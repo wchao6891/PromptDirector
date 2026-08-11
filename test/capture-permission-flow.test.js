@@ -1,0 +1,275 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+import {
+  CLIPBOARD_READ_PERMISSIONS,
+  CONTINUOUS_CAPTURE_ORIGINS,
+  ensureClipboardReadPermission,
+  hasClipboardReadPermission,
+  readClipboardTextAfterFocus,
+  ensureContinuousCapturePermission,
+  ensurePagePermission,
+  pagePermissionPattern
+} from "../capture-permissions.js";
+import { runCaptureTransaction } from "../capture-workspace.js";
+
+const projectRoot = new URL("../", import.meta.url);
+
+test("explicit clipboard extraction uses one optional permission with a recoverable grant", async () => {
+  const manifest = JSON.parse(await readFile(new URL("manifest.json", projectRoot), "utf8"));
+  const calls = [];
+  const permissions = {
+    contains: async (request) => {
+      calls.push(["contains", request]);
+      return false;
+    },
+    request: async (request) => {
+      calls.push(["request", request]);
+      return true;
+    }
+  };
+
+  assert.ok(manifest.optional_permissions.includes("clipboardRead"));
+  assert.ok(manifest.optional_permissions.includes("declarativeNetRequestWithHostAccess"));
+  assert.equal(manifest.optional_permissions.length, 2);
+  assert.equal(await hasClipboardReadPermission(permissions), false);
+  assert.equal(await ensureClipboardReadPermission(permissions), true);
+  assert.deepEqual(calls, [
+    ["contains", { permissions: [...CLIPBOARD_READ_PERMISSIONS] }],
+    ["contains", { permissions: [...CLIPBOARD_READ_PERMISSIONS] }],
+    ["request", { permissions: [...CLIPBOARD_READ_PERMISSIONS] }]
+  ]);
+});
+
+test("clipboard reading waits for focus stability and retries one transient post-permission failure", async () => {
+  const calls = [];
+  let reads = 0;
+  const text = await readClipboardTextAfterFocus({
+    clipboardApi: {
+      readText: async () => {
+        reads += 1;
+        calls.push(`read-${reads}`);
+        if (reads === 1) throw new DOMException("Document is not focused", "NotAllowedError");
+        return "已复制的提示词";
+      }
+    },
+    documentObject: { hasFocus: () => true },
+    windowObject: {
+      requestAnimationFrame(callback) {
+        calls.push("frame");
+        callback();
+      }
+    }
+  });
+
+  assert.equal(text, "已复制的提示词");
+  assert.deepEqual(calls, ["frame", "frame", "read-1", "frame", "frame", "read-2"]);
+});
+
+test("cross-page capture uses one explicit all-sites grant instead of origin-by-origin access", async () => {
+  const manifest = JSON.parse(await readFile(new URL("manifest.json", projectRoot), "utf8"));
+  const calls = [];
+  const chromeApi = {
+    permissions: {
+      request: async (request) => {
+        calls.push(["permission", request]);
+        return true;
+      }
+    },
+    tabs: {
+      query: async () => {
+        calls.push(["tab"]);
+        return [{ id: 17, url: "https://example.com/work" }];
+      }
+    },
+    runtime: {
+      sendMessage: async (message) => {
+        calls.push(["message", message]);
+        return { ok: true, message: "截图已加入草稿", draft: { id: "draft" } };
+      }
+    }
+  };
+
+  assert.deepEqual(manifest.optional_host_permissions, ["<all_urls>"]);
+  const result = await runCaptureTransaction({
+    type: "CAPTURE_ACTIVE_TAB_TO_DRAFT",
+    chromeApi
+  });
+
+  assert.equal(result.message, "截图已加入草稿");
+  assert.deepEqual(calls, [
+    ["permission", { origins: [...CONTINUOUS_CAPTURE_ORIGINS] }],
+    ["tab"],
+    ["message", { type: "CAPTURE_ACTIVE_TAB_TO_DRAFT", tabId: 17 }]
+  ]);
+});
+
+test("denied screenshot permission stops before tab lookup and leaves the draft untouched", async () => {
+  const calls = [];
+  const chromeApi = {
+    permissions: {
+      request: async () => {
+        calls.push("permission");
+        return false;
+      }
+    },
+    tabs: {
+      query: async () => {
+        calls.push("tab");
+        return [];
+      }
+    },
+    runtime: {
+      sendMessage: async () => {
+        calls.push("message");
+        return { ok: true };
+      }
+    }
+  };
+
+  await assert.rejects(
+    () => runCaptureTransaction({ type: "CAPTURE_VISIBLE_VISUALS_TO_DRAFT", chromeApi }),
+    { message: "没有获得跨网页截图权限，当前草稿没有改变" }
+  );
+  assert.deepEqual(calls, ["permission"]);
+});
+
+test("continuous capture requests the declared all-sites permission from the user gesture", async () => {
+  const requests = [];
+  const granted = await ensureContinuousCapturePermission({
+    request: async (request) => {
+      requests.push(request);
+      return true;
+    }
+  });
+
+  assert.equal(granted, true);
+  assert.deepEqual(requests, [{ origins: [...CONTINUOUS_CAPTURE_ORIGINS] }]);
+});
+
+test("text collection keeps its narrower per-site permission", async () => {
+  const calls = [];
+  const permissions = {
+    contains: async (request) => {
+      calls.push(["contains", request]);
+      return false;
+    },
+    request: async (request) => {
+      calls.push(["request", request]);
+      return true;
+    }
+  };
+
+  assert.equal(pagePermissionPattern("https://example.com/article"), "https://example.com/*");
+  assert.equal(await ensurePagePermission("https://example.com/article", permissions), true);
+  assert.deepEqual(calls, [
+    ["contains", { origins: ["https://example.com/*"] }],
+    ["request", { origins: ["https://example.com/*"] }]
+  ]);
+  await assert.rejects(() => ensurePagePermission("chrome://extensions", permissions), {
+    message: "请先切换到需要采集的普通网页"
+  });
+});
+
+test("text capture resolves the active page before requesting only that page permission", async () => {
+  const calls = [];
+  const chromeApi = {
+    permissions: {
+      contains: async (request) => {
+        calls.push(["contains", request]);
+        return false;
+      },
+      request: async (request) => {
+        calls.push(["request", request]);
+        return true;
+      }
+    },
+    tabs: {
+      query: async () => {
+        calls.push(["tab"]);
+        return [{ id: 23, url: "https://example.com/article" }];
+      }
+    },
+    runtime: {
+      sendMessage: async (message) => {
+        calls.push(["message", message]);
+        return { ok: true, message: "高亮文字已加入当前草稿", draft: { id: "draft" } };
+      }
+    }
+  };
+
+  await runCaptureTransaction({
+    type: "ADD_ACTIVE_SELECTION_TO_DRAFT",
+    chromeApi
+  });
+
+  assert.deepEqual(calls, [
+    ["tab"],
+    ["contains", { origins: ["https://example.com/*"] }],
+    ["request", { origins: ["https://example.com/*"] }],
+    ["message", { type: "ADD_ACTIVE_SELECTION_TO_DRAFT", tabId: 23 }]
+  ]);
+});
+
+test("creative result capture and commit use one background transaction", async () => {
+  const messages = [];
+  const capturedDraft = { id: "captured", visuals: [{ id: "visual-1" }] };
+  const chromeApi = {
+    permissions: { request: async () => true },
+    tabs: { query: async () => [{ id: 29, url: "https://example.com/result" }] },
+    runtime: {
+      sendMessage: async (message) => {
+        messages.push(message);
+        return {
+          ok: true,
+          message: "生成结果已保存",
+          draft: capturedDraft,
+          captured: { ok: true, draft: capturedDraft },
+          committed: { ok: true }
+        };
+      }
+    }
+  };
+
+  const result = await runCaptureTransaction({
+    type: "CAPTURE_ACTIVE_TAB_TO_DRAFT",
+    commitCreative: true,
+    chromeApi
+  });
+
+  assert.equal(result.message, "生成结果已保存");
+  assert.deepEqual(messages, [{
+    type: "CAPTURE_CREATIVE_OUTPUTS",
+    captureType: "CAPTURE_ACTIVE_TAB_TO_DRAFT",
+    tabId: 29
+  }]);
+});
+
+test("a failed creative commit exposes the captured draft instead of hiding the saved screenshot", async () => {
+  const capturedDraft = { id: "captured", visuals: [{ id: "visual-1" }] };
+  const chromeApi = {
+    permissions: { request: async () => true },
+    tabs: { query: async () => [{ id: 31, url: "https://example.com/result" }] },
+    runtime: {
+      sendMessage: async () => ({
+        ok: false,
+        message: "没有等待接收结果的提示词",
+        draft: capturedDraft
+      })
+    }
+  };
+
+  await assert.rejects(
+    () => runCaptureTransaction({
+      type: "CAPTURE_ACTIVE_TAB_TO_DRAFT",
+      commitCreative: true,
+      chromeApi
+    }),
+    (error) => {
+      assert.equal(error.message, "没有等待接收结果的提示词");
+      assert.equal(error.draft, capturedDraft);
+      return true;
+    }
+  );
+});

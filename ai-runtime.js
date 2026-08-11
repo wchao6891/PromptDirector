@@ -1,0 +1,261 @@
+import { normalizeAiSettings } from "./deepseek.js";
+import { normalizeVisionSettings } from "./vision.js";
+import {
+  migrateLegacyAiConfiguration,
+  normalizeAiProviderRegistry,
+  normalizeAiTaskAssignments,
+  resolveAiProviderAssignment
+} from "./ai-provider-registry.js";
+
+const TEXT_TASKS = new Set(["textTags", "skillExtraction", "creativePlanning"]);
+
+export const AI_RUNTIME_PROTOCOL_VERSION = 1;
+
+export function requireAiRuntimeProtocolVersion(value) {
+  if (Number(value) !== AI_RUNTIME_PROTOCOL_VERSION) {
+    throw new Error("创作台页面与扩展后台不是同一版本。请在浏览器扩展管理页重新加载 PromptDirector，再回到本轮继续；本轮内容不会丢失，也没有发起付费请求");
+  }
+  return true;
+}
+
+export function aiConfigurationFromStorage(stored = {}) {
+  const migrated = stored.aiProviderRegistry
+    ? {
+        registry: normalizeAiProviderRegistry(stored.aiProviderRegistry),
+        assignments: normalizeAiTaskAssignments(stored.aiTaskAssignments, stored.aiProviderRegistry)
+      }
+    : migrateLegacyAiConfiguration(stored);
+  return {
+    ...migrated,
+    preferences: normalizeAiPreferences(stored.aiPreferences, stored)
+  };
+}
+
+export function normalizeAiPreferences(value = {}, legacy = {}) {
+  const text = normalizeAiSettings(legacy.aiSettings);
+  const vision = normalizeVisionSettings(legacy.visionSettings);
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    version: 1,
+    textInstructionsByLocale: {
+      "zh-CN": clean(source.textInstructionsByLocale?.["zh-CN"]) || text.analysisInstructionsByLocale["zh-CN"],
+      en: clean(source.textInstructionsByLocale?.en) || text.analysisInstructionsByLocale.en
+    },
+    visionInstructionsByLocale: {
+      "zh-CN": clean(source.visionInstructionsByLocale?.["zh-CN"]) || vision.instructionsByLocale["zh-CN"],
+      en: clean(source.visionInstructionsByLocale?.en) || vision.instructionsByLocale.en
+    },
+    autoAnalyzeImports: Object.hasOwn(source, "autoAnalyzeImports")
+      ? source.autoAnalyzeImports === true
+      : vision.autoAnalyzeImports
+  };
+}
+
+export function projectAiRuntime(configurationValue = {}) {
+  const configuration = normalizeConfiguration(configurationValue);
+  const { registry, assignments, preferences } = configuration;
+  const providers = registry.providers;
+  const planning = settingsForTextAssignment(assignments.textTags, providers, preferences, false);
+  const openai = providers.openai;
+  const compatible = providers["custom-media"] || providers.custom;
+  const imageAnalysis = assignments.imageAnalysis;
+  const vision = normalizeVisionSettings({
+    activeProvider: ["custom-media", "custom"].includes(imageAnalysis.providerId) ? "compatible" : "openai",
+    consent: true,
+    autoAnalyzeImports: preferences.autoAnalyzeImports,
+    instructionsByLocale: preferences.visionInstructionsByLocale,
+    openai: {
+      model: assignments.imageAnalysis.providerId === "openai" ? assignments.imageAnalysis.model : openai?.models?.imageAnalysis,
+      apiKey: usableKey(openai),
+      videoGeneration: {
+        ...(openai?.videoGeneration ?? {}),
+        model: openai?.models?.videoGeneration || openai?.videoGeneration?.model
+      }
+    },
+    compatible: {
+      protocol: compatible?.protocol,
+      endpoint: compatible?.endpoint,
+      model: compatible?.models?.imageAnalysis,
+      apiKey: usableKey(compatible),
+      imageGeneration: {
+        ...(compatible?.imageGeneration ?? {}),
+        model: compatible?.models?.imageGeneration || compatible?.imageGeneration?.model,
+        apiKey: usableKey(compatible, true, "imageGeneration")
+      }
+    }
+  });
+  const xai = providers.xai;
+  return {
+    aiSettings: planning,
+    visionSettings: {
+      ...vision,
+      providerProfiles: providers,
+      xai: {
+        apiKey: usableKey(xai),
+        textModel: xai?.models?.creativePlanning,
+        imageModel: xai?.models?.imageGeneration || xai?.models?.imageAnalysis,
+        videoModel: xai?.models?.videoGeneration,
+        mediaConsent: xai?.consent === true
+      }
+    },
+    aiServiceProfiles: {
+      gemini: { apiKey: usableKey(providers.gemini, false), model: providers.gemini?.models?.videoAnalysis },
+      xai: {
+        apiKey: usableKey(xai),
+        textModel: xai?.models?.creativePlanning,
+        imageModel: xai?.models?.imageGeneration || xai?.models?.imageAnalysis,
+        videoModel: xai?.models?.videoGeneration,
+        mediaConsent: xai?.consent === true
+      }
+    },
+    aiTaskRoutes: legacyRuntimeRoutes(assignments),
+    aiTaskAssignments: assignments,
+    aiProviderRegistry: registry,
+    aiPreferences: preferences
+  };
+}
+
+export function resolveTextTaskSettings(taskId, configurationValue = {}, options = {}) {
+  if (!TEXT_TASKS.has(taskId)) throw new Error("这不是文字任务");
+  const configuration = normalizeConfiguration(configurationValue);
+  if (options.requireConfigured === false) {
+    return settingsForTextAssignment(configuration.assignments[taskId], configuration.registry.providers, configuration.preferences, false);
+  }
+  const resolved = resolveAiProviderAssignment(taskId, configuration.registry, configuration.assignments);
+  const profile = configuration.registry.providers[resolved.providerId];
+  requireConsent(profile, resolved.provider);
+  return settingsForTextAssignment(resolved, configuration.registry.providers, configuration.preferences, true);
+}
+
+export function resolveVisionTaskSettings(taskId, configurationValue = {}, options = {}) {
+  if (!["imageAnalysis", "imageGeneration"].includes(taskId)) throw new Error("这不是图片任务");
+  const configuration = normalizeConfiguration(configurationValue);
+  const resolved = options.requireConfigured === false
+    ? configuration.assignments[taskId]
+    : resolveAiProviderAssignment(taskId, configuration.registry, configuration.assignments);
+  const profile = configuration.registry.providers[resolved.providerId];
+  if (options.requireConfigured !== false) requireConsent(profile, resolved.provider);
+  const openai = resolved.providerId === "openai";
+  const endpoint = chatEndpoint(profile);
+  return normalizeVisionSettings({
+    activeProvider: openai ? "openai" : "compatible",
+    consent: true,
+    autoAnalyzeImports: configuration.preferences.autoAnalyzeImports,
+    instructionsByLocale: configuration.preferences.visionInstructionsByLocale,
+    openai: {
+      model: resolved.model,
+      apiKey: openai ? profile.apiKey : "",
+      videoGeneration: profile.videoGeneration
+    },
+    compatible: {
+      protocol: profile.protocol === "responses" ? "responses" : "chat_completions",
+      endpoint,
+      model: resolved.model,
+      apiKey: openai ? "" : profile.apiKey,
+      imageGeneration: {
+        ...(profile.imageGeneration ?? {}),
+        model: taskId === "imageGeneration" ? resolved.model : profile.models.imageGeneration,
+        apiKey: openai ? "" : usableKey(profile, true, "imageGeneration")
+      }
+    },
+    nativeProvider: resolved.providerId === "gemini" ? {
+      id: "gemini",
+      endpoint: profile.endpoint,
+      apiKey: profile.apiKey,
+      model: resolved.model
+    } : null
+  });
+}
+
+export function resolveVideoAnalysisTask(configurationValue = {}) {
+  const configuration = normalizeConfiguration(configurationValue);
+  const resolved = resolveAiProviderAssignment("videoAnalysis", configuration.registry, configuration.assignments);
+  const profile = configuration.registry.providers[resolved.providerId];
+  requireConsent(profile, resolved.provider);
+  return {
+    ...resolved,
+    apiKey: profile.apiKey,
+    endpoint: profile.endpoint
+  };
+}
+
+export function legacyRuntimeRoutes(assignmentsValue = {}) {
+  const assignments = assignmentsValue && typeof assignmentsValue === "object" ? assignmentsValue : {};
+  const route = (taskId, fallback) => ({
+    serviceId: assignments[taskId]?.providerId === "xai" ? "xai" : fallback,
+    model: clean(assignments[taskId]?.model)
+  });
+  return {
+    "text-tags": route("textTags", "current-text"),
+    "skill-extraction": route("skillExtraction", "current-text"),
+    "creative-planning": route("creativePlanning", "current-text"),
+    "image-analysis": route("imageAnalysis", "current-vision"),
+    "video-analysis": { serviceId: assignments.videoAnalysis?.providerId || "gemini", model: clean(assignments.videoAnalysis?.model) },
+    "image-generation": route("imageGeneration", "current-vision"),
+    "video-generation": route("videoGeneration", "current-vision")
+  };
+}
+
+function settingsForTextAssignment(assignmentValue, providers, preferences, strict) {
+  const providerId = clean(assignmentValue?.providerId) || "deepseek";
+  const profile = providers[providerId] || providers.deepseek;
+  if (strict) requireConsent(profile, profile?.label || providerId);
+  const model = clean(assignmentValue?.model) || profile?.models?.textTags || profile?.models?.creativePlanning;
+  const deepseek = providerId === "deepseek";
+  return normalizeAiSettings({
+    activeProvider: deepseek ? "deepseek" : "compatible",
+    apiKey: deepseek ? profile?.apiKey : "",
+    analysisModel: deepseek ? model : undefined,
+    consent: strict ? true : profile?.consent === true,
+    analysisInstructionsByLocale: preferences.textInstructionsByLocale,
+    compatible: deepseek ? undefined : {
+      endpoint: chatEndpoint(profile),
+      model,
+      apiKey: profile?.apiKey
+    }
+  });
+}
+
+function normalizeConfiguration(value = {}) {
+  const registry = normalizeAiProviderRegistry(value.registry ?? value.aiProviderRegistry);
+  return {
+    registry,
+    assignments: normalizeAiTaskAssignments(value.assignments ?? value.aiTaskAssignments, registry),
+    preferences: normalizeAiPreferences(value.preferences ?? value.aiPreferences)
+  };
+}
+
+function chatEndpoint(profile = {}) {
+  if (profile.id === "deepseek") return "https://api.deepseek.com/chat/completions";
+  if (profile.id === "openai") return "https://api.openai.com/v1/chat/completions";
+  if (profile.id === "xai") return "https://api.x.ai/v1/chat/completions";
+  if (profile.id === "openrouter") return `${clean(profile.endpoint).replace(/\/$/, "")}/chat/completions`;
+  if (profile.id === "gemini") return `${clean(profile.endpoint).replace(/\/$/, "")}/v1beta/openai/chat/completions`;
+  return clean(profile.endpoint);
+}
+
+function usableKey(profile, requireConsent = true, taskId = "") {
+  const imageKey = profile?.imageGeneration?.apiKey;
+  const key = taskId === "imageGeneration"
+    ? imageKey || (requiresDedicatedImageCredential(profile) ? "" : profile?.apiKey)
+    : profile?.apiKey;
+  return profile && (!requireConsent || profile.consent === true) ? clean(key) : "";
+}
+
+function requiresDedicatedImageCredential(profile = {}) {
+  if (profile.imageGeneration?.protocol !== "images_generations") return false;
+  try {
+    const endpoint = profile.imageGeneration?.endpoint || profile.endpoint;
+    return new URL(endpoint).hostname.toLocaleLowerCase("en-US").endsWith("micuapi.ai");
+  } catch {
+    return false;
+  }
+}
+
+function requireConsent(profile, label) {
+  if (!profile?.consent) throw new Error(`${label || "所选 AI 服务"} 尚未确认发送范围`);
+}
+
+function clean(value) {
+  return String(value ?? "").replace(/[\u0000-\u001f\u007f]/gu, " ").trim();
+}

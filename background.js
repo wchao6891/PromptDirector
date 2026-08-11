@@ -1,0 +1,5740 @@
+import { showPageToast } from "./capture-region.js";
+import {
+  classifyContent,
+  classifyImportedMedia,
+  confirmClassification,
+  createSourceRule
+} from "./classifier.js";
+import { migrateLibraryState, needsMigration } from "./migration.js";
+import {
+  CONTENT_TYPE_VISIBILITY,
+  CONTENT_ROLES,
+  SCHEMA_VERSION,
+  contentRoleForEntry,
+  contentTypeForRole,
+  createContentType,
+  isValidContentPath,
+  normalizeTaxonomy,
+  removeContentTypeWithTransfer,
+  updateContentType
+} from "./taxonomy.js";
+import {
+  applyFacetChange,
+  createFacetNode,
+  normalizeFacetCatalog,
+  previewFacetChange,
+  recoverFullyArchivedFacets,
+  restoreArchivedFacets,
+  restoreArchivedNodes,
+  uniqueNames
+} from "./facets.js";
+import { appendFacetUndo, facetUndoCount, undoFacetHistory } from "./facet-history.js";
+import {
+  acceptAnalysisCandidate,
+  applyAnalysisCandidates,
+  applyAnalysisImport,
+  applyTextAnalysisTags,
+  applyVisionAnalysis,
+  editVisionDescription,
+  rejectAnalysisCandidate,
+  undoVisionAnalysis,
+  setManualAssignment
+} from "./analysis-candidates.js";
+import {
+  ANALYSIS_PROMPT_VERSION,
+  analysisProfileFingerprint,
+  analysisTaxonomyPrompt,
+  mergeAiSettings,
+  normalizeAiSettings,
+  publicAiSettings,
+  summarizeVisualSetWithAi
+} from "./deepseek.js";
+import {
+  compileVisualSetSummaryInstruction,
+  normalizeVisualSetSummaryV1,
+  prepareVisualSetSummary
+} from "./visual-analysis.js";
+import { createAiProviderModule } from "./ai-provider-module.js";
+import {
+  analysisBatchSummary,
+  analysisRebuildRecovery,
+  backfillLegacyAnalysisMeta,
+  cancelAnalysisBatch,
+  claimAnalysisItems,
+  createAnalysisBatchUndo,
+  createAnalysisBatchJob,
+  createVisionBatchJob,
+  failAnalysisItem,
+  finalizeAnalysisRebuild,
+  finalizePartialAnalysisRebuild,
+  normalizeAnalysisBatchJob,
+  pauseAnalysisBatch,
+  previewAnalysisBatch,
+  previewVisionBatch,
+  reconcileVisionBatchResults,
+  restoreAnalysisBatchUndo,
+  resumeAnalysisBatch,
+  retryFailedAnalysisItems,
+  stageAnalysisRebuildResults,
+  succeedAnalysisItem,
+  textFingerprint
+} from "./analysis-batch.js";
+import { buildAutomaticVisionJob } from "./automatic-vision.js";
+import {
+  analysisRevisionMeta,
+  entryTextRevision,
+  markEntryTextChanged,
+  updateEntryText
+} from "./analysis-revision.js";
+import { applyDetailOrganizationMappings } from "./tag-taxonomy.js";
+import {
+  buildEntry,
+  defaultSettingsForLocale,
+  findDuplicate,
+  normalizeSettings,
+  screenshotStorageKey
+} from "./lib.js";
+import {
+  deleteScreenshotBlob,
+  discardScreenshotReplacementBackup,
+  getScreenshotBlob,
+  undoScreenshotReplacement,
+  saveScreenshotBlob
+} from "./image-store.js";
+import {
+  deleteMediaBlob,
+  deleteMediaBlobs,
+  getAllDerivedMetadata,
+  getDerivedMedia,
+  getDerivedMetadata,
+  getMediaBlob,
+  saveDerivedMetadata,
+  saveMediaBlob
+} from "./media-store.js";
+import { findExactMediaDuplicate, sha256Blob } from "./local-media.js";
+import { tempReferenceAssetIds, unreadReferenceImageAssets } from "./temp-references.js";
+import {
+  addStagedAsset,
+  collectRetainedLocalAssetIds,
+  normalizeImportStagingState,
+  removeStagedAsset,
+  stagedAssetById
+} from "./import-staging.js";
+import {
+  cancelImportJob,
+  createImportJob,
+  finishImportItem,
+  markImportJobAnalysisQueued,
+  normalizeImportJobsState,
+  retryImportJob,
+  startImportJob,
+  undoImportJob
+} from "./import-jobs.js";
+import {
+  createCreativeSkill,
+  deleteCreativeSkill,
+  normalizeCreativeSkillsState,
+  restoreCreativeSkillVersion,
+  saveCreativeSkillVersion,
+  skillPackageAssetIds
+} from "./creative-skills.js";
+import {
+  addEntryMedia,
+  addTimeNote,
+  entryMediaAssets,
+  normalizeEntryMedia,
+  removeEntryMedia,
+  removeTimeNote,
+  setEntryMediaPrompt,
+  setPrimaryMedia
+} from "./media.js";
+import {
+  cancelLibraryMaintenance,
+  completeLibraryMaintenanceItem,
+  createLibraryMaintenanceJob,
+  libraryMaintenanceSummary,
+  mergeLibraryMaintenanceProgress,
+  nextLibraryMaintenanceItem,
+  normalizeLibraryMaintenanceJob,
+  pauseLibraryMaintenance,
+  resumeLibraryMaintenance,
+  retryLibraryMaintenanceFailures
+} from "./library-maintenance.js";
+import {
+  commitMetadataThenDeleteImages,
+  replaceImagesWithRollback
+} from "./image-transaction.js";
+import { createEntrySaveUndo, normalizeLastSaveUndo, restoreScreenshotSaveEntry } from "./save-history.js";
+import {
+  mergeLibraryPackage,
+  selectLibraryPackage,
+  selectProjectPackage
+} from "./library-package.js";
+import {
+  createCollection,
+  deleteCollection,
+  normalizeOrganizerState,
+  planCollectionAndEntriesDeletion,
+  removeEntriesFromOrganizer,
+  replaceCollectionEntries,
+  renameCollection,
+  setCollectionVisibility
+} from "./organizer.js";
+import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
+import { PALETTE_VERSION } from "./palette.js";
+import {
+  COMPOSER_METHOD_VERSION,
+  appendDiagnosticEvent,
+  createComposerSession,
+  isMeaningfulComposerSession,
+  normalizeComposerAiProfile,
+  normalizeComposerSessions,
+  normalizeComposerSettings,
+  resetComposerAgentInstruction,
+  sessionSummary,
+  resetComposerTaskMethod,
+  setComposerFailure,
+  updateComposerAgentInstruction,
+  updateComposerTaskMethod
+} from "./composer.js";
+import {
+  activeCreativeJob,
+  createCreativeJob,
+  creativeJobById,
+  interruptActiveCreativeJobs,
+  normalizeCreativeJobsState,
+  retryCreativeJob,
+  updateCreativeJob
+} from "./creative-jobs.js";
+import { handleContextMenuCapture, syncContextMenus } from "./context-menus.js";
+import {
+  createCaptureDraft,
+  draftParts,
+  draftSourcePages,
+  draftText
+} from "./capture-draft.js";
+import { createCaptureWorkspace } from "./capture-workspace.js";
+import {
+  applyPageCaptureSelections,
+  collectPageCaptureSnapshot,
+  PAGE_CAPTURE_ADAPTERS,
+  normalizePageCaptureBatch
+} from "./page-capture.js";
+import { fetchBoundedMedia } from "./bounded-media.js";
+import { PAGE_CAPTURE_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { publicAiServiceProfiles } from "./ai-task-routing.js";
+import {
+  mergeAiProviderRegistry,
+  normalizeAiTaskAssignments,
+  publicAiProviderRegistry
+} from "./ai-provider-registry.js";
+import {
+  AI_RUNTIME_PROTOCOL_VERSION,
+  aiConfigurationFromStorage,
+  normalizeAiPreferences,
+  projectAiRuntime,
+  resolveTextTaskSettings,
+  resolveVideoAnalysisTask,
+  resolveVisionTaskSettings
+} from "./ai-runtime.js";
+import {
+  analyzeVideoWithGemini,
+  analyzeVideoWithOpenRouter,
+  requireVideoAnalysisConfirmation
+} from "./video-analysis.js";
+import { detectMediaReferenceProvider } from "./media-reference-resolver.js";
+import {
+  createCompoundCase,
+  normalizeCompoundCases,
+  removeEntriesFromCompoundCases,
+  splitCompoundCase,
+  updateCompoundCase
+} from "./compound-cases.js";
+import {
+  addEntryVisual,
+  normalizeEntryVisuals,
+  primaryVisual,
+  removeEntryVisual,
+  setPrimaryVisual,
+  updateEntryVisual
+} from "./visuals.js";
+import {
+  VISION_ANALYSIS_VERSION,
+  evaluateCreativeOutputWithVision,
+  analyzeImageWithVision,
+  blobToDataUrl,
+  imageFingerprint,
+  mergeVisionSettings,
+  normalizeVisionSettings,
+  permissionPatternForVisionSettings,
+  probeCompatibleModels,
+  publicVisionSettings
+} from "./vision.js";
+import {
+  activateCreativeResultContext,
+  addCreativeOutput,
+  applyCreativeEvaluation,
+  createCreativeRun,
+  normalizeActiveCreativeResult,
+  normalizeCreativeExperimentSettings,
+  normalizeCreativeRuns,
+  recordCreativeSignal,
+  removeCreativeOutput,
+  updateCreativeJudgment
+} from "./creative-runs.js";
+import { mergeCreativeExperimentPackage } from "./creative-experiment-package.js";
+import {
+  attachSyncImageReferences,
+  collectSyncImageReferences,
+  createRevisionSnapshot,
+  mergeRevisionSnapshots,
+  normalizeSyncSettings,
+  syncErrorDetails,
+  syncStateHasContent,
+  SYNC_SNAPSHOT_FORMAT,
+  SYNC_SNAPSHOT_VERSION
+} from "./sync-model.js";
+import {
+  createOrUnlockSyncVault,
+  listSyncSnapshots,
+  openSyncVaultWithKey,
+  readSyncObject,
+  writeSyncObject,
+  writeSyncSnapshot
+} from "./sync-vault.js";
+import {
+  clearSyncPrivateState,
+  getSyncCryptoKey,
+  getSyncDirectoryHandle,
+  saveSyncCryptoKey
+} from "./sync-store.js";
+
+const STORAGE_KEYS = Object.freeze({
+  schemaVersion: "schemaVersion",
+  entries: "entries",
+  compoundCases: "compoundCases",
+  settings: "settings",
+  taxonomy: "taxonomy",
+  facetCatalog: "facetCatalog",
+  classificationRules: "classificationRules",
+  migrationBackup: "migrationBackup",
+  classificationResetBackup: "classificationResetBackup",
+  facetMigrationBackup: "creativeFacetMigrationBackupV5",
+  facetUndo: "facetUndo",
+  aiSettings: "aiSettings",
+  visionSettings: "visionSettings",
+  aiServiceProfiles: "aiServiceProfiles",
+  aiTaskRoutes: "aiTaskRoutes",
+  aiProviderRegistry: "aiProviderRegistry",
+  aiTaskAssignments: "aiTaskAssignments",
+  aiPreferences: "aiPreferences",
+  visionAnalysisUndo: "visionAnalysisUndo",
+  automaticVisionBatchJob: "automaticVisionBatchJob",
+  batchJob: "batchJob",
+  libraryMaintenanceJob: "libraryMaintenanceJob",
+  legacyAnalysisBatchJob: "analysisBatchJob",
+  analysisBatchUndo: "analysisBatchUndo",
+  analysisRebuildStaging: "analysisRebuildStaging",
+  organizerState: "organizerState",
+  uiPreferences: "uiPreferences",
+  composerSettings: "composerSettings",
+  composerSessions: "composerSessions",
+  creativeExperimentSettings: "creativeExperimentSettings",
+  creativeRuns: "creativeRuns",
+  creativeJobs: "creativeJobs",
+  importJobs: "importJobs",
+  importStaging: "importStaging",
+  creativeSkills: "creativeSkills",
+  activeCreativeResult: "activeCreativeResult",
+  lastSaveUndo: "lastSaveUndo",
+  captureDraft: "captureDraft",
+  syncSettings: "syncSettings",
+  syncMeta: "syncMeta"
+});
+const SYNCED_STORAGE_KEYS = new Set([
+  STORAGE_KEYS.entries,
+  STORAGE_KEYS.compoundCases,
+  STORAGE_KEYS.settings,
+  STORAGE_KEYS.taxonomy,
+  STORAGE_KEYS.facetCatalog,
+  STORAGE_KEYS.classificationRules,
+  STORAGE_KEYS.organizerState,
+  STORAGE_KEYS.composerSettings,
+  STORAGE_KEYS.composerSessions,
+  STORAGE_KEYS.creativeExperimentSettings,
+  STORAGE_KEYS.creativeRuns,
+  STORAGE_KEYS.creativeSkills
+]);
+const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+let writeQueue = Promise.resolve();
+let captureWriteQueue = Promise.resolve();
+let automaticSyncScheduled = false;
+let creatingOffscreenDocument = null;
+let visionAnalysisInFlight = false;
+const aiProviderModule = createAiProviderModule();
+let activePageCapture = null;
+let syncInFlight = null;
+let syncApplyInProgress = false;
+let syncIdleTimer = null;
+let maintenanceRunnerActive = false;
+let maintenanceRunnerTimer = 0;
+let automaticVisionRunnerActive = false;
+let automaticVisionRunnerTimer = 0;
+let importRunnerActive = false;
+let importRunnerTimer = 0;
+const LIBRARY_MAINTENANCE_ALARM = "prompt-director-library-maintenance";
+const AUTOMATIC_VISION_ALARM = "prompt-director-automatic-vision";
+const IMPORT_JOB_ALARM = "prompt-director-local-import";
+const MAINTENANCE_SLICE_TARGET_MS = 250;
+const captureRuntime = createCaptureWorkspace({
+  chromeApi: chrome,
+  captureDraftStorageKey: STORAGE_KEYS.captureDraft,
+  uiPreferencesStorageKey: STORAGE_KEYS.uiPreferences,
+  ensureOffscreenDocument,
+  deleteVisual: deleteScreenshotBlob
+});
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await restrictLocalStorageAccess();
+  await syncContextMenus();
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+
+  const state = await readState();
+  await commitLocalChanges({ [STORAGE_KEYS.settings]: state.settings });
+  await migrateLegacyScreenshots(state.entries);
+});
+
+restrictLocalStorageAccess().catch((error) => console.error("PromptDirector storage access restriction failed", error));
+syncContextMenus().catch((error) => console.error("PromptDirector context menu sync failed", error));
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error("PromptDirector side panel setup failed", error));
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === LIBRARY_MAINTENANCE_ALARM) scheduleLibraryMaintenanceRunner();
+  if (alarm.name === AUTOMATIC_VISION_ALARM) scheduleAutomaticVisionRunner();
+  if (alarm.name === IMPORT_JOB_ALARM) scheduleImportRunner();
+});
+scheduleLibraryMaintenanceRunner();
+scheduleAutomaticVisionRunner();
+recoverCreativeJobs().catch((error) => console.error("PromptDirector creative job recovery failed", error));
+recoverImportJobs().catch((error) => console.error("PromptDirector local import recovery failed", error));
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  handleContextMenuCapture(info, tab, {
+    chromeApi: chrome,
+    enqueueCapture,
+    dispatch: (action, payload) => captureRuntime.dispatch(action, payload),
+    showResult: showResultToast,
+    formatError: userMessage,
+    reportSidePanelError: (error) => console.error("PromptDirector side panel open failed", error)
+  });
+});
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== "save-selection") return;
+  const response = await enqueueCapture(() => captureRuntime.dispatch("add-active-selection"));
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.windowId) await chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => undefined);
+  await showResultToast(tab?.id, response.message, !response.ok);
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "capture-region") return;
+  port.onMessage.addListener(() => undefined);
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.target === "offscreen") return false;
+  const interaction = {
+    sidePanelOpening: openCreativeResultSidePanel(message, sender)
+  };
+  handleMessage(message, interaction)
+    .then(sendResponse)
+    .catch((error) => sendResponse({ ok: false, message: userMessage(error) }));
+  return true;
+});
+
+function openCreativeResultSidePanel(message, sender) {
+  if (message?.type !== "ACTIVATE_CREATIVE_RESULT") return null;
+  const windowId = sender?.tab?.windowId;
+  if (!Number.isInteger(windowId)) return Promise.resolve(false);
+  return chrome.sidePanel.open({ windowId })
+    .then(() => true)
+    .catch((error) => {
+      console.error("PromptDirector creative result side panel open failed", error);
+      return false;
+    });
+}
+
+async function handleMessage(message, interaction = {}) {
+  switch (message?.type) {
+    case "GET_STATE": {
+      const stateRead = enqueue(async () => ({ ok: true, ...publicLibraryState(await readState()) }));
+      scheduleAutomaticSync();
+      return stateRead;
+    }
+    case "GET_FOLDER_BACKUP_STATE":
+      return enqueue(async () => ({ ok: true, ...folderBackupState(await readState()) }));
+    case "GET_CAPTURE_WORKSPACE":
+      scheduleAutomaticSync();
+      return enqueueCapture(async () => captureWorkspace());
+    case "GET_DATA_SAFETY_STATUS":
+      return enqueue(async () => dataSafetyStatus(await readState()));
+    case "CONNECT_SYNC_FOLDER":
+      return enqueue(async () => connectSyncFolder(message.password));
+    case "UNLOCK_SYNC_VAULT":
+      return enqueue(async () => unlockSyncVault(message.password));
+    case "SYNC_NOW":
+      return enqueue(async () => synchronizeNow("manual"));
+    case "DISCONNECT_SYNC_FOLDER":
+      return enqueue(async () => disconnectSyncFolder());
+    case "UPDATE_CAPTURE_DRAFT":
+      return enqueueCapture(async () => captureRuntime.dispatch("persist-draft", { draft: message.draft }));
+    case "ADD_ACTIVE_SELECTION_TO_DRAFT":
+      return enqueueCapture(async () => captureRuntime.dispatch("add-active-selection", { tabId: message.tabId }));
+    case "TRY_ACTIVE_SELECTION_TO_DRAFT":
+      return enqueueCapture(async () => captureRuntime.dispatch("try-active-selection"));
+    case "ADD_CLIPBOARD_TEXT_TO_DRAFT":
+      return enqueueCapture(async () => captureRuntime.dispatch("add-clipboard-text", { text: message.text }));
+    case "CAPTURE_ACTIVE_TAB_TO_DRAFT":
+      return enqueueCapture(async () => captureRuntime.dispatch("capture-active-tab", { tabId: message.tabId }));
+    case "CAPTURE_VISIBLE_VISUALS_TO_DRAFT":
+      return enqueueCapture(async () => captureRuntime.dispatch("capture-visible-visuals", { tabId: message.tabId }));
+    case "START_SMART_VISUAL_SELECTION":
+      return enqueueCapture(async () => captureRuntime.dispatch("start-visible-visual-selection", { tabId: message.tabId }));
+    case "CONFIRM_SMART_VISUAL_SELECTION":
+      return enqueueCapture(async () => captureRuntime.dispatch("confirm-visible-visual-selection", { sessionId: message.sessionId }));
+    case "CANCEL_SMART_VISUAL_SELECTION":
+      return enqueueCapture(async () => captureRuntime.dispatch("cancel-visible-visual-selection", { sessionId: message.sessionId }));
+    case "CANCEL_REGION_CAPTURE":
+      return captureRuntime.dispatch("cancel-region-capture", { sessionId: message.sessionId });
+    case "START_PAGE_CAPTURE":
+      return enqueueCapture(async () => startPageCapture(message.mode));
+    case "CANCEL_PAGE_CAPTURE":
+      return cancelPageCapture(message.sessionId);
+    case "COMMIT_PAGE_CAPTURE":
+      return enqueueCapture(async () => enqueue(async () => commitPageCapture(message.batch)));
+    case "SMART_VISUAL_SELECTION_CHANGED":
+    case "SMART_VISUAL_SELECTION_ENDED":
+    case "REGION_CAPTURE_CHANGED":
+      return { ok: true };
+    case "CAPTURE_CREATIVE_OUTPUTS":
+      return captureAndCommitCreativeOutputs(message);
+    case "UPDATE_CAPTURE_FRAGMENT":
+      return enqueueCapture(async () => captureRuntime.dispatch("update-fragment", {
+        fragmentId: message.fragmentId,
+        text: message.text
+      }));
+    case "REMOVE_CAPTURE_FRAGMENT":
+      return enqueueCapture(async () => captureRuntime.dispatch("remove-fragment", { fragmentId: message.fragmentId }));
+    case "REORDER_CAPTURE_FRAGMENTS":
+      return enqueueCapture(async () => captureRuntime.dispatch("reorder-fragments", { ids: message.ids }));
+    case "REMOVE_CAPTURE_VISUAL":
+      return enqueueCapture(async () => captureRuntime.dispatch("remove-visual", { visualId: message.visualId }));
+    case "REORDER_CAPTURE_VISUALS":
+      return enqueueCapture(async () => captureRuntime.dispatch("reorder-visuals", { ids: message.ids }));
+    case "SET_CAPTURE_PRIMARY_VISUAL":
+      return enqueueCapture(async () => captureRuntime.dispatch("set-primary-visual", { visualId: message.visualId }));
+    case "CANCEL_CAPTURE_DRAFT":
+      return enqueueCapture(async () => captureRuntime.dispatch("cancel"));
+    case "COMMIT_CAPTURE_DRAFT":
+      return enqueueCapture(async () => enqueue(async () => commitCaptureDraft(message.duplicateAction)));
+    case "START_CAPTURE_FOR_CASE":
+      return enqueueCapture(async () => startCaptureForCase(message.caseId, message.partEntryId));
+    case "CREATE_COMPOUND_CASE":
+      return enqueue(async () => createCompoundCaseAction(message));
+    case "UPDATE_COMPOUND_CASE":
+      return enqueue(async () => updateCompoundCaseAction(message));
+    case "SPLIT_COMPOUND_CASE":
+      return enqueue(async () => splitCompoundCaseAction(message.compoundCaseId));
+    case "SET_ENTRY_PRIMARY_VISUAL":
+      return enqueue(async () => setEntryPrimaryVisual(message.entryId, message.visualId));
+    case "DELETE_ENTRY_VISUAL":
+      return enqueue(async () => deleteEntryVisual(message.entryId, message.visualId));
+    case "ADD_UPLOADED_VISUAL":
+      return enqueue(async () => addUploadedVisual(message.entryId, message.visual));
+    case "SET_ENTRY_PRIMARY_MEDIA":
+      return enqueue(async () => setEntryPrimaryMedia(message.entryId, message.assetId));
+    case "DELETE_ENTRY_MEDIA":
+      return enqueue(async () => deleteEntryMedia(message.entryId, message.assetId));
+    case "ADD_UPLOADED_MEDIA":
+      return enqueue(async () => addUploadedMedia(message.entryId, message.asset, message.posterAsset));
+    case "CREATE_MEDIA_CASE":
+      return enqueue(async () => createMediaCase(message.asset, message.posterAsset, message.title, message.text));
+    case "CREATE_MEDIA_REFERENCE":
+      return enqueue(async () => createMediaReferenceCase(message.asset, message.posterAsset, message.title));
+    case "CREATE_QUICK_NOTE":
+      return enqueue(async () => createQuickNote(message.title, message.text));
+    case "ADD_TIME_NOTE":
+      return enqueue(async () => addEntryTimeNote(message.entryId, message.note));
+    case "ADD_VIDEO_KEYFRAME":
+      return enqueue(async () => addVideoKeyframe(message.entryId, message.asset, message.note));
+    case "DELETE_TIME_NOTE":
+      return enqueue(async () => deleteEntryTimeNote(message.entryId, message.noteId));
+    case "EXPORT_MARKDOWN":
+    case "EXPORT_ARCHIVE":
+      return enqueue(async () => exportArchive(await readState(), message.entryIds));
+    case "EXPORT_PROJECT":
+      return enqueue(async () => exportProjectArchive(await readState(), message.collectionId));
+    case "EXPORT_CREATIVE_EXPERIMENTS":
+      return enqueue(async () => exportCreativeExperiments(await readState()));
+    case "PREVIEW_CREATIVE_EXPERIMENT_IMPORT":
+      return enqueue(async () => previewCreativeExperimentImport(await readState(), message.experiments));
+    case "APPLY_CREATIVE_EXPERIMENT_IMPORT":
+      return enqueue(async () => applyCreativeExperimentImport(await readState(), message));
+    case "PREVIEW_LIBRARY_IMPORT":
+      return enqueue(async () => previewLibraryImport(await readState(), message.library, {
+        preserveLibraryConfiguration: message.preserveLibraryConfiguration === true
+      }));
+    case "APPLY_LIBRARY_IMPORT":
+      return enqueue(async () => applyLibraryImport(await readState(), message));
+    case "UPDATE_SETTINGS":
+      return enqueue(async () => {
+        const state = await readState();
+        const settings = normalizeSettings(message.settings);
+        await commitLocalChanges({ [STORAGE_KEYS.settings]: settings });
+        return {
+          ok: true,
+          message: "设置已保存，下次导出 ZIP 时生效",
+          count: state.entries.length,
+          settings
+        };
+      });
+    case "UPDATE_UI_PREFERENCES":
+      return enqueue(async () => {
+        const uiPreferences = normalizeUiPreferences(message.preferences);
+        await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
+        return { ok: true, uiPreferences };
+      });
+    case "UPDATE_AI_SETTINGS":
+    case "UPDATE_AI_TEXT_PROVIDER":
+      return enqueue(async () => updateAiTextProvider(message.settings));
+    case "UPDATE_VISION_SETTINGS":
+    case "UPDATE_AI_VISION_PROVIDER":
+      return enqueue(async () => updateAiVisionProvider(message.settings));
+    case "UPDATE_AI_PROVIDER_CONFIGURATION":
+      return enqueue(async () => updateAiProviderConfiguration(message));
+    case "VERIFY_AI_IMAGE_GENERATION_CREDENTIAL":
+      return enqueue(async () => verifyAiImageGenerationCredential(message));
+    case "DISCOVER_AI_PROVIDER_MODELS":
+      return discoverAiProviderModels(message.providerId, message.force === true);
+    case "GET_AI_TASK_RUNTIME":
+      return enqueue(async () => getAiTaskRuntime(message.taskId, message.allowUnconfigured === true));
+    case "GET_COMPOSER_AI_RUNTIME":
+      return enqueue(async () => getComposerAiRuntime());
+    case "PROBE_VISION_MODELS":
+      return enqueue(async () => probeVisionModels(message.settings));
+    case "GET_COMPOSER_SESSION":
+      return enqueue(async () => getComposerSession(message.sessionId));
+    case "START_CREATIVE_JOB":
+      return enqueue(async () => startCreativeJobAction(message.request, message.jobId));
+    case "GET_CREATIVE_JOB":
+      return enqueue(async () => getCreativeJobAction(message.jobId));
+    case "CANCEL_CREATIVE_JOB":
+      return cancelCreativeJobAction(message.jobId);
+    case "RETRY_CREATIVE_JOB":
+      return enqueue(async () => retryCreativeJobAction(message.jobId));
+    case "UPDATE_CREATIVE_JOB_PROGRESS":
+      return enqueue(async () => updateCreativeJobProgress(message));
+    case "GET_CREATIVE_JOB_EXECUTION_STATE":
+      return creativeJobExecutionState();
+    case "COMPLETE_CREATIVE_JOB":
+      return enqueue(async () => completeCreativeJobAction(message));
+    case "FAIL_CREATIVE_JOB":
+      return enqueue(async () => failCreativeJobAction(message));
+    case "START_IMPORT_JOB":
+      return enqueue(async () => startImportJobAction(message));
+    case "GET_IMPORT_JOB":
+      return enqueue(async () => getImportJobAction(message.jobId));
+    case "CANCEL_IMPORT_JOB":
+      return enqueue(async () => cancelImportJobAction(message.jobId));
+    case "RETRY_IMPORT_JOB":
+      return enqueue(async () => retryImportJobAction(message.jobId));
+    case "UNDO_IMPORT_JOB":
+      return enqueue(async () => undoImportJobAction(message.jobId));
+    case "ADD_TEMP_REFERENCES":
+      return enqueue(async () => addTempReferencesAction(message));
+    case "REMOVE_TEMP_REFERENCE":
+      return enqueue(async () => removeTempReferenceAction(message));
+    case "SAVE_TEMP_REFERENCE_AS_CASE":
+      return enqueue(async () => saveTempReferenceAsCaseAction(message));
+    case "ANALYZE_TEMP_REFERENCES":
+      return analyzeTempReferencesAction(message);
+    case "CREATE_CREATIVE_SKILL":
+      return enqueue(async () => createCreativeSkillAction(message));
+    case "SAVE_CREATIVE_SKILL_VERSION":
+      return enqueue(async () => saveCreativeSkillVersionAction(message));
+    case "RESTORE_CREATIVE_SKILL_VERSION":
+      return enqueue(async () => restoreCreativeSkillVersionAction(message));
+    case "DELETE_CREATIVE_SKILL":
+      return enqueue(async () => deleteCreativeSkillAction(message.skillId));
+    case "UPDATE_COMPOSER_SETTINGS":
+      return enqueue(async () => updateComposerSettings(message));
+    case "UPSERT_COMPOSER_SESSION":
+      return enqueue(async () => upsertComposerSession(message.session));
+    case "DELETE_COMPOSER_SESSION":
+      return enqueue(async () => deleteComposerSession(message.sessionId));
+    case "SAVE_COMPOSER_RESULT":
+      return enqueue(async () => saveComposerResult(message));
+    case "ACTIVATE_CREATIVE_RESULT":
+      return enqueue(async () => activateCreativeResult(message, interaction.sidePanelOpening));
+    case "CLEAR_ACTIVE_CREATIVE_RESULT":
+      return enqueue(async () => {
+        await commitLocalChanges({ [STORAGE_KEYS.activeCreativeResult]: null });
+        return { ok: true };
+      });
+    case "COMMIT_CREATIVE_OUTPUTS":
+      return commitExistingCreativeOutputs();
+    case "REGISTER_GENERATED_OUTPUTS":
+      return enqueue(async () => registerGeneratedOutputs(message));
+    case "UPDATE_CREATIVE_EXPERIMENT_SETTINGS":
+      return enqueue(async () => updateCreativeExperimentSettings(message.settings));
+    case "SAVE_CREATIVE_OUTPUT_TO_LIBRARY":
+      return enqueue(async () => saveCreativeOutputToLibrary(message));
+    case "RECORD_CREATIVE_SIGNAL":
+      return enqueue(async () => updateCreativeSignal(message));
+    case "UPDATE_CREATIVE_JUDGMENT":
+      return enqueue(async () => updateCreativeJudgmentAction(message));
+    case "DELETE_CREATIVE_OUTPUT":
+      return enqueue(async () => deleteCreativeOutput(message));
+    case "ANALYZE_CREATIVE_OUTPUT":
+      return analyzeCreativeOutput(message.runId, message.visualId);
+    case "ANALYZE_ENTRY_IMAGE":
+      return analyzeEntryImage(message.entryId, message.visualId, message.outputLocale, message.batchJobId);
+    case "ANALYZE_ENTRY_VISUAL_SET":
+      return analyzeEntryVisualSet(message);
+    case "ANALYZE_ENTRY_VIDEO":
+      return analyzeEntryVideo(message);
+    case "UPDATE_VISION_DESCRIPTION":
+      return enqueue(async () => updateVisionDescription(message.entryId, message.visualId, message.description));
+    case "UPDATE_ENTRY_TEXT":
+      return enqueue(async () => updateCaseText(message));
+    case "UPDATE_ENTRY_MEDIA_PROMPT":
+      return enqueue(async () => updateEntryMediaPromptAction(message));
+    case "APPLY_ENTRY_MEDIA_PROMPT_SUGGESTIONS":
+      return enqueue(async () => applyEntryMediaPromptSuggestions(message));
+    case "UPDATE_ENTRY_TITLE":
+      return enqueue(async () => updateCaseTitle(message));
+    case "UNDO_VISION_ANALYSIS":
+      return enqueue(async () => undoEntryVisionAnalysis(message.entryId));
+    case "UNDO_LAST":
+      return enqueue(async () => undoLastSave());
+    case "DELETE_ENTRY":
+      return enqueue(async () => deleteEntry(message.entryId));
+    case "DELETE_COLLECTION_WITH_ENTRIES":
+      return enqueue(async () => deleteCollectionWithEntries(message));
+    case "CONFIRM_CLASSIFICATION":
+      return enqueue(async () => updateClassification(message));
+    case "RENAME_CONTENT_TYPE":
+      return enqueue(async () => updateContentTypeName(message));
+    case "CREATE_CONTENT_TYPE":
+      return enqueue(async () => createLibraryContentType(message));
+    case "UPDATE_CONTENT_TYPE":
+      return enqueue(async () => updateLibraryContentType(message));
+    case "SET_CONTENT_TYPE_VISIBILITY":
+      return enqueue(async () => updateLibraryContentTypeVisibility(message));
+    case "DELETE_CONTENT_TYPE":
+      return enqueue(async () => deleteLibraryContentType(message));
+    case "CREATE_FACET_NODE":
+      return enqueue(async () => createFacetTag(message));
+    case "APPLY_DETAIL_TAG_ORGANIZATION":
+      return enqueue(async () => applyDetailTagOrganization(message));
+    case "SET_ENTRY_FACET":
+      return enqueue(async () => updateEntryFacet(message));
+    case "CREATE_COLLECTION":
+    case "RENAME_COLLECTION":
+    case "DELETE_COLLECTION":
+    case "REPLACE_COLLECTION_ENTRIES":
+    case "SET_COLLECTION_VISIBILITY":
+      return enqueue(async () => updateOrganizer(message));
+    case "ACCEPT_ANALYSIS_CANDIDATE":
+      return enqueue(async () => decideAnalysisCandidate(message, true));
+    case "REJECT_ANALYSIS_CANDIDATE":
+      return enqueue(async () => decideAnalysisCandidate(message, false));
+    case "APPLY_ENTRY_ANALYSIS_RESULT":
+      return enqueue(async () => applyEntryAnalysisResult(message));
+    case "PREVIEW_ANALYSIS_BATCH":
+      return enqueue(async () => previewDeepSeekBatch(message.outputLocale, message.mode));
+    case "CREATE_ANALYSIS_BATCH":
+      return enqueue(async () => createDeepSeekBatch(message.outputLocale, message.mode));
+    case "CLAIM_ANALYSIS_ITEMS":
+      return enqueue(async () => claimDeepSeekBatchItems(message.jobId));
+    case "GET_ANALYSIS_BATCH_STATUS":
+      return getDeepSeekBatchStatus(message.jobId);
+    case "COMMIT_ANALYSIS_ITEM":
+      return enqueue(async () => commitDeepSeekBatchItem(message));
+    case "COMMIT_ANALYSIS_ITEMS":
+      return enqueue(async () => commitDeepSeekBatchItems(message));
+    case "FAIL_ANALYSIS_ITEM":
+      return enqueue(async () => failDeepSeekBatchItem(message));
+    case "PAUSE_ANALYSIS_BATCH":
+      return enqueue(async () => updateDeepSeekBatch("pause", message.jobId));
+    case "RESUME_ANALYSIS_BATCH":
+      return enqueue(async () => updateDeepSeekBatch("resume", message.jobId));
+    case "CANCEL_ANALYSIS_BATCH":
+      return enqueue(async () => updateDeepSeekBatch("cancel", message.jobId));
+    case "RETRY_ANALYSIS_FAILURES":
+      return enqueue(async () => updateDeepSeekBatch("retry", message.jobId));
+    case "APPLY_STAGED_ANALYSIS_REBUILD":
+      return enqueue(async () => applyStagedAnalysisRebuild(message.jobId));
+    case "RECOVER_ANALYSIS_BATCH":
+      return enqueue(async () => recoverDeepSeekBatch());
+    case "UNDO_ANALYSIS_BATCH":
+      return enqueue(async () => undoDeepSeekBatch(message.jobId));
+    case "PREVIEW_VISION_BATCH":
+      return enqueue(async () => previewVisionBatchTask(message));
+    case "CREATE_VISION_BATCH":
+      return enqueue(async () => createVisionBatchTask(message));
+    case "CLAIM_VISION_BATCH_ITEM":
+      return enqueue(async () => claimVisionBatchItem(message.jobId));
+    case "COMPLETE_VISION_BATCH_ITEM":
+      return enqueue(async () => completeVisionBatchItem(message));
+    case "FAIL_VISION_BATCH_ITEM":
+      return enqueue(async () => failVisionBatchItem(message));
+    case "PAUSE_VISION_BATCH":
+      return enqueue(async () => updateVisionBatch("pause", message.jobId));
+    case "RESUME_VISION_BATCH":
+      return enqueue(async () => updateVisionBatch("resume", message.jobId));
+    case "CANCEL_VISION_BATCH":
+      return enqueue(async () => updateVisionBatch("cancel", message.jobId));
+    case "RETRY_VISION_BATCH_FAILURES":
+      return enqueue(async () => updateVisionBatch("retry", message.jobId));
+    case "IMPORT_ANALYSIS_CANDIDATES":
+      return enqueue(async () => importAnalysisCandidates(message.payload));
+    case "PREVIEW_FACET_CHANGE":
+      return enqueue(async () => previewFacetUpdate(message.change));
+    case "APPLY_FACET_CHANGE":
+      return enqueue(async () => applyFacetUpdate(message.preview));
+    case "RESTORE_ARCHIVED_FACETS":
+      return enqueue(async () => restoreFacetDimensions(message.facetIds));
+    case "RESTORE_ARCHIVED_NODES":
+      return enqueue(async () => restoreFacetTags(message.nodeIds));
+    case "PREVIEW_REANALYZE":
+    case "PREVIEW_LIBRARY_MAINTENANCE":
+      return enqueue(async () => previewLibraryMaintenance());
+    case "APPLY_REANALYZE":
+    case "START_LIBRARY_MAINTENANCE":
+      return enqueue(async () => startLibraryMaintenance());
+    case "GET_LIBRARY_MAINTENANCE_STATUS":
+      return libraryMaintenanceStatus();
+    case "PAUSE_LIBRARY_MAINTENANCE":
+      return enqueue(async () => updateLibraryMaintenance("pause"));
+    case "RESUME_LIBRARY_MAINTENANCE":
+      return enqueue(async () => updateLibraryMaintenance("resume"));
+    case "CANCEL_LIBRARY_MAINTENANCE":
+      return enqueue(async () => updateLibraryMaintenance("cancel"));
+    case "RETRY_LIBRARY_MAINTENANCE":
+      return enqueue(async () => updateLibraryMaintenance("retry"));
+    case "UNDO_FACET_UPDATE":
+      return enqueue(async () => undoFacetUpdate());
+    default:
+      return { ok: false, message: "未知操作" };
+  }
+}
+
+async function captureWorkspace() {
+  const draft = await captureRuntime.getDraft();
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.entries,
+    STORAGE_KEYS.compoundCases,
+    STORAGE_KEYS.taxonomy,
+    STORAGE_KEYS.classificationRules,
+    STORAGE_KEYS.activeCreativeResult,
+    STORAGE_KEYS.composerSessions
+  ]);
+  const state = {
+    entries: Array.isArray(stored[STORAGE_KEYS.entries]) ? stored[STORAGE_KEYS.entries] : [],
+    taxonomy: normalizeTaxonomy(stored[STORAGE_KEYS.taxonomy]),
+    classificationRules: Array.isArray(stored[STORAGE_KEYS.classificationRules]) ? stored[STORAGE_KEYS.classificationRules] : [],
+    activeCreativeResult: normalizeActiveCreativeResult(stored[STORAGE_KEYS.activeCreativeResult]),
+    composerSessions: normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions])
+  };
+  const compound = normalizeCompoundCases(stored[STORAGE_KEYS.compoundCases], state.entries)
+    .find((item) => item.id === draft.targetCaseId);
+  const targetEntry = draft.targetCaseId
+    ? state.entries.find((entry) => entry.id === draft.targetCaseId) ?? (compound ? {
+      id: compound.id,
+      title: compound.title,
+      classification: draft.contentTypeId ? { pathIds: [draft.contentTypeId] } : undefined
+    } : null)
+    : null;
+  const suggested = targetEntry?.classification ?? captureDraftClassification(draft, state);
+  const partContentTypes = Object.fromEntries(draftParts(draft).map((part) => {
+    const classification = classifyContent({
+      text: part.text, title: part.sourceTitle, url: part.sourceUrl, visuals: part.visuals
+    }, state.classificationRules, state.taxonomy);
+    const id = classification?.pathIds?.[0] || "";
+    const name = state.taxonomy.nodes.find((item) => item.id === id)?.name || "待确认";
+    return [part.sourceUrl || "source:unknown", { id, name }];
+  }));
+  return {
+    ok: true,
+    draft,
+    targetEntry,
+    suggestedContentTypeId: suggested?.pathIds?.[0] || "",
+    contentTypes: state.taxonomy.nodes.map((item) => ({ id: item.id, name: item.name })),
+    partContentTypes,
+    activeCreativeResult: state.activeCreativeResult,
+    activeCreativePrompt: activeCreativePromptSummary(state.activeCreativeResult, state.composerSessions),
+    count: state.entries.length
+  };
+}
+
+async function startPageCapture(mode = "loaded") {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !/^https?:/iu.test(tab.url || "")) {
+    return { ok: false, message: "请先切换到需要采集的普通网页" };
+  }
+  const sessionId = crypto.randomUUID();
+  activePageCapture = { sessionId, tabId: tab.id };
+  await chrome.runtime.sendMessage({ type: "PAGE_CAPTURE_CHANGED", sessionId, phase: mode === "whole" ? "scanning" : "starting" }).catch(() => undefined);
+  let result;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["vendor/document-ingestion/Readability.js"]
+    });
+    [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: collectPageCaptureSnapshot,
+      args: [{
+        sessionId,
+        adapters: PAGE_CAPTURE_ADAPTERS,
+        mode: mode === "whole" ? "whole" : "loaded",
+        maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates,
+        maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
+        maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
+        maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters
+      }]
+    });
+  } finally {
+    activePageCapture = null;
+  }
+  const batch = normalizePageCaptureBatch({
+    ...result?.result,
+    tabId: tab.id,
+    status: "preview"
+  });
+  if (!batch.candidates.length) {
+    return { ok: false, message: "当前网页没有识别到可保存的正文、作品或媒体" };
+  }
+  return {
+    ok: true,
+    message: `已识别 ${batch.candidates.length} 项网页内容，请确认后保存`,
+    batch
+  };
+}
+
+async function cancelPageCapture(sessionIdValue) {
+  const sessionId = String(sessionIdValue ?? "").trim();
+  if (!activePageCapture || sessionId && sessionId !== activePageCapture.sessionId) return { ok: false, message: "整页扫描已经结束" };
+  try {
+    const response = await chrome.tabs.sendMessage(activePageCapture.tabId, {
+      type: "PROMPTDIRECTOR_PAGE_CAPTURE", sessionId: activePageCapture.sessionId, action: "cancel"
+    });
+    return response?.ok ? { ok: true, message: "正在停止整页扫描，并恢复原滚动位置" } : { ok: false, message: "网页扫描器没有响应" };
+  } catch {
+    return { ok: false, message: "扫描页面已经关闭或刷新" };
+  }
+}
+
+async function commitPageCapture(batchValue) {
+  const batch = normalizePageCaptureBatch(batchValue);
+  const selected = applyPageCaptureSelections(batch);
+  if (!selected.length) return { ok: false, message: "请至少选择一项网页内容" };
+  const state = await readState();
+  const results = [];
+  let entries = [...state.entries];
+  const savedAssetIds = [];
+  let metadataCommitted = false;
+  try {
+    for (const candidate of selected) {
+      const duplicate = entries.find((entry) => entry.url === candidate.canonicalUrl
+        || (candidate.sourceFacts.itemId && entry.sourceFacts?.provider === candidate.sourceFacts.provider && entry.sourceFacts?.itemId === candidate.sourceFacts.itemId));
+      if (duplicate) {
+        results.push({ candidateId: candidate.id, status: "duplicate", entryId: duplicate.id, title: duplicate.title });
+        continue;
+      }
+      const mediaAssets = [];
+      const warnings = [];
+      for (const media of candidate.media) {
+        if (media.kind === "video") {
+          const referenceUrl = media.url || candidate.canonicalUrl;
+          const provider = detectMediaReferenceProvider(referenceUrl);
+          const playbackMode = ["youtube", "vimeo", "bilibili", "douyin", "x"].includes(provider) ? "embed" : "source";
+          mediaAssets.push({
+            id: crypto.randomUUID(),
+            kind: "video",
+            storageMode: "reference",
+            sourceUrl: referenceUrl,
+            sourceTitle: candidate.title,
+            width: media.width,
+            height: media.height,
+            capturedAt: new Date().toISOString(),
+            playbackCapability: playbackMode === "embed" ? "embedded" : "external",
+            reference: { url: referenceUrl, provider, playbackMode },
+            reviewStatus: "verified"
+          });
+          continue;
+        }
+        const assetId = crypto.randomUUID();
+        try {
+          const blob = media.dataUrl
+            ? await dataUrlToImageBlob(media.dataUrl)
+            : await fetchBoundedMedia(media.url, {
+                kind: "image",
+                maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+                timeoutMs: 60_000,
+                accept: "image/avif,image/webp,image/png,image/jpeg,image/gif"
+              });
+          const contentHash = await sha256Blob(blob);
+          const existing = entries.flatMap(entryMediaAssets).find((asset) => asset.contentHash === contentHash);
+          if (existing) {
+            warnings.push(`已跳过重复媒体：${media.alt || media.url}`);
+            continue;
+          }
+          await saveMediaBlob(assetId, blob);
+          savedAssetIds.push(assetId);
+          mediaAssets.push({
+            id: assetId,
+            kind: "image",
+            storageMode: "managed",
+            sourceUrl: media.url || candidate.canonicalUrl,
+            sourceTitle: media.alt || candidate.title,
+            mimeType: blob.type,
+            byteSize: blob.size,
+            width: media.width,
+            height: media.height,
+            contentHash,
+            captureMethod: media.captureMethod,
+            capturedAt: new Date().toISOString(),
+            reviewStatus: "verified"
+          });
+        } catch (error) {
+          warnings.push(`${media.alt || media.url}：${userMessage(error)}`);
+        }
+      }
+      const base = buildEntry({
+        text: candidate.contentText || candidate.excerpt,
+        title: candidate.title,
+        url: candidate.canonicalUrl,
+        allowEmptyText: mediaAssets.length > 0
+      });
+      if (!base.text && !mediaAssets.length) {
+        results.push({ candidateId: candidate.id, status: "failed", title: candidate.title, warnings: [...warnings, "没有可保存的正文或媒体"] });
+        continue;
+      }
+      const entry = normalizeEntryMedia({
+        ...base,
+        schemaVersion: SCHEMA_VERSION,
+        sourceFacts: candidate.sourceFacts,
+        sourcePages: [{ url: candidate.canonicalUrl, title: candidate.title }],
+        mediaAssets,
+        primaryMediaId: mediaAssets.find((asset) => asset.kind === "image")?.id || mediaAssets[0]?.id || "",
+        classification: classifyContent({ ...base, mediaAssets }, state.classificationRules, state.taxonomy),
+        customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
+        rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
+      });
+      entries.push(entry);
+      results.push({ candidateId: candidate.id, status: warnings.length ? "partial" : "saved", entryId: entry.id, title: entry.title, warnings });
+    }
+    if (!results.some((item) => ["saved", "partial"].includes(item.status))) {
+      return { ok: true, message: "所选内容均已存在或无法保存", results };
+    }
+    await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+    metadataCommitted = true;
+    const postCommitWarnings = [];
+    try { await notifySaved(entries.length); }
+    catch (error) { postCommitWarnings.push(`保存成功，但状态提示更新失败：${userMessage(error)}`); }
+    const newImageEntries = results.filter((item) => ["saved", "partial"].includes(item.status)).map((item) => item.entryId)
+      .filter((entryId) => entries.find((entry) => entry.id === entryId)?.mediaAssets?.some((asset) => asset.kind === "image"));
+    if (newImageEntries.length) {
+      try { await queueAutomaticVisionAnalysis(newImageEntries); }
+      catch (error) { postCommitWarnings.push(`案例已保存，但自动画面分析没有加入队列：${userMessage(error)}`); }
+    }
+    const savedCount = results.filter((item) => ["saved", "partial"].includes(item.status)).length;
+    const duplicateCount = results.filter((item) => item.status === "duplicate").length;
+    return {
+      ok: true,
+      message: `已保存 ${savedCount} 项${duplicateCount ? `，跳过 ${duplicateCount} 项重复内容` : ""}${postCommitWarnings.length ? `；${postCommitWarnings.join("；")}` : ""}`,
+      results,
+      warnings: postCommitWarnings
+    };
+  } catch (error) {
+    if (!metadataCommitted) await Promise.allSettled(savedAssetIds.map((assetId) => deleteMediaBlob(assetId)));
+    throw error;
+  }
+}
+
+async function startCaptureForCase(caseId, partEntryId = "") {
+  const current = await captureRuntime.getDraft();
+  if (current.fragments.length || current.visuals.length || current.targetCaseId) {
+    return { ok: false, message: "当前还有未保存草稿，请先保存或丢弃" };
+  }
+  const state = await readState();
+  const compound = normalizeCompoundCases(state.compoundCases, state.entries).find((item) => item.id === String(caseId ?? ""));
+  const entryId = String(partEntryId || (compound ? compound.memberEntryIds[0] : caseId) || "");
+  const entry = findEntry(state, entryId);
+  const draft = createCaptureDraft({
+    targetCaseId: compound?.id || entry.id,
+    targetPartEntryId: partEntryId ? entry.id : "",
+    title: compound?.title || entry.title,
+    contentTypeId: entry.classification?.pathIds?.[0] || "",
+    customLabels: entry.customLabels
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.captureDraft]: draft });
+  return { ok: true, message: `正在为“${compound?.title || entry.title}”继续采集`, draft, sourceUrl: entry.url };
+}
+
+async function createCompoundCaseAction(message) {
+  const state = await readState();
+  const result = createCompoundCase(state.compoundCases, state.entries, {
+    id: message.compoundCaseId,
+    title: message.title,
+    memberEntryIds: message.memberEntryIds,
+    coverVisualId: message.coverVisualId,
+    customLabels: message.customLabels
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.compoundCases]: result.compoundCases });
+  return { ok: true, message: "案例已组合，可随时拆分", compoundCase: result.compoundCase };
+}
+
+async function updateCompoundCaseAction(message) {
+  const state = await readState();
+  const result = updateCompoundCase(state.compoundCases, state.entries, message.compoundCaseId, {
+    title: message.title,
+    memberEntryIds: message.memberEntryIds,
+    coverVisualId: message.coverVisualId,
+    customLabels: message.customLabels
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.compoundCases]: result.compoundCases });
+  return {
+    ok: true,
+    message: result.split ? "成员不足两个，已恢复为独立案例" : "组合内容已更新",
+    compoundCase: result.compoundCase
+  };
+}
+
+async function splitCompoundCaseAction(compoundCaseId) {
+  const state = await readState();
+  const result = splitCompoundCase(state.compoundCases, state.entries, compoundCaseId);
+  await commitLocalChanges({ [STORAGE_KEYS.compoundCases]: result.compoundCases });
+  return { ok: true, message: `已拆分为 ${result.memberEntryIds.length} 个独立案例`, memberEntryIds: result.memberEntryIds };
+}
+
+async function setEntryPrimaryVisual(entryId, visualId) {
+  const state = await readState();
+  const current = findEntry(state, entryId);
+  const updated = setPrimaryVisual(current, visualId);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "主图已更新", entry: updated };
+}
+
+async function deleteEntryVisual(entryId, visualId) {
+  const state = await readState();
+  const current = normalizeEntryVisuals(findEntry(state, entryId));
+  const visual = current.visuals.find((item) => item.id === String(visualId ?? ""));
+  if (!visual) return { ok: false, message: "没有找到这张截图" };
+  let updated = removeEntryVisual(current, visual.id);
+  updated.facetAssignments = (updated.facetAssignments ?? []).filter((item) =>
+    !(item.source === "vision_model" && (item.visualId === visual.id || (!item.visualId && visual.visionAnalysis)))
+  );
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  await deleteScreenshotBlob(visual.id).catch(() => undefined);
+  return { ok: true, message: "这张截图已删除，案例文字和其他截图保持不变", entry: updated };
+}
+
+async function addUploadedVisual(entryId, visualValue) {
+  const state = await readState();
+  const current = findEntry(state, entryId);
+  const visualId = String(visualValue?.id ?? "").trim();
+  if (!visualId || !await getScreenshotBlob(visualId)) throw new Error("没有读取到待添加的图片");
+  const updated = addEntryVisual(current, {
+    ...visualValue,
+    id: visualId,
+    sourceUrl: current.url,
+    sourceTitle: current.title,
+    capturedAt: new Date().toISOString(),
+    reviewStatus: "verified"
+  });
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  await queueAutomaticVisionAnalysis([updated.id]);
+  return { ok: true, message: `图片已加入案例 · 共 ${updated.visuals.length} 张`, entry: updated };
+}
+
+async function setEntryPrimaryMedia(entryId, assetId) {
+  const state = await readState();
+  const current = findEntry(state, entryId);
+  const updated = setPrimaryMedia(current, assetId);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "主要媒体已更新", entry: updated };
+}
+
+async function deleteEntryMedia(entryId, assetId) {
+  const state = await readState();
+  const current = normalizeEntryMedia(findEntry(state, entryId));
+  const asset = current.mediaAssets.find((item) => item.id === String(assetId ?? ""));
+  if (!asset) return { ok: false, message: "没有找到这个媒体" };
+  const updated = removeEntryMedia(current, asset.id);
+  const removedAssets = current.mediaAssets.filter((item) => !updated.mediaAssets.some((next) => next.id === item.id));
+  updated.facetAssignments = (updated.facetAssignments ?? []).filter((item) =>
+    !(item.source === "vision_model" && item.visualId === asset.id)
+  );
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  await Promise.allSettled(removedAssets.filter((item) => item.storageMode === "managed").map((item) => deleteMediaBlob(item.id)));
+  return { ok: true, message: "媒体已删除，案例文字和其他资料保持不变", entry: updated };
+}
+
+async function addUploadedMedia(entryId, assetValue, posterValue = null) {
+  const state = await readState();
+  const current = findEntry(state, entryId);
+  const assetId = String(assetValue?.id ?? "").trim();
+  const storageMode = assetValue?.storageMode === "reference" ? "reference" : "managed";
+  if (!assetId || (storageMode === "managed" && !await getMediaBlob(assetId))) {
+    throw new Error("没有读取到待添加的媒体文件");
+  }
+  let updated = addEntryMedia(current, {
+    ...assetValue,
+    id: assetId,
+    storageMode,
+    sourceUrl: assetValue?.sourceUrl || current.url,
+    sourceTitle: assetValue?.sourceTitle || current.title,
+    capturedAt: new Date().toISOString(),
+    reviewStatus: "verified"
+  });
+  if (posterValue?.id) {
+    if (!await getMediaBlob(posterValue.id)) throw new Error("没有读取到视频封面");
+    updated = addEntryMedia(updated, { ...posterValue, usage: "poster", derivedFromAssetId: assetId, storageMode: "managed" });
+  }
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  if (assetValue?.kind === "image") await queueAutomaticVisionAnalysis([updated.id]);
+  const contentCount = updated.mediaAssets.filter((item) => item.usage !== "poster").length;
+  return { ok: true, message: `资料已加入案例 · 共 ${contentCount} 项`, entry: updated };
+}
+
+async function createMediaCase(assetValue, posterValue, titleValue, textValue = "") {
+  const assetId = String(assetValue?.id ?? "").trim();
+  if (!assetId || !await getMediaBlob(assetId)) throw new Error("没有读取到待保存的媒体文件");
+  const state = await readState();
+  const base = buildEntry({ text: textValue, title: titleValue, url: "", allowEmptyText: true });
+  const mediaAssets = [{ ...assetValue, id: assetId, storageMode: "managed", capturedAt: new Date().toISOString(), reviewStatus: "verified" }];
+  if (posterValue?.id) {
+    if (!await getMediaBlob(posterValue.id)) throw new Error("没有读取到视频封面");
+    mediaAssets.push({ ...posterValue, usage: "poster", derivedFromAssetId: assetId, storageMode: "managed" });
+  }
+  const classification = classifyImportedMedia({ ...base, mediaAssets }, state.taxonomy);
+  const entry = normalizeEntryMedia({
+    ...base,
+    schemaVersion: SCHEMA_VERSION,
+    mediaAssets,
+    primaryMediaId: assetId,
+    classification,
+    customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
+    rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
+  });
+  const entries = [...state.entries, entry];
+  await retireLastSaveUndo();
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id)
+  });
+  await notifySaved(entries.length);
+  if (assetValue?.kind === "image") await queueAutomaticVisionAnalysis([entry.id]);
+  return { ok: true, message: "资料已保存", entry };
+}
+
+async function createMediaReferenceCase(assetValue, posterValue, titleValue) {
+  const state = await readState();
+  const sourceUrl = String(assetValue?.reference?.url || assetValue?.sourceUrl || "").trim();
+  const base = buildEntry({ text: "", title: titleValue, url: sourceUrl, allowEmptyText: true });
+  const mediaAssets = [{ ...assetValue, storageMode: "reference", sourceUrl, capturedAt: new Date().toISOString(), reviewStatus: "verified" }];
+  if (posterValue?.id) {
+    if (!await getMediaBlob(posterValue.id)) throw new Error("没有读取到视频封面");
+    mediaAssets.push({ ...posterValue, usage: "poster", derivedFromAssetId: assetValue?.id, storageMode: "managed" });
+  }
+  const entry = normalizeEntryMedia({
+    ...base,
+    schemaVersion: SCHEMA_VERSION,
+    mediaAssets,
+    primaryMediaId: assetValue?.id,
+    classification: classifyContent({ ...base, mediaAssets }, state.classificationRules, state.taxonomy),
+    customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
+    rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
+  });
+  const entries = [...state.entries, entry];
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  await notifySaved(entries.length);
+  return { ok: true, message: "视频来源已保存；不能嵌入的平台会打开原网页", entry };
+}
+
+async function createQuickNote(titleValue, textValue) {
+  const state = await readState();
+  const entry = buildEntry({ text: textValue, title: titleValue, url: "" });
+  entry.schemaVersion = SCHEMA_VERSION;
+  entry.classification = classifyImportedMedia({ ...entry, sourceKind: "quick_note" }, state.taxonomy);
+  const entries = [...state.entries, entry];
+  await retireLastSaveUndo();
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id)
+  });
+  await notifySaved(entries.length);
+  return { ok: true, message: "快速笔记已保存", entry };
+}
+
+async function addEntryTimeNote(entryId, noteValue) {
+  const state = await readState();
+  const current = findEntry(state, entryId);
+  const updated = addTimeNote(current, noteValue);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "时间点笔记已保存", entry: updated };
+}
+
+async function addVideoKeyframe(entryId, assetValue, noteValue) {
+  const state = await readState();
+  const current = normalizeEntryMedia(findEntry(state, entryId));
+  const frameId = String(assetValue?.id ?? "").trim();
+  if (!frameId || !await getMediaBlob(frameId)) throw new Error("没有读取到关键帧图片");
+  let updated = addEntryMedia(current, {
+    ...assetValue,
+    id: frameId,
+    kind: "image",
+    storageMode: "managed",
+    capturedAt: new Date().toISOString(),
+    reviewStatus: "verified"
+  });
+  updated = addTimeNote(updated, { ...noteValue, frameAssetId: frameId });
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "当前画面和时间点笔记已保存", entry: updated };
+}
+
+async function deleteEntryTimeNote(entryId, noteId) {
+  const state = await readState();
+  const current = findEntry(state, entryId);
+  const updated = removeTimeNote(current, noteId);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "时间点笔记已删除", entry: updated };
+}
+
+async function commitCaptureDraft(duplicateAction = "") {
+  const draft = await captureRuntime.getDraft();
+  if (!draft.fragments.length && !draft.visuals.length) return { ok: false, message: "草稿里还没有可保存的文字或截图", draft };
+  const state = await readState();
+  const targetCompound = normalizeCompoundCases(state.compoundCases, state.entries)
+    .find((compound) => compound.id === draft.targetCaseId) ?? null;
+  if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound);
+  const text = draftText(draft);
+  const sourcePages = mergeSourcePages(draftSourcePages(draft), draft.visuals.map((visual) => ({
+    url: visual.sourceUrl,
+    title: visual.sourceTitle
+  })));
+  const firstVisual = draft.visuals[0];
+  const sourceUrl = sourcePages[0]?.url || firstVisual?.sourceUrl || "";
+  const sourceTitle = draft.title || sourcePages[0]?.title || firstVisual?.sourceTitle || "未命名案例";
+  const candidateBase = buildEntry({ text, title: sourceTitle, url: sourceUrl, allowEmptyText: draft.visuals.length > 0 });
+  const explicitTarget = draft.targetCaseId
+    ? state.entries.find((entryValue) => entryValue.id === draft.targetCaseId) ?? null
+    : null;
+  if (draft.targetCaseId && !explicitTarget) throw new Error("要继续采集的案例已经不存在");
+  const duplicate = !explicitTarget && text ? findDuplicate(state.entries, candidateBase) : null;
+  if (duplicate && !["merge", "new"].includes(duplicateAction)) {
+    return { ok: false, duplicate: true, existing: { id: duplicate.id, title: duplicate.title }, draft };
+  }
+  const target = explicitTarget ?? (duplicateAction === "merge" ? duplicate : null);
+  let entry;
+  let created = false;
+  if (target) {
+    entry = normalizeEntryVisuals(target);
+    const nextText = text && !entry.text.includes(text) ? [entry.text, text].filter(Boolean).join("\n\n") : entry.text;
+    entry = {
+      ...markEntryTextChanged(entry, nextText),
+      sourcePages: mergeSourcePages(entry.sourcePages, sourcePages),
+      customLabels: draft.customLabelsExplicit ? uniqueNames(draft.customLabels) : uniqueNames(entry.customLabels)
+    };
+    if (draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])) {
+      entry.classification = {
+        pathIds: [draft.contentTypeId],
+        status: "confirmed",
+        source: "manual",
+        reason: "保存前人工确认"
+      };
+    }
+    for (const visual of draft.visuals) entry = addEntryVisual(entry, visual);
+    if (draft.primaryVisualExplicit && draft.primaryVisualId) entry = setPrimaryVisual(entry, draft.primaryVisualId);
+  } else {
+    created = true;
+    entry = normalizeEntryVisuals({
+      ...candidateBase,
+      schemaVersion: SCHEMA_VERSION,
+      title: sourceTitle,
+      sourcePages,
+      visuals: draft.visuals,
+      primaryVisualId: draft.primaryVisualId,
+      classification: draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])
+        ? { pathIds: [draft.contentTypeId], status: "confirmed", source: "manual", reason: "保存前人工确认" }
+        : captureDraftClassification(draft, state),
+      customLabels: uniqueNames(draft.customLabels),
+      metadataLabels: [],
+      facetAssignments: [], analysisCandidates: [], analysisBreakdown: [], rejectedCandidateKeys: [],
+      negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
+    });
+  }
+  const entries = target
+    ? state.entries.map((item) => item.id === entry.id ? entry : item)
+    : [...state.entries, entry];
+  const nextDraft = createCaptureDraft();
+  await retireLastSaveUndo();
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    ...captureCommitState(draft, nextDraft),
+    ...(created ? { [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id) } : {})
+  });
+  await notifySaved(entries.length);
+  if (draft.visuals.length) await queueAutomaticVisionAnalysis([entry.id]);
+  return { ok: true, message: target ? "内容已加入明确选择的案例" : "多段文字和截图已保存为新案例", entry, draft: nextDraft };
+}
+
+async function commitCaptureIntoCompound(draft, parts, state, targetCompound) {
+  let entries = [...state.entries];
+  let compounds = normalizeCompoundCases(state.compoundCases, entries);
+  const memberIds = [...targetCompound.memberEntryIds];
+  for (const [index, part] of parts.entries()) {
+    const partTarget = findCapturePartTarget({
+      entries,
+      memberIds,
+      part,
+      preferredEntryId: index === 0 ? draft.targetPartEntryId : ""
+    });
+    if (partTarget) {
+      const updated = mergeCapturePartIntoEntry(partTarget, part, draft, state);
+      entries = entries.map((entry) => entry.id === updated.id ? updated : entry);
+      continue;
+    }
+    const created = createEntryFromCapturePart(part, draft, state, {
+      title: memberIds.length || index ? part.sourceTitle : draft.title || part.sourceTitle
+    });
+    entries.push(created);
+    memberIds.push(created.id);
+  }
+
+  const updated = updateCompoundCase(compounds, entries, targetCompound.id, { memberEntryIds: memberIds });
+  compounds = updated.compoundCases;
+  const compoundCase = updated.compoundCase;
+
+  const nextDraft = createCaptureDraft();
+  await retireLastSaveUndo();
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.compoundCases]: compounds,
+    ...captureCommitState(draft, nextDraft)
+  });
+  await notifySaved(entries.length);
+  const affectedEntryIds = entries
+    .filter((entry) => entryMediaAssets(entry).some((asset) => parts.some((part) => part.visuals.some((visual) => visual.id === asset.id))))
+    .map((entry) => entry.id);
+  if (affectedEntryIds.length) await queueAutomaticVisionAnalysis(affectedEntryIds);
+  return {
+    ok: true,
+    message: `内容已加入组合案例 · 共 ${compoundCase.memberEntryIds.length} 个部分`,
+    entry: compoundCase,
+    compoundCase,
+    draft: nextDraft
+  };
+}
+
+function captureCommitState(_draft, nextDraft) {
+  return {
+    [STORAGE_KEYS.captureDraft]: nextDraft
+  };
+}
+
+function findCapturePartTarget({ entries, memberIds, part, preferredEntryId }) {
+  if (preferredEntryId && memberIds.includes(preferredEntryId)) {
+    const preferred = entries.find((entry) => entry.id === preferredEntryId) ?? null;
+    if (preferred && (!part.sourceUrl || entryHasSource(preferred, part.sourceUrl))) return preferred;
+  }
+  if (!part.sourceUrl) return memberIds.length === 1 ? entries.find((entry) => entry.id === memberIds[0]) ?? null : null;
+  return entries.find((entry) => memberIds.includes(entry.id) && entryHasSource(entry, part.sourceUrl)) ?? null;
+}
+
+function entryHasSource(entry, sourceUrl) {
+  return entry.url === sourceUrl || (entry.sourcePages ?? []).some((source) => source.url === sourceUrl);
+}
+
+function mergeCapturePartIntoEntry(entryValue, part, draft, state) {
+  let entry = normalizeEntryVisuals(entryValue);
+  const nextText = part.text && !String(entry.text ?? "").includes(part.text)
+    ? [entry.text, part.text].filter(Boolean).join("\n\n")
+    : entry.text;
+  entry = {
+    ...markEntryTextChanged(entry, nextText),
+    sourcePages: mergeSourcePages(entry.sourcePages, [{ url: part.sourceUrl, title: part.sourceTitle }]),
+    customLabels: draft.customLabelsExplicit ? uniqueNames(draft.customLabels) : uniqueNames(entry.customLabels)
+  };
+  if (draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])) {
+    entry.classification = { pathIds: [draft.contentTypeId], status: "confirmed", source: "manual", reason: "保存前人工确认" };
+  }
+  for (const visual of part.visuals) entry = addEntryVisual(entry, visual);
+  if (part.visuals.some((visual) => visual.id === draft.primaryVisualId)) entry = setPrimaryVisual(entry, draft.primaryVisualId);
+  return entry;
+}
+
+function createEntryFromCapturePart(part, draft, state, options = {}) {
+  const sourceTitle = String(options.title || part.sourceTitle || "未命名案例").trim();
+  const base = buildEntry({
+    text: part.text,
+    title: sourceTitle,
+    url: part.sourceUrl,
+    allowEmptyText: part.visuals.length > 0
+  });
+  return normalizeEntryVisuals({
+    ...base,
+    schemaVersion: SCHEMA_VERSION,
+    sourcePages: mergeSourcePages([], [{ url: part.sourceUrl, title: part.sourceTitle }]),
+    visuals: part.visuals,
+    primaryVisualId: part.visuals.some((visual) => visual.id === draft.primaryVisualId)
+      ? draft.primaryVisualId
+      : part.visuals[0]?.id || "",
+    classification: draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])
+      ? { pathIds: [draft.contentTypeId], status: "confirmed", source: "manual", reason: "保存前人工确认" }
+      : classifyContent({ text: part.text, title: part.sourceTitle, url: part.sourceUrl, visuals: part.visuals }, state.classificationRules, state.taxonomy),
+    customLabels: uniqueNames(draft.customLabels),
+    metadataLabels: [],
+    facetAssignments: [], analysisCandidates: [], analysisBreakdown: [], rejectedCandidateKeys: [],
+    negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
+  });
+}
+
+function captureDraftClassification(draft, state) {
+  const text = draftText(draft);
+  const firstSource = draftSourcePages(draft)[0];
+  return classifyContent({
+    text,
+    title: draft.title || firstSource?.title || draft.visuals[0]?.sourceTitle || "",
+    url: firstSource?.url || draft.visuals[0]?.sourceUrl || "",
+    visuals: draft.visuals
+  }, state.classificationRules, state.taxonomy);
+}
+
+function mergeSourcePages(leftValue, rightValue) {
+  const seen = new Set();
+  return [...(Array.isArray(leftValue) ? leftValue : []), ...(Array.isArray(rightValue) ? rightValue : [])].flatMap((item) => {
+    const url = String(item?.url ?? "").trim();
+    if (!url || seen.has(url)) return [];
+    seen.add(url);
+    return [{ url, title: String(item?.title ?? "").trim() }];
+  });
+}
+
+async function undoLastSave() {
+  const state = await readState();
+  const undo = normalizeLastSaveUndo(state.lastSaveUndo);
+  if (!undo) return { ok: false, message: "没有可安全撤回的保存操作" };
+
+  if (undo.type === "delete_created_entry") {
+    const removed = state.entries.find((item) => item.id === undo.entryId);
+    if (!removed) {
+      await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+      return { ok: false, message: "这次保存已经不存在，撤回记录已清理" };
+    }
+    const entries = state.entries.filter((item) => item.id !== removed.id);
+    const organizerState = removeEntriesFromOrganizer(state.organizerState, [removed.id]);
+    const compoundCases = removeEntriesFromCompoundCases(state.compoundCases, state.entries, [removed.id]);
+    const visionAnalysisUndo = await visionUndoWithout(removed.id);
+    await commitLocalChanges({
+      [STORAGE_KEYS.entries]: entries,
+      [STORAGE_KEYS.compoundCases]: compoundCases,
+      [STORAGE_KEYS.organizerState]: organizerState,
+      [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
+    });
+    const visualIds = normalizeEntryMedia(removed).mediaAssets.filter((asset) => asset.storageMode === "managed").map((asset) => asset.id);
+    await chrome.storage.local.remove([STORAGE_KEYS.lastSaveUndo, screenshotStorageKey(removed.id)]);
+    await Promise.allSettled(visualIds.map((visualId) => deleteMediaBlob(visualId)));
+    return { ok: true, message: "已撤回刚才保存的案例", removed, count: entries.length };
+  }
+
+  const current = state.entries.find((item) => item.id === undo.entryId);
+  if (!current) {
+    await discardSaveUndoBackup(undo).catch(() => undefined);
+    await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+    return { ok: false, message: "原案例已经不存在，撤回记录已清理" };
+  }
+  const updated = restoreScreenshotSaveEntry(current, undo);
+  const replacedScreenshot = await getScreenshotBlob(current.id);
+  let restoredScreenshot = null;
+  if (undo.hadScreenshot) {
+    restoredScreenshot = await undoScreenshotReplacement(current.id, { backupEntryId: undo.backupEntryId });
+  } else {
+    await deleteScreenshotBlob(current.id);
+  }
+  const entries = state.entries.map((item) => item.id === updated.id ? updated : item);
+  try {
+    await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  } catch (error) {
+    if (replacedScreenshot) await saveScreenshotBlob(current.id, replacedScreenshot).catch(() => undefined);
+    if (restoredScreenshot) {
+      await saveScreenshotBlob(undo.backupEntryId, restoredScreenshot).catch(() => undefined);
+    }
+    throw error;
+  }
+  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+  return { ok: true, message: "已恢复原案例更新前的截图与图片分析", entry: updated, count: entries.length };
+}
+
+async function deleteEntry(entryId) {
+  const state = await readState();
+  const entry = normalizeEntryMedia(findEntry(state, entryId));
+  const creativeVisualIds = new Set(state.creativeRuns.flatMap((run) =>
+    run.outputs.map((output) => output.visual.id)
+  ));
+  const removableVisualIds = entry.mediaAssets
+    .filter((visual) => !creativeVisualIds.has(visual.id))
+    .map((visual) => visual.id);
+  const entries = state.entries.filter((item) => item.id !== entry.id);
+  const organizerState = removeEntriesFromOrganizer(state.organizerState, [entry.id]);
+  const compoundCases = removeEntriesFromCompoundCases(state.compoundCases, state.entries, [entry.id]);
+  const visionAnalysisUndo = await visionUndoWithout(entry.id);
+  await commitMetadataThenDeleteImages({
+    imageIds: removableVisualIds,
+    deleteImage: deleteMediaBlob,
+    commitMetadata: () => commitLocalChanges({
+      [STORAGE_KEYS.entries]: entries,
+      [STORAGE_KEYS.compoundCases]: compoundCases,
+      [STORAGE_KEYS.organizerState]: organizerState,
+      [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
+    })
+  });
+  await Promise.allSettled([
+    clearLastSaveUndoForEntry(entry.id),
+    chrome.storage.local.remove(screenshotStorageKey(entry.id))
+  ]);
+  return {
+    ok: true,
+    message: "案例已从本机删除",
+    deletedEntryId: entry.id,
+    entries,
+    organizerState,
+    compoundCases
+  };
+}
+
+async function deleteCollectionWithEntries(message) {
+  const state = await readState();
+  const deletion = planCollectionAndEntriesDeletion(
+    state.organizerState,
+    state.entries,
+    message.collectionId,
+    message.confirmationName
+  );
+  if (!deletion.deletedEntryIds.length) throw new Error("这个项目没有可删除的案例");
+
+  const deletedEntryIds = new Set(deletion.deletedEntryIds);
+  const retainedMediaIds = new Set(deletion.entries.flatMap((entry) =>
+    normalizeEntryMedia(entry).mediaAssets.map((asset) => asset.id)
+  ));
+  state.creativeRuns.forEach((run) => run.outputs.forEach((output) => retainedMediaIds.add(output.visual.id)));
+  const removableMediaIds = deletion.deletedEntries.flatMap((entry) =>
+    normalizeEntryMedia(entry).mediaAssets
+      .map((asset) => asset.id)
+      .filter((assetId) => !retainedMediaIds.has(assetId))
+  );
+  const compoundCases = removeEntriesFromCompoundCases(
+    state.compoundCases,
+    state.entries,
+    deletion.deletedEntryIds
+  );
+  const visionAnalysisUndo = await visionUndoWithoutEntries(deletedEntryIds);
+  const cleanup = await commitMetadataThenDeleteImages({
+    imageIds: removableMediaIds,
+    deleteImages: deleteMediaBlobs,
+    commitMetadata: () => commitLocalChanges({
+      [STORAGE_KEYS.entries]: deletion.entries,
+      [STORAGE_KEYS.compoundCases]: compoundCases,
+      [STORAGE_KEYS.organizerState]: deletion.organizerState,
+      [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
+    })
+  });
+  await Promise.allSettled([
+    clearLastSaveUndoForEntries(deletedEntryIds),
+    chrome.storage.local.remove(deletion.deletedEntryIds.map(screenshotStorageKey))
+  ]);
+  const cleanupWarning = cleanup.failedIds.length
+    ? `；${cleanup.failedIds.length} 个已失去引用的媒体文件未能清理，可稍后重试`
+    : "";
+  return {
+    ok: true,
+    message: `已删除项目“${deletion.collection.name}”及其中 ${deletion.deletedEntryIds.length} 个案例${cleanupWarning}`,
+    deletedEntryCount: deletion.deletedEntryIds.length,
+    deletedMediaCount: cleanup.deletedIds.length,
+    failedMediaCount: cleanup.failedIds.length,
+    ...publicDomainState({
+      ...state,
+      entries: deletion.entries,
+      organizerState: deletion.organizerState,
+      compoundCases
+    })
+  };
+}
+
+function enqueue(task) {
+  const operation = writeQueue.then(task, task);
+  writeQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+function enqueueCapture(task) {
+  const operation = captureWriteQueue.then(task, task);
+  captureWriteQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function restrictLocalStorageAccess() {
+  if (typeof chrome.storage?.local?.setAccessLevel !== "function") return;
+  await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+}
+
+async function retireLastSaveUndo(options = {}) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.lastSaveUndo);
+  const undo = normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo]);
+  const preserveCurrentFixedBackup = undo?.type === "restore_replaced_screenshot" &&
+    undo.entryId === options.preserveBackupEntryId &&
+    undo.backupEntryId === `backup:${undo.entryId}`;
+  if (undo?.type === "restore_replaced_screenshot" && !preserveCurrentFixedBackup) {
+    await discardSaveUndoBackup(undo).catch(() => undefined);
+  }
+  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+}
+
+async function clearLastSaveUndoForEntry(entryId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.lastSaveUndo);
+  const undo = normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo]);
+  if (undo?.entryId !== entryId) return;
+  if (undo.type === "restore_replaced_screenshot") {
+    await discardSaveUndoBackup(undo).catch(() => undefined);
+  }
+  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+}
+
+async function clearLastSaveUndoForEntries(entryIds) {
+  const ids = entryIds instanceof Set ? entryIds : new Set(entryIds);
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.lastSaveUndo);
+  const undo = normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo]);
+  if (!undo || !ids.has(undo.entryId)) return;
+  if (undo.type === "restore_replaced_screenshot") {
+    await discardSaveUndoBackup(undo).catch(() => undefined);
+  }
+  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+}
+
+async function discardSaveUndoBackup(undoValue) {
+  const undo = normalizeLastSaveUndo(undoValue);
+  if (undo?.type !== "restore_replaced_screenshot") return;
+  await discardScreenshotReplacementBackup(undo.entryId, { backupEntryId: undo.backupEntryId });
+}
+
+async function readState() {
+  const stored = await chrome.storage.local.get([
+    ...Object.values(STORAGE_KEYS),
+    "tagCatalog"
+  ]);
+  const aiConfiguration = aiConfigurationFromStorage(stored);
+  const aiRuntime = projectAiRuntime(aiConfiguration);
+  const aiStorageOutdated = !stored[STORAGE_KEYS.aiProviderRegistry]
+    || Number(stored[STORAGE_KEYS.aiProviderRegistry]?.version) !== aiConfiguration.registry.version
+    || !stored[STORAGE_KEYS.aiPreferences]
+    || JSON.stringify(stored[STORAGE_KEYS.aiTaskAssignments] ?? {}) !== JSON.stringify(aiConfiguration.assignments);
+  if (aiStorageOutdated) {
+    await commitLocalChanges({
+      [STORAGE_KEYS.aiProviderRegistry]: aiConfiguration.registry,
+      [STORAGE_KEYS.aiTaskAssignments]: aiConfiguration.assignments,
+      [STORAGE_KEYS.aiPreferences]: aiConfiguration.preferences
+    });
+    stored[STORAGE_KEYS.aiProviderRegistry] = aiConfiguration.registry;
+    stored[STORAGE_KEYS.aiTaskAssignments] = aiConfiguration.assignments;
+    stored[STORAGE_KEYS.aiPreferences] = aiConfiguration.preferences;
+  }
+  if ([STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes]
+    .some((key) => Object.hasOwn(stored, key))) {
+    await chrome.storage.local.remove([
+      STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes
+    ]);
+  }
+  const shouldMigrate = needsMigration(stored);
+  const migration = shouldMigrate ? migrateLibraryState(stored) : null;
+  let state = migration?.state ?? {
+    schemaVersion: SCHEMA_VERSION,
+    entries: stored[STORAGE_KEYS.entries],
+    compoundCases: stored[STORAGE_KEYS.compoundCases],
+    taxonomy: stored[STORAGE_KEYS.taxonomy],
+    facetCatalog: stored[STORAGE_KEYS.facetCatalog],
+    classificationRules: stored[STORAGE_KEYS.classificationRules],
+    organizerState: stored[STORAGE_KEYS.organizerState],
+    settings: stored[STORAGE_KEYS.settings]
+  };
+  if (shouldMigrate) {
+    const update = storagePayload(state);
+    if (!stored[STORAGE_KEYS.migrationBackup]) {
+      update[STORAGE_KEYS.migrationBackup] = migration?.backup;
+    }
+    if (migration.resetPerformed && !stored[STORAGE_KEYS.facetMigrationBackup]) {
+      update[STORAGE_KEYS.facetMigrationBackup] = migration.backup;
+    }
+    if (migration.resetPerformed && !stored[STORAGE_KEYS.classificationResetBackup]) {
+      update[STORAGE_KEYS.classificationResetBackup] = migration.backup;
+    }
+    await commitLocalChanges(update);
+    await chrome.storage.local.remove("tagCatalog");
+  }
+  const recoveredVocabulary = recoverFullyArchivedFacets(state.facetCatalog);
+  if (recoveredVocabulary.restoredFacetIds.length) {
+    state = { ...state, facetCatalog: recoveredVocabulary.catalog };
+    await commitLocalChanges({ [STORAGE_KEYS.facetCatalog]: state.facetCatalog });
+    await chrome.storage.local.remove(STORAGE_KEYS.facetUndo);
+    stored[STORAGE_KEYS.facetUndo] = null;
+  }
+  const uiPreferences = normalizeUiPreferences(stored[STORAGE_KEYS.uiPreferences]);
+  const locale = resolveLocale(uiPreferences, chrome.i18n.getUILanguage());
+  const composerSessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+  if (JSON.stringify(stored[STORAGE_KEYS.composerSessions] ?? []) !== JSON.stringify(composerSessions)) {
+    await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: composerSessions });
+  }
+  const creativeRuns = normalizeCreativeRuns(stored[STORAGE_KEYS.creativeRuns]);
+  const creativeJobs = normalizeCreativeJobsState(stored[STORAGE_KEYS.creativeJobs]);
+  const importJobs = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]);
+  const importStaging = normalizeImportStagingState(stored[STORAGE_KEYS.importStaging]);
+  const creativeSkills = normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]);
+  const creativeExperimentSettings = normalizeCreativeExperimentSettings(stored[STORAGE_KEYS.creativeExperimentSettings]);
+  const activeCreativeResult = normalizeActiveCreativeResult(stored[STORAGE_KEYS.activeCreativeResult]);
+  const syncSettings = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
+  if (!stored[STORAGE_KEYS.batchJob] && stored[STORAGE_KEYS.legacyAnalysisBatchJob]) {
+    const migratedBatch = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.legacyAnalysisBatchJob]);
+    if (migratedBatch) {
+      stored[STORAGE_KEYS.batchJob] = migratedBatch;
+      await commitLocalChanges({ [STORAGE_KEYS.batchJob]: migratedBatch });
+    }
+    await chrome.storage.local.remove(STORAGE_KEYS.legacyAnalysisBatchJob);
+  }
+  if (JSON.stringify(stored[STORAGE_KEYS.creativeRuns] ?? []) !== JSON.stringify(creativeRuns) ||
+      JSON.stringify(stored[STORAGE_KEYS.creativeJobs] ?? {}) !== JSON.stringify(creativeJobs) ||
+      JSON.stringify(stored[STORAGE_KEYS.creativeExperimentSettings] ?? {}) !== JSON.stringify(creativeExperimentSettings) ||
+      JSON.stringify(stored[STORAGE_KEYS.activeCreativeResult] ?? null) !== JSON.stringify(activeCreativeResult)) {
+    await commitLocalChanges({
+      [STORAGE_KEYS.creativeRuns]: creativeRuns,
+      [STORAGE_KEYS.creativeJobs]: creativeJobs,
+      [STORAGE_KEYS.creativeExperimentSettings]: creativeExperimentSettings,
+      [STORAGE_KEYS.activeCreativeResult]: activeCreativeResult
+    });
+  }
+  const storedBatchJob = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  const textBatchSummary = storedBatchJob?.kind === "text_tags"
+    ? {
+        ...analysisBatchSummary(storedBatchJob),
+        ...analysisRebuildRecovery(storedBatchJob, stored[STORAGE_KEYS.analysisRebuildStaging])
+      }
+    : null;
+  const analysisUndo = stored[STORAGE_KEYS.analysisBatchUndo];
+  return {
+    ...domainState(state),
+    settings: normalizeSettings(state.settings ?? {}, defaultSettingsForLocale(locale)),
+    uiPreferences,
+    aiSettings: publicAiSettings(aiRuntime.aiSettings),
+    visionSettings: publicVisionSettings(aiRuntime.visionSettings),
+    aiServiceProfiles: publicAiServiceProfiles(aiRuntime.aiServiceProfiles),
+    aiTaskRoutes: aiRuntime.aiTaskRoutes,
+    aiProviderRegistry: publicAiProviderRegistry(aiConfiguration.registry),
+    aiTaskAssignments: aiConfiguration.assignments,
+    composerSettings: normalizeComposerSettings(stored[STORAGE_KEYS.composerSettings]),
+    composerSessions,
+    composerSessionSummaries: composerSessions.map(sessionSummary),
+    creativeExperimentSettings,
+    creativeRuns,
+    creativeJobs,
+    importJobs,
+    importStaging,
+    creativeSkills,
+    activeCreativeResult,
+    syncSettings,
+    syncStatus: await publicSyncStatus(syncSettings),
+    visionUndoEntryIds: Object.keys(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}),
+    pendingContentCount: state.entries.filter(
+      (entry) => entry.classification?.status === "needs_review"
+    ).length,
+    pendingSuggestionCount: state.entries.reduce((count, entry) =>
+      count + reusableAnalysisItems(entry.analysisCandidates).length, 0),
+    analysisPendingCount: state.entries.filter((entry) => entry.analysisPending).length,
+    migrationBackupExists: Boolean(
+      stored[STORAGE_KEYS.facetMigrationBackup] || stored[STORAGE_KEYS.migrationBackup] || shouldMigrate
+    ),
+    canUndoFacetUpdate: facetUndoCount(stored[STORAGE_KEYS.facetUndo]) > 0,
+    facetUndoCount: facetUndoCount(stored[STORAGE_KEYS.facetUndo]),
+    facetUndo: stored[STORAGE_KEYS.facetUndo] ?? null,
+    restoredArchivedFacetCount: recoveredVocabulary.restoredFacetIds.length,
+    analysisBatchJob: textBatchSummary,
+    maintenanceJob: libraryMaintenanceSummary(stored[STORAGE_KEYS.libraryMaintenanceJob]),
+    visionBatchJob: analysisBatchSummary(stored[STORAGE_KEYS.batchJob])?.kind === "vision"
+      ? analysisBatchSummary(stored[STORAGE_KEYS.batchJob])
+      : null,
+    canUndoAnalysisBatch: Boolean(textBatchSummary && analysisUndo?.jobId === textBatchSummary.id),
+    lastSaveUndo: normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo])
+  };
+}
+
+async function createCreativeSkillAction(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const result = createCreativeSkill(stored[STORAGE_KEYS.creativeSkills], message.skill);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
+  return { ok: true, message: "Skill 已保存", creativeSkills: result.state, skill: result.skill };
+}
+
+async function saveCreativeSkillVersionAction(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const result = saveCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.version);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
+  return { ok: true, message: "Skill 新版本已保存", creativeSkills: result.state, skill: result.skill };
+}
+
+async function restoreCreativeSkillVersionAction(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const result = restoreCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.versionId);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
+  return { ok: true, message: "已将所选版本恢复为新的当前版本", creativeSkills: result.state, skill: result.skill };
+}
+
+async function deleteCreativeSkillAction(skillId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const result = deleteCreativeSkill(stored[STORAGE_KEYS.creativeSkills], skillId);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
+  await deleteMediaBlobs(skillPackageAssetIds(result.skill)).catch(() => undefined);
+  return { ok: true, message: "Skill 已删除", creativeSkills: result.state };
+}
+
+async function getComposerSession(sessionId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]).find((item) => item.id === sessionId);
+  return session ? { ok: true, session } : { ok: false, message: "没有找到这份创作草稿" };
+}
+
+async function startCreativeJobAction(request, jobId) {
+  if (!["create_image", "create_video"].includes(request?.session?.outputMode)) {
+    return { ok: false, message: "后台持久任务当前只用于创建图片或视频" };
+  }
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.creativeJobs,
+    STORAGE_KEYS.composerSessions
+  ]);
+  const created = createCreativeJob(stored[STORAGE_KEYS.creativeJobs], request, { id: jobId });
+  const sessions = upsertSessionList(stored[STORAGE_KEYS.composerSessions], created.job.request.session);
+  await commitLocalChanges({
+    [STORAGE_KEYS.creativeJobs]: created.state,
+    [STORAGE_KEYS.composerSessions]: sessions
+  });
+  try {
+    await dispatchCreativeJob(created.job);
+  } catch (error) {
+    await failCreativeJobAction({
+      jobId: created.job.id,
+      error: { kind: "service", message: userMessage(error), retryable: true }
+    });
+    return { ok: false, message: userMessage(error), job: creativeJobById(created.state, created.job.id) };
+  }
+  return { ok: true, message: "创作任务已在后台开始", job: created.job };
+}
+
+async function getCreativeJobAction(jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
+  const creativeJobs = normalizeCreativeJobsState(stored[STORAGE_KEYS.creativeJobs]);
+  const job = String(jobId ?? "").trim()
+    ? creativeJobById(creativeJobs, jobId)
+    : activeCreativeJob(creativeJobs) ?? creativeJobs.items.at(-1) ?? null;
+  return { ok: true, job, creativeJobs };
+}
+
+async function retryCreativeJobAction(jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
+  const retried = retryCreativeJob(stored[STORAGE_KEYS.creativeJobs], jobId);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeJobs]: retried.state });
+  try {
+    await dispatchCreativeJob(retried.job);
+  } catch (error) {
+    await failCreativeJobAction({
+      jobId: retried.job.id,
+      error: { kind: "service", message: userMessage(error), retryable: true }
+    });
+    return { ok: false, message: userMessage(error), job: retried.job };
+  }
+  return { ok: true, message: "创作任务已重新开始", job: retried.job };
+}
+
+async function updateCreativeJobProgress(message) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.creativeJobs,
+    STORAGE_KEYS.composerSessions
+  ]);
+  const current = creativeJobById(stored[STORAGE_KEYS.creativeJobs], message.jobId);
+  if (!current || !["queued", "running"].includes(current.status)) {
+    return { ok: false, message: "创作任务已经结束" };
+  }
+  const creativeJobs = updateCreativeJob(stored[STORAGE_KEYS.creativeJobs], current.id, {
+    status: "running",
+    phase: message.phase,
+    ...(message.remoteVideo ? { remoteVideo: message.remoteVideo } : {})
+  });
+  const update = { [STORAGE_KEYS.creativeJobs]: creativeJobs };
+  if (message.session) {
+    const session = createComposerSession(message.session);
+    if (session.id !== current.sessionId) return { ok: false, message: "创作任务与对话不匹配" };
+    update[STORAGE_KEYS.composerSessions] = upsertSessionList(stored[STORAGE_KEYS.composerSessions], session);
+  }
+  await commitLocalChanges(update);
+  return { ok: true, job: creativeJobById(creativeJobs, current.id) };
+}
+
+async function creativeJobExecutionState() {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.entries,
+    STORAGE_KEYS.compoundCases,
+    STORAGE_KEYS.facetCatalog,
+    STORAGE_KEYS.composerSettings,
+    STORAGE_KEYS.aiProviderRegistry,
+    STORAGE_KEYS.aiTaskAssignments,
+    STORAGE_KEYS.aiPreferences
+  ]);
+  const aiRuntime = projectAiRuntime(aiConfigurationFromStorage(stored));
+  return {
+    ok: true,
+    aiRuntimeProtocolVersion: AI_RUNTIME_PROTOCOL_VERSION,
+    entries: stored[STORAGE_KEYS.entries],
+    compoundCases: stored[STORAGE_KEYS.compoundCases],
+    facetCatalog: stored[STORAGE_KEYS.facetCatalog],
+    composerSettings: stored[STORAGE_KEYS.composerSettings],
+    aiSettings: resolveTextTaskSettings("creativePlanning", aiConfigurationFromStorage(stored)),
+    visionSettings: aiRuntime.visionSettings,
+    aiServiceProfiles: aiRuntime.aiServiceProfiles,
+    aiTaskAssignments: aiRuntime.aiTaskAssignments
+  };
+}
+
+async function completeCreativeJobAction(message) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.creativeJobs,
+    STORAGE_KEYS.composerSessions,
+    STORAGE_KEYS.creativeRuns
+  ]);
+  const current = creativeJobById(stored[STORAGE_KEYS.creativeJobs], message.jobId);
+  if (!current || current.status !== "running") return { ok: false, message: "创作任务已经结束" };
+  const session = createComposerSession(message.session);
+  if (session.id !== current.sessionId) return { ok: false, message: "创作任务与对话不匹配" };
+  const visuals = Array.isArray(message.visuals) ? message.visuals : [];
+  for (const visual of visuals) {
+    const id = String(visual?.id ?? "").trim();
+    const video = visual?.kind === "video" || String(visual?.mimeType ?? "").startsWith("video/");
+    const blob = id ? video ? await getMediaBlob(id) : await getScreenshotBlob(id) : null;
+    if (!blob || !blob.type.startsWith(video ? "video/" : "image/") || !blob.size) {
+      return { ok: false, message: `有一项生成${video ? "视频" : "图片"}没有完整写入本地存储` };
+    }
+  }
+
+  let creativeRuns = normalizeCreativeRuns(stored[STORAGE_KEYS.creativeRuns]);
+  if (visuals.length) {
+    const promptVersionId = session.promptVersions.at(-1)?.id;
+    if (!promptVersionId) return { ok: false, message: "生成媒体缺少对应的提示词版本" };
+    let run = creativeRuns.find((item) => item.sessionId === session.id && item.promptVersionId === promptVersionId);
+    if (run) {
+      for (const visual of visuals) run = addCreativeOutput(run, visual, undefined, message.generation);
+      creativeRuns = [run, ...creativeRuns.filter((item) => item.id !== run.id)];
+    } else {
+      run = createCreativeRun({ sessionId: session.id, promptVersionId }, session, visuals, undefined, message.generation);
+      creativeRuns = [run, ...creativeRuns];
+    }
+    creativeRuns = normalizeCreativeRuns(creativeRuns);
+  }
+  const creativeJobs = updateCreativeJob(stored[STORAGE_KEYS.creativeJobs], current.id, {
+    status: "completed",
+    phase: "completed",
+    error: null
+  });
+  await commitLocalChanges({
+    [STORAGE_KEYS.creativeJobs]: creativeJobs,
+    [STORAGE_KEYS.composerSessions]: upsertSessionList(stored[STORAGE_KEYS.composerSessions], session),
+    [STORAGE_KEYS.creativeRuns]: creativeRuns
+  });
+  return { ok: true, job: creativeJobById(creativeJobs, current.id), creativeRuns };
+}
+
+async function failCreativeJobAction(message) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.creativeJobs,
+    STORAGE_KEYS.composerSessions
+  ]);
+  const current = creativeJobById(stored[STORAGE_KEYS.creativeJobs], message.jobId);
+  if (!current || !["queued", "running"].includes(current.status)) {
+    return { ok: false, message: "创作任务已经结束" };
+  }
+  const details = normalizeCreativeJobFailure(message.error, current);
+  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+  const sourceSession = sessions.find((item) => item.id === current.sessionId) ?? current.request.session;
+  let session = appendDiagnosticEvent(sourceSession, {
+    phase: current.phase === "planning" ? "planning" : "streaming",
+    status: "failed",
+    detail: details.message
+  });
+  session = setComposerFailure(session, {
+    userMessageId: current.userMessageId,
+    phase: current.phase === "planning" ? "planning" : "streaming",
+    kind: details.kind,
+    message: `${details.message}。本轮内容已保留。`,
+    retryable: details.retryable
+  });
+  const creativeJobs = updateCreativeJob(stored[STORAGE_KEYS.creativeJobs], current.id, {
+    status: "failed",
+    error: details
+  });
+  await commitLocalChanges({
+    [STORAGE_KEYS.creativeJobs]: creativeJobs,
+    [STORAGE_KEYS.composerSessions]: upsertSessionList(sessions, session)
+  });
+  if (details.referenceLimit && current.request.session?.outputMode === "create_image") {
+    await rememberObservedReferenceLimit(details.referenceLimit).catch(() => undefined);
+  }
+  await cleanupCreativeJobMask(current);
+  return { ok: true, job: creativeJobById(creativeJobs, current.id), session };
+}
+
+async function cancelCreativeJobAction(jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
+  const current = creativeJobById(stored[STORAGE_KEYS.creativeJobs], jobId);
+  if (!current) return { ok: false, message: "没有找到对应的创作任务" };
+  if (!["queued", "running"].includes(current.status)) return { ok: true, job: current };
+  let runnerStopped = false;
+  let runnerMessage = "";
+  try {
+    await ensureOffscreenDocument();
+    const response = await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "CANCEL_CREATIVE_JOB",
+      jobId: current.id
+    });
+    runnerStopped = response?.ok === true;
+    runnerMessage = response?.message || "";
+  } catch (error) {
+    runnerMessage = userMessage(error);
+  }
+  return enqueue(async () => {
+    const latest = await chrome.storage.local.get([
+      STORAGE_KEYS.creativeJobs,
+      STORAGE_KEYS.composerSessions
+    ]);
+    const active = creativeJobById(latest[STORAGE_KEYS.creativeJobs], current.id);
+    if (!active || !["queued", "running"].includes(active.status)) return { ok: true, job: active };
+    const creativeJobs = updateCreativeJob(latest[STORAGE_KEYS.creativeJobs], active.id, {
+      status: "canceled",
+      error: {
+        kind: "canceled",
+        message: "用户已取消本次创作",
+        retryable: active.request.imageEdit?.mode !== "local"
+      }
+    });
+    const sessions = normalizeComposerSessions(latest[STORAGE_KEYS.composerSessions]);
+    const sourceSession = sessions.find((item) => item.id === active.sessionId) ?? active.request.session;
+    const session = setComposerFailure(sourceSession, {
+      userMessageId: active.userMessageId,
+      phase: active.phase === "planning" ? "planning" : "streaming",
+      kind: "stopped",
+      message: "用户已取消本次创作",
+      retryable: active.request.imageEdit?.mode !== "local"
+    });
+    await commitLocalChanges({
+      [STORAGE_KEYS.creativeJobs]: creativeJobs,
+      [STORAGE_KEYS.composerSessions]: upsertSessionList(sessions, session)
+    });
+    await cleanupCreativeJobMask(active);
+    return {
+      ok: true,
+      message: runnerStopped
+        ? "创作任务已取消"
+        : `创作任务状态已解除${runnerMessage ? `；后台执行器未响应：${runnerMessage}` : ""}`,
+      job: creativeJobById(creativeJobs, active.id)
+    };
+  });
+}
+
+async function dispatchCreativeJob(job) {
+  await ensureOffscreenDocument();
+  const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "RUN_CREATIVE_JOB", job });
+  if (!response?.ok) throw new Error(response?.message || "后台创作任务启动失败");
+}
+
+function upsertSessionList(values, sessionValue) {
+  const session = createComposerSession(sessionValue);
+  const sessions = normalizeComposerSessions(values);
+  return normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
+}
+
+function normalizeCreativeJobFailure(value, job) {
+  const allowedKinds = new Set(["network", "timeout", "rate_limit", "service", "response", "reference_limit", "expired", "unknown", "storage"]);
+  const kind = allowedKinds.has(value?.kind) ? value.kind : "unknown";
+  const message = String(value?.message ?? "创作任务失败").trim() || "创作任务失败";
+  return {
+    kind,
+    message,
+    retryable: value?.retryable === true && job.request.imageEdit?.mode !== "local",
+    referenceLimit: normalizeObservedReferenceLimit(value?.referenceLimit)
+  };
+}
+
+function normalizeObservedReferenceLimit(value) {
+  const maximum = Number(value?.maximum);
+  const actual = Number(value?.actual);
+  if (!Number.isInteger(maximum) || maximum < 0) return null;
+  return { maximum, actual: Number.isInteger(actual) && actual >= 0 ? actual : null };
+}
+
+async function rememberObservedReferenceLimit(value) {
+  const referenceLimit = normalizeObservedReferenceLimit(value);
+  if (!referenceLimit) return;
+  const configuration = await loadAiConfiguration();
+  const assignment = configuration.assignments.imageGeneration;
+  const profile = configuration.registry.providers[assignment?.providerId];
+  const modelId = String(profile?.models?.imageGeneration ?? assignment?.model ?? "").trim();
+  if (!profile || !modelId) return;
+  const before = profile.discoveredModels.find((model) => model.id === modelId);
+  const descriptor = {
+    ...(before ?? {
+      id: modelId,
+      name: modelId,
+      status: "available",
+      confidence: "manual_unverified",
+      source: "observed_error",
+      tasks: ["imageGeneration"],
+      inputModalities: ["text", "image"],
+      outputModalities: ["image"],
+      supportedParameters: [],
+      supportedResolutions: [],
+      supportedAspectRatios: []
+    }),
+    tasks: [...new Set([...(before?.tasks ?? []), "imageGeneration"])],
+    referenceImages: {
+      supported: true,
+      maxItems: referenceLimit.maximum,
+      source: "observed_error",
+      observedAt: new Date().toISOString()
+    }
+  };
+  const registry = mergeAiProviderRegistry(configuration.registry, { providers: {
+    [profile.id]: {
+      discoveredModels: [descriptor, ...profile.discoveredModels.filter((model) => model.id !== modelId)]
+    }
+  } });
+  await persistAiConfiguration({ ...configuration, registry });
+}
+
+async function cleanupCreativeJobMask(job) {
+  const maskAssetId = String(job?.request?.imageEdit?.maskAssetId ?? "").trim();
+  if (maskAssetId) await deleteScreenshotBlob(maskAssetId).catch(() => undefined);
+}
+
+async function startImportJobAction(message) {
+  const state = await readState();
+  const collectionId = String(message.collectionId ?? "").trim();
+  if (collectionId && !state.organizerState.collections.some((item) => item.id === collectionId)) {
+    throw new Error("没有找到导入目标项目");
+  }
+  let staging = normalizeImportStagingState(state.importStaging);
+  const incoming = Array.isArray(message.stagedAssets) ? message.stagedAssets : [];
+  if (!incoming.length) throw new Error("请选择要导入的本机资料");
+  const keepById = new Map((Array.isArray(message.items) ? message.items : [])
+    .map((item) => [String(item?.stagedAssetId ?? "").trim(), item?.keepDuplicate === true]));
+  const jobItems = [];
+  const batchAssets = [];
+  for (const value of incoming) {
+    const assetId = String(value?.assetId ?? "").trim();
+    const name = String(value?.name ?? "").trim();
+    const blob = assetId ? await getMediaBlob(assetId) : null;
+    if (!(blob instanceof Blob)) throw new Error(`没有读取到待导入文件：${name || assetId || "未命名"}`);
+    const file = new File([blob], name, { type: blob.type || value?.mimeType });
+    const duplicate = await findExactMediaDuplicate(file, state.entries, {
+      readBlob: getMediaBlob,
+      candidateAssets: batchAssets
+    });
+    const staged = addStagedAsset(staging, {
+      ...value,
+      mimeType: blob.type || value?.mimeType,
+      byteSize: blob.size,
+      contentHash: duplicate.contentHash,
+      duplicateAssetId: duplicate.duplicateAssetId
+    });
+    staging = staged.state;
+    batchAssets.push({
+      id: staged.asset.assetId,
+      byteSize: staged.asset.byteSize,
+      mimeType: staged.asset.mimeType,
+      sourceTitle: staged.asset.name,
+      contentHash: staged.asset.contentHash
+    });
+    jobItems.push({
+      stagedAssetId: staged.asset.id,
+      duplicateAssetId: staged.asset.duplicateAssetId,
+      keepDuplicate: keepById.get(staged.asset.id) === true
+    });
+  }
+  const created = createImportJob(state.importJobs, {
+    collectionId,
+    items: jobItems,
+    options: {
+      duplicateAction: "skip",
+      autoAnalyze: message.options?.autoAnalyze === true
+    }
+  });
+  const skippedCleanupIds = [];
+  for (const item of created.job.items.filter((value) => value.status === "skipped")) {
+    const staged = stagedAssetById(staging, item.stagedAssetId);
+    if (!staged) continue;
+    const removed = removeStagedAsset(staging, staged.id);
+    staging = removed.state;
+    skippedCleanupIds.push(...removed.removedAssetIds);
+  }
+  await commitLocalChanges({
+    [STORAGE_KEYS.importJobs]: created.state,
+    [STORAGE_KEYS.importStaging]: staging
+  });
+  await deleteUnreferencedMedia(skippedCleanupIds);
+  await queueImportJobAnalysis(created.job);
+  scheduleImportRunner();
+  return { ok: true, message: "本机资料已加入后台导入", job: created.job };
+}
+
+async function getImportJobAction(jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const importJobs = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]);
+  const id = String(jobId ?? "").trim();
+  const job = id
+    ? importJobs.items.find((item) => item.id === id) ?? null
+    : importJobs.items.find((item) => ["queued", "running"].includes(item.status)) ?? importJobs.items.at(-1) ?? null;
+  return { ok: true, job, importJobs };
+}
+
+async function cancelImportJobAction(jobId) {
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.importJobs, STORAGE_KEYS.importStaging]);
+  const canceled = cancelImportJob(stored[STORAGE_KEYS.importJobs], jobId);
+  let staging = normalizeImportStagingState(stored[STORAGE_KEYS.importStaging]);
+  const cleanupIds = [];
+  for (const item of canceled.job.items.filter((value) => value.status === "skipped" && value.skipReason === "canceled")) {
+    const staged = stagedAssetById(staging, item.stagedAssetId);
+    if (!staged) continue;
+    const removed = removeStagedAsset(staging, staged.id);
+    staging = removed.state;
+    cleanupIds.push(...removed.removedAssetIds);
+  }
+  await commitLocalChanges({
+    [STORAGE_KEYS.importJobs]: canceled.state,
+    [STORAGE_KEYS.importStaging]: staging
+  });
+  await deleteUnreferencedMedia(cleanupIds);
+  return { ok: true, message: "已取消剩余导入项", job: canceled.job };
+}
+
+async function retryImportJobAction(jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const retried = retryImportJob(stored[STORAGE_KEYS.importJobs], jobId);
+  await commitLocalChanges({ [STORAGE_KEYS.importJobs]: retried.state });
+  scheduleImportRunner();
+  return { ok: true, message: "失败项已重新加入后台导入", job: retried.job };
+}
+
+async function undoImportJobAction(jobId) {
+  const state = await readState();
+  const undone = undoImportJob(state.importJobs, jobId);
+  const removedIds = new Set(undone.createdEntryIds);
+  const removedEntries = state.entries.filter((entry) => removedIds.has(entry.id));
+  const entries = state.entries.filter((entry) => !removedIds.has(entry.id));
+  const organizerState = removeEntriesFromOrganizer(
+    normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id)),
+    undone.createdEntryIds
+  );
+  const compoundCases = removeEntriesFromCompoundCases(state.compoundCases, state.entries, undone.createdEntryIds);
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.organizerState]: organizerState,
+    [STORAGE_KEYS.compoundCases]: compoundCases,
+    [STORAGE_KEYS.importJobs]: undone.state
+  });
+  const assetIds = removedEntries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets
+    .filter((asset) => asset.storageMode !== "reference")
+    .map((asset) => asset.id));
+  await deleteUnreferencedMedia(assetIds);
+  return { ok: true, message: `已撤销本次导入的 ${removedEntries.length} 个案例`, job: undone.job };
+}
+
+async function recoverImportJobs() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const recovered = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs], { recoverRunning: true });
+  if (JSON.stringify(stored[STORAGE_KEYS.importJobs] ?? {}) !== JSON.stringify(recovered)) {
+    await commitLocalChanges({ [STORAGE_KEYS.importJobs]: recovered });
+  }
+  if (recovered.items.some((job) => ["queued", "running"].includes(job.status) && job.items.some((item) => item.status === "queued"))) {
+    scheduleImportRunner();
+  }
+}
+
+function scheduleImportRunner() {
+  if (importRunnerActive || importRunnerTimer) return;
+  chrome.alarms.create(IMPORT_JOB_ALARM, { when: Date.now() + 1000 }).catch(() => undefined);
+  importRunnerTimer = setTimeout(() => {
+    importRunnerTimer = 0;
+    void enqueue(runImportJobSlice).catch((error) => console.error("PromptDirector local import failed", error));
+  }, 0);
+}
+
+async function runImportJobSlice() {
+  if (importRunnerActive) return;
+  importRunnerActive = true;
+  try {
+    const stored = await chrome.storage.local.get([STORAGE_KEYS.importJobs, STORAGE_KEYS.importStaging]);
+    let jobs = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]);
+    const active = jobs.items.find((job) => ["queued", "running"].includes(job.status) && job.items.some((item) => item.status === "queued"));
+    if (!active) return;
+    const started = startImportJob(jobs, active.id);
+    jobs = started.state;
+    await commitLocalChanges({ [STORAGE_KEYS.importJobs]: jobs });
+    const item = started.job.items.find((value) => value.status === "queued");
+    try {
+      await importStagedItem(started.job, item);
+    } catch (error) {
+      const latest = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+      const failed = finishImportItem(latest[STORAGE_KEYS.importJobs], started.job.id, item.id, {
+        status: "failed",
+        error: userMessage(error)
+      });
+      await commitLocalChanges({ [STORAGE_KEYS.importJobs]: failed.state });
+      await queueImportJobAnalysis(failed.job);
+    }
+  } finally {
+    importRunnerActive = false;
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+    const pending = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]).items.some((job) =>
+      ["queued", "running"].includes(job.status) && job.items.some((item) => item.status === "queued"));
+    if (pending) scheduleImportRunner();
+    else await chrome.alarms.clear(IMPORT_JOB_ALARM).catch(() => undefined);
+  }
+}
+
+async function importStagedItem(job, item) {
+  const state = await readState();
+  const staged = stagedAssetById(state.importStaging, item.stagedAssetId);
+  if (!staged) throw new Error("暂存文件已经丢失，无法继续导入");
+  if (!await getMediaBlob(staged.assetId)) throw new Error(`本机媒体已经丢失：${staged.name}`);
+  if (staged.posterAssetId && !await getMediaBlob(staged.posterAssetId)) throw new Error(`视频或 GIF 封面已经丢失：${staged.name}`);
+  const entry = importedEntryFromStagedAsset(state, staged);
+  const entries = [...state.entries, entry];
+  let organizerState = normalizeOrganizerState(state.organizerState, entries.map((value) => value.id));
+  if (job.collectionId) {
+    const target = organizerState.collections.find((collection) => collection.id === job.collectionId);
+    if (!target) throw new Error("导入目标项目已经不存在");
+    target.entryIds = [...new Set([...target.entryIds, entry.id])];
+    organizerState = normalizeOrganizerState(organizerState, entries.map((value) => value.id));
+  }
+  const finished = finishImportItem(state.importJobs, job.id, item.id, { status: "imported", entryId: entry.id });
+  const removed = removeStagedAsset(state.importStaging, staged.id);
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.organizerState]: organizerState,
+    [STORAGE_KEYS.importJobs]: finished.state,
+    [STORAGE_KEYS.importStaging]: removed.state
+  });
+  await notifySaved(entries.length);
+  await queueImportJobAnalysis(finished.job);
+}
+
+function importedEntryFromStagedAsset(state, staged) {
+  const base = buildEntry({ text: staged.contentText || "", title: staged.name, url: "", allowEmptyText: true });
+  const asset = {
+    id: staged.assetId,
+    kind: staged.kind,
+    storageMode: "managed",
+    mimeType: staged.mimeType,
+    byteSize: staged.byteSize,
+    sourceTitle: staged.name,
+    relativePath: staged.relativePath,
+    contentHash: staged.contentHash,
+    capturedAt: new Date().toISOString(),
+    reviewStatus: "verified",
+    ...(staged.width ? { width: staged.width } : {}),
+    ...(staged.height ? { height: staged.height } : {}),
+    ...(staged.durationMs ? { durationMs: staged.durationMs } : {}),
+    ...(staged.playbackCapability ? { playbackCapability: staged.playbackCapability } : {}),
+    ...(staged.kind === "document" && staged.contentFormat ? { extractedTextFormat: staged.contentFormat } : {}),
+    ...(staged.posterAssetId ? { posterAssetId: staged.posterAssetId } : {})
+  };
+  const mediaAssets = [asset];
+  if (staged.posterAssetId) {
+    mediaAssets.push({
+      ...(staged.posterAsset ?? {}),
+      id: staged.posterAssetId,
+      kind: "image",
+      usage: "poster",
+      derivedFromAssetId: staged.assetId,
+      storageMode: "managed",
+      capturedAt: new Date().toISOString(),
+      reviewStatus: "verified"
+    });
+  }
+  return normalizeEntryMedia({
+    ...base,
+    schemaVersion: SCHEMA_VERSION,
+    mediaAssets,
+    primaryMediaId: staged.assetId,
+    classification: classifyImportedMedia({ ...base, mediaAssets }, state.taxonomy),
+    customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
+    rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
+  });
+}
+
+async function queueImportJobAnalysis(job) {
+  if (!["completed", "failed", "canceled"].includes(job.status) || !job.options.autoAnalyze || job.analysisQueuedAt) return;
+  const entryIds = job.items.filter((item) => item.status === "imported").map((item) => item.entryId).filter(Boolean);
+  if (entryIds.length) await queueAutomaticVisionAnalysis(entryIds, { requireAutoImportSetting: false });
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const marked = markImportJobAnalysisQueued(stored[STORAGE_KEYS.importJobs], job.id);
+  await commitLocalChanges({ [STORAGE_KEYS.importJobs]: marked.state });
+}
+
+async function addTempReferencesAction(message) {
+  const sessionId = String(message.sessionId ?? "").trim();
+  if (!sessionId) throw new Error("临时引用缺少创作会话编号");
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+  const existing = sessions.find((item) => item.id === sessionId);
+  if (message.session && String(message.session.id ?? "").trim() !== sessionId) throw new Error("临时引用与创作会话不匹配");
+  const baseline = existing ?? (message.session ? createComposerSession(message.session) : null);
+  if (!baseline || baseline.id !== sessionId) throw new Error("创作会话尚未保存，请重新打开创作台");
+  const additions = Array.isArray(message.tempReferences) ? message.tempReferences : [];
+  if (!additions.length) throw new Error("没有可添加的临时引用");
+  const knownIds = new Set(baseline.referenceSnapshots.map((item) => item.entryId));
+  for (const reference of additions) {
+    const referenceId = String(reference?.entryId ?? "").trim();
+    if (!referenceId.startsWith("temp-reference:") || reference?.sourceType !== "temporary") {
+      throw new Error("临时引用格式无效");
+    }
+    if (knownIds.has(referenceId)) throw new Error("这项临时引用已经加入创作台");
+    const assetIds = tempReferenceAssetIds(reference);
+    if (!assetIds.length) throw new Error("临时引用没有可用媒体");
+    for (const assetId of assetIds) {
+      if (!await getMediaBlob(assetId)) throw new Error("临时引用媒体已经失效，请重新添加");
+    }
+    knownIds.add(referenceId);
+  }
+  const session = createComposerSession({
+    ...baseline,
+    referenceSnapshots: [...baseline.referenceSnapshots, ...additions]
+  });
+  const next = normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
+  await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
+  return { ok: true, session, summaries: next.map(sessionSummary) };
+}
+
+async function removeTempReferenceAction(message) {
+  const sessionId = String(message.sessionId ?? "").trim();
+  const tempReferenceId = String(message.tempReferenceId ?? "").trim();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+  const current = sessions.find((item) => item.id === sessionId);
+  if (!current) throw new Error("没有找到这份创作草稿");
+  const reference = current.referenceSnapshots.find((item) => item.entryId === tempReferenceId && item.sourceType === "temporary");
+  if (!reference) throw new Error("没有找到这项临时引用");
+  const session = createComposerSession({
+    ...current,
+    referenceSnapshots: current.referenceSnapshots.filter((item) => item.entryId !== tempReferenceId)
+  });
+  const next = normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
+  await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
+  await deleteUnreferencedMedia(tempReferenceAssetIds(reference));
+  return { ok: true, session, summaries: next.map(sessionSummary) };
+}
+
+async function saveTempReferenceAsCaseAction(message) {
+  const state = await readState();
+  const sessionId = String(message.sessionId ?? "").trim();
+  const tempReferenceId = String(message.tempReferenceId ?? "").trim();
+  const current = state.composerSessions.find((item) => item.id === sessionId);
+  if (!current) throw new Error("没有找到这份创作草稿");
+  const reference = current.referenceSnapshots.find((item) => item.entryId === tempReferenceId && item.sourceType === "temporary");
+  if (!reference) throw new Error("没有找到这项临时引用");
+  const assetRefs = Array.isArray(reference.assetRefs) ? reference.assetRefs : [];
+  if (!assetRefs.length) throw new Error("临时引用没有可保存的媒体");
+  for (const asset of assetRefs) {
+    if (!await getMediaBlob(asset.assetId)) throw new Error(`临时引用媒体已经失效：${asset.name || "未命名"}`);
+  }
+  const title = String(message.title ?? reference.title ?? assetRefs[0]?.name ?? "本机参考").trim();
+  const base = buildEntry({ text: reference.referenceText || "", title, url: "", allowEmptyText: true });
+  const mediaAssets = assetRefs.map((asset) => ({
+    id: asset.assetId,
+    kind: asset.kind,
+    storageMode: "managed",
+    mimeType: asset.mimeType,
+    byteSize: asset.byteSize,
+    sourceTitle: asset.name,
+    capturedAt: new Date().toISOString(),
+    reviewStatus: "verified"
+  }));
+  const entry = normalizeEntryMedia({
+    ...base,
+    schemaVersion: SCHEMA_VERSION,
+    mediaAssets,
+    primaryMediaId: mediaAssets[0].id,
+    classification: classifyImportedMedia({ ...base, mediaAssets }, state.taxonomy),
+    customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
+    rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
+  });
+  const libraryReference = {
+    ...reference,
+    entryId: entry.id,
+    sourceType: "library",
+    assetRefs: undefined
+  };
+  const session = createComposerSession({
+    ...current,
+    referenceSnapshots: current.referenceSnapshots.map((item) => item.entryId === tempReferenceId ? libraryReference : item)
+  });
+  const sessions = normalizeComposerSessions([session, ...state.composerSessions.filter((item) => item.id !== session.id)]);
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: [...state.entries, entry],
+    [STORAGE_KEYS.composerSessions]: sessions
+  });
+  if (mediaAssets.some((asset) => asset.kind === "image")) await queueAutomaticVisionAnalysis([entry.id]);
+  return { ok: true, message: "临时引用已保存为案例", entry, session, summaries: sessions.map(sessionSummary) };
+}
+
+async function analyzeTempReferencesAction(message) {
+  if (visionAnalysisInFlight) return { ok: false, message: "已有图片正在分析，请等待完成" };
+  visionAnalysisInFlight = true;
+  try {
+    const sessionId = String(message.sessionId ?? "").trim();
+    const requestedIds = [...new Set((Array.isArray(message.tempReferenceIds) ? message.tempReferenceIds : [])
+      .map((value) => String(value ?? "").trim()).filter(Boolean))];
+    if (!sessionId || !requestedIds.length) return { ok: false, message: "没有可分析的临时图片" };
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEYS.composerSessions,
+      STORAGE_KEYS.facetCatalog
+    ]);
+    const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+    const session = sessions.find((item) => item.id === sessionId);
+    if (!session) return { ok: false, message: "没有找到这份创作草稿" };
+    const requested = new Set(requestedIds);
+    const references = session.referenceSnapshots.filter((reference) =>
+      requested.has(reference.entryId)
+      && unreadReferenceImageAssets(reference).length
+    );
+    if (references.length !== requested.size) {
+      return { ok: false, message: "参考图片已经变化，请确认后重试" };
+    }
+    const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration());
+    const locale = message.outputLocale === "en" ? "en" : "zh-CN";
+    const analyzed = [];
+    for (const reference of references) {
+      const imageAssets = unreadReferenceImageAssets(reference);
+      const descriptions = [];
+      const fingerprints = [];
+      const analyses = [];
+      for (const asset of imageAssets) {
+        const blob = await getTempReferenceVisionBlob(asset);
+        if (!blob) throw new Error(`参考图片已经失效：${asset.name || "未命名图片"}`);
+        const fingerprint = await imageFingerprint(blob);
+        const result = await analyzeImageWithVision({
+          imageDataUrl: await blobToDataUrl(blob),
+          catalog: stored[STORAGE_KEYS.facetCatalog],
+          locale,
+          settings
+        });
+        descriptions.push(result.description);
+        fingerprints.push({ assetId: asset.assetId, fingerprint });
+        analyses.push({
+          assetId: asset.assetId,
+          imageFingerprint: fingerprint,
+          analysisImageFingerprint: fingerprint,
+          analysisVersion: VISION_ANALYSIS_VERSION,
+          analysisFingerprint: result.profileFingerprint,
+          reconstructionPrompt: result.reconstructionPrompt
+        });
+      }
+      analyzed.push({ referenceId: reference.entryId, descriptions, fingerprints, analyses });
+    }
+
+    return await enqueue(async () => {
+      const latestStored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+      const latestSessions = normalizeComposerSessions(latestStored[STORAGE_KEYS.composerSessions]);
+      const latestSession = latestSessions.find((item) => item.id === sessionId);
+      if (!latestSession) return { ok: false, message: "分析期间创作草稿已经变化，本次结果没有写入" };
+      for (const item of analyzed) {
+        const current = latestSession.referenceSnapshots.find((reference) =>
+          reference.entryId === item.referenceId
+          && unreadReferenceImageAssets(reference).length
+        );
+        if (!current) return { ok: false, message: "分析期间参考图片已经变化，本次结果没有写入" };
+        const currentAssets = unreadReferenceImageAssets(current);
+        for (const expected of item.fingerprints) {
+          const asset = currentAssets.find((value) => value.assetId === expected.assetId);
+          const blob = asset ? await getTempReferenceVisionBlob(asset) : null;
+          if (!blob || await imageFingerprint(blob) !== expected.fingerprint) {
+            return { ok: false, message: "分析期间参考图片已经变化，本次结果没有写入" };
+          }
+        }
+      }
+      const resultByReferenceId = new Map(analyzed.map((item) => [item.referenceId, item]));
+      const updatedSession = createComposerSession({
+        ...latestSession,
+        referenceSnapshots: latestSession.referenceSnapshots.map((reference) => {
+          const result = resultByReferenceId.get(reference.entryId);
+          return result ? {
+            ...reference,
+            referenceKind: "vision",
+            referenceText: result.descriptions.join("\n\n"),
+            assets: result.analyses
+          } : reference;
+        })
+      });
+      const next = normalizeComposerSessions([
+        updatedSession,
+        ...latestSessions.filter((item) => item.id !== updatedSession.id)
+      ]);
+      await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
+      return {
+        ok: true,
+        message: `已完成 ${analyzed.length} 项临时图片分析`,
+        session: updatedSession,
+        summaries: next.map(sessionSummary)
+      };
+    });
+  } catch (error) {
+    return { ok: false, message: userMessage(error) };
+  } finally {
+    visionAnalysisInFlight = false;
+  }
+}
+
+async function getTempReferenceVisionBlob(asset) {
+  const blob = await getMediaBlob(asset.assetId) ?? await getScreenshotBlob(asset.assetId);
+  if (!blob) return null;
+  if (blob.type !== "image/gif") return blob;
+  const derived = await getDerivedMedia(asset.assetId).catch(() => null);
+  return derived?.thumbnail instanceof Blob ? derived.thumbnail : blob;
+}
+
+async function deleteUnreferencedMedia(assetIdsValue) {
+  const candidates = new Set((Array.isArray(assetIdsValue) ? assetIdsValue : []).map(String).map((value) => value.trim()).filter(Boolean));
+  if (!candidates.size) return;
+  const state = await readState();
+  const referenced = referencedMediaAssetIds(state);
+  await deleteMediaBlobs([...candidates].filter((assetId) => !referenced.has(assetId)));
+}
+
+function referencedMediaAssetIds(state) {
+  return collectRetainedLocalAssetIds(state);
+}
+
+function temporaryAssetIdsFromSession(session) {
+  return (Array.isArray(session?.referenceSnapshots) ? session.referenceSnapshots : [])
+    .filter((reference) => reference?.sourceType === "temporary")
+    .flatMap(tempReferenceAssetIds);
+}
+
+async function updateComposerSettings(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSettings);
+  let settings = normalizeComposerSettings(stored[STORAGE_KEYS.composerSettings]);
+  const allowedActions = ["save_agent", "reset_agent", "save_task", "reset_task", "preferences"];
+  const action = allowedActions.includes(message.action) ? message.action : "preferences";
+  if (action === "save_agent") settings = updateComposerAgentInstruction(settings, message.text);
+  if (action === "reset_agent") settings = resetComposerAgentInstruction(settings);
+  if (action === "save_task") settings = updateComposerTaskMethod(settings, { taskKey: message.taskKey, text: message.text });
+  if (action === "reset_task") settings = resetComposerTaskMethod(settings, message.taskKey);
+  if (["auto", "zh-CN", "en"].includes(message.outputLanguage)) settings.outputLanguage = message.outputLanguage;
+  if (message.lastTargetPlatform !== undefined) settings.lastTargetPlatform = String(message.lastTargetPlatform ?? "").trim();
+  if (message.lastAiProfile !== undefined) settings.lastAiProfile = normalizeComposerAiProfile(message.lastAiProfile);
+  if (message.productionReviewEnabled !== undefined) settings.productionReviewEnabled = message.productionReviewEnabled !== false;
+  await commitLocalChanges({ [STORAGE_KEYS.composerSettings]: settings });
+  const responseMessage = action.startsWith("reset_")
+    ? "已采用当前版本默认内容"
+    : action === "preferences" ? "创作偏好已保存" : "Agent 设置已保存";
+  return { ok: true, message: responseMessage, composerSettings: settings };
+}
+
+async function upsertComposerSession(value) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+  const session = createComposerSession(value);
+  if (!isMeaningfulComposerSession(session)) return { ok: false, message: "空白新对话不会保存到历史" };
+  const next = normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
+  await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
+  return { ok: true, session, summaries: next.map(sessionSummary) };
+}
+
+async function deleteComposerSession(sessionId) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.composerSessions,
+    STORAGE_KEYS.activeCreativeResult
+  ]);
+  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+  const removedSession = sessions.find((item) => item.id === sessionId);
+  const next = sessions.filter((item) => item.id !== sessionId);
+  if (next.length === sessions.length) return { ok: false, message: "没有找到这份创作草稿" };
+  const active = normalizeActiveCreativeResult(stored[STORAGE_KEYS.activeCreativeResult]);
+  await commitLocalChanges({
+    [STORAGE_KEYS.composerSessions]: next,
+    ...(active?.sessionId === sessionId ? { [STORAGE_KEYS.activeCreativeResult]: null } : {})
+  });
+  await deleteUnreferencedMedia(temporaryAssetIdsFromSession(removedSession));
+  return { ok: true, message: "创作草稿已删除", summaries: next.map(sessionSummary) };
+}
+
+async function saveComposerResult(message) {
+  const state = await readState();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]).find((item) => item.id === message.sessionId);
+  if (!session) return { ok: false, message: "创作草稿已变化，请重新打开" };
+  const version = session.promptVersions.find((item) => item.id === message.promptVersionId);
+  if (!version) return { ok: false, message: "最终提示词尚未完整保存" };
+  const title = String(message.title ?? version.title ?? session.title).trim() || "未命名提示词";
+  const contentRole = session.targetType === "video" ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.promptImage;
+  const contentType = contentTypeForRole(state.taxonomy, contentRole);
+  const entry = {
+    ...buildEntry({ text: version.text, title, url: "" }),
+    schemaVersion: SCHEMA_VERSION,
+    classification: contentType
+      ? { pathIds: [contentType.id], status: "confirmed", source: "composer", reason: "创作台保存" }
+      : { pathIds: [], status: "needs_review", source: "composer", reason: "没有匹配当前创作用途的内容类型" },
+    facetAssignments: [],
+    analysisCandidates: [],
+    analysisBreakdown: [],
+    rejectedCandidateKeys: [],
+    negativeTerms: [],
+    legacyFacetCandidates: [],
+    analysisPending: false,
+    creationMeta: {
+      sourceEntryIds: session.referenceSnapshots.map((item) => item.entryId),
+      promptVersionId: version.id,
+      methodVersion: version.methodVersion || COMPOSER_METHOD_VERSION,
+      targetPlatform: session.targetPlatform,
+      outputLanguage: version.outputLanguage || session.outputLanguage,
+      createdAt: version.createdAt
+    }
+  };
+  const entries = [...state.entries, entry];
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "最终提示词已保存为新案例", entry };
+}
+
+async function activateCreativeResult(message, sidePanelOpening = null) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions])
+    .find((item) => item.id === String(message.sessionId ?? "").trim());
+  if (!session) return { ok: false, message: "创作草稿已变化，请重新打开" };
+  if (session.targetType === "video") {
+    await commitLocalChanges({ [STORAGE_KEYS.activeCreativeResult]: null });
+    return { ok: false, message: "当前版本只支持关联图片生成结果" };
+  }
+  const activeCreativeResult = activateCreativeResultContext(session, message.promptVersionId);
+  await commitLocalChanges({ [STORAGE_KEYS.activeCreativeResult]: activeCreativeResult });
+  const panelOpened = sidePanelOpening ? await sidePanelOpening : false;
+  return {
+    ok: true,
+    message: panelOpened
+      ? "已打开侧边栏，可选择本次生成图片"
+      : "已准备添加生成图片，但侧边栏未自动打开，请点击插件图标",
+    panelOpened,
+    activeCreativeResult
+  };
+}
+
+async function captureAndCommitCreativeOutputs(message) {
+  const transaction = await enqueueCapture(async () => {
+    const captured = await dispatchCaptureMessage(message.captureType, message.tabId);
+    if (!captured?.ok || !captured.added) {
+      return { ...captured, captured, committed: null, draft: captured?.draft };
+    }
+    const committed = await enqueue(() => commitCreativeOutputsTransaction());
+    return {
+      ok: committed.ok,
+      message: committed.message,
+      draft: captured.draft,
+      captured,
+      committed
+    };
+  });
+  if (!transaction.ok || !transaction.committed) return transaction;
+  const committed = await analyzeCommittedCreativeOutputs(transaction.committed);
+  return { ...transaction, message: committed.message, committed };
+}
+
+async function commitExistingCreativeOutputs() {
+  const committed = await enqueueCapture(() => enqueue(() => commitCreativeOutputsTransaction()));
+  return analyzeCommittedCreativeOutputs(committed);
+}
+
+async function registerGeneratedOutputs(message) {
+  const state = await readState();
+  const sessionId = String(message.sessionId ?? "").trim();
+  const promptVersionId = String(message.promptVersionId ?? "").trim();
+  const session = state.composerSessions.find((item) => item.id === sessionId);
+  if (!session) return { ok: false, message: "对应的创作草稿已经不存在" };
+  if (!session.promptVersions.some((item) => item.id === promptVersionId)) {
+    return { ok: false, message: "生成图片与提示词版本不匹配" };
+  }
+  const visuals = Array.isArray(message.visuals) ? message.visuals : [];
+  if (!visuals.length) return { ok: false, message: "没有收到可登记的生成图片" };
+  for (const visual of visuals) {
+    const id = String(visual?.id ?? "").trim();
+    const blob = id ? await getScreenshotBlob(id) : null;
+    if (!blob || !blob.type.startsWith("image/") || !blob.size) {
+      return { ok: false, message: "有一张生成图片没有完整写入本地存储" };
+    }
+  }
+  let creativeRuns = normalizeCreativeRuns(state.creativeRuns);
+  let run = creativeRuns.find((item) => item.sessionId === sessionId && item.promptVersionId === promptVersionId);
+  if (run) {
+    for (const visual of visuals) run = addCreativeOutput(run, visual, undefined, message.generation);
+    creativeRuns = [run, ...creativeRuns.filter((item) => item.id !== run.id)];
+  } else {
+    run = createCreativeRun({ sessionId, promptVersionId }, session, visuals, undefined, message.generation);
+    creativeRuns = [run, ...creativeRuns];
+  }
+  creativeRuns = normalizeCreativeRuns(creativeRuns);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns });
+  return { ok: true, message: `已保存 ${visuals.length} 张生成图片`, runId: run.id, creativeRuns };
+}
+
+function dispatchCaptureMessage(type, tabId) {
+  const actions = {
+    ADD_ACTIVE_SELECTION_TO_DRAFT: "add-active-selection",
+    CAPTURE_ACTIVE_TAB_TO_DRAFT: "capture-active-tab",
+    CAPTURE_VISIBLE_VISUALS_TO_DRAFT: "capture-visible-visuals"
+  };
+  const action = actions[type];
+  if (!action) throw new Error("不支持的创作结果采集操作");
+  return captureRuntime.dispatch(action, { tabId });
+}
+
+async function commitCreativeOutputsTransaction() {
+  const state = await readState();
+  const context = state.activeCreativeResult;
+  if (!context) return { ok: false, message: "没有等待接收结果的提示词，请先在创作台复制一版提示词" };
+  const session = state.composerSessions.find((item) => item.id === context.sessionId);
+  if (!session) return { ok: false, message: "对应的创作草稿已经不存在" };
+  const draft = await captureRuntime.getDraft();
+  if (draft.fragments.length) return { ok: false, message: "本次生成结果只接收图片，请先清空待保存文字" };
+  if (!draft.visuals.length) return { ok: false, message: "请先选择或框选生成图片" };
+
+  let runs = normalizeCreativeRuns(state.creativeRuns);
+  let run = runs.find((item) =>
+    item.sessionId === context.sessionId && item.promptVersionId === context.promptVersionId
+  );
+  if (run) {
+    for (const visual of draft.visuals) run = addCreativeOutput(run, visual);
+    runs = [run, ...runs.filter((item) => item.id !== run.id)];
+  } else {
+    run = createCreativeRun(context, session, draft.visuals);
+    runs = [run, ...runs];
+  }
+  runs = normalizeCreativeRuns(runs);
+  const visualIds = draft.visuals.map((item) => item.id);
+  await commitLocalChanges({
+    [STORAGE_KEYS.creativeRuns]: runs,
+    [STORAGE_KEYS.captureDraft]: createCaptureDraft(),
+    [STORAGE_KEYS.activeCreativeResult]: null
+  });
+  return {
+    ok: true,
+    message: `已关联 ${visualIds.length} 张生成结果`,
+    runId: run.id,
+    visualIds,
+    creativeRuns: runs,
+    autoAnalyze: state.creativeExperimentSettings.enabled && state.creativeExperimentSettings.autoAnalyze
+  };
+}
+
+async function analyzeCommittedCreativeOutputs(committed) {
+  if (!committed.ok || !committed.autoAnalyze) return committed;
+
+  const failures = [];
+  for (const visualId of committed.visualIds) {
+    const result = await analyzeCreativeOutput(committed.runId, visualId);
+    if (!result.ok) failures.push(result.message);
+  }
+  if (!failures.length) {
+    return { ...committed, message: `${committed.message}，高级视觉对照已完成` };
+  }
+  return {
+    ...committed,
+    message: `${committed.message}；视觉对照未完成：${failures[0]}`,
+    analysisWarning: failures[0]
+  };
+}
+
+async function updateCreativeExperimentSettings(value) {
+  const settings = normalizeCreativeExperimentSettings(value);
+  if (settings.autoAnalyze) {
+    const vision = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration());
+    if (!vision.consent || !vision[vision.activeProvider].apiKey) {
+      throw new Error("自动视觉对照需要先完成图片视觉设置并确认截图发送范围");
+    }
+  }
+  await commitLocalChanges({ [STORAGE_KEYS.creativeExperimentSettings]: settings });
+  return {
+    ok: true,
+    message: settings.enabled
+      ? settings.autoAnalyze ? "创作实验已开启，保存结果后会使用当前视觉服务分析" : "创作实验已开启"
+      : "创作实验已关闭",
+    creativeExperimentSettings: settings
+  };
+}
+
+async function saveCreativeOutputToLibrary(message) {
+  const state = await readState();
+  const located = findCreativeOutput(state.creativeRuns, message.runId, message.visualId);
+  if (!located) return { ok: false, message: "没有找到这张创作结果" };
+  let posterAssetId = "";
+  let metadataCommitted = false;
+  try {
+  let run = located.run;
+  const output = located.output;
+  const videoOutput = output.visual.kind === "video";
+  const outputAssets = [output.visual];
+  if (videoOutput) {
+    const thumbnail = (await getDerivedMedia(output.visual.id).catch(() => null))?.thumbnail;
+    if (thumbnail instanceof Blob) {
+      const posterId = `poster:${output.visual.id}`;
+      await saveMediaBlob(posterId, thumbnail);
+      posterAssetId = posterId;
+      outputAssets[0] = { ...output.visual, posterAssetId: posterId };
+      outputAssets.push({
+        id: posterId,
+        kind: "image",
+        usage: "poster",
+        derivedFromAssetId: output.visual.id,
+        storageMode: "managed",
+        mimeType: thumbnail.type,
+        byteSize: thumbnail.size,
+        width: output.visual.width,
+        height: output.visual.height,
+        capturedAt: output.visual.capturedAt,
+        reviewStatus: "verified"
+      });
+    }
+  }
+  const existing = state.entries.find((entry) =>
+    entry.creationMeta?.promptVersionId === run.promptVersionId
+  );
+  let entry;
+  let entries;
+  if (existing) {
+    entry = {
+      ...existing,
+      creationMeta: {
+        ...existing.creationMeta,
+        creativeRunId: run.id,
+        promptVersionId: run.promptVersionId
+      }
+    };
+    for (const asset of outputAssets) entry = addEntryMedia(entry, asset, { makePrimary: false });
+    entries = state.entries.map((item) => item.id === existing.id ? entry : item);
+  } else {
+    entry = {
+      ...buildEntry({ text: run.promptText, title: run.title || "创作结果", url: "" }),
+      schemaVersion: SCHEMA_VERSION,
+      classification: (() => {
+        const contentType = contentTypeForRole(state.taxonomy, videoOutput ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.promptImage);
+        return contentType
+          ? { pathIds: [contentType.id], status: "confirmed", source: "composer", reason: "创作结果回流" }
+          : { pathIds: [], status: "needs_review", source: "composer", reason: `没有匹配${videoOutput ? "视频" : "图片"}创作用途的内容类型` };
+      })(),
+      facetAssignments: [],
+      analysisCandidates: [],
+      analysisBreakdown: [],
+      rejectedCandidateKeys: [],
+      negativeTerms: [],
+      legacyFacetCandidates: [],
+      analysisPending: false,
+      mediaAssets: outputAssets,
+      primaryMediaId: output.visual.id,
+      creationMeta: {
+        creativeRunId: run.id,
+        promptVersionId: run.promptVersionId,
+        methodVersion: run.methodVersion || COMPOSER_METHOD_VERSION,
+        targetPlatform: run.targetPlatform,
+        outputLanguage: run.outputLanguage,
+        createdAt: run.createdAt
+      }
+    };
+    entries = [...state.entries, normalizeEntryMedia(entry)];
+  }
+  run = recordCreativeSignal(run, output.visual.id, "saved_to_library");
+  const creativeRuns = replaceCreativeRun(state.creativeRuns, run);
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.creativeRuns]: creativeRuns
+  });
+  metadataCommitted = true;
+  let warning = "";
+  if (!videoOutput) {
+    try { await queueAutomaticVisionAnalysis([entry.id]); }
+    catch (error) { warning = `结果已保存，但自动画面分析没有加入队列：${userMessage(error)}`; }
+  }
+  return {
+    ok: true,
+    message: `${existing ? `结果${videoOutput ? "视频" : "图片"}已加入对应案例` : "结果与这版提示词已保存到灵感库"}${warning ? `；${warning}` : ""}`,
+    entry,
+    creativeRuns,
+    ...(warning ? { warnings: [warning] } : {})
+  };
+  } catch (error) {
+    if (posterAssetId && !metadataCommitted) await deleteMediaBlob(posterAssetId).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function updateCreativeSignal(message) {
+  const state = await readState();
+  const located = findCreativeOutput(state.creativeRuns, message.runId, message.visualId);
+  if (!located) return { ok: false, message: "没有找到这张创作结果" };
+  const run = recordCreativeSignal(located.run, located.output.visual.id, message.signalType);
+  const creativeRuns = replaceCreativeRun(state.creativeRuns, run);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns });
+  return { ok: true, creativeRuns };
+}
+
+async function updateCreativeJudgmentAction(message) {
+  const state = await readState();
+  const located = findCreativeOutput(state.creativeRuns, message.runId, message.visualId);
+  if (!located) return { ok: false, message: "没有找到这项创作结果" };
+  const run = updateCreativeJudgment(located.run, located.output.visual.id, message.judgment);
+  const creativeRuns = replaceCreativeRun(state.creativeRuns, run);
+  await commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns });
+  const judgment = run.outputs.find((item) => item.visual.id === located.output.visual.id)?.judgment ?? null;
+  return {
+    ok: true,
+    message: judgment ? "本次人工判断已保存" : "本次人工判断已清空",
+    creativeRuns,
+    judgment
+  };
+}
+
+async function deleteCreativeOutput(message) {
+  const state = await readState();
+  const located = findCreativeOutput(state.creativeRuns, message.runId, message.visualId);
+  if (!located) return { ok: false, message: "没有找到这张创作结果" };
+  const run = removeCreativeOutput(located.run, located.output.visual.id);
+  const creativeRuns = replaceCreativeRun(state.creativeRuns, run);
+  const usedByCase = state.entries.some((entry) =>
+    entryMediaAssets(entry).some((visual) => visual.id === located.output.visual.id)
+  );
+  if (located.output.visual.kind === "video") {
+    await commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns });
+    if (!usedByCase) await deleteMediaBlob(located.output.visual.id);
+    return { ok: true, message: "生成结果已移除", creativeRuns };
+  }
+  await commitMetadataThenDeleteImages({
+    imageIds: usedByCase ? [] : [located.output.visual.id],
+    deleteImage: deleteScreenshotBlob,
+    commitMetadata: () => commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns })
+  });
+  return { ok: true, message: "生成结果已移除", creativeRuns };
+}
+
+async function analyzeCreativeOutput(runId, visualId) {
+  if (visionAnalysisInFlight) return { ok: false, message: "已有一张图片正在分析，请等待完成" };
+  visionAnalysisInFlight = true;
+  try {
+    const state = await readState();
+    if (!state.creativeExperimentSettings.enabled) {
+      return { ok: false, message: "请先在分析设置中开启“创作实验（高级）”" };
+    }
+    const located = findCreativeOutput(state.creativeRuns, runId, visualId);
+    if (!located) return { ok: false, message: "没有找到这张创作结果" };
+    const blob = await getScreenshotBlob(located.output.visual.id);
+    if (!blob) return { ok: false, message: "没有读取到这张生成结果" };
+    const fingerprint = await imageFingerprint(blob);
+    const privateSettings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration());
+    const result = await evaluateCreativeOutputWithVision({
+      imageDataUrl: await blobToDataUrl(blob),
+      locale: located.run.outputLanguage === "en" ? "en" : "zh-CN",
+      settings: privateSettings,
+      target: creativeEvaluationTarget(located.run)
+    });
+    return enqueue(async () => {
+      const latest = await readState();
+      const current = findCreativeOutput(latest.creativeRuns, runId, visualId);
+      const currentBlob = await getScreenshotBlob(visualId);
+      if (!current || !currentBlob || await imageFingerprint(currentBlob) !== fingerprint) {
+        return { ok: false, message: "分析期间结果图片已经变化，本次对照没有写入" };
+      }
+      const run = applyCreativeEvaluation(current.run, visualId, {
+        ...result,
+        resultFingerprint: fingerprint,
+        analyzedAt: new Date().toISOString()
+      });
+      const creativeRuns = replaceCreativeRun(latest.creativeRuns, run);
+      await commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns });
+      return { ok: true, message: "视觉对照已完成", creativeRuns, evaluation: run.outputs.find((item) => item.visual.id === visualId)?.evaluation };
+    });
+  } catch (error) {
+    return { ok: false, message: userMessage(error) };
+  } finally {
+    visionAnalysisInFlight = false;
+  }
+}
+
+function activeCreativePromptSummary(context, sessions) {
+  if (!context) return null;
+  const session = sessions.find((item) => item.id === context.sessionId);
+  const version = session?.promptVersions.find((item) => item.id === context.promptVersionId);
+  if (!session || !version || session.targetType !== "image") return null;
+  return {
+    sessionId: session.id,
+    promptVersionId: version.id,
+    title: version.title || session.title,
+    targetPlatform: session.targetPlatform
+  };
+}
+
+function findCreativeOutput(runsValue, runIdValue, visualIdValue) {
+  const run = normalizeCreativeRuns(runsValue).find((item) => item.id === String(runIdValue ?? "").trim());
+  const output = run?.outputs.find((item) => item.visual.id === String(visualIdValue ?? "").trim());
+  return run && output ? { run, output } : null;
+}
+
+function replaceCreativeRun(runsValue, run) {
+  return normalizeCreativeRuns([run, ...normalizeCreativeRuns(runsValue).filter((item) => item.id !== run.id)]);
+}
+
+function creativeEvaluationTarget(run) {
+  return {
+    targetType: run.targetType,
+    targetPlatform: run.targetPlatform || "通用",
+    userRequest: run.briefSnapshot.filter((item) => item.role === "user").map((item) => item.content).join("\n"),
+    finalPrompt: run.promptText,
+    executionInstruction: run.executionInstruction
+  };
+}
+
+async function updateClassification(message) {
+  const state = await readState();
+  if (!isValidContentPath(state.taxonomy, message.pathIds)) {
+    return { ok: false, message: "内容分类路径无效" };
+  }
+  const current = findEntry(state, message.entryId);
+  const recovery = await recoverPaletteAfterClassification(confirmClassification(current, message.pathIds, state.taxonomy));
+  const updated = recovery.entry;
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  let classificationRules = state.classificationRules;
+  if (message.rememberSource) {
+    const rule = createSourceRule(current.url, message.pathIds, state.taxonomy);
+    classificationRules = [
+      ...state.classificationRules.filter((item) => item.hostname !== rule.hostname),
+      rule
+    ];
+  }
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.classificationRules]: classificationRules
+  });
+  const confirmationMessage = message.rememberSource ? "分类已确认，并记住此来源" : "内容分类已确认";
+  return {
+    ok: true,
+    message: [confirmationMessage, recovery.paletteMessage].filter(Boolean).join("，"),
+    entry: updated,
+    classificationRules
+  };
+}
+
+async function recoverPaletteAfterClassification(entry) {
+  const visual = primaryVisual(entry);
+  if (!visual || visual.palette?.colors?.length) {
+    return { entry };
+  }
+  try {
+    await ensureOffscreenDocument();
+    const result = await chrome.runtime.sendMessage({
+      target: "offscreen", type: "ANALYZE_STORED_SCREENSHOT", entryId: visual.id
+    });
+    if (result?.ok && result.palette?.colors?.length) {
+      return { entry: updateEntryVisual(entry, visual.id, (item) => ({ ...item, palette: result.palette })), paletteMessage: "色卡已从本地主图恢复" };
+    }
+    return { entry, paletteMessage: "本地截图暂时无法恢复色卡" };
+  } catch {
+    return { entry, paletteMessage: "本地截图暂时无法恢复色卡" };
+  }
+}
+
+async function updateContentTypeName(message) {
+  const state = await readState();
+  const taxonomy = updateContentType(state.taxonomy, message.contentId, { name: message.name });
+  await commitLocalChanges({ [STORAGE_KEYS.taxonomy]: taxonomy });
+  return { ok: true, message: "内容类型显示名已更新，历史案例会同步显示新名称", taxonomy };
+}
+
+async function createLibraryContentType(message) {
+  const state = await readState();
+  const taxonomy = createContentType(state.taxonomy, {
+    id: `content:${crypto.randomUUID()}`,
+    name: message.name,
+    role: message.role
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.taxonomy]: taxonomy });
+  return { ok: true, message: "内容类型已创建", taxonomy };
+}
+
+async function updateLibraryContentType(message) {
+  const state = await readState();
+  const taxonomy = updateContentType(state.taxonomy, message.contentId, {
+    name: message.name,
+    role: message.role
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.taxonomy]: taxonomy });
+  return { ok: true, message: "内容类型已更新，历史案例会继续使用这个分类", taxonomy };
+}
+
+async function updateLibraryContentTypeVisibility(message) {
+  const state = await readState();
+  const visibility = message.visibility === CONTENT_TYPE_VISIBILITY.categoryOnly
+    ? CONTENT_TYPE_VISIBILITY.categoryOnly
+    : CONTENT_TYPE_VISIBILITY.library;
+  const taxonomy = updateContentType(state.taxonomy, message.contentId, { visibility });
+  await commitLocalChanges({ [STORAGE_KEYS.taxonomy]: taxonomy });
+  return {
+    ok: true,
+    message: visibility === CONTENT_TYPE_VISIBILITY.categoryOnly
+      ? "这个内容类型现在仅在分类内显示"
+      : "这个内容类型现在会显示在资料库中",
+    taxonomy
+  };
+}
+
+async function deleteLibraryContentType(message) {
+  const state = await readState();
+  const transferred = removeContentTypeWithTransfer(state, message.contentId, message.replacementId);
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: transferred.entries,
+    [STORAGE_KEYS.classificationRules]: transferred.classificationRules,
+    [STORAGE_KEYS.taxonomy]: transferred.taxonomy
+  });
+  return {
+    ok: true,
+    message: transferred.movedCount
+      ? `内容类型已删除，${transferred.movedCount} 条案例已转移`
+      : "内容类型已删除",
+    entries: transferred.entries,
+    classificationRules: transferred.classificationRules,
+    taxonomy: transferred.taxonomy
+  };
+}
+
+async function createFacetTag(message) {
+  const state = await readState();
+  const before = domainState(state);
+  const facetCatalog = createFacetNode(state.facetCatalog, {
+    facetId: message.facetId,
+    parentId: message.parentId || null,
+    name: message.name,
+    aliases: message.aliases,
+    patterns: message.patterns
+  });
+  const next = { ...before, facetCatalog };
+  await persistDomainState(next, before, { entriesChanged: false });
+  return { ok: true, message: "创作标签已创建", facetCatalog, canUndoFacetUpdate: true };
+}
+
+async function applyDetailTagOrganization(message) {
+  const state = await readState();
+  const before = domainState(state);
+  const applied = applyDetailOrganizationMappings(before, message.mappings);
+  await persistDomainState(applied.state, before);
+  return {
+    ok: true,
+    message: `已整理 ${applied.changedCount} 个三级标签，其中合并 ${applied.mergedCount} 个；旧名称仍可搜索`,
+    ...publicDomainState(applied.state),
+    canUndoFacetUpdate: true
+  };
+}
+
+async function updateAiProviderConfiguration(message = {}) {
+  const current = await loadAiConfiguration();
+  const registry = mergeAiProviderRegistry(current.registry, message.registry);
+  const assignments = normalizeAiTaskAssignments(message.assignments ?? current.assignments, registry);
+  const configuration = {
+    registry,
+    assignments,
+    preferences: normalizeAiPreferences(message.preferences ?? current.preferences)
+  };
+  await persistAiConfiguration(configuration);
+  return aiConfigurationResponse(configuration, "AI 服务与七项默认任务已统一保存");
+}
+
+async function verifyAiImageGenerationCredential(message = {}) {
+  const providerId = String(message.providerId ?? "").trim();
+  const configuration = providerId ? await loadAiConfiguration() : null;
+  const profile = configuration?.registry?.providers?.[providerId];
+  const endpoint = String(message.endpoint ?? profile?.imageGeneration?.endpoint ?? "").trim();
+  const apiKey = String(message.apiKey ?? "").trim() || String(profile?.imageGeneration?.apiKey ?? "").trim();
+  const model = String(message.model ?? profile?.models?.imageGeneration ?? profile?.imageGeneration?.model ?? "").trim();
+  if (!endpoint || !apiKey || !model) throw new Error("图片生成 Key 校验缺少接口、Key 或模型");
+  const result = await aiProviderModule.verifyModelAccess({
+    id: "custom-media-image-credential-check",
+    endpoint,
+    apiKey,
+    protocol: "images_generations"
+  }, model);
+  if (!result.available) {
+    throw new Error(`当前保存的图片生成 API Key 的模型列表中没有 ${model}。米醋生图必须使用 vip_2_image（Image2）分组 Key；本次设置更改未保存，也没有发起生图请求。`);
+  }
+  return {
+    ok: true,
+    model,
+    verification: result.verification,
+    executionVerified: result.executionVerified,
+    message: `模型目录中可见 ${model}；这只证明目录可见，不代表米醋已授权该 Key 进入生图分组`
+  };
+}
+
+async function discoverAiProviderModels(providerIdValue, force = false) {
+  const providerId = String(providerIdValue ?? "").trim();
+  const configuration = await loadAiConfiguration();
+  const profile = configuration.registry.providers[providerId];
+  if (!profile) throw new Error("没有找到要刷新的 AI 厂商");
+  if (!profile.endpoint || !profile.apiKey) throw new Error(`${profile.label} 需要先保存接口地址和 API Key`);
+  const result = await aiProviderModule.discoverModels(profile, {
+    etag: force ? "" : profile.discovery?.etag
+  });
+  return enqueue(async () => {
+    const current = await loadAiConfiguration();
+    const currentProfile = current.registry.providers[providerId];
+    if (!currentProfile
+      || currentProfile.endpoint !== profile.endpoint
+      || currentProfile.protocol !== profile.protocol
+      || currentProfile.apiKey !== profile.apiKey) {
+      throw new Error(`${profile.label} 的连接已在模型读取期间变更，请重新刷新`);
+    }
+    const registry = mergeAiProviderRegistry(current.registry, { providers: {
+      [providerId]: {
+        discoveredModels: result.models,
+        discovery: {
+          discoveredAt: result.discoveredAt,
+          source: result.source,
+          etag: result.cache?.etag,
+          cacheControl: result.cache?.cacheControl,
+          error: ""
+        }
+      }
+    } });
+    const next = { ...current, registry };
+    await persistAiConfiguration(next);
+    return aiConfigurationResponse(next, `${profile.label} 已发现 ${result.models.length} 个模型`);
+  });
+}
+
+async function updateAiTextProvider(value = {}) {
+  const current = await loadAiConfiguration();
+  const { settings, credentialReset } = mergeAiSettings(projectAiRuntime(current).aiSettings, value);
+  const providerId = settings.activeProvider === "compatible" ? "custom-text" : "deepseek";
+  const source = settings.activeProvider === "compatible" ? settings.compatible : settings;
+  const registry = mergeAiProviderRegistry(current.registry, { providers: {
+    [providerId]: {
+      endpoint: settings.activeProvider === "compatible" ? source.endpoint : "https://api.deepseek.com/chat/completions",
+      protocol: "chat_completions",
+      apiKey: source.apiKey,
+      clearApiKey: value.clearApiKey === (settings.activeProvider === "compatible" ? "compatible" : "deepseek"),
+      consent: settings.consent,
+      models: { textTags: settings.activeProvider === "compatible" ? source.model : settings.analysisModel }
+    }
+  } });
+  const configuration = {
+    registry,
+    assignments: normalizeAiTaskAssignments({
+      ...current.assignments,
+      textTags: { providerId, model: settings.activeProvider === "compatible" ? source.model : settings.analysisModel }
+    }, registry),
+    preferences: normalizeAiPreferences({
+      ...current.preferences,
+      textInstructionsByLocale: settings.analysisInstructionsByLocale
+    })
+  };
+  await persistAiConfiguration(configuration);
+  return aiConfigurationResponse(configuration, credentialReset
+    ? "兼容接口域名已变更；旧 API Key 未沿用，请重新填写新服务的 Key"
+    : "文字标签服务已保存");
+}
+
+async function updateAiVisionProvider(value = {}) {
+  const current = await loadAiConfiguration();
+  const { settings, credentialReset } = mergeVisionSettings(projectAiRuntime(current).visionSettings, value);
+  permissionPatternForVisionSettings(settings);
+  if (!settings[settings.activeProvider].model) throw new Error("请填写所选图片服务的模型名称");
+  const providerId = settings.activeProvider === "compatible" ? "custom-media" : "openai";
+  const clear = String(value.clearApiKey ?? "");
+  const registry = mergeAiProviderRegistry(current.registry, { providers: {
+    openai: {
+      endpoint: "https://api.openai.com/v1/responses",
+      apiKey: settings.openai.apiKey,
+      clearApiKey: clear === "openai",
+      consent: settings.consent,
+      models: {
+        imageAnalysis: settings.openai.model,
+        videoGeneration: settings.openai.videoGeneration.model
+      },
+      videoGeneration: settings.openai.videoGeneration
+    },
+    "custom-media": {
+      endpoint: settings.compatible.endpoint,
+      protocol: settings.compatible.protocol,
+      apiKey: settings.compatible.apiKey,
+      clearApiKey: clear === "compatible",
+      consent: settings.consent,
+      models: {
+        imageAnalysis: settings.compatible.model,
+        imageGeneration: settings.compatible.imageGeneration.model
+      },
+      imageGeneration: {
+        ...settings.compatible.imageGeneration,
+        apiKey: clear === "compatible_image" ? "" : settings.compatible.imageGeneration.apiKey
+      }
+    }
+  } });
+  const assignments = { ...current.assignments, imageAnalysis: {
+    providerId,
+    model: providerId === "openai" ? settings.openai.model : settings.compatible.model
+  } };
+  for (const taskId of ["imageGeneration", "videoGeneration"]) {
+    if (assignments[taskId]?.providerId === providerId) {
+      assignments[taskId] = { ...assignments[taskId], model: registry.providers[providerId]?.models?.[taskId] };
+    }
+  }
+  const configuration = {
+    registry,
+    assignments: normalizeAiTaskAssignments(assignments, registry),
+    preferences: normalizeAiPreferences({
+      ...current.preferences,
+      visionInstructionsByLocale: settings.instructionsByLocale,
+      autoAnalyzeImports: settings.autoAnalyzeImports
+    })
+  };
+  const selected = registry.providers[providerId];
+  if (configuration.preferences.autoAnalyzeImports && (!selected?.consent || !selected?.credentialConfigured)) {
+    throw new Error("自动分析导入图片需要先完成视觉服务配置，并确认图片发送范围");
+  }
+  await persistAiConfiguration(configuration);
+  return aiConfigurationResponse(configuration, credentialReset
+    ? "兼容接口域名已变更；旧 API Key 未沿用，请重新填写新服务的 Key"
+    : "图片视觉分析设置已保存");
+}
+
+async function loadAiConfiguration() {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.aiProviderRegistry, STORAGE_KEYS.aiTaskAssignments, STORAGE_KEYS.aiPreferences,
+    STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes
+  ]);
+  return aiConfigurationFromStorage(stored);
+}
+
+async function persistAiConfiguration(configuration) {
+  await commitLocalChanges({
+    [STORAGE_KEYS.aiProviderRegistry]: configuration.registry,
+    [STORAGE_KEYS.aiTaskAssignments]: configuration.assignments,
+    [STORAGE_KEYS.aiPreferences]: configuration.preferences
+  });
+  await chrome.storage.local.remove([
+    STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes
+  ]);
+}
+
+function aiConfigurationResponse(configuration, message) {
+  const runtime = projectAiRuntime(configuration);
+  return {
+    ok: true,
+    message,
+    aiProviderRegistry: publicAiProviderRegistry(configuration.registry),
+    aiTaskAssignments: configuration.assignments,
+    aiSettings: publicAiSettings(runtime.aiSettings),
+    visionSettings: publicVisionSettings(runtime.visionSettings),
+    aiServiceProfiles: publicAiServiceProfiles(runtime.aiServiceProfiles),
+    aiTaskRoutes: runtime.aiTaskRoutes
+  };
+}
+
+async function getAiTaskRuntime(taskIdValue, allowUnconfigured = false) {
+  const taskId = canonicalAiTaskId(taskIdValue);
+  const configuration = await loadAiConfiguration();
+  const assignment = configuration.assignments[taskId];
+  const providerLabel = configuration.registry.providers[assignment?.providerId]?.label || assignment?.providerId;
+  if (["textTags", "skillExtraction", "creativePlanning"].includes(taskId)) {
+    return { ok: true, taskId, assignment, providerLabel, aiSettings: resolveTextTaskSettings(taskId, configuration, { requireConfigured: !allowUnconfigured }) };
+  }
+  if (["imageAnalysis", "imageGeneration"].includes(taskId)) {
+    return { ok: true, taskId, assignment, providerLabel, visionSettings: resolveVisionTaskSettings(taskId, configuration, { requireConfigured: !allowUnconfigured }) };
+  }
+  if (taskId === "videoAnalysis") return { ok: true, taskId, videoAnalysis: resolveVideoAnalysisTask(configuration) };
+  if (taskId === "videoGeneration") return { ok: true, taskId, runtime: projectAiRuntime(configuration) };
+  throw new Error("未知 AI 任务");
+}
+
+async function getComposerAiRuntime() {
+  const configuration = await loadAiConfiguration();
+  return { ok: true, aiRuntimeProtocolVersion: AI_RUNTIME_PROTOCOL_VERSION, ...projectAiRuntime(configuration) };
+}
+
+function canonicalAiTaskId(value) {
+  const map = {
+    "text-tags": "textTags", "skill-extraction": "skillExtraction", "creative-planning": "creativePlanning",
+    "image-analysis": "imageAnalysis", "video-analysis": "videoAnalysis",
+    "image-generation": "imageGeneration", "video-generation": "videoGeneration"
+  };
+  const id = String(value ?? "").trim();
+  return map[id] || id;
+}
+
+async function probeVisionModels(value) {
+  const current = projectAiRuntime(await loadAiConfiguration()).visionSettings;
+  const { settings } = mergeVisionSettings(current, { activeProvider: "compatible", compatible: value });
+  const result = await probeCompatibleModels(settings.compatible);
+  return { ok: true, message: `连接成功 · 找到 ${result.models.length} 个模型`, ...result };
+}
+
+async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "") {
+  if (visionAnalysisInFlight) return { ok: false, message: "已有一张图片正在分析，请等待完成" };
+  visionAnalysisInFlight = true;
+  try {
+    const state = await readState();
+    const entry = findEntry(state, entryId);
+    const visualId = String(visualIdValue ?? "").trim() || primaryVisual(entry)?.id;
+    const visual = normalizeEntryVisuals(entry).visuals.find((item) => item.id === visualId);
+    if (!visual) return { ok: false, message: "这条案例没有可分析的截图" };
+    const blob = await getVisionImageBlob(visual.id);
+    if (!blob) return { ok: false, message: "没有读取到这条案例的截图" };
+    const fingerprint = await imageFingerprint(blob);
+    const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration());
+    const result = await analyzeImageWithVision({
+      imageDataUrl: await blobToDataUrl(blob),
+      catalog: state.facetCatalog,
+      locale: outputLocale === "en" ? "en" : "zh-CN",
+      measuredCanvas: { width: visual.width, height: visual.height },
+      settings
+    });
+
+    return await enqueue(async () => {
+      const currentState = await readState();
+      const current = findEntry(currentState, entry.id);
+      const currentVisual = normalizeEntryVisuals(current).visuals.find((item) => item.id === visual.id);
+      const currentBlob = await getVisionImageBlob(visual.id);
+      if (!currentVisual || !currentBlob || await imageFingerprint(currentBlob) !== fingerprint) {
+        return { ok: false, message: "分析期间截图已经变化，本次结果没有写入，请重新分析" };
+      }
+      const analysisState = domainState(currentState);
+      analysisState.entries = analysisState.entries.map((item) => item.id === current.id
+        ? { ...item, visionAnalysis: currentVisual?.visionAnalysis }
+        : item);
+      const applied = applyVisionAnalysis(analysisState, current.id, result, {
+        version: VISION_ANALYSIS_VERSION,
+        visualId: visual.id,
+        imageFingerprint: fingerprint,
+        profileFingerprint: result.profileFingerprint,
+        locale: outputLocale,
+        providerType: result.providerType,
+        model: result.model,
+        usage: result.usage,
+        batchJobId: String(batchJobIdValue ?? "").trim()
+      });
+      const analyzed = applied.state.entries.find((item) => item.id === current.id);
+      const visionAnalysis = analyzed.visionAnalysis;
+      delete analyzed.visionAnalysis;
+      const normalized = updateEntryVisual(analyzed, visual.id, (item) => ({
+        ...item,
+        contentHash: fingerprint,
+        visionAnalysis
+      }));
+      applied.state.entries = applied.state.entries.map((item) => item.id === current.id ? normalized : item);
+      const undoStore = {
+        ...((await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo))[STORAGE_KEYS.visionAnalysisUndo] ?? {})
+      };
+      undoStore[current.id] = applied.undo;
+      await commitLocalChanges({
+        ...storagePayload(applied.state),
+        [STORAGE_KEYS.visionAnalysisUndo]: undoStore
+      });
+      return {
+        ok: true,
+        message: result.tagDiagnostics?.rejectedCount
+          ? `画面分析已保存，并写入 ${applied.appliedCount} 个检索标签；另有 ${result.tagDiagnostics.rejectedCount} 个不符合当前分类体系的可选标签未采用`
+          : `画面分析已保存，并写入 ${applied.appliedCount} 个检索标签`,
+        entry: applied.state.entries.find((item) => item.id === current.id),
+        usage: result.usage,
+        ...publicDomainState(applied.state),
+        visionUndoEntryIds: Object.keys(undoStore)
+      };
+    });
+  } finally {
+    visionAnalysisInFlight = false;
+  }
+}
+
+async function analyzeEntryVisualSet(message) {
+  const state = await readState();
+  const current = normalizeEntryMedia(findEntry(state, message.entryId));
+  const locale = message.outputLocale === "en" ? "en" : "zh-CN";
+  const selectedIds = new Set((Array.isArray(message.assetIds) ? message.assetIds : []).map((id) => String(id ?? "").trim()).filter(Boolean));
+  const assets = current.mediaAssets.filter((asset) => asset.kind === "image" && asset.usage !== "poster" && (!selectedIds.size || selectedIds.has(asset.id)));
+  const prepared = prepareVisualSetSummary(assets.map((asset) => ({
+    assetId: asset.id,
+    imageFingerprint: asset.contentHash,
+    analysis: asset.visionAnalysis
+  })), locale);
+  if (!prepared.ready) return {
+    ok: false,
+    code: "missing_individual_analysis",
+    missingAssetIds: prepared.missingAssetIds,
+    message: `还有 ${prepared.missingAssetIds.length} 张图片缺少有效的独立分析，请先完成逐图分析`
+  };
+  const configuration = await loadAiConfiguration();
+  const result = await summarizeVisualSetWithAi(prepared.input, resolveTextTaskSettings("creativePlanning", configuration), {
+    instruction: compileVisualSetSummaryInstruction(locale)
+  });
+  const summary = normalizeVisualSetSummaryV1(result.value, assets.map((asset) => asset.id));
+  const analysis = {
+    id: `visual-set:${crypto.randomUUID()}`,
+    ...summary,
+    text: summary.reusablePrompt,
+    mode: String(message.mode || "group"),
+    batchIndex: Math.max(0, Number(message.batchIndex) || 0),
+    batchCount: Math.max(1, Number(message.batchCount) || 1),
+    provider: result.provider,
+    model: result.model,
+    usage: result.usage,
+    createdAt: new Date().toISOString()
+  };
+  const updated = normalizeEntryMedia({ ...current, visualSetAnalyses: [...current.visualSetAnalyses, analysis] });
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "整组图片关系分析已保存", entry: updated, analysis };
+}
+
+async function analyzeEntryVideo(message) {
+  requireVideoAnalysisConfirmation(message.singleConfirmation);
+  const state = await readState();
+  const entry = normalizeEntryMedia(findEntry(state, message.entryId));
+  const assetId = String(message.assetId ?? "").trim() || entry.primaryMediaId;
+  const asset = entry.mediaAssets.find((item) => item.id === assetId && item.kind === "video" && item.usage !== "poster");
+  if (!asset) return { ok: false, message: "没有找到要分析的视频" };
+  const route = resolveVideoAnalysisTask(await loadAiConfiguration());
+  const videoBlob = asset.storageMode === "managed" ? await getMediaBlob(asset.id) : null;
+  if (asset.storageMode === "managed" && !videoBlob) return { ok: false, message: "本地视频文件缺失，无法分析" };
+  const sourceUrl = asset.reference?.url || asset.sourceUrl;
+  const analyzeVideo = route.providerId === "gemini"
+    ? analyzeVideoWithGemini
+    : route.providerId === "openrouter"
+      ? analyzeVideoWithOpenRouter
+      : null;
+  if (!analyzeVideo) throw new Error(`${route.provider} 的视频理解请求协议当前版本尚未适配`);
+  const analysis = await analyzeVideo({
+    apiKey: route.apiKey,
+    endpoint: route.endpoint,
+    model: route.model,
+    mode: message.mode,
+    customQuestion: message.customQuestion,
+    videoBlob,
+    youtubeUrl: sourceUrl,
+    onStage: (phase) => chrome.runtime.sendMessage({
+      type: "VIDEO_ANALYSIS_CHANGED", entryId: entry.id, assetId: asset.id, phase,
+      provider: route.provider, model: route.model
+    }).catch(() => undefined)
+  });
+  return await enqueue(async () => {
+    const currentState = await readState();
+    const current = normalizeEntryMedia(findEntry(currentState, entry.id));
+    if (!current.mediaAssets.some((item) => item.id === asset.id)) {
+      return { ok: false, message: "分析期间视频已被移除，本次结果没有写入" };
+    }
+    const record = {
+      id: `video-analysis:${crypto.randomUUID()}`,
+      assetId: asset.id,
+      text: analysis.text,
+      mode: String(message.mode || "creative-breakdown"),
+      prompt: analysis.prompt,
+      sourceKind: analysis.sourceKind,
+      provider: analysis.provider,
+      model: analysis.model,
+      usage: analysis.usage,
+      cost: analysis.cost ?? null,
+      routing: analysis.routing ?? null,
+      version: 1,
+      createdAt: new Date().toISOString()
+    };
+    const updated = normalizeEntryMedia({ ...current, videoAnalyses: [...current.videoAnalyses, record] });
+    await commitLocalChanges({
+      [STORAGE_KEYS.entries]: currentState.entries.map((item) => item.id === current.id ? updated : item)
+    });
+    return { ok: true, message: "视频分析已保存为新版本", entry: updated, analysis: record };
+  });
+}
+
+async function updateVisionDescription(entryId, visualIdValue, description) {
+  const state = await readState();
+  const current = findEntry(state, entryId);
+  const visualId = String(visualIdValue ?? "").trim() || primaryVisual(current)?.id;
+  const visual = normalizeEntryVisuals(current).visuals.find((item) => item.id === visualId);
+  if (!visual?.visionAnalysis) throw new Error("这张截图还没有可编辑的画面描述");
+  const temporary = editVisionDescription({ visionAnalysis: visual.visionAnalysis }, description);
+  const updated = updateEntryVisual(current, visual.id, (item) => ({ ...item, visionAnalysis: temporary.visionAnalysis }));
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "画面描述已保存", entry: updated, entries };
+}
+
+async function updateEntryMediaPromptAction(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const updated = setEntryMediaPrompt(current, message.assetId, message.text, "manual");
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return {
+    ok: true,
+    message: String(message.text ?? "").trim() ? "这张图片的独立提示词已保存" : "已恢复使用案例共享提示词",
+    entry: updated
+  };
+}
+
+async function applyEntryMediaPromptSuggestions(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const suggestions = Array.isArray(message.suggestions) ? message.suggestions : [];
+  let updated = current;
+  let appliedCount = 0;
+  for (const item of suggestions) {
+    const text = String(item?.text ?? "").trim();
+    if (!text) continue;
+    updated = setEntryMediaPrompt(updated, item.assetId, text, "ai-suggestion");
+    appliedCount += 1;
+  }
+  if (!appliedCount) return { ok: false, message: "没有需要保存的逐图提示词" };
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: `已确认并保存 ${appliedCount} 条逐图提示词`, entry: updated };
+}
+
+async function undoEntryVisionAnalysis(entryId) {
+  const state = await readState();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo);
+  const undoStore = { ...(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
+  const undo = undoStore[entryId];
+  if (!undo) return { ok: false, message: "这条案例没有可撤回的图片分析" };
+  const current = findEntry(state, entryId);
+  const visualId = String(undo.visualId ?? "").trim() || primaryVisual(current)?.id;
+  const visual = normalizeEntryVisuals(current).visuals.find((item) => item.id === visualId);
+  const temporaryState = domainState(state);
+  temporaryState.entries = temporaryState.entries.map((entry) => entry.id === entryId
+    ? { ...entry, visionAnalysis: visual?.visionAnalysis }
+    : entry);
+  const next = undoVisionAnalysis(temporaryState, undo);
+  const undoneEntry = next.entries.find((entry) => entry.id === entryId);
+  const restoredVision = undoneEntry.visionAnalysis;
+  delete undoneEntry.visionAnalysis;
+  const normalized = updateEntryVisual(undoneEntry, visualId, (item) => {
+    const updated = { ...item };
+    if (restoredVision) updated.visionAnalysis = restoredVision;
+    else delete updated.visionAnalysis;
+    return updated;
+  });
+  next.entries = next.entries.map((entry) => entry.id === entryId ? normalized : entry);
+  delete undoStore[entryId];
+  await commitLocalChanges({
+    ...storagePayload(next),
+    [STORAGE_KEYS.visionAnalysisUndo]: undoStore
+  });
+  return {
+    ok: true,
+    message: "已撤回本次图片分析",
+    entry: next.entries.find((item) => item.id === entryId),
+    ...publicDomainState(next),
+    visionUndoEntryIds: Object.keys(undoStore)
+  };
+}
+
+async function updateEntryFacet(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const node = state.facetCatalog.nodes.find((item) => item.id === message.nodeId && item.status === "active");
+  if (!node || node.facetId !== message.facetId) return { ok: false, message: "创作标签无效" };
+  const updated = setManualAssignment(current, node.facetId, node.id, message.selected !== false);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: message.selected === false ? "标签已移除" : "创作标签已添加", entry: updated };
+}
+
+async function updateCaseText(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const updated = updateEntryText(current, message.text, message.textRevision);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return {
+    ok: true,
+    message: updated.text === current.text ? "提示词没有变化" : "提示词已保存，需要时可重新分析标签",
+    entry: updated
+  };
+}
+
+async function updateCaseTitle(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const title = String(message.title ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  if (!title) return { ok: false, message: "案例标题不能为空" };
+  const updated = { ...current, title };
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: title === current.title ? "标题没有变化" : "标题已保存", entry: updated };
+}
+
+async function updateOrganizer(message) {
+  const state = await readState();
+  let organizerState = normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id));
+  let created = null;
+  if (message.type === "CREATE_COLLECTION") {
+    const result = createCollection(organizerState, message.name);
+    organizerState = result.state;
+    created = result.item;
+  } else if (message.type === "RENAME_COLLECTION") {
+    organizerState = renameCollection(organizerState, message.collectionId, message.name);
+  } else if (message.type === "DELETE_COLLECTION") {
+    organizerState = deleteCollection(organizerState, message.collectionId);
+  } else if (message.type === "REPLACE_COLLECTION_ENTRIES") {
+    const validIds = new Set(state.entries.map((entry) => entry.id));
+    const entryIds = (Array.isArray(message.entryIds) ? message.entryIds : []).filter((id) => validIds.has(id));
+    organizerState = replaceCollectionEntries(organizerState, message.collectionId, entryIds);
+  } else if (message.type === "SET_COLLECTION_VISIBILITY") {
+    organizerState = setCollectionVisibility(organizerState, message.collectionId, message.visibility);
+  }
+  await commitLocalChanges({ [STORAGE_KEYS.organizerState]: organizerState });
+  return { ok: true, message: organizerMessage(message.type), organizerState, created };
+}
+
+function organizerMessage(type) {
+  return ({
+    CREATE_COLLECTION: "项目已创建",
+    RENAME_COLLECTION: "项目名称已保存",
+    DELETE_COLLECTION: "项目已删除，案例仍保留在资料库",
+    REPLACE_COLLECTION_ENTRIES: "项目案例已更新",
+    SET_COLLECTION_VISIBILITY: "项目显示范围已更新"
+  })[type] || "项目已更新";
+}
+
+async function decideAnalysisCandidate(message, accepted) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  if (accepted) {
+    const next = acceptAnalysisCandidate(domainState(state), current.id, message.candidateId, message.edits);
+    await persistDomainState(next, domainState(state));
+    return { ok: true, message: "候选已确认，并归入可编辑词库", ...publicDomainState(next), canUndoFacetUpdate: true };
+  }
+  const updated = rejectAnalysisCandidate(current, message.candidateId);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "候选已拒绝，同一候选不会重复出现", entry: updated };
+}
+
+async function applyEntryAnalysisResult(message) {
+  const state = await readState();
+  const entry = findEntry(state, message.entryId);
+  if (message.textRevision && message.textRevision !== entryTextRevision(entry)) {
+    return { ok: false, message: "提示词原文已变化，本次分析结果没有写入" };
+  }
+  const fingerprint = message.fingerprint || await textFingerprint(entry.text);
+  const applied = applyTextAnalysisTags(domainState(state), entry.id, message.tags);
+  const updated = applied.state.entries.find((item) => item.id === entry.id);
+  updated.analysisPending = false;
+  updated.analyzedAt = new Date().toISOString();
+  updated.analysisMeta = analysisMeta(message, fingerprint, updated.analyzedAt, updated);
+  await persistDomainState(applied.state, domainState(state));
+  return {
+    ok: true,
+    message: analysisResultMessage(applied),
+    entry: updated,
+    ...publicDomainState(applied.state),
+    canUndoFacetUpdate: true
+  };
+}
+
+async function previewDeepSeekBatch(outputLocale, mode = "incremental") {
+  const state = await readState();
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisRebuildStaging
+  ]);
+  const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  const previousSummary = analysisBatchSummary(previous);
+  if (previous?.mode === "rebuild" && previousSummary?.counts.failed && !previous.partialApplied) {
+    const recovery = analysisRebuildRecovery(previous, stored[STORAGE_KEYS.analysisRebuildStaging]);
+    return {
+      ok: false,
+      message: recovery.recoverable
+        ? `已有 ${recovery.stagedResultCount} 条重建结果安全暂存，请先继续完成剩余 ${previousSummary.counts.failed} 条`
+        : "旧重建任务的暂存结果不完整，已阻止创建新的付费任务"
+    };
+  }
+  const settings = resolveTextTaskSettings("textTags", await loadAiConfiguration(), { requireConfigured: false });
+  const locale = outputLocale === "en" ? "en" : "zh-CN";
+  const profileFingerprint = await analysisProfileFingerprint(settings, locale);
+  const preview = await previewAnalysisBatch(state.entries, {
+    analysisModel: settings.activeProvider === "compatible" ? settings.compatible.model : settings.analysisModel,
+    profileFingerprint,
+    mode,
+    fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length
+  });
+  return { ok: true, message: "批量分析预览已生成", preview };
+}
+
+async function createDeepSeekBatch(outputLocale, mode = "incremental") {
+  const state = await readState();
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisRebuildStaging
+  ]);
+  const settings = resolveTextTaskSettings("textTags", await loadAiConfiguration());
+  if (!publicAiSettings(settings).configured) return { ok: false, message: "请先完成所选 AI 服务配置" };
+  if (!settings.consent) return { ok: false, message: "请先确认：主动分析时会发送案例文字到所选 AI 服务" };
+  const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  const previousSummary = analysisBatchSummary(previous);
+  if (previous?.mode === "rebuild" && previousSummary?.counts.failed && !previous.partialApplied) {
+    const recovery = analysisRebuildRecovery(previous, stored[STORAGE_KEYS.analysisRebuildStaging]);
+    return {
+      ok: false,
+      message: recovery.recoverable
+        ? `已有 ${recovery.stagedResultCount} 条重建结果安全暂存，请先继续完成剩余 ${previousSummary.counts.failed} 条`
+        : "旧重建任务的暂存结果不完整，已阻止创建新的付费任务"
+    };
+  }
+  if (previous && ["running", "paused"].includes(previous.status) &&
+      previous.items.some((item) => ["pending", "running"].includes(item.status))) {
+    return { ok: false, message: "已有未完成的批量任务，请继续或取消后再新建" };
+  }
+  const locale = outputLocale === "en" ? "en" : "zh-CN";
+  const profileFingerprint = await analysisProfileFingerprint(settings, locale);
+  const job = await createAnalysisBatchJob(state.entries, {
+    analysisModel: settings.activeProvider === "compatible" ? settings.compatible.model : settings.analysisModel,
+    outputLocale: locale,
+    profileFingerprint,
+    mode,
+    catalogRevision: state.facetCatalog.revision,
+    fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length
+  });
+  const changes = { [STORAGE_KEYS.batchJob]: job };
+  if (job.mode === "rebuild") {
+    changes[STORAGE_KEYS.analysisRebuildStaging] = { version: 1, jobId: job.id, results: {} };
+  } else {
+    changes[STORAGE_KEYS.analysisBatchUndo] = createAnalysisBatchUndo(job, state);
+  }
+  await commitLocalChanges(changes);
+  return { ok: true, message: `已创建 ${job.items.length} 条批量分析任务`, analysisBatchJob: analysisBatchSummary(job) };
+}
+
+async function claimDeepSeekBatchItems(jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const current = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
+  const claimed = claimAnalysisItems(current);
+  if (claimed.claims.length) {
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: claimed.job });
+  }
+  return {
+    ok: true,
+    claims: claimed.claims,
+    analysisBatchJob: analysisBatchSummary(claimed.job)
+  };
+}
+
+async function getDeepSeekBatchStatus(jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
+  return { ok: true, analysisBatchJob: analysisBatchSummary(job) };
+}
+
+async function commitDeepSeekBatchItem(message) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisRebuildStaging
+  ]);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
+  requireClaim(job, message.entryId, message.claimId);
+  if (message.error) {
+    const failed = failAnalysisItem(job, message.entryId, message.claimId, message.error);
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: failed });
+    return {
+      ok: true,
+      message: "已记录失败项",
+      analysisBatchJob: analysisBatchSummary(failed)
+    };
+  }
+  const state = await readState();
+  const entry = findEntry(state, message.entryId);
+  if (entryTextRevision(entry) !== Math.max(1, Number(message.textRevision) || 1)) {
+    return failDeepSeekBatchItem({
+      ...message,
+      error: { message: "提示词原文已变化，请重新预览", status: 409 }
+    });
+  }
+  const expectedRevision = job.resultCatalogRevision ?? job.catalogRevision;
+  if (state.facetCatalog.revision !== expectedRevision) {
+    const failed = failAnalysisItem(job, message.entryId, message.claimId, {
+      message: "创作词库已在其他页面修改，请暂停后重新分析",
+      status: 409
+    });
+    const paused = pauseAnalysisBatch(failed);
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: paused });
+    return { ok: false, message: "创作词库已变化，批量任务已暂停", analysisBatchJob: analysisBatchSummary(paused) };
+  }
+  if (job.mode === "rebuild") {
+    return commitStagedRebuildResults(job, stored[STORAGE_KEYS.analysisRebuildStaging], state, [message]);
+  }
+  const applied = applyTextAnalysisTags(domainState(state), entry.id, message.tags);
+  const updated = applied.state.entries.find((item) => item.id === entry.id);
+  updated.analysisPending = false;
+  updated.analyzedAt = new Date().toISOString();
+  updated.analysisMeta = analysisMeta({ ...message, profileFingerprint: job.profileFingerprint }, message.fingerprint, updated.analyzedAt, updated);
+  const nextJob = succeedAnalysisItem(
+    job,
+    message.entryId,
+    message.claimId,
+    message.usage,
+    applied.state.facetCatalog.revision
+  );
+  await commitLocalChanges({
+    ...storagePayload(applied.state),
+    [STORAGE_KEYS.batchJob]: nextJob
+  });
+  return {
+    ok: true,
+    message: analysisResultMessage(applied),
+    analysisBatchJob: analysisBatchSummary(nextJob)
+  };
+}
+
+async function commitDeepSeekBatchItems(message) {
+  const results = Array.isArray(message.results) ? message.results : [];
+  if (!results.length) return { ok: false, message: "批量分析结果为空" };
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisRebuildStaging
+  ]);
+  let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
+  const state = await readState();
+  const expectedRevision = job.resultCatalogRevision ?? job.catalogRevision;
+  if (state.facetCatalog.revision !== expectedRevision) {
+    const paused = pauseAnalysisBatch(job);
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: paused });
+    return { ok: false, message: "创作词库已变化，批量任务已暂停", analysisBatchJob: analysisBatchSummary(paused) };
+  }
+  if (job.mode === "rebuild") {
+    return commitStagedRebuildResults(job, stored[STORAGE_KEYS.analysisRebuildStaging], state, results);
+  }
+  let working = domainState(state);
+  for (const result of results) {
+    requireClaim(job, result.entryId, result.claimId);
+    if (result.error) {
+      job = failAnalysisItem(job, result.entryId, result.claimId, result.error);
+      continue;
+    }
+    const entry = working.entries.find((item) => item.id === result.entryId);
+    if (!entry || entryTextRevision(entry) !== Math.max(1, Number(result.textRevision) || 1)) {
+      job = failAnalysisItem(job, result.entryId, result.claimId, {
+        message: "提示词原文已变化，请重新预览",
+        status: 409
+      });
+      continue;
+    }
+    const applied = applyTextAnalysisTags(working, entry.id, result.tags);
+    working = applied.state;
+    const updated = working.entries.find((item) => item.id === entry.id);
+    updated.analysisPending = false;
+    updated.analyzedAt = new Date().toISOString();
+    updated.analysisMeta = analysisMeta({
+      ...result,
+      profileFingerprint: job.profileFingerprint
+    }, result.fingerprint, updated.analyzedAt, updated);
+    job = succeedAnalysisItem(job, result.entryId, result.claimId, result.usage, working.facetCatalog.revision);
+  }
+  await commitLocalChanges({
+    ...storagePayload(working),
+    [STORAGE_KEYS.batchJob]: job
+  });
+  return {
+    ok: true,
+    facetCatalog: working.facetCatalog,
+    analysisBatchJob: analysisBatchSummary(job)
+  };
+}
+
+async function commitStagedRebuildResults(jobValue, stagingValue, state, results) {
+  const stagedResult = stageAnalysisRebuildResults(jobValue, stagingValue, state, results);
+  let { job } = stagedResult;
+  const { staging } = stagedResult;
+  const summary = analysisBatchSummary(job);
+  if (summary.status !== "completed" || summary.counts.failed) {
+    await commitLocalChanges({
+      [STORAGE_KEYS.batchJob]: job,
+      [STORAGE_KEYS.analysisRebuildStaging]: staging
+    });
+    return { ok: true, analysisBatchJob: summary };
+  }
+
+  const finalized = finalizeAnalysisRebuild(job, staging, domainState(state));
+  const working = finalized.state;
+  job = finalized.job;
+  const undo = createAnalysisBatchUndo(job, state);
+  await commitLocalChanges({
+    ...storagePayload(working),
+    [STORAGE_KEYS.batchJob]: job,
+    [STORAGE_KEYS.analysisBatchUndo]: undo,
+    [STORAGE_KEYS.analysisRebuildStaging]: { version: 1, jobId: job.id, committed: true, results: {} }
+  });
+  await chrome.storage.local.remove(STORAGE_KEYS.analysisRebuildStaging);
+  return {
+    ok: true,
+    message: "全部案例已成功，固定标签树已原子切换",
+    facetCatalog: working.facetCatalog,
+    analysisBatchJob: analysisBatchSummary(job)
+  };
+}
+
+async function failDeepSeekBatchItem(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
+  requireClaim(job, message.entryId, message.claimId);
+  const failed = failAnalysisItem(job, message.entryId, message.claimId, message.error);
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: failed });
+  return { ok: true, message: "已记录失败项", analysisBatchJob: analysisBatchSummary(failed) };
+}
+
+async function updateDeepSeekBatch(action, jobId) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisRebuildStaging
+  ]);
+  const current = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
+  if (action === "retry" && current.mode === "rebuild") {
+    const recovery = analysisRebuildRecovery(current, stored[STORAGE_KEYS.analysisRebuildStaging]);
+    if (!recovery.recoverable) {
+      return { ok: false, message: "重建暂存结果不完整，已阻止重复付费；正式标签库保持不变" };
+    }
+  }
+  const actions = {
+    pause: pauseAnalysisBatch,
+    resume: resumeAnalysisBatch,
+    cancel: cancelAnalysisBatch,
+    retry: retryFailedAnalysisItems
+  };
+  const next = actions[action](current);
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
+  if (action === "cancel" && current.mode === "rebuild") {
+    await chrome.storage.local.remove(STORAGE_KEYS.analysisRebuildStaging);
+  }
+  const messages = {
+    pause: "批量分析已暂停",
+    resume: "批量分析已继续",
+    cancel: "批量分析已取消",
+    retry: current.mode === "rebuild" ? "仅剩余失败项已重新加入队列，已有暂存结果继续保留" : "失败项已重新加入队列"
+  };
+  return { ok: true, message: messages[action], analysisBatchJob: analysisBatchSummary(next) };
+}
+
+async function applyStagedAnalysisRebuild(jobId) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisRebuildStaging
+  ]);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
+  const recovery = analysisRebuildRecovery(job, stored[STORAGE_KEYS.analysisRebuildStaging]);
+  if (!recovery.recoverable) {
+    return { ok: false, message: "没有可安全应用的重建缓存，正式标签库保持不变" };
+  }
+  const state = await readState();
+  const expectedRevision = job.resultCatalogRevision ?? job.catalogRevision;
+  if (state.facetCatalog.revision !== expectedRevision) {
+    return { ok: false, message: "创作词库已在重建后修改，不能安全应用旧缓存" };
+  }
+  const staleCount = job.items.filter((item) => {
+    if (item.status !== "succeeded") return false;
+    const entry = state.entries.find((candidate) => candidate.id === item.entryId);
+    return !entry || entryTextRevision(entry) !== item.textRevision;
+  }).length;
+  if (staleCount) {
+    return { ok: false, message: `${staleCount} 条成功案例的原文已变化，不能安全应用旧缓存` };
+  }
+  const finalized = finalizePartialAnalysisRebuild(
+    job,
+    stored[STORAGE_KEYS.analysisRebuildStaging],
+    domainState(state)
+  );
+  const undo = createAnalysisBatchUndo(job, state);
+  await commitLocalChanges({
+    ...storagePayload(finalized.state),
+    [STORAGE_KEYS.batchJob]: finalized.job,
+    [STORAGE_KEYS.analysisBatchUndo]: undo,
+    [STORAGE_KEYS.analysisRebuildStaging]: { version: 1, jobId: job.id, committed: true, results: {} }
+  });
+  await chrome.storage.local.remove(STORAGE_KEYS.analysisRebuildStaging);
+  const failedCount = analysisBatchSummary(job).counts.failed;
+  return {
+    ok: true,
+    message: `已应用 ${recovery.stagedResultCount} 条成功结果，${failedCount} 条失败案例已转为待分析`,
+    facetCatalog: finalized.state.facetCatalog,
+    analysisBatchJob: analysisBatchSummary(finalized.job),
+    canUndoAnalysisBatch: true
+  };
+}
+
+async function recoverDeepSeekBatch() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  if (!job || !job.items.some((item) => item.status === "running")) {
+    return { ok: true, analysisBatchJob: analysisBatchSummary(job) };
+  }
+  const recovered = resumeAnalysisBatch(job);
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: recovered });
+  return { ok: true, message: "已从上次中断处继续", analysisBatchJob: analysisBatchSummary(recovered) };
+}
+
+async function undoDeepSeekBatch(jobId) {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisBatchUndo
+  ]);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
+  const undo = stored[STORAGE_KEYS.analysisBatchUndo];
+  if (!undo || undo.jobId !== job.id) return { ok: false, message: "没有这次批量分析的撤回快照" };
+  const state = await readState();
+  const expectedRevision = job.resultCatalogRevision ?? job.catalogRevision;
+  if (state.facetCatalog.revision !== expectedRevision) {
+    return { ok: false, message: "创作词库已在批量分析后继续修改，不能安全自动撤回" };
+  }
+  const restored = restoreAnalysisBatchUndo(domainState(state), undo);
+  await commitLocalChanges(storagePayload(restored));
+  await chrome.storage.local.remove([
+    STORAGE_KEYS.batchJob,
+    STORAGE_KEYS.analysisBatchUndo,
+    STORAGE_KEYS.analysisRebuildStaging
+  ]);
+  return {
+    ok: true,
+    message: "已撤回本次批量分析，人工修改与案例原文保持不变",
+    ...publicDomainState(restored),
+    analysisBatchJob: null,
+    canUndoAnalysisBatch: false
+  };
+}
+
+async function previewVisionBatchTask(message) {
+  const state = await readState();
+  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+  const provider = settings[settings.activeProvider];
+  const preview = previewVisionBatch(state.entries, {
+    entryIds: message.entryIds,
+    includeAllImages: message.includeAllImages,
+    reanalyze: message.reanalyze,
+    providerType: settings.activeProvider,
+    model: provider.model
+  });
+  return { ok: true, preview };
+}
+
+async function createVisionBatchTask(message) {
+  const state = await readState();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+  const provider = settings[settings.activeProvider];
+  if (!provider.apiKey) return { ok: false, message: "请先保存当前图片服务的 API Key" };
+  if (!settings.consent) return { ok: false, message: "请先确认主动分析时会发送当前截图" };
+  const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  if (previous && ["running", "paused"].includes(previous.status) &&
+      previous.items.some((item) => ["pending", "running"].includes(item.status))) {
+    return { ok: false, message: "已有未完成的批量任务，请继续或取消后再新建" };
+  }
+  const job = createVisionBatchJob(state.entries, {
+    entryIds: message.entryIds,
+    includeAllImages: message.includeAllImages,
+    reanalyze: message.reanalyze,
+    providerType: settings.activeProvider,
+    model: provider.model,
+    outputLocale: message.outputLocale
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
+  await chrome.storage.local.remove(STORAGE_KEYS.analysisBatchUndo);
+  return {
+    ok: true,
+    message: `已创建 ${job.requestCount} 张图片分析任务`,
+    visionBatchJob: analysisBatchSummary(job)
+  };
+}
+
+async function claimVisionBatchItem(jobId) {
+  const [state, stored] = await Promise.all([
+    readState(),
+    chrome.storage.local.get(STORAGE_KEYS.batchJob)
+  ]);
+  let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "vision");
+  const reconciled = reconcileVisionBatchResults(job, state.entries);
+  job = reconciled.job;
+  if (reconciled.recoveredCount) {
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
+  }
+  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+  const provider = settings[settings.activeProvider];
+  if (settings.activeProvider !== job.providerType || provider.model !== job.model) {
+    const paused = pauseAnalysisBatch(job);
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: paused });
+    return { ok: false, message: "图片服务或模型已变化，任务已暂停，请重新创建预览" };
+  }
+  const claimed = claimAnalysisItems(job, 1);
+  if (claimed.claims.length) {
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: claimed.job });
+  }
+  return {
+    ok: true,
+    claim: claimed.claims[0] ?? null,
+    visionBatchJob: analysisBatchSummary(claimed.job)
+  };
+}
+
+async function completeVisionBatchItem(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "vision");
+  requireClaim(job, message.entryId, message.claimId, message.visualId);
+  const usage = {
+    promptTokens: Math.max(0, Number(message.usage?.inputTokens) || 0),
+    completionTokens: Math.max(0, Number(message.usage?.outputTokens) || 0),
+    totalTokens: Math.max(0, Number(message.usage?.totalTokens) || 0)
+  };
+  const next = succeedAnalysisItem(job, message.entryId, message.claimId, usage);
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
+  return { ok: true, visionBatchJob: analysisBatchSummary(next) };
+}
+
+async function failVisionBatchItem(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "vision");
+  requireClaim(job, message.entryId, message.claimId, message.visualId);
+  const failed = failAnalysisItem(job, message.entryId, message.claimId, message.error);
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: failed });
+  return { ok: true, visionBatchJob: analysisBatchSummary(failed) };
+}
+
+async function updateVisionBatch(action, jobId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const current = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "vision");
+  const actions = {
+    pause: pauseAnalysisBatch,
+    resume: resumeAnalysisBatch,
+    cancel: cancelAnalysisBatch,
+    retry: retryFailedAnalysisItems
+  };
+  const next = actions[action](current);
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
+  return {
+    ok: true,
+    message: ({ pause: "批量画面分析已暂停", resume: "批量画面分析已继续", cancel: "批量画面分析已取消", retry: "失败图片已重新加入队列" })[action],
+    visionBatchJob: analysisBatchSummary(next)
+  };
+}
+
+async function queueAutomaticVisionAnalysis(entryIdsValue, options = {}) {
+  const entryIds = [...new Set((Array.isArray(entryIdsValue) ? entryIdsValue : []).map(String).filter(Boolean))];
+  if (!entryIds.length) return false;
+  const [state, stored] = await Promise.all([
+    readState(),
+    chrome.storage.local.get(STORAGE_KEYS.automaticVisionBatchJob)
+  ]);
+  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+  const publicSettings = publicVisionSettings(settings);
+  if ((options.requireAutoImportSetting !== false && !settings.autoAnalyzeImports) ||
+      !settings.consent || !publicSettings[settings.activeProvider].configured) return false;
+  const provider = settings[settings.activeProvider];
+  const job = buildAutomaticVisionJob(state.entries, entryIds, {
+    providerType: settings.activeProvider,
+    model: provider.model,
+    outputLocale: resolveLocale(state.uiPreferences, chrome.i18n.getUILanguage()) === "en" ? "en" : "zh-CN"
+  }, stored[STORAGE_KEYS.automaticVisionBatchJob]);
+  if (!job) return false;
+  await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
+  await ensureAutomaticVisionAlarm(true);
+  scheduleAutomaticVisionRunner();
+  return true;
+}
+
+function scheduleAutomaticVisionRunner() {
+  if (automaticVisionRunnerActive || automaticVisionRunnerTimer) return;
+  automaticVisionRunnerTimer = setTimeout(() => {
+    automaticVisionRunnerTimer = 0;
+    void runAutomaticVisionItem();
+  }, 0);
+}
+
+async function runAutomaticVisionItem() {
+  if (automaticVisionRunnerActive) return;
+  automaticVisionRunnerActive = true;
+  let continueRunning = false;
+  try {
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEYS.automaticVisionBatchJob
+    ]);
+    let job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.automaticVisionBatchJob]);
+    const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+    const configured = publicVisionSettings(settings)[settings.activeProvider].configured;
+    if (!job || job.kind !== "vision" || job.status !== "running" ||
+        !settings.autoAnalyzeImports || !settings.consent || !configured) {
+      await ensureAutomaticVisionAlarm(false);
+      return;
+    }
+    if (visionAnalysisInFlight) {
+      continueRunning = true;
+      return;
+    }
+    const state = await readState();
+    job = resumeAnalysisBatch(job);
+    job = reconcileVisionBatchResults(job, state.entries).job;
+    const claimed = claimAnalysisItems(job, 1);
+    job = claimed.job;
+    await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
+    const claim = claimed.claims[0];
+    if (!claim) {
+      await ensureAutomaticVisionAlarm(false);
+      return;
+    }
+
+    const result = await analyzeEntryImage(claim.entryId, claim.visualId, job.outputLocale, job.id);
+    await enqueue(async () => {
+      const latestStored = await chrome.storage.local.get(STORAGE_KEYS.automaticVisionBatchJob);
+      const latest = requireAnalysisBatch(latestStored[STORAGE_KEYS.automaticVisionBatchJob], job.id, "vision");
+      requireClaim(latest, claim.entryId, claim.claimId, claim.visualId);
+      const next = result.ok
+        ? succeedAnalysisItem(latest, claim.entryId, claim.claimId, {
+            promptTokens: result.usage?.inputTokens,
+            completionTokens: result.usage?.outputTokens,
+            totalTokens: result.usage?.totalTokens
+          })
+        : { ...failAnalysisItem(latest, claim.entryId, claim.claimId, { message: result.message }), status: "paused" };
+      await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: next });
+      job = next;
+    });
+    continueRunning = job.status === "running";
+    await ensureAutomaticVisionAlarm(continueRunning);
+  } catch (error) {
+    console.error("PromptDirector automatic vision analysis failed", error);
+    await ensureAutomaticVisionAlarm(true);
+  } finally {
+    automaticVisionRunnerActive = false;
+    if (continueRunning) scheduleAutomaticVisionRunner();
+  }
+}
+
+async function ensureAutomaticVisionAlarm(running) {
+  if (running) await chrome.alarms.create(AUTOMATIC_VISION_ALARM, { periodInMinutes: 1 });
+  else await chrome.alarms.clear(AUTOMATIC_VISION_ALARM);
+}
+
+async function getVisionImageBlob(visualId) {
+  return await getMediaBlob(visualId) ?? await getScreenshotBlob(visualId);
+}
+
+async function importAnalysisCandidates(payload) {
+  if (!payload || !Array.isArray(payload.entries)) return { ok: false, message: "候选文件格式无效" };
+  const state = await readState();
+  const applied = applyAnalysisImport(domainState(state), payload);
+  if (!applied.matchedCount) return { ok: false, message: "分析文件与当前案例库没有匹配的案例 ID" };
+  const matchedIds = new Set(applied.matchedEntryIds);
+  const analyzedAt = new Date().toISOString();
+  const importedEntries = applied.state.entries.map((entry) => matchedIds.has(entry.id)
+    ? { ...entry, analysisPending: false, analyzedAt }
+    : entry);
+  const analysisBaseline = await backfillLegacyAnalysisMeta(importedEntries);
+  const importedState = { ...applied.state, entries: analysisBaseline.entries };
+  await persistDomainState(importedState, domainState(state));
+  const unmatched = applied.unmatchedCount
+    ? `；另有 ${applied.unmatchedCount} 条未包含在本次分析的案例已保留原文和截图、清除旧候选，等待下次分析`
+    : "";
+  return {
+    ok: true,
+    message: `已整理 ${applied.matchedCount} 条案例：自动写入 ${applied.confirmedCount} 个明确标签${applied.suggestedCount ? `，仅保留 ${applied.suggestedCount} 个非常不确定项` : "，没有待确认项"}${unmatched}`,
+    ...publicDomainState(importedState),
+    canUndoFacetUpdate: true
+  };
+}
+
+async function visionUndoWithout(entryId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo);
+  const next = { ...(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
+  delete next[entryId];
+  return next;
+}
+
+async function visionUndoWithoutEntries(entryIds) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo);
+  const next = { ...(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
+  for (const entryId of entryIds) delete next[entryId];
+  return next;
+}
+
+async function previewFacetUpdate(change) {
+  const state = await readState();
+  const preview = previewFacetChange(domainState(state), change);
+  return { ok: true, message: "请确认本次词库更新", preview };
+}
+
+async function applyFacetUpdate(preview) {
+  const state = await readState();
+  const applied = applyFacetChange(domainState(state), preview);
+  await persistDomainState(applied.state, applied.undo, {
+    entriesChanged: preview?.change?.type === "merge"
+  });
+  return { ok: true, message: "创作词库已更新，历史案例已同步", ...publicDomainState(applied.state), canUndoFacetUpdate: true };
+}
+
+async function restoreFacetDimensions(facetIds) {
+  const state = await readState();
+  const before = domainState(state);
+  const facetCatalog = restoreArchivedFacets(state.facetCatalog, facetIds);
+  if (facetCatalog.revision === state.facetCatalog.revision) {
+    return { ok: false, message: "没有找到可恢复的已归档维度" };
+  }
+  const next = { ...before, facetCatalog };
+  await persistDomainState(next, before, { entriesChanged: false });
+  return {
+    ok: true,
+    message: "已归档维度已恢复，原案例标签重新可见",
+    ...publicDomainState(next),
+    canUndoFacetUpdate: true
+  };
+}
+
+async function restoreFacetTags(nodeIds) {
+  const state = await readState();
+  const before = domainState(state);
+  const facetCatalog = restoreArchivedNodes(state.facetCatalog, nodeIds);
+  if (facetCatalog.revision === state.facetCatalog.revision) {
+    return { ok: false, message: "没有找到可恢复的已归档标签" };
+  }
+  const next = { ...before, facetCatalog };
+  await persistDomainState(next, before, { entriesChanged: false });
+  return {
+    ok: true,
+    message: "已归档标签已恢复，原案例标签重新可见",
+    ...publicDomainState(next),
+    canUndoFacetUpdate: true
+  };
+}
+
+async function previewLibraryMaintenance() {
+  const [state, derivedMetadata] = await Promise.all([readState(), getAllDerivedMetadata()]);
+  const targets = libraryMaintenanceTargets(state.entries, derivedMetadata);
+  return {
+    ok: true,
+    message: "资料补全检查完成",
+    preview: {
+      caseCount: targets.classificationEntryIds.length,
+      confirmed: targets.classificationEntryIds.length,
+      suggested: 0,
+      paletteCount: targets.paletteAssetIds.length,
+      total: targets.classificationEntryIds.length + targets.paletteAssetIds.length,
+      cases: []
+    }
+  };
+}
+
+async function startLibraryMaintenance() {
+  const [state, derivedMetadata, stored] = await Promise.all([
+    readState(),
+    getAllDerivedMetadata(),
+    chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob)
+  ]);
+  const current = normalizeLibraryMaintenanceJob(stored[STORAGE_KEYS.libraryMaintenanceJob]);
+  if (current && ["running", "paused"].includes(current.status) && libraryMaintenanceSummary(current).remaining) {
+    return { ok: false, message: "已有未完成的资料补全任务，请继续或取消后再开始" };
+  }
+  const targets = libraryMaintenanceTargets(state.entries, derivedMetadata);
+  const job = createLibraryMaintenanceJob(targets);
+  await commitLocalChanges({ [STORAGE_KEYS.libraryMaintenanceJob]: job });
+  await ensureLibraryMaintenanceAlarm(job.status === "running");
+  scheduleLibraryMaintenanceRunner();
+  return {
+    ok: true,
+    message: job.status === "completed" ? "当前资料已经完整" : `已开始后台补全 ${libraryMaintenanceSummary(job).total} 项资料`,
+    maintenanceJob: libraryMaintenanceSummary(job)
+  };
+}
+
+async function libraryMaintenanceStatus() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+  return { ok: true, maintenanceJob: libraryMaintenanceSummary(stored[STORAGE_KEYS.libraryMaintenanceJob]) };
+}
+
+async function updateLibraryMaintenance(action) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+  const current = normalizeLibraryMaintenanceJob(stored[STORAGE_KEYS.libraryMaintenanceJob]);
+  if (!current) return { ok: false, message: "没有可用的资料补全任务" };
+  const actions = {
+    pause: pauseLibraryMaintenance,
+    resume: resumeLibraryMaintenance,
+    cancel: cancelLibraryMaintenance,
+    retry: retryLibraryMaintenanceFailures
+  };
+  const next = actions[action](current);
+  await commitLocalChanges({ [STORAGE_KEYS.libraryMaintenanceJob]: next });
+  await ensureLibraryMaintenanceAlarm(next.status === "running");
+  if (next.status === "running") scheduleLibraryMaintenanceRunner();
+  const messages = {
+    pause: "资料补全已暂停",
+    resume: "资料补全已继续",
+    cancel: "资料补全已取消",
+    retry: "失败项已重新加入后台任务"
+  };
+  return { ok: true, message: messages[action], maintenanceJob: libraryMaintenanceSummary(next) };
+}
+
+function libraryMaintenanceTargets(entriesValue, derivedMetadata) {
+  const metadata = derivedMetadata instanceof Map ? derivedMetadata : new Map();
+  const classificationEntryIds = [];
+  const paletteAssetIds = [];
+  const seenAssets = new Set();
+  for (const entry of Array.isArray(entriesValue) ? entriesValue : []) {
+    if (entry.classification?.status === "needs_review") classificationEntryIds.push(entry.id);
+    for (const asset of entryMediaAssets(entry)) {
+      if (asset.kind !== "image" || asset.usage === "poster" || seenAssets.has(asset.id)) continue;
+      seenAssets.add(asset.id);
+      const cachedPalette = metadata.get(asset.id)?.palette;
+      const inlineCurrent = asset.palette?.colors?.length && asset.palette.version === PALETTE_VERSION;
+      const cachedCurrent = cachedPalette?.colors?.length && cachedPalette.version === PALETTE_VERSION;
+      if (!inlineCurrent && !cachedCurrent) paletteAssetIds.push(asset.id);
+    }
+  }
+  return { classificationEntryIds, paletteAssetIds };
+}
+
+function scheduleLibraryMaintenanceRunner() {
+  if (maintenanceRunnerActive || maintenanceRunnerTimer) return;
+  maintenanceRunnerTimer = setTimeout(() => {
+    maintenanceRunnerTimer = 0;
+    void runLibraryMaintenanceSlice();
+  }, 0);
+}
+
+async function runLibraryMaintenanceSlice() {
+  if (maintenanceRunnerActive) return;
+  maintenanceRunnerActive = true;
+  let continueRunning = false;
+  try {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+    let job = normalizeLibraryMaintenanceJob(stored[STORAGE_KEYS.libraryMaintenanceJob]);
+    if (!job || job.status !== "running") {
+      await ensureLibraryMaintenanceAlarm(false);
+      return;
+    }
+    job = await enqueue(() => completeMaintenanceClassifications(job));
+    const started = performance.now();
+    let processedInSlice = 0;
+    while (job.status === "running" && nextLibraryMaintenanceItem(job)?.kind === "palette" &&
+      (!processedInSlice || performance.now() - started < MAINTENANCE_SLICE_TARGET_MS)) {
+      const item = nextLibraryMaintenanceItem(job);
+      let result;
+      try {
+        const cached = await getDerivedMetadata(item.id);
+        if (cached?.palette?.version === PALETTE_VERSION && cached.palette.colors?.length) result = { ok: true };
+        else {
+          await ensureOffscreenDocument();
+          const analyzed = await chrome.runtime.sendMessage({
+            target: "offscreen",
+            type: "ANALYZE_STORED_SCREENSHOT",
+            entryId: item.id
+          });
+          if (!analyzed?.ok || !analyzed.palette?.colors?.length) throw new Error(analyzed?.message || "无法生成色卡");
+          const metadata = await saveDerivedMetadata(item.id, {
+            ...cached,
+            width: analyzed.width,
+            height: analyzed.height,
+            mimeType: analyzed.mimeType,
+            byteSize: analyzed.byteSize,
+            palette: analyzed.palette
+          });
+          void chrome.runtime.sendMessage({
+            type: "LIBRARY_DERIVED_METADATA_UPDATED",
+            assetId: item.id,
+            metadata
+          }).catch(() => undefined);
+          result = { ok: true };
+        }
+      } catch (error) {
+        result = { ok: false, message: userMessage(error) };
+      }
+      job = completeLibraryMaintenanceItem(job, result);
+      processedInSlice += 1;
+    }
+    job = await persistLibraryMaintenanceProgress(job);
+    if (!job) return;
+    const summary = libraryMaintenanceSummary(job);
+    void chrome.runtime.sendMessage({ type: "LIBRARY_MAINTENANCE_PROGRESS", maintenanceJob: summary }).catch(() => undefined);
+    await ensureLibraryMaintenanceAlarm(job.status === "running");
+    continueRunning = job.status === "running";
+  } catch (error) {
+    console.error("PromptDirector library maintenance failed", error);
+    await ensureLibraryMaintenanceAlarm(true);
+  } finally {
+    maintenanceRunnerActive = false;
+    if (continueRunning) scheduleLibraryMaintenanceRunner();
+  }
+}
+
+async function persistLibraryMaintenanceProgress(progress) {
+  return enqueue(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+    const next = mergeLibraryMaintenanceProgress(stored[STORAGE_KEYS.libraryMaintenanceJob], progress);
+    if (!next || next.id !== progress.id) return next;
+    await commitLocalChanges({ [STORAGE_KEYS.libraryMaintenanceJob]: next });
+    return next;
+  });
+}
+
+async function completeMaintenanceClassifications(jobValue) {
+  let job = jobValue;
+  if (nextLibraryMaintenanceItem(job)?.kind !== "classification") return job;
+  const state = await readState();
+  const remainingIds = new Set(job.classificationEntryIds.slice(job.classificationCursor));
+  const entries = state.entries.map((entry) => {
+    if (!remainingIds.has(entry.id)) return entry;
+    if (entry.classification?.status !== "needs_review") return entry;
+    return {
+      ...entry,
+      analysisPending: false,
+      classification: classifyContent(entry, state.classificationRules, state.taxonomy)
+    };
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  while (nextLibraryMaintenanceItem(job)?.kind === "classification") {
+    job = completeLibraryMaintenanceItem(job, { ok: true });
+  }
+  return job;
+}
+
+async function ensureLibraryMaintenanceAlarm(running) {
+  if (running) {
+    await chrome.alarms.create(LIBRARY_MAINTENANCE_ALARM, { periodInMinutes: 1 });
+  } else await chrome.alarms.clear(LIBRARY_MAINTENANCE_ALARM);
+}
+
+async function undoFacetUpdate() {
+  const state = await readState();
+  const undone = undoFacetHistory(domainState(state), state.facetUndo);
+  const update = storagePayload(undone.state);
+  if (undone.remainingSteps) update[STORAGE_KEYS.facetUndo] = undone.history;
+  await commitLocalChanges(update);
+  if (!undone.remainingSteps) await chrome.storage.local.remove(STORAGE_KEYS.facetUndo);
+  return {
+    ok: true,
+    message: "已撤回上一步",
+    ...publicDomainState(undone.state),
+    canUndoFacetUpdate: undone.remainingSteps > 0,
+    facetUndoCount: undone.remainingSteps
+  };
+}
+
+function findEntry(state, entryId) {
+  const entry = state.entries.find((item) => item.id === entryId);
+  if (!entry) throw new Error("没有找到这条案例");
+  return entry;
+}
+
+function requireAnalysisBatch(value, jobId, kind) {
+  const job = normalizeAnalysisBatchJob(value);
+  if (!job || (jobId && job.id !== jobId)) throw new Error("批量分析任务已变化，请刷新页面");
+  if (kind && job.kind !== kind) throw new Error("另一种批量任务正在运行，请先完成或取消");
+  return job;
+}
+
+function requireClaim(job, entryId, claimId, visualId = "") {
+  const item = job.items.find((candidate) =>
+    candidate.entryId === entryId &&
+    candidate.claimId === claimId &&
+    (!visualId || candidate.visualId === visualId)
+  );
+  if (!item || item.status !== "running" || item.claimId !== claimId) {
+    throw new Error("这条批量分析结果已经失效，请刷新后继续");
+  }
+  return item;
+}
+
+function analysisMeta(message, fingerprint, analyzedAt, entry = {}) {
+  return {
+    ...(fingerprint ? { textFingerprint: fingerprint } : {}),
+    ...analysisRevisionMeta(entry),
+    promptVersion: ANALYSIS_PROMPT_VERSION,
+    model: String(message.model ?? ""),
+    analyzedAt,
+    profileFingerprint: String(message.profileFingerprint ?? "").trim(),
+    usage: {
+      promptTokens: Math.max(0, Number(message.usage?.promptTokens) || 0),
+      completionTokens: Math.max(0, Number(message.usage?.completionTokens) || 0),
+      totalTokens: Math.max(0, Number(message.usage?.totalTokens) || 0),
+      cacheHitTokens: Math.max(0, Number(message.usage?.cacheHitTokens) || 0),
+      cacheMissTokens: Math.max(0, Number(message.usage?.cacheMissTokens) || 0)
+    }
+  };
+}
+
+function analysisResultMessage(applied) {
+  return `已写入 ${applied.appliedCount} 个检索标签`;
+}
+
+function reusableAnalysisItems(values) {
+  return (Array.isArray(values) ? values : []).filter((item) => item?.source && item.source !== "deepseek_text");
+}
+
+function domainState(state) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    entries: state.entries,
+    compoundCases: normalizeCompoundCases(state.compoundCases, state.entries),
+    taxonomy: state.taxonomy,
+    facetCatalog: state.facetCatalog,
+    classificationRules: state.classificationRules,
+    organizerState: normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id))
+  };
+}
+
+function publicDomainState(state) {
+  return {
+    entries: enrichContentMeanings(state.entries, state.taxonomy),
+    compoundCases: normalizeCompoundCases(state.compoundCases, state.entries),
+    taxonomy: state.taxonomy,
+    facetCatalog: state.facetCatalog,
+    classificationRules: state.classificationRules,
+    organizerState: normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id))
+  };
+}
+
+function publicLibraryState(state) {
+  const {
+    facetUndo: _facetUndo,
+    composerSessions: _composerSessions,
+    lastSaveUndo,
+    ...visibleState
+  } = state;
+  return {
+    ...visibleState,
+    entries: enrichContentMeanings(visibleState.entries, visibleState.taxonomy),
+    canUndoLastSave: Boolean(lastSaveUndo)
+  };
+}
+
+function folderBackupState(state) {
+  return {
+    entries: state.entries,
+    settings: state.settings,
+    taxonomy: state.taxonomy,
+    facetCatalog: state.facetCatalog,
+    classificationRules: state.classificationRules,
+    organizerState: state.organizerState,
+    compoundCases: state.compoundCases,
+    composerSettings: state.composerSettings,
+    composerSessions: state.composerSessions,
+    creativeExperimentSettings: state.creativeExperimentSettings,
+    creativeRuns: state.creativeRuns,
+    creativeSkills: state.creativeSkills
+  };
+}
+
+function enrichContentMeanings(entriesValue, taxonomy) {
+  const normalizedTaxonomy = normalizeTaxonomy(taxonomy);
+  const names = new Map(normalizedTaxonomy.nodes.map((item) => [item.id, item.name]));
+  const roles = new Map(normalizedTaxonomy.nodes.map((item) => [item.id, item.role]));
+  return (Array.isArray(entriesValue) ? entriesValue : []).map((entry) => ({
+    ...entry,
+    contentRole: contentRoleForEntry(entry, normalizedTaxonomy, roles),
+    contentTypeName: names.get(entry.classification?.pathIds?.[0]) || ""
+  }));
+}
+
+function storagePayload(state) {
+  return {
+    [STORAGE_KEYS.schemaVersion]: SCHEMA_VERSION,
+    [STORAGE_KEYS.entries]: state.entries,
+    [STORAGE_KEYS.compoundCases]: normalizeCompoundCases(state.compoundCases, state.entries),
+    [STORAGE_KEYS.taxonomy]: state.taxonomy,
+    [STORAGE_KEYS.facetCatalog]: normalizeFacetCatalog(state.facetCatalog),
+    [STORAGE_KEYS.classificationRules]: state.classificationRules,
+    [STORAGE_KEYS.organizerState]: normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id))
+  };
+}
+
+async function commitLocalChanges(update) {
+  await chrome.storage.local.set(update);
+  if (!syncApplyInProgress && Object.keys(update).some((key) => SYNCED_STORAGE_KEYS.has(key))) {
+    scheduleIdleSync();
+  }
+}
+
+async function persistDomainState(state, undo, historyOptions) {
+  const update = storagePayload(state);
+  if (undo) {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.facetUndo);
+    update[STORAGE_KEYS.facetUndo] = appendFacetUndo(
+      stored[STORAGE_KEYS.facetUndo], undo, state, historyOptions
+    );
+  }
+  await commitLocalChanges(update);
+}
+
+async function exportArchive(state, requestedEntryIds) {
+  if (!Array.isArray(requestedEntryIds) || !requestedEntryIds.length) throw new Error("请先选择要分享的案例");
+  const exportState = selectLibraryPackage(state, requestedEntryIds);
+  await migrateLegacyScreenshots(exportState.entries);
+  const archive = await createArchiveUrl(exportState, true);
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: archive.url,
+      filename: sharedArchivePath(state.settings.outputPath),
+      conflictAction: "uniquify",
+      saveAs: false
+    });
+    await waitForDownload(downloadId);
+  } finally {
+    await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "REVOKE_BLOB_URL",
+      url: archive.url
+    });
+  }
+  return {
+    ok: true,
+    message: `分享包已导出（${exportState.entries.length} 个案例、${archive.imageCount} 张截图）`,
+    count: exportState.entries.length,
+    settings: state.settings
+  };
+}
+
+async function exportProjectArchive(state, collectionId) {
+  const exportState = selectProjectPackage(state, collectionId);
+  const project = exportState.organizerState.collections[0];
+  await migrateLegacyScreenshots(exportState.entries);
+  const archive = await createArchiveUrl(exportState, true);
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: archive.url,
+      filename: projectArchivePath(state.settings.outputPath, project.name),
+      conflictAction: "uniquify",
+      saveAs: false
+    });
+    await waitForDownload(downloadId);
+  } finally {
+    await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "REVOKE_BLOB_URL",
+      url: archive.url
+    });
+  }
+  return {
+    ok: true,
+    message: `项目“${project.name}”已导出（${exportState.entries.length} 个案例、${archive.imageCount} 张图片）`,
+    count: exportState.entries.length,
+    imageCount: archive.imageCount
+  };
+}
+
+async function exportCreativeExperiments(state) {
+  if (!state.creativeRuns.some((run) => run.outputs.length)) {
+    return { ok: false, message: "还没有可导出的真实生成结果" };
+  }
+  await ensureOffscreenDocument();
+  const archive = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "CREATE_CREATIVE_EXPERIMENT_ARCHIVE_URL",
+    composerSettings: state.composerSettings,
+    composerSessions: state.composerSessions,
+    creativeExperimentSettings: state.creativeExperimentSettings,
+    creativeRuns: state.creativeRuns,
+    creativeSkills: state.creativeSkills
+  });
+  if (!archive?.ok || !archive.url) throw new Error(archive?.message || "无法准备创作实验包");
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: archive.url,
+      filename: experimentArchivePath(state.settings.outputPath),
+      conflictAction: "uniquify",
+      saveAs: false
+    });
+    await waitForDownload(downloadId);
+  } finally {
+    await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "REVOKE_BLOB_URL",
+      url: archive.url
+    });
+  }
+  return {
+    ok: true,
+    message: `创作实验包已导出（${archive.runCount} 次运行、${archive.mediaCount ?? archive.imageCount} 项结果媒体）`
+  };
+}
+
+function previewCreativeExperimentImport(state, experiments) {
+  const result = mergeCreativeExperimentPackage(state, experiments);
+  return {
+    ok: true,
+    sessionIdMap: result.sessionIdMap,
+    runIdMap: result.runIdMap,
+    importedRunCount: result.importedRunCount,
+    importedOutputCount: result.importedOutputCount,
+    visualIdMap: result.visualIdMap
+  };
+}
+
+async function applyCreativeExperimentImport(state, message) {
+  const result = mergeCreativeExperimentPackage(state, message.experiments, {
+    sessionIdMap: message.sessionIdMap,
+    runIdMap: message.runIdMap,
+    visualIdMap: message.visualIdMap
+  });
+  await commitLocalChanges({
+    [STORAGE_KEYS.composerSettings]: result.state.composerSettings,
+    [STORAGE_KEYS.composerSessions]: result.state.composerSessions,
+    [STORAGE_KEYS.creativeExperimentSettings]: result.state.creativeExperimentSettings,
+    [STORAGE_KEYS.creativeRuns]: result.state.creativeRuns
+  });
+  return {
+    ok: true,
+    message: `已导入 ${result.importedRunCount} 次创作运行和 ${result.importedOutputCount} 项结果媒体`,
+    creativeRuns: result.state.creativeRuns
+  };
+}
+
+function previewLibraryImport(state, library, options = {}) {
+  const result = mergeLibraryPackage(state, library, options);
+  return {
+    ok: true,
+    entryIdMap: result.entryIdMap,
+    compoundIdMap: result.compoundIdMap,
+    visualIdMap: result.visualIdMap,
+    sessionIdMap: result.sessionIdMap,
+    runIdMap: result.runIdMap,
+    skillIdMap: result.skillIdMap,
+    packageAssetIdMap: result.packageAssetIdMap,
+    importedCount: result.importedCount,
+    skippedCount: result.skippedCount,
+    importedRunCount: result.importedRunCount,
+    importedOutputCount: result.importedOutputCount,
+    importedSkillCount: result.importedSkillCount,
+    skippedSkillCount: result.skippedSkillCount
+  };
+}
+
+async function applyLibraryImport(state, message) {
+  const result = mergeLibraryPackage(state, message.library, {
+    entryIdMap: message.entryIdMap,
+    compoundIdMap: message.compoundIdMap,
+    visualIdMap: message.visualIdMap,
+    sessionIdMap: message.sessionIdMap,
+    runIdMap: message.runIdMap,
+    skillIdMap: message.skillIdMap,
+    packageAssetIdMap: message.packageAssetIdMap,
+    preserveLibraryConfiguration: message.preserveLibraryConfiguration === true
+  });
+  await commitLocalChanges({
+    ...storagePayload(result.state),
+    [STORAGE_KEYS.settings]: normalizeSettings(result.state.settings ?? state.settings),
+    [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(result.state.composerSettings ?? state.composerSettings),
+    [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(result.state.composerSessions ?? state.composerSessions),
+    [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
+      result.state.creativeExperimentSettings ?? state.creativeExperimentSettings
+    ),
+    [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.state.creativeRuns ?? state.creativeRuns),
+    [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills)
+  });
+  const importedEntryIds = Object.values(result.entryIdMap);
+  if (importedEntryIds.length) await queueAutomaticVisionAnalysis(importedEntryIds);
+  return {
+    ok: true,
+    message: result.importedCount || result.importedRunCount || result.importedSkillCount
+      ? `已导入 ${result.importedCount} 个案例、${result.importedRunCount} 次创作运行和 ${result.importedSkillCount} 个 Skill${result.skippedCount || result.skippedSkillCount ? `，跳过 ${result.skippedCount} 个已有案例和 ${result.skippedSkillCount} 个已有 Skill` : ""}`
+      : `没有新增内容，${result.skippedCount} 个案例已经存在`,
+    count: result.state.entries.length,
+    importedCount: result.importedCount,
+    skippedCount: result.skippedCount,
+    importedRunCount: result.importedRunCount,
+    importedOutputCount: result.importedOutputCount,
+    importedSkillCount: result.importedSkillCount,
+    skippedSkillCount: result.skippedSkillCount
+  };
+}
+
+function sharedArchivePath(outputPath) {
+  const normalized = normalizeSettings({ outputPath }).outputPath;
+  const separator = normalized.lastIndexOf("/");
+  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  const filename = separator >= 0 ? normalized.slice(separator + 1) : normalized;
+  return `${directory}${filename.replace(/\.zip$/i, "")}-分享.zip`;
+}
+
+function projectArchivePath(outputPath, projectName) {
+  const normalized = normalizeSettings({ outputPath }).outputPath;
+  const separator = normalized.lastIndexOf("/");
+  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  const safeName = String(projectName ?? "项目").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() || "项目";
+  return `${directory}PromptDirector-${safeName}-分享.zip`;
+}
+
+function experimentArchivePath(outputPath) {
+  const normalized = normalizeSettings({ outputPath }).outputPath;
+  const separator = normalized.lastIndexOf("/");
+  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  return `${directory}PromptDirector-创作实验.zip`;
+}
+
+async function createArchiveUrl(state, sharing = false) {
+  await ensureOffscreenDocument();
+  const manifest = chrome.runtime.getManifest();
+  const locale = resolveLocale(state.uiPreferences, chrome.i18n.getUILanguage());
+  const result = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "CREATE_ARCHIVE_URL",
+    entries: state.entries,
+    settings: state.settings,
+    taxonomy: state.taxonomy,
+    facetCatalog: state.facetCatalog,
+    classificationRules: state.classificationRules,
+    organizerState: state.organizerState,
+    compoundCases: state.compoundCases,
+    composerSettings: sharing ? undefined : state.composerSettings,
+    composerSessions: sharing ? [] : state.composerSessions,
+    creativeExperimentSettings: sharing ? undefined : state.creativeExperimentSettings,
+    creativeRuns: sharing ? [] : state.creativeRuns,
+    creativeSkills: sharing ? { version: 1, items: [] } : state.creativeSkills,
+    uiPreferences: state.uiPreferences,
+    locale,
+    sharing,
+    installUrl: manifest.homepage_url || ""
+  });
+  if (!result?.ok || !result.url) {
+    throw new Error(result?.message || "无法准备案例库 ZIP");
+  }
+  return result;
+}
+
+function scheduleIdleSync() {
+  clearTimeout(syncIdleTimer);
+  syncIdleTimer = setTimeout(() => {
+    syncIdleTimer = null;
+    enqueue(() => synchronizeNow("idle")).catch(() => undefined);
+  }, 1_500);
+}
+
+function scheduleAutomaticSync() {
+  if (automaticSyncScheduled) return;
+  automaticSyncScheduled = true;
+  enqueue(() => synchronizeNow("open"))
+    .catch(() => undefined)
+    .finally(() => { automaticSyncScheduled = false; });
+}
+
+async function connectSyncFolder(password) {
+  const directory = await getSyncDirectoryHandle();
+  if (!directory) throw new Error("请先选择同步文件夹");
+  await requireDirectoryPermission(directory);
+  const vault = await createOrUnlockSyncVault(directory, String(password ?? ""));
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const settings = normalizeSyncSettings({
+    ...stored[STORAGE_KEYS.syncSettings],
+    enabled: true,
+    vaultId: vault.header.vaultId,
+    lastError: "",
+    lastErrorCode: ""
+  });
+  await saveSyncCryptoKey(vault.key);
+  await commitLocalChanges({ [STORAGE_KEYS.syncSettings]: settings });
+  const result = await synchronizeWithVault(vault, settings, "connect");
+  return {
+    ...result,
+    message: result.restored
+      ? `同步库已连接，并恢复 ${result.entryCount} 个案例`
+      : `同步库已连接，${result.entryCount} 个案例已安全同步`
+  };
+}
+
+async function unlockSyncVault(password) {
+  const directory = await getSyncDirectoryHandle();
+  if (!directory) throw new Error("本机没有保存同步文件夹，请重新选择");
+  await requireDirectoryPermission(directory);
+  const vault = await createOrUnlockSyncVault(directory, String(password ?? ""));
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const current = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
+  if (current.vaultId && current.vaultId !== vault.header.vaultId) {
+    throw new Error("这个文件夹不是此前连接的同步库，请使用“更换同步文件夹”");
+  }
+  const settings = normalizeSyncSettings({
+    ...current,
+    enabled: true,
+    vaultId: vault.header.vaultId,
+    lastError: "",
+    lastErrorCode: ""
+  });
+  await saveSyncCryptoKey(vault.key);
+  await commitLocalChanges({ [STORAGE_KEYS.syncSettings]: settings });
+  const result = await synchronizeWithVault(vault, settings, "unlock");
+  return { ...result, message: "同步库已解锁并完成同步" };
+}
+
+async function synchronizeNow(reason = "manual") {
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = performSynchronization(reason).finally(() => {
+    syncInFlight = null;
+  });
+  return syncInFlight;
+}
+
+async function performSynchronization(reason) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const settings = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
+  if (!settings.enabled) {
+    if (reason === "manual") throw new Error("请先在“数据与同步”中选择同步文件夹");
+    return { ok: false, skipped: true };
+  }
+  const directory = await getSyncDirectoryHandle();
+  if (!directory) throw await recordSyncError(settings, "同步文件夹需要重新选择");
+  const permission = await directoryPermission(directory);
+  if (permission !== "granted") throw await recordSyncError(settings, "同步文件夹权限已失效，请重新授权");
+  const key = await getSyncCryptoKey();
+  if (!key) throw await recordSyncError(settings, "同步库已锁定，请输入密码解锁");
+  try {
+    const vault = await openSyncVaultWithKey(directory, key, settings.vaultId);
+    return await synchronizeWithVault(vault, settings, reason);
+  } catch (error) {
+    throw await recordSyncError(settings, error);
+  }
+}
+
+async function synchronizeWithVault(vault, settingsValue, reason) {
+  const settings = normalizeSyncSettings(settingsValue);
+  const current = await readState();
+  const metaStored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
+  const meta = normalizeSyncMeta(metaStored[STORAGE_KEYS.syncMeta]);
+  const remoteSnapshots = await listSyncSnapshots(vault);
+  const localPrepared = await prepareStateForSync(current, vault, (progress) => notifySyncProgress(progress));
+  const localImageRefs = collectSyncImageReferences(localPrepared);
+  const localClock = Math.max(
+    meta.logicalClock,
+    ...remoteSnapshots.map((snapshot) => Number(snapshot.logicalClock) || 0)
+  ) + 1;
+  const baseSnapshot = {
+    format: SYNC_SNAPSHOT_FORMAT,
+    version: SYNC_SNAPSHOT_VERSION,
+    records: meta.records
+  };
+  const localSnapshot = await createRevisionSnapshot(localPrepared, {
+    deviceId: settings.deviceId,
+    logicalClock: localClock,
+    baseSnapshot
+  });
+  const merged = mergeRevisionSnapshots([...remoteSnapshots, localSnapshot]);
+  if (syncStateHasContent(current) && !syncStateHasContent(merged.state)) {
+    throw new Error("同步结果异常为空，本地资料未被修改");
+  }
+
+  notifySyncProgress({ phase: "merging" });
+  const finalPrepared = attachSyncImageReferences(merged.state, merged.imageRefs);
+  const finalSnapshot = await createRevisionSnapshot(finalPrepared, {
+    deviceId: settings.deviceId,
+    logicalClock: localClock + 1,
+    baseSnapshot: {
+      format: SYNC_SNAPSHOT_FORMAT,
+      version: SYNC_SNAPSHOT_VERSION,
+      records: merged.records
+    }
+  });
+  const lastSyncAt = new Date().toISOString();
+  const nextSettings = normalizeSyncSettings({
+    ...settings,
+    enabled: true,
+    vaultId: vault.header.vaultId,
+    lastSyncAt,
+    lastError: "",
+    lastErrorCode: ""
+  });
+  await replaceImagesWithRollback({
+    replacements: syncedImageReplacements(
+      vault,
+      merged.imageRefs,
+      localImageRefs,
+      (progress) => notifySyncProgress(progress)
+    ),
+    readImage: getMediaBlob,
+    writeImage: saveMediaBlob,
+    deleteImage: deleteMediaBlob,
+    commitMetadata: async () => {
+      notifySyncProgress({ phase: "saving" });
+      await writeSyncSnapshot(vault, finalSnapshot, { retentionCount: settings.retentionCount });
+      syncApplyInProgress = true;
+      try {
+        await commitLocalChanges({
+          ...synchronizedStatePayload(current, merged.state),
+          [STORAGE_KEYS.syncSettings]: nextSettings,
+          [STORAGE_KEYS.syncMeta]: {
+            logicalClock: localClock + 1,
+            records: finalSnapshot.records
+          }
+        });
+      } finally {
+        syncApplyInProgress = false;
+      }
+    }
+  });
+  return {
+    ok: true,
+    reason,
+    restored: !current.entries.length && Boolean(merged.state.entries?.length),
+    entryCount: merged.state.entries?.length ?? 0,
+    imageCount: Object.keys(merged.imageRefs).length,
+    mediaCount: Object.keys(merged.imageRefs).length,
+    conflictCount: merged.conflicts.length,
+    lastSyncAt
+  };
+}
+
+async function prepareStateForSync(state, vault, onProgress = () => undefined) {
+  const prepared = structuredClone({
+    entries: state.entries,
+    compoundCases: state.compoundCases,
+    organizerState: state.organizerState,
+    taxonomy: state.taxonomy,
+    facetCatalog: state.facetCatalog,
+    classificationRules: state.classificationRules,
+    settings: { libraryTitle: state.settings?.libraryTitle },
+    composerSettings: state.composerSettings,
+    composerSessions: state.composerSessions,
+    creativeExperimentSettings: state.creativeExperimentSettings,
+    creativeRuns: state.creativeRuns,
+    creativeSkills: state.creativeSkills
+  });
+  const seenVisualIds = new Set();
+  const visuals = [
+    ...prepared.entries.flatMap((entry) => entry.mediaAssets ?? entry.visuals ?? []),
+    ...prepared.creativeRuns.flatMap((run) => run.outputs.map((output) => output.visual)),
+    ...(prepared.creativeSkills?.items ?? []).flatMap((skill) => skill.packageFiles ?? []),
+    ...prepared.composerSessions.flatMap((session) => (session.referenceSnapshots ?? [])
+      .filter((reference) => reference.sourceType === "temporary")
+      .flatMap((reference) => reference.assetRefs ?? []))
+  ].filter((visual) => {
+    const assetId = visual?.id ?? visual?.assetId;
+    if (!assetId || seenVisualIds.has(assetId)) return false;
+    seenVisualIds.add(assetId);
+    return true;
+  });
+  for (const [index, visual] of visuals.entries()) {
+    if (index % 5 === 0) onProgress({ phase: "encrypting", current: index, total: visuals.length });
+    if (visual.storageMode === "reference") continue;
+    const blob = await getMediaBlob(visual.id ?? visual.assetId);
+    if (!blob) continue;
+    visual.syncObjectId = await writeSyncObject(vault, blob);
+    visual.syncContentType = blob.type;
+  }
+  onProgress({ phase: "encrypting", current: visuals.length, total: visuals.length });
+  return prepared;
+}
+
+async function* syncedImageReplacements(vault, imageRefs, localImageRefs = {}, onProgress = () => undefined) {
+  const pending = Object.entries(imageRefs).filter(([visualId, reference]) =>
+    localImageRefs?.[visualId]?.objectId !== reference?.objectId
+  );
+  for (const [index, [visualId, reference]] of pending.entries()) {
+    if (index % 5 === 0) onProgress({ phase: "restoring", current: index, total: pending.length });
+    const blob = await readSyncObject(vault, reference.objectId);
+    yield { id: visualId, blob };
+  }
+  onProgress({ phase: "restoring", current: pending.length, total: pending.length });
+}
+
+function notifySyncProgress(progress = {}) {
+  chrome.runtime.sendMessage({
+    type: "SYNC_PROGRESS",
+    phase: progress.phase,
+    current: Math.max(0, Number(progress.current) || 0),
+    total: Math.max(0, Number(progress.total) || 0)
+  }).catch(() => undefined);
+}
+
+function synchronizedStatePayload(current, synced) {
+  const entries = Array.isArray(synced.entries) ? synced.entries : current.entries;
+  const next = {
+    schemaVersion: SCHEMA_VERSION,
+    entries,
+    compoundCases: normalizeCompoundCases(synced.compoundCases ?? current.compoundCases, entries),
+    taxonomy: synced.taxonomy ?? current.taxonomy,
+    facetCatalog: synced.facetCatalog ?? current.facetCatalog,
+    classificationRules: synced.classificationRules ?? current.classificationRules,
+    organizerState: normalizeOrganizerState(
+      synced.organizerState ?? current.organizerState,
+      entries.map((entry) => entry.id)
+    )
+  };
+  const settings = normalizeSettings({
+    ...current.settings,
+    libraryTitle: synced.settings?.libraryTitle || current.settings.libraryTitle
+  });
+  return {
+    ...storagePayload(next),
+    [STORAGE_KEYS.settings]: settings,
+    [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(synced.composerSettings ?? current.composerSettings),
+    [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(synced.composerSessions ?? current.composerSessions),
+    [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
+      synced.creativeExperimentSettings ?? current.creativeExperimentSettings
+    ),
+    [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(synced.creativeRuns ?? current.creativeRuns),
+    [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(synced.creativeSkills ?? current.creativeSkills)
+  };
+}
+
+async function disconnectSyncFolder() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const current = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
+  await clearSyncPrivateState();
+  await commitLocalChanges({
+    [STORAGE_KEYS.syncSettings]: normalizeSyncSettings({
+      ...current,
+      enabled: false,
+      vaultId: "",
+      lastError: "",
+      lastErrorCode: ""
+    })
+  });
+  await chrome.storage.local.remove(STORAGE_KEYS.syncMeta);
+  return { ok: true, message: "已断开同步文件夹，本地案例没有删除" };
+}
+
+async function dataSafetyStatus(state) {
+  const media = state.entries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets);
+  return {
+    ok: true,
+    entryCount: state.entries.length,
+    imageCount: state.entries.reduce((sum, entry) => sum + normalizeEntryVisuals(entry).visuals.length, 0),
+    mediaCount: media.length,
+    videoCount: media.filter((asset) => asset.kind === "video").length,
+    documentCount: media.filter((asset) => asset.kind === "document").length,
+    syncStatus: state.syncStatus
+  };
+}
+
+async function publicSyncStatus(settingsValue) {
+  const settings = normalizeSyncSettings(settingsValue);
+  const directory = await getSyncDirectoryHandle().catch(() => null);
+  const permission = directory ? await directoryPermission(directory) : "missing";
+  const unlocked = Boolean(await getSyncCryptoKey().catch(() => null));
+  return {
+    enabled: settings.enabled,
+    connected: Boolean(settings.vaultId && directory),
+    unlocked,
+    permission,
+    needsAuthorization: settings.enabled && permission !== "granted",
+    lastSyncAt: settings.lastSyncAt,
+    lastError: settings.lastError,
+    lastErrorCode: settings.lastErrorCode
+  };
+}
+
+async function requireDirectoryPermission(directory) {
+  const permission = await directoryPermission(directory);
+  if (permission !== "granted") {
+    throw new Error("同步文件夹尚未授权，请重新选择文件夹");
+  }
+}
+
+async function directoryPermission(directory) {
+  if (typeof directory.queryPermission !== "function") return "granted";
+  return directory.queryPermission({ mode: "readwrite" });
+}
+
+async function recordSyncError(settings, failure) {
+  const details = syncErrorDetails(failure);
+  const message = details.message || "同步失败";
+  const error = new Error(message);
+  syncApplyInProgress = true;
+  try {
+    await commitLocalChanges({
+      [STORAGE_KEYS.syncSettings]: normalizeSyncSettings({
+        ...settings,
+        lastError: message,
+        lastErrorCode: details.code
+      })
+    });
+  } finally {
+    syncApplyInProgress = false;
+  }
+  return error;
+}
+
+function normalizeSyncMeta(value = {}) {
+  return {
+    logicalClock: Math.max(0, Math.floor(Number(value.logicalClock) || 0)),
+    records: value.records && typeof value.records === "object" ? structuredClone(value.records) : {}
+  };
+}
+
+async function migrateLegacyScreenshots(entries) {
+  for (const entryValue of entries) {
+    const entry = normalizeEntryVisuals(entryValue);
+    if (!entry.visuals.some((visual) => visual.id === entry.id)) continue;
+    const legacyKey = screenshotStorageKey(entry.id);
+    const stored = await chrome.storage.local.get(legacyKey);
+    const legacyDataUrl = stored[legacyKey];
+    if (!legacyDataUrl) continue;
+
+    let blob = await getScreenshotBlob(entry.id);
+    if (!blob) {
+      blob = await dataUrlToImageBlob(legacyDataUrl);
+      await saveScreenshotBlob(entry.id, blob);
+    }
+    await chrome.storage.local.remove(legacyKey);
+  }
+}
+
+async function dataUrlToImageBlob(value) {
+  if (!/^data:image\/(?:png|jpeg|webp);base64,/.test(String(value ?? ""))) {
+    throw new Error("旧版截图数据损坏，无法迁移");
+  }
+  const response = await fetch(value);
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/")) throw new Error("旧版截图格式无效");
+  return blob;
+}
+
+async function ensureOffscreenDocument() {
+  const documentUrl = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [documentUrl]
+  });
+  if (contexts.length) return;
+
+  if (!creatingOffscreenDocument) {
+    creatingOffscreenDocument = chrome.offscreen
+      .createDocument({
+        url: OFFSCREEN_DOCUMENT_PATH,
+        reasons: ["BLOBS"],
+        justification: "处理持久媒体创作、截图裁剪和本地文件打包"
+      })
+      .finally(() => {
+        creatingOffscreenDocument = null;
+      });
+  }
+  await creatingOffscreenDocument;
+}
+
+async function recoverCreativeJobs() {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.creativeJobs,
+    STORAGE_KEYS.composerSessions
+  ]);
+  const creativeJobs = normalizeCreativeJobsState(stored[STORAGE_KEYS.creativeJobs]);
+  const active = activeCreativeJob(creativeJobs);
+  if (!active) return;
+  const documentUrl = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [documentUrl]
+  });
+  if (contexts.length) {
+    const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "GET_CREATIVE_JOB_RUNNER" }).catch(() => null);
+    if (response?.ok && response.jobId === active.id) return;
+  }
+  if (active.request.session.outputMode === "create_video" && active.remoteVideo && ["generation", "downloading"].includes(active.phase)) {
+    try {
+      await dispatchCreativeJob(active);
+      return;
+    } catch {
+      // Continue to the explicit interrupted state below when the resumable runner cannot restart.
+    }
+  }
+  const interrupted = interruptActiveCreativeJobs(creativeJobs);
+  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
+  const sourceSession = sessions.find((item) => item.id === active.sessionId) ?? active.request.session;
+  const session = setComposerFailure(sourceSession, {
+    userMessageId: active.userMessageId,
+    phase: active.phase === "planning" ? "planning" : "streaming",
+    kind: "storage",
+    message: "浏览器曾在任务完成前退出，结果状态未知，请手动重试",
+    retryable: true
+  });
+  await commitLocalChanges({
+    [STORAGE_KEYS.creativeJobs]: interrupted,
+    [STORAGE_KEYS.composerSessions]: upsertSessionList(sessions, session)
+  });
+}
+
+function waitForDownload(downloadId) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(
+      () => finish(new Error("本地文件写入超时")),
+      DOWNLOAD_TIMEOUT_MS
+    );
+
+    const onChanged = (delta) => {
+      if (delta.id !== downloadId || !delta.state) return;
+      if (delta.state.current === "complete") finish();
+      if (delta.state.current === "interrupted") {
+        finish(new Error(delta.error?.current || "本地文件写入被中断"));
+      }
+    };
+
+    const finish = (error) => {
+      clearTimeout(timeoutId);
+      chrome.downloads.onChanged.removeListener(onChanged);
+      if (error) reject(error);
+      else resolve();
+    };
+
+    chrome.downloads.onChanged.addListener(onChanged);
+    chrome.downloads
+      .search({ id: downloadId })
+      .then(([item]) => {
+        if (item?.state === "complete") finish();
+        if (item?.state === "interrupted") {
+          finish(new Error(item.error || "本地文件写入被中断"));
+        }
+      })
+      .catch(finish);
+  });
+}
+
+async function showResultToast(tabId, message, isError) {
+  if (!tabId) return;
+  await chrome.scripting
+    .executeScript({
+      target: { tabId },
+      func: showPageToast,
+      args: [message, isError]
+    })
+    .catch(() => undefined);
+}
+
+async function notifySaved(count) {
+  await chrome.action.setBadgeBackgroundColor({ color: "#176B56" });
+  await chrome.action.setBadgeText({ text: String(count) });
+  setTimeout(() => chrome.action.setBadgeText({ text: "" }), 1800);
+}
+
+async function notifyError(message) {
+  await chrome.action.setBadgeBackgroundColor({ color: "#B42318" });
+  await chrome.action.setBadgeText({ text: "!" });
+  await chrome.action.setTitle({ title: `保存失败：${message}` });
+  setTimeout(async () => {
+    await chrome.action.setBadgeText({ text: "" });
+    await chrome.action.setTitle({ title: "保存高亮提示词" });
+  }, 3000);
+}
+
+function userMessage(error) {
+  if (error instanceof Error) return error.message;
+  return String(error || "保存失败");
+}

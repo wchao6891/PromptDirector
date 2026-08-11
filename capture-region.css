@@ -1,0 +1,186 @@
+#__prompt_case_capture_overlay__ {
+  position: fixed;
+  z-index: 2147483646;
+  inset: 0;
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#__prompt_case_capture_overlay__ .prompt-case-capture-instruction {
+  position: fixed;
+  z-index: 2;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  max-width: calc(100vw - 32px);
+  align-items: center;
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(12, 30, 25, 0.92);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.3);
+  font: 700 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+@media (max-width: 540px) {
+  #__prompt_case_capture_overlay__ .prompt-case-capture-instruction {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 7px;
+    white-space: normal;
+  }
+
+}
+
+#__prompt_case_capture_overlay__ .prompt-case-capture-selection {
+  position: fixed;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  display: none;
+  border: 2px solid #f0c36b;
+  border-radius: 3px;
+  background: transparent;
+  box-shadow: 0 0 0 100vmax rgba(8, 18, 15, 0.58);
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+#__prompt_case_visual_picker__ {
+  position: fixed;
+  z-index: 2147483647;
+  inset: 0;
+  color: #fff;
+  background: transparent;
+  font: 700 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  pointer-events: none;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar {
+  position: fixed;
+  z-index: 2;
+  top: 14px;
+  left: 50%;
+  display: flex;
+  box-sizing: border-box;
+  min-height: 46px;
+  max-width: calc(100vw - 24px);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 13px;
+  padding: 7px 8px 7px 14px;
+  background: rgba(12, 30, 25, .96);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .34);
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar > span:first-child {
+  min-width: 0;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-picker-count {
+  color: #d1fe17;
+  white-space: nowrap;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar > span:last-child {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar button {
+  min-height: 32px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 8px;
+  padding: 5px 10px;
+  color: #fff;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar .prompt-case-visual-picker-add {
+  border-color: #d1fe17;
+  color: #0f1113;
+  background: #d1fe17;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-candidate {
+  position: fixed;
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, .76);
+  border-radius: 4px;
+  padding: 0;
+  color: #082217;
+  background: rgba(15, 17, 19, .04);
+  box-shadow: 0 0 0 1px rgba(15, 17, 19, .7);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-candidate:hover {
+  border-color: #d1fe17;
+  background: rgba(209, 254, 23, .06);
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-candidate > span {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: none;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid rgba(15, 17, 19, .9);
+  border-radius: 4px;
+  color: #0f1113;
+  background: #d1fe17;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .3);
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-candidate.is-selected {
+  border-color: #d1fe17;
+  background: rgba(209, 254, 23, .12);
+  box-shadow: 0 0 0 1px rgba(15, 17, 19, .94), inset 0 0 0 1px #d1fe17;
+}
+
+#__prompt_case_visual_picker__ .prompt-case-visual-candidate.is-selected > span { display: grid; }
+
+@media (prefers-reduced-motion: no-preference) {
+  #__prompt_case_visual_picker__ .prompt-case-visual-candidate {
+    transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+  }
+}
+
+@media (max-width: 540px) {
+  #__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar {
+    right: 8px;
+    left: 8px;
+    max-width: none;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 7px 10px;
+    transform: none;
+  }
+
+  #__prompt_case_visual_picker__ .prompt-case-visual-picker-toolbar > span:first-child {
+    flex: 1 1 190px;
+  }
+}

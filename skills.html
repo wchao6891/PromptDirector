@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN" data-i18n-title="创作 Skill 中心">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>创作 Skill 中心</title>
+    <script src="theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="ui-foundation.css" />
+    <link rel="stylesheet" href="library.css" />
+    <link rel="stylesheet" href="skills-page.css" />
+  </head>
+  <body class="skills-page">
+    <header class="skills-topbar">
+      <a class="skills-brand" href="library.html"><img src="assets/icons/icon-source.svg" alt="" /><span><small>PromptDirector</small><strong data-i18n="创作 Skill">创作 Skill</strong></span></a>
+      <label class="skills-search"><span class="sr-only" data-i18n="搜索 Skill">搜索 Skill</span><input id="skill-search" type="search" placeholder="搜索调用名或说明" data-i18n-placeholder="搜索调用名或说明" /></label>
+      <div class="skills-top-actions">
+        <button id="skill-import" class="button-secondary" type="button" data-i18n="导入">导入</button>
+        <button id="skill-create" type="button" data-i18n="新建 Skill">新建 Skill</button>
+        <button id="skill-context-back" class="button-secondary skill-context-back" type="button" aria-label="返回案例库" title="返回案例库"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span>返回案例库</span></button>
+      </div>
+      <input id="skill-zip-file" class="sr-only" type="file" accept=".zip,application/zip" />
+      <input id="skill-folder-files" class="sr-only" type="file" webkitdirectory multiple />
+    </header>
+
+    <main class="skills-main">
+      <section id="skill-library" class="skill-library">
+        <div class="skills-heading"><h1 data-i18n="创作 Skill 中心">创作 Skill 中心</h1><p id="skill-summary"></p></div>
+        <p id="skill-feedback" class="skill-feedback" role="status"></p>
+        <div id="skill-list" class="skill-grid"></div>
+        <div id="skill-empty" class="skill-empty" hidden><strong data-i18n="还没有创作 Skill">还没有创作 Skill</strong><p data-i18n="从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。">从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。</p><button id="skill-empty-create" type="button" data-i18n="创建第一份 Skill">创建第一份 Skill</button></div>
+      </section>
+
+      <section id="skill-detail" class="skill-detail" hidden>
+        <header class="skill-detail-header">
+          <div><h1 id="skill-detail-title"></h1><code id="skill-detail-call-name"></code></div>
+          <div class="skill-detail-actions">
+            <button id="skill-test" type="button" data-i18n="用此 Skill 创作">用此 Skill 创作</button>
+            <button id="skill-detail-edit" class="button-secondary" type="button" data-i18n="编辑">编辑</button>
+            <details id="skill-detail-more" class="skill-detail-more">
+              <summary data-i18n="更多">更多</summary>
+              <div class="skill-detail-more-panel">
+                <button id="skill-detail-refine" class="button-secondary" type="button" data-i18n="用证据改进 Skill">用证据改进 Skill</button>
+                <button id="skill-export" class="button-secondary" type="button" data-i18n="导出 Skill">导出 Skill</button>
+              </div>
+            </details>
+          </div>
+        </header>
+        <p id="skill-detail-feedback" class="skill-feedback" role="status"></p>
+        <div class="skill-detail-layout">
+          <aside class="skill-detail-summary">
+            <p id="skill-detail-description"></p>
+            <dl>
+              <div><dt data-i18n="版本">版本</dt><dd id="skill-detail-version"></dd></div>
+              <div><dt data-i18n="来源">来源</dt><dd id="skill-detail-source"></dd></div>
+              <div><dt data-i18n="更新">更新</dt><dd id="skill-detail-updated"></dd></div>
+            </dl>
+          </aside>
+          <article id="skill-detail-markdown" class="skill-detail-markdown"></article>
+        </div>
+      </section>
+
+      <section id="skill-workspace" class="skill-workspace" hidden>
+        <header class="skill-workspace-header"><div><p id="skill-workspace-kicker" class="skill-workspace-mode"></p><h1 id="skill-workspace-title" data-i18n="创建创作 Skill">创建创作 Skill</h1></div><button id="skill-delete" class="button-secondary danger-button" type="button" hidden data-i18n="删除">删除</button></header>
+
+        <div id="skill-builder" class="skill-builder">
+          <aside id="skill-source-sidebar" class="skill-source-sidebar">
+            <div class="skill-section-heading"><div><small>01</small><strong data-i18n="选择来源案例">选择来源案例</strong></div><span id="skill-selected-count">0</span></div>
+            <label><span data-i18n="按项目筛选">按项目筛选</span><select id="skill-project-filter"><option value="" data-i18n="全部项目">全部项目</option></select></label>
+            <label><span data-i18n="搜索案例">搜索案例</span><input id="skill-case-search" type="search" placeholder="搜索提示词或标题" data-i18n-placeholder="搜索提示词或标题" /></label>
+            <p data-i18n="项目只帮助选材，保存后的 Skill 不属于任何项目。">项目只帮助选材，保存后的 Skill 不属于任何项目。</p>
+          </aside>
+
+          <div class="skill-builder-content">
+            <section id="skill-source-step" class="skill-step">
+              <div class="skill-section-heading"><div><small data-i18n="来源">来源</small><strong data-i18n="案例组合">案例组合</strong></div><button id="skill-visible-select" class="button-secondary skill-visible-select" type="button" data-i18n="全选当前结果">全选当前结果</button></div>
+              <div id="skill-case-grid" class="skill-case-grid"></div>
+            </section>
+
+            <section id="skill-run-evidence-step" class="skill-step" hidden>
+              <div class="skill-section-heading"><div><small data-i18n="创作实验">创作实验</small><strong data-i18n="选择人工判断证据">选择人工判断证据</strong></div><span id="skill-run-evidence-count">0</span></div>
+              <p class="skill-evidence-note" data-i18n="这里只显示实际应用过当前 Skill 且由你填写了判断的运行；勾选后才会进入本次改进。">这里只显示实际应用过当前 Skill 且由你填写了判断的运行；勾选后才会进入本次改进。</p>
+              <div id="skill-run-evidence-list" class="skill-run-evidence-list"></div>
+            </section>
+
+            <section id="skill-target-step" class="skill-step skill-target-step">
+              <div class="skill-section-heading"><div><small>02</small><strong data-i18n="说明提炼目标">说明提炼目标</strong></div></div>
+              <textarea id="skill-goal" rows="4" placeholder="说清楚你想从这些案例中学什么，例如只提炼色彩组织、构图逻辑、角色塑造或动作设计。" data-i18n-placeholder="说清楚你想从这些案例中学什么，例如只提炼色彩组织、构图逻辑、角色塑造或动作设计。"></textarea>
+              <div class="skill-mode-row">
+                <label class="skill-mode"><input type="radio" name="skill-analysis-mode" value="text" checked /><span><strong data-i18n="文字提炼">文字提炼</strong><small data-i18n="使用原提示词和已有画面分析">使用原提示词和已有画面分析</small></span></label>
+                <label class="skill-mode"><input type="radio" name="skill-analysis-mode" value="vision" /><span><strong data-i18n="增加视觉分析">增加视觉分析</strong><small data-i18n="发送临时联系表，会产生额外费用">发送临时联系表，会产生额外费用</small></span></label>
+              </div>
+              <div id="skill-vision-preview" class="skill-vision-preview" hidden></div>
+              <div class="skill-step-actions"><button id="skill-generate" type="button" data-i18n="生成可编辑草稿">生成可编辑草稿</button><button id="skill-retry-vision" class="button-secondary" type="button" hidden data-i18n="重试失败批次">重试失败批次</button></div>
+              <p id="skill-generation-status" class="skill-feedback" role="status"></p>
+            </section>
+
+            <section id="skill-draft-step" class="skill-step skill-draft-step" hidden>
+              <div class="skill-section-heading"><div><small>03</small><strong data-i18n="编辑并保存">编辑并保存</strong></div><span id="skill-version-label"></span></div>
+              <div class="skill-name-grid">
+                <label><span data-i18n="调用名">调用名</span><div class="skill-call-name"><b>/</b><input id="skill-call-name" maxlength="80" placeholder="你的 Skill 名称" data-i18n-placeholder="你的 Skill 名称" /></div></label>
+                <label><span data-i18n="说明">说明</span><input id="skill-description" maxlength="240" placeholder="它在什么创作任务中发挥作用" data-i18n-placeholder="它在什么创作任务中发挥作用" /></label>
+              </div>
+              <label><span data-i18n="SKILL.md 正文">SKILL.md 正文</span><textarea id="skill-markdown" class="skill-markdown-editor" rows="22"></textarea></label>
+              <div class="skill-step-actions"><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
+              <p id="skill-save-status" class="skill-feedback" role="status"></p>
+            </section>
+
+            <section id="skill-versions-step" class="skill-step" hidden>
+              <div class="skill-section-heading"><div><small data-i18n="版本">版本</small><strong data-i18n="已保存版本">已保存版本</strong></div><span data-i18n="最多保留 10 个">最多保留 10 个</span></div>
+              <div id="skill-version-list" class="skill-version-list"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="skill-import-dialog" class="skill-import-dialog">
+      <header><h2 data-i18n="导入外部 Skill">导入外部 Skill</h2><button id="skill-import-close" class="icon-button" type="button" aria-label="关闭" data-i18n-aria-label="关闭" title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
+      <p data-i18n="完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。">完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。</p>
+      <div><button id="skill-import-zip" type="button" data-i18n="选择 ZIP">选择 ZIP</button><button id="skill-import-folder" class="button-secondary" type="button" data-i18n="选择目录">选择目录</button></div>
+    </dialog>
+    <script type="module" src="skills-page.js"></script>
+  </body>
+</html>

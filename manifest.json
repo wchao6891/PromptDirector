@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extensionName__",
+  "short_name": "__MSG_extensionShortName__",
+  "version": "1.18.4",
+  "homepage_url": "https://github.com/wchao6891/PromptDirector",
+  "default_locale": "zh_CN",
+  "minimum_chrome_version": "116",
+  "description": "__MSG_extensionDescription__",
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "contextMenus",
+    "downloads",
+    "offscreen",
+    "sidePanel",
+    "scripting",
+    "storage",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://api.deepseek.com/*"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
+  ],
+  "optional_permissions": [
+    "clipboardRead",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "__MSG_actionTitle__",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "collector.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob:; frame-src blob: https://player.vimeo.com https://www.youtube-nocookie.com https://player.bilibili.com https://www.douyin.com https://open.douyin.com https://platform.twitter.com;"
+  },
+  "commands": {
+    "save-selection": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "__MSG_saveSelectionCommand__"
+    }
+  }
+}

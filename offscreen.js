@@ -1,0 +1,449 @@
+import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
+import { deleteMediaBlob, getMediaBlob } from "./media-store.js";
+import {
+  SCREENSHOT_SETTINGS,
+  archiveMarkdownFilename,
+  calculateCropGeometry,
+  renderLibraryJson,
+  renderMarkdown
+} from "./lib.js";
+import { createZipBlob } from "./zip.js";
+import { PALETTE_VERSION, extractPalette } from "./palette.js";
+import {
+  SHARE_PREVIEW_FOUNDATION_FILENAME,
+  SHARE_PREVIEW_HTML_FILENAME,
+  SHARE_PREVIEW_MASONRY_FILENAME,
+  SHARE_PREVIEW_RUNTIME_FILENAME,
+  renderSharePreviewHtml,
+  renderSharePreviewMasonryJs,
+  renderSharePreviewRuntimeJs
+} from "./share-preview.js";
+import { normalizeUiPreferences } from "./preferences.js";
+import { normalizeEntryMedia } from "./media.js";
+import { normalizeCreativeRuns } from "./creative-runs.js";
+import { buildCreativeExperimentPackage } from "./creative-experiment-package.js";
+import { runCreativeJob } from "./creative-job-runner.js";
+import { composerServiceErrorDetails } from "./composer-service.js";
+
+const blobUrls = new Set();
+let creativeJobRunner = null;
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.target !== "offscreen") return false;
+  handleMessage(message)
+    .then(sendResponse)
+    .catch((error) => sendResponse({ ok: false, message: error.message }));
+  return true;
+});
+
+async function handleMessage(message) {
+  switch (message.type) {
+    case "CROP_AND_STORE_SCREENSHOT":
+      return cropScreenshot(message);
+    case "CROP_AND_STORE_SCREENSHOTS":
+      return cropScreenshots(message);
+    case "CREATE_ARCHIVE_URL":
+      return createArchiveUrl(message);
+    case "CREATE_CREATIVE_EXPERIMENT_ARCHIVE_URL":
+      return createCreativeExperimentArchiveUrl(message);
+    case "ANALYZE_STORED_SCREENSHOT":
+      return analyzeStoredScreenshot(message.entryId);
+    case "RUN_CREATIVE_JOB":
+      return startCreativeJob(message.job);
+    case "CANCEL_CREATIVE_JOB":
+      return cancelCreativeJob(message.jobId);
+    case "GET_CREATIVE_JOB_RUNNER":
+      return { ok: true, jobId: creativeJobRunner?.jobId ?? "" };
+    case "REVOKE_BLOB_URL":
+      if (blobUrls.delete(message.url)) URL.revokeObjectURL(message.url);
+      return { ok: true };
+    default:
+      return { ok: false, message: "未知后台画布操作" };
+  }
+}
+
+function startCreativeJob(job) {
+  const jobId = String(job?.id ?? "").trim();
+  if (!jobId) throw new Error("创作任务编号无效");
+  if (creativeJobRunner) {
+    if (creativeJobRunner.jobId === jobId) return { ok: true, jobId, running: true };
+    throw new Error("后台已有创作任务正在运行");
+  }
+  const controller = new AbortController();
+  const runner = { jobId, controller, cancelRequested: false, promise: null };
+  runner.promise = runCreativeJob(job, {
+    signal: controller.signal,
+    loadState: () => sendBackgroundMessage({ type: "GET_CREATIVE_JOB_EXECUTION_STATE" }),
+    progress: ({ phase, session, remoteVideo }) => sendBackgroundMessage({
+      type: "UPDATE_CREATIVE_JOB_PROGRESS",
+      jobId,
+      phase,
+      session,
+      remoteVideo
+    })
+  }).then(async (result) => {
+    const response = await sendBackgroundMessage({
+      type: "COMPLETE_CREATIVE_JOB",
+      jobId,
+      session: result.session,
+      visuals: result.visuals,
+      generation: result.generation
+    });
+    if (!response?.ok) {
+      await Promise.allSettled((result.visuals ?? []).map((visual) => visual.kind === "video" ? deleteMediaBlob(visual.id) : deleteScreenshotBlob(visual.id)));
+      throw new Error(response?.message || "创作任务结果保存失败");
+    }
+    return response;
+  }).catch(async (error) => {
+    if (runner.cancelRequested || error?.name === "AbortError") return { ok: false, canceled: true };
+    const details = composerServiceErrorDetails(error);
+    await sendBackgroundMessage({
+      type: "FAIL_CREATIVE_JOB",
+      jobId,
+      error: details
+    }).catch(() => undefined);
+    return { ok: false, message: details.message };
+  }).finally(async () => {
+    const maskAssetId = String(job?.request?.imageEdit?.maskAssetId ?? "").trim();
+    if (maskAssetId) await deleteScreenshotBlob(maskAssetId).catch(() => undefined);
+    if (creativeJobRunner === runner) creativeJobRunner = null;
+  });
+  creativeJobRunner = runner;
+  return { ok: true, jobId, running: true };
+}
+
+async function cancelCreativeJob(jobIdValue) {
+  const jobId = String(jobIdValue ?? "").trim();
+  if (!creativeJobRunner || creativeJobRunner.jobId !== jobId) {
+    return { ok: false, message: "后台没有找到正在运行的创作任务" };
+  }
+  creativeJobRunner.cancelRequested = true;
+  creativeJobRunner.controller.abort();
+  await creativeJobRunner.promise;
+  return { ok: true, jobId, canceled: true };
+}
+
+async function sendBackgroundMessage(message) {
+  const response = await chrome.runtime.sendMessage(message);
+  if (!response?.ok) throw new Error(response?.message || "创作任务状态保存失败");
+  return response;
+}
+
+async function createCreativeExperimentArchiveUrl({
+  composerSettings,
+  composerSessions,
+  creativeExperimentSettings,
+  creativeRuns
+}) {
+  const files = [];
+  const visualPaths = {};
+  const seen = new Set();
+  for (const run of normalizeCreativeRuns(creativeRuns)) {
+    for (const output of run.outputs) {
+      if (seen.has(output.visual.id)) continue;
+      const video = output.visual.kind === "video" || String(output.visual.mimeType ?? "").startsWith("video/");
+      const blob = video ? await getMediaBlob(output.visual.id) : await getScreenshotBlob(output.visual.id);
+      if (!blob) throw new Error(`创作实验中的生成结果${video ? "视频" : "图片"}缺失，请删除该结果或重新采集后再导出`);
+      const path = `results/${safeAssetName(run.id)}/${safeAssetName(output.visual.id)}.${resultExtension(blob.type)}`;
+      visualPaths[output.visual.id] = path;
+      files.push({ name: path, data: blob });
+      seen.add(output.visual.id);
+    }
+  }
+  const data = buildCreativeExperimentPackage({
+    composerSettings,
+    composerSessions,
+    creativeExperimentSettings,
+    creativeRuns
+  }, visualPaths);
+  files.unshift({ name: "experiments.json", data: `${JSON.stringify(data, null, 2)}\n` });
+  const archive = await createZipBlob(files);
+  const url = URL.createObjectURL(archive);
+  blobUrls.add(url);
+  return {
+    ok: true,
+    url,
+    runCount: data.runs.length,
+    mediaCount: seen.size,
+    imageCount: seen.size,
+    byteSize: archive.size
+  };
+}
+
+function resultExtension(mimeType) {
+  const known = {
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov"
+  };
+  return known[mimeType] || imageExtension(mimeType);
+}
+
+async function analyzeStoredScreenshot(entryId) {
+  const blob = await getScreenshotBlob(entryId);
+  if (!blob) return { ok: false, message: "没有找到已保存的截图" };
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = await loadImage(url);
+    const maximumWidth = 480;
+    const width = Math.min(maximumWidth, image.naturalWidth);
+    const height = Math.max(1, Math.round(image.naturalHeight * width / image.naturalWidth));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("浏览器无法创建色卡画布");
+    context.drawImage(image, 0, 0, width, height);
+    const colors = extractPalette(context.getImageData(0, 0, width, height));
+    return {
+      ok: true,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      mimeType: blob.type,
+      byteSize: blob.size,
+      palette: colors.length ? { colors, source: "screenshot", version: PALETTE_VERSION } : undefined
+    };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function cropScreenshot({ entryId, dataUrl, selection }) {
+  const image = await loadImage(dataUrl);
+  return cropLoadedScreenshot(image, entryId, selection);
+}
+
+async function cropScreenshots({ entryIds, dataUrl, selections }) {
+  const ids = Array.isArray(entryIds) ? entryIds : [];
+  const values = Array.isArray(selections) ? selections : [];
+  if (!ids.length || ids.length !== values.length) throw new Error("批量截图数据不完整");
+  const image = await loadImage(dataUrl);
+  const storedIds = [];
+  try {
+    const results = [];
+    for (const [index, selection] of values.entries()) {
+      storedIds.push(ids[index]);
+      results.push(await cropLoadedScreenshot(image, ids[index], selection));
+    }
+    return { ok: true, results };
+  } catch (error) {
+    await Promise.allSettled(storedIds.map((entryId) => deleteScreenshotBlob(entryId)));
+    throw error;
+  }
+}
+
+async function cropLoadedScreenshot(image, entryId, selection) {
+  const geometry = calculateCropGeometry({
+    imageWidth: image.naturalWidth,
+    imageHeight: image.naturalHeight,
+    viewportWidth: selection.viewportWidth,
+    viewportHeight: selection.viewportHeight,
+    rect: selection.rect
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = geometry.outputWidth;
+  canvas.height = geometry.outputHeight;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("浏览器无法创建截图画布");
+  context.drawImage(
+    image,
+    geometry.sourceX,
+    geometry.sourceY,
+    geometry.sourceWidth,
+    geometry.sourceHeight,
+    0,
+    0,
+    geometry.outputWidth,
+    geometry.outputHeight
+  );
+  const blob = await canvasToBlob(canvas);
+  await saveScreenshotBlob(entryId, blob);
+  const colors = extractPalette(context.getImageData(0, 0, canvas.width, canvas.height));
+  return {
+    ok: true,
+    width: geometry.outputWidth,
+    height: geometry.outputHeight,
+    mimeType: blob.type,
+    byteSize: blob.size,
+    palette: colors.length ? { colors, source: "screenshot", version: PALETTE_VERSION } : undefined
+  };
+}
+
+async function createArchiveUrl({
+  entries, settings, taxonomy, facetCatalog, classificationRules, organizerState,
+  composerSettings, composerSessions, creativeExperimentSettings, creativeRuns,
+  creativeSkills, compoundCases, uiPreferences, locale: localeValue, sharing = false, installUrl = ""
+}) {
+  const files = [];
+  const resolvedEntries = [];
+  const imagePaths = new Map();
+  let imageCount = 0;
+  const preferences = normalizeUiPreferences(uiPreferences);
+  const locale = localeValue === "en" ? "en" : "zh-CN";
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const normalized = normalizeEntryMedia(entry);
+    const mediaAssets = [];
+    for (const asset of normalized.mediaAssets) {
+      if (asset.storageMode === "reference") {
+        mediaAssets.push(asset);
+        continue;
+      }
+      const blob = await getMediaBlob(asset.id);
+      if (!blob) throw new Error(`“${entry.title || "未命名案例"}”的媒体文件缺失，请从完整备份恢复后再导出`);
+      const assetPath = `${mediaDirectory(asset.kind)}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${mediaExtension(blob.type, asset.kind)}`;
+      files.push({ name: assetPath, data: blob });
+      if (asset.kind === "image") {
+        imagePaths.set(asset.id, assetPath);
+        imageCount += 1;
+      }
+      mediaAssets.push({ ...asset, assetPath });
+    }
+    resolvedEntries.push({ ...normalized, mediaAssets });
+  }
+
+  const resolvedCreativeRuns = [];
+  if (!sharing) {
+    for (const run of normalizeCreativeRuns(creativeRuns)) {
+      const outputs = [];
+      for (const output of run.outputs) {
+        let screenshotPath = imagePaths.get(output.visual.id);
+        if (!screenshotPath) {
+          const blob = await getScreenshotBlob(output.visual.id);
+          if (!blob) throw new Error("创作实验中的生成结果图片缺失，请删除该结果或重新采集后再备份");
+          screenshotPath = `creative-results/${safeAssetName(run.id)}/${safeAssetName(output.visual.id)}.${imageExtension(blob.type)}`;
+          files.push({ name: screenshotPath, data: blob });
+          imagePaths.set(output.visual.id, screenshotPath);
+          imageCount += 1;
+        }
+        outputs.push({ ...output, visual: { ...output.visual, screenshotPath } });
+      }
+      resolvedCreativeRuns.push({ ...run, outputs });
+    }
+  }
+
+  const resolvedCreativeSkills = structuredClone(creativeSkills ?? { version: 1, items: [] });
+  if (!sharing) {
+    for (const skill of resolvedCreativeSkills.items ?? []) {
+      for (const file of skill.packageFiles ?? []) {
+        const blob = await getMediaBlob(file.assetId);
+        if (!blob) throw new Error(`外部 Skill 原包文件缺失：${file.path}`);
+        const archivePath = skillArchivePath(skill.portableId, file.assetId, file.path);
+        files.push({ name: archivePath, data: blob });
+        file.archivePath = archivePath;
+        file.byteSize = blob.size;
+        file.mimeType = blob.type || file.mimeType || "application/octet-stream";
+      }
+    }
+  }
+
+  files.unshift({
+    name: archiveMarkdownFilename(settings),
+    data: renderMarkdown(resolvedEntries, settings, taxonomy, facetCatalog, { locale })
+  });
+  files.splice(1, 0, {
+    name: "library.json",
+    data: renderLibraryJson(
+      resolvedEntries,
+      settings,
+      taxonomy,
+      facetCatalog,
+      classificationRules,
+      organizerState,
+      sharing ? null : {
+        composerSettings,
+        composerSessions,
+        creativeExperimentSettings,
+        creativeRuns: resolvedCreativeRuns,
+        creativeSkills: resolvedCreativeSkills
+      },
+      compoundCases
+    )
+  });
+  if (sharing) {
+    const [foundationCss, iconSprite, masonrySource] = await Promise.all([
+      packagedRuntimeAsset("ui-foundation.css"),
+      packagedRuntimeAsset("assets/ui-icons.svg"),
+      packagedRuntimeAsset("stable-masonry.js")
+    ]);
+    files.splice(2, 0, {
+      name: SHARE_PREVIEW_HTML_FILENAME,
+      data: renderSharePreviewHtml(resolvedEntries, settings, taxonomy, facetCatalog, {
+        installUrl,
+        locale,
+        theme: preferences.theme,
+        iconSprite
+      })
+    });
+    files.splice(3, 0, {
+      name: SHARE_PREVIEW_RUNTIME_FILENAME,
+      data: renderSharePreviewRuntimeJs()
+    });
+    files.splice(4, 0,
+      { name: SHARE_PREVIEW_FOUNDATION_FILENAME, data: foundationCss },
+      { name: SHARE_PREVIEW_MASONRY_FILENAME, data: renderSharePreviewMasonryJs(masonrySource) }
+    );
+  }
+  const archive = await createZipBlob(files);
+  const url = URL.createObjectURL(archive);
+  blobUrls.add(url);
+  return { ok: true, url, imageCount, fileCount: files.length, byteSize: archive.size };
+}
+
+async function packagedRuntimeAsset(path) {
+  const response = await fetch(chrome.runtime.getURL(path));
+  if (!response.ok) throw new Error(`分享页运行资源缺失：${path}`);
+  return response.text();
+}
+
+function skillArchivePath(portableId, assetId, packagePath) {
+  const parts = String(packagePath ?? "").split("/").filter(Boolean).map(safeAssetName);
+  if (!parts.length) throw new Error("外部 Skill 原包路径无效");
+  return ["skills", safeAssetName(portableId), safeAssetName(assetId), ...parts].join("/");
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("截图压缩失败"))),
+      SCREENSHOT_SETTINGS.mimeType,
+      SCREENSHOT_SETTINGS.quality
+    );
+  });
+}
+
+function safeAssetName(value) {
+  const safe = String(value ?? "").replace(/[^A-Za-z0-9._-]/g, "-");
+  if (!safe || safe === "." || safe === "..") throw new Error("案例编号无效");
+  return safe;
+}
+
+function imageExtension(mimeType) {
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/webp") return "webp";
+  throw new Error(`不支持的截图格式：${mimeType || "未知"}`);
+}
+
+function mediaDirectory(kind) {
+  return kind === "video" ? "videos" : kind === "document" ? "documents" : "images";
+}
+
+function mediaExtension(mimeType, kind) {
+  const known = {
+    "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
+    "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+    "video/x-matroska": "mkv", "video/x-msvideo": "avi",
+    "application/pdf": "pdf", "text/plain": "txt", "text/markdown": "md", "text/html": "html"
+  };
+  return known[mimeType] || (kind === "video" ? "video" : kind === "document" ? "bin" : imageExtension(mimeType));
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("浏览器无法读取当前截图"));
+    image.src = dataUrl;
+  });
+}

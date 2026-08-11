@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN" data-i18n-title="私人提示词创作台">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>私人提示词创作台</title>
+    <script src="theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="ui-foundation.css" />
+    <link rel="stylesheet" href="library.css" />
+    <link rel="stylesheet" href="composer-page.css" />
+  </head>
+  <body class="composer-page">
+    <div id="composer-shell" class="composer-shell">
+      <aside id="composer-nav" class="composer-nav" aria-label="创作导航" data-i18n-aria-label="创作导航">
+        <header class="composer-brand">
+          <a href="library.html" class="composer-brand-link" aria-label="返回视觉灵感库" data-i18n-aria-label="返回视觉灵感库">
+            <img src="assets/icons/icon-source.svg" alt="" />
+            <span><small>PromptDirector</small><strong data-i18n="创作台">创作台</strong></span>
+          </a>
+          <button id="composer-nav-close" class="icon-button composer-mobile-only" type="button" aria-label="关闭导航" data-i18n-aria-label="关闭导航" title="关闭导航"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+        </header>
+        <button id="composer-new" class="composer-new" type="button"><span aria-hidden="true">＋</span><span data-i18n="新对话">新对话</span></button>
+        <nav class="composer-nav-section" aria-labelledby="drafts-heading">
+          <div class="composer-nav-heading"><strong id="drafts-heading" data-i18n="最近对话">最近对话</strong></div>
+          <div id="composer-session-list" class="composer-session-list"></div>
+        </nav>
+        <div class="composer-nav-footer">
+          <p data-i18n="草稿与案例只保存在本机。">草稿与案例只保存在本机。</p>
+        </div>
+      </aside>
+
+      <main class="composer-chat">
+        <header class="composer-toolbar">
+          <button id="composer-nav-open" class="icon-button composer-mobile-only" type="button" aria-label="打开导航" data-i18n-aria-label="打开导航" title="打开导航"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-menu"></use></svg></button>
+          <div class="composer-title-wrap">
+            <strong id="composer-title">未命名图片提示词</strong>
+            <span id="composer-save-state" data-i18n="已自动保存">已自动保存</span>
+          </div>
+          <div class="composer-toolbar-actions">
+            <button id="composer-diagnostic-export" class="button-secondary composer-diagnostic-export" type="button" data-i18n="导出对话诊断">导出对话诊断</button>
+            <a href="library.html" class="button-secondary composer-library-exit"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span data-i18n="返回灵感库">返回灵感库</span></a>
+          </div>
+        </header>
+
+        <section id="composer-timeline" class="composer-chat-scroll" aria-live="polite"></section>
+
+        <footer class="composer-input-area">
+          <div id="composer-aliases" class="composer-aliases composer-input-aliases" aria-label="插入案例编号" data-i18n-aria-label="插入案例编号"></div>
+          <div id="composer-applied-skills" class="composer-applied-skills" aria-label="已应用 Skill" hidden></div>
+          <div id="composer-retrieval-sources" class="composer-retrieval-sources" aria-label="本轮检索来源" hidden></div>
+          <div class="composer-input-box">
+            <div id="composer-temp-reference-row" class="composer-temp-reference-row" hidden>
+              <div id="composer-temp-references" class="composer-temp-references" aria-label="临时附件"></div>
+              <button id="composer-temp-reference-save-all" class="button-secondary composer-temp-reference-save-all" type="button">全部保存</button>
+            </div>
+            <textarea id="composer-instruction" rows="2" placeholder="生成提示词、分析资料、提炼方法，或直接讨论…" data-i18n-placeholder="生成提示词、分析资料、提炼方法，或直接讨论…"></textarea>
+            <div id="composer-skill-menu" class="composer-skill-menu" role="listbox" aria-label="选择创作 Skill" hidden></div>
+            <div class="composer-input-footer">
+              <div class="composer-input-tools">
+                <button id="composer-attachment-local" class="button-secondary icon-button composer-attachment-local" type="button" aria-label="添加本机文件" data-i18n-aria-label="添加本机文件" title="添加本机文件" data-i18n-title="添加本机文件"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-paperclip"></use></svg></button>
+                <input id="composer-attachment-files" class="sr-only" type="file" multiple />
+                <fieldset class="composer-type-switch" aria-label="生成类型" data-i18n-aria-label="生成类型">
+                  <label><input type="radio" name="composer-type" value="image" checked /><span data-i18n="图片">图片</span></label>
+                  <label><input type="radio" name="composer-type" value="video" /><span data-i18n="视频">视频</span></label>
+                </fieldset>
+                <button id="composer-reference-open" class="button-secondary composer-reference-trigger" type="button"><span data-i18n="参考">参考</span><strong id="composer-reference-count">0</strong></button>
+                <details id="composer-options" class="composer-options">
+                  <summary class="button-secondary" aria-label="创作设置" data-i18n-aria-label="创作设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-settings"></use></svg></summary>
+                  <div class="composer-options-panel">
+                    <strong data-i18n="创作设置">创作设置</strong>
+                    <label class="composer-option-field"><span data-i18n="任务">任务</span><select id="composer-route"><option value="auto" data-i18n="自动判断">自动判断</option><option value="compose" data-i18n="生成提示词">生成提示词</option><option value="analyze_materials" data-i18n="分析资料">分析资料</option><option value="chat" data-i18n="普通对话">普通对话</option></select></label>
+                    <label class="composer-option-field"><span data-i18n="目标模型">目标模型</span><input id="composer-platform" placeholder="通用" /></label>
+                    <label class="composer-option-field"><span data-i18n="输出语言">输出语言</span><select id="composer-output-language"><option value="auto" data-i18n="自动">自动</option><option value="zh-CN">中文</option><option value="en">English</option></select></label>
+                    <label class="composer-option-toggle" title="在原有两次请求中检查常见平台拒绝风险，并在保持创作核心的前提下修复" data-i18n-title="在原有两次请求中检查常见平台拒绝风险，并在保持创作核心的前提下修复"><span><b data-i18n="审核修复">审核修复</b><small data-i18n="保持创作核心，检查常见拒绝风险">保持创作核心，检查常见拒绝风险</small></span><input id="composer-production-review" type="checkbox" role="switch" checked /></label>
+                    <label class="composer-option-toggle"><span><b data-i18n="思考模式">思考模式</b><small data-i18n="更慢且消耗更多输出 token">更慢且消耗更多输出 token</small></span><input id="composer-thinking" type="checkbox" role="switch" /></label>
+                    <label class="composer-option-toggle"><span><b id="composer-create-media-label">创建图片</b><small id="composer-create-image-note">使用当前创作服务直接生成图片</small></span><input id="composer-create-image" type="checkbox" role="switch" /></label>
+                    <section id="composer-generation-settings" class="composer-generation-settings" hidden>
+                      <strong id="composer-generation-settings-title" data-i18n="本轮图片参数">本轮图片参数</strong>
+                      <label id="composer-image-size-field" class="composer-option-field"><span data-i18n="画幅与分辨率">画幅与分辨率</span><select id="composer-image-size"></select></label>
+                      <label id="composer-image-quality-field" class="composer-option-field"><span data-i18n="质量">质量</span><select id="composer-image-quality"></select></label>
+                      <label id="composer-image-reference-mode-field" class="composer-option-field"><span>参考图参与方式</span><select id="composer-image-reference-mode"><option value="conditioned">带原图（默认）</option><option value="prompt_only">只在整理提示词时看图</option><option value="text_only">全程只用分析文字</option></select></label>
+                      <label id="composer-video-duration-field" class="composer-option-field" hidden><span data-i18n="时长">时长</span><select id="composer-video-duration"></select></label>
+                      <p id="composer-generation-parameter-note"></p>
+                    </section>
+                    <button id="composer-assembly-open" class="button-secondary composer-option-action" type="button" data-i18n="查看本次装配">查看本次装配</button>
+                  </div>
+                </details>
+              </div>
+              <div class="composer-input-actions">
+                <div class="composer-model-control">
+                  <button id="composer-model-trigger" class="button-secondary composer-model-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="composer-model-label">Flash</span><span aria-hidden="true">⌄</span></button>
+                  <div id="composer-model-menu" class="composer-model-menu" role="menu" hidden>
+                    <strong data-i18n="创作模型">创作模型</strong>
+                    <button id="composer-model-flash" type="button" role="menuitemradio" aria-checked="true"><span><b>DeepSeek Flash</b><small data-i18n="响应更快，默认推荐">响应更快，默认推荐</small></span><span aria-hidden="true">✓</span></button>
+                    <button id="composer-model-pro" type="button" role="menuitemradio" aria-checked="false"><span><b>DeepSeek Pro</b><small data-i18n="质量优先，等待更久">质量优先，等待更久</small></span><span aria-hidden="true">✓</span></button>
+                    <button id="composer-model-openai" type="button" role="menuitemradio" aria-checked="false"><span><b id="composer-model-openai-label">OpenAI</b><small>读取手选原图与对应提示词</small></span><span aria-hidden="true">✓</span></button>
+                    <button id="composer-model-compatible" type="button" role="menuitemradio" aria-checked="false"><span><b id="composer-model-compatible-label">兼容视觉服务</b><small>读取手选原图与对应提示词</small></span><span aria-hidden="true">✓</span></button>
+                    <button id="composer-model-xai" type="button" role="menuitemradio" aria-checked="false"><span><b id="composer-model-xai-label">xAI</b><small>使用已配置的 xAI 文字与图片能力</small></span><span aria-hidden="true">✓</span></button>
+                    <div id="composer-model-dynamic" class="composer-model-dynamic" hidden></div>
+                    <p>规划不发送图片；多模态服务仅在最终装配时读取手选内容图。</p>
+                  </div>
+                </div>
+                <button id="composer-action" class="composer-action" type="button" aria-label="发送" data-i18n-aria-label="发送"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-send"></use></svg></button>
+              </div>
+            </div>
+          </div>
+          <div class="composer-status-line"><p id="composer-feedback" role="status"></p><p id="composer-send-note"></p></div>
+        </footer>
+      </main>
+
+      <section id="composer-reference-workspace" class="composer-reference-workspace" aria-label="参考资料" data-i18n-aria-label="参考资料" aria-hidden="true" inert hidden>
+        <header class="composer-reference-header">
+          <div class="composer-reference-title">
+            <strong id="composer-workspace-title" data-i18n="本次参考">本次参考</strong>
+            <nav class="composer-reference-tabs" aria-label="参考类型">
+              <button id="composer-reference-tab-cases" type="button" aria-pressed="true" data-i18n="案例">案例</button>
+              <button id="composer-reference-tab-skills" type="button" aria-pressed="false">Skill</button>
+            </nav>
+            <p id="composer-workspace-description">只选择本次对话需要借鉴的案例，不会修改案例库或 Skill。</p>
+          </div>
+          <button id="composer-reference-close" class="icon-button" type="button" aria-label="关闭参考资料" data-i18n-aria-label="关闭参考资料" title="关闭参考资料"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+        </header>
+
+        <div class="composer-reference-body">
+          <aside id="composer-projects-panel" class="composer-projects-panel" hidden>
+            <div class="composer-reference-heading">
+              <div><strong>已保存的创作 Skill</strong><span>可同时应用多个，并按当前顺序执行。</span></div>
+            </div>
+            <div id="composer-project-list" class="composer-project-list"></div>
+          </aside>
+
+          <main id="composer-case-picker" class="composer-case-picker">
+            <div class="composer-reference-heading">
+              <div><strong data-i18n="选择案例">选择案例</strong><span id="composer-case-selection-count"></span></div>
+              <div class="composer-reference-filters">
+                <label><span class="sr-only" data-i18n="筛选项目">筛选项目</span><select id="composer-reference-project-filter"></select></label>
+                <label class="composer-reference-search"><span class="sr-only" data-i18n="搜索可用案例">搜索可用案例</span><input id="composer-reference-search" type="search" placeholder="搜索提示词或案例标题" data-i18n-placeholder="搜索提示词或案例标题" /></label>
+              </div>
+            </div>
+            <div id="composer-case-list" class="composer-case-list"></div>
+          </main>
+        </div>
+
+        <footer id="composer-reference-footer" class="composer-reference-footer">
+          <div class="composer-reference-footer-status"><p id="composer-reference-feedback" class="composer-workspace-feedback" role="status" aria-live="polite"></p><div id="composer-selection-strip" class="composer-selection-strip"></div></div>
+          <div><button id="composer-reference-clear" class="button-secondary" type="button" data-i18n="清空参考">清空参考</button><button id="composer-reference-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button><button id="composer-reference-apply" type="button" data-i18n="应用参考">应用参考</button></div>
+        </footer>
+      </section>
+    </div>
+
+    <dialog id="composer-assembly-dialog" class="composer-assembly-dialog" aria-labelledby="composer-assembly-title">
+      <header><div><strong id="composer-assembly-title" data-i18n="本次装配">本次装配</strong><p>这里显示本轮实际采用的 Agent、任务方法和资料。</p></div><button id="composer-assembly-close" class="icon-button" type="button" aria-label="关闭本次装配" data-i18n-aria-label="关闭本次装配" title="关闭本次装配"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
+      <div id="composer-assembly-content" class="composer-assembly-content"></div>
+    </dialog>
+    <dialog id="composer-image-blocker" class="composer-image-blocker" aria-labelledby="composer-image-blocker-title">
+      <form method="dialog">
+        <header>
+          <strong id="composer-image-blocker-title">当前模型无法读取图片</strong>
+          <button id="composer-image-blocker-cancel" class="icon-button" type="submit" value="cancel" aria-label="取消本轮" title="取消本轮"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+        </header>
+        <p id="composer-image-blocker-description">本轮包含尚未分析的临时图片。请选择视觉创作服务，或明确调用当前图片分析服务后继续。</p>
+        <div class="composer-image-blocker-actions">
+          <button id="composer-image-blocker-choose-service" type="button">选择视觉创作服务</button>
+          <button id="composer-image-blocker-analyze" class="button-secondary" type="button">调用图片分析并继续</button>
+          <button class="button-secondary" type="submit" value="cancel">取消本轮</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="composer-page.js"></script>
+  </body>
+</html>

@@ -1,0 +1,36 @@
+{
+  "name": "prompt-case-collector",
+  "version": "1.18.4",
+  "private": false,
+  "license": "Apache-2.0",
+  "repository": "https://github.com/wchao6891/PromptDirector",
+  "type": "module",
+  "scripts": {
+    "build:brand": "node tools/build-brand-icons.mjs",
+    "build:documents": "node tools/document-runtime.mjs",
+    "build:icons": "node tools/build-ui-icons.mjs",
+    "build:pdfjs": "node tools/pdfjs-runtime.mjs",
+    "test": "node --test",
+    "check": "node tools/check-source.mjs",
+    "check:public": "node tools/validate-public-source.mjs",
+    "check:brand": "node tools/build-brand-icons.mjs --check",
+    "check:documents": "node tools/document-runtime.mjs --check",
+    "check:pdfjs": "node tools/pdfjs-runtime.mjs --check",
+    "package": "npm run build:brand && npm run build:documents && npm run build:icons && node tools/package-extension.mjs",
+    "package:release": "npm run build:brand && npm run build:documents && npm run build:icons && node tools/package-extension.mjs --release",
+    "test:e2e": "python3 test/run_e2e.py",
+    "test:smart-picker": "python3 test/smart_visual_picker_e2e.py",
+    "verify": "npm run check:public && npm run check && npm run check:brand && npm run check:documents && npm run check:pdfjs && npm test && npm run package"
+  },
+  "dependencies": {
+    "@jonahschulte/rtf-toolkit": "0.5.0",
+    "@mozilla/readability": "0.6.0",
+    "pdfjs-dist": "6.2.108",
+    "turndown": "7.2.4"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "cheerio": "1.2.0",
+    "lucide-static": "1.30.0"
+  }
+}

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="PromptDirector P mark">
+  <rect x="4" y="4" width="120" height="120" rx="22" fill="#D1FE17"/>
+  <path d="M30 25h48c19 0 32 12 32 30 0 14-7 25-20 31L70 69c9-2 14-7 14-14 0-8-6-13-16-13H25l5-17Z" fill="#0F1113"/>
+  <path d="m29 63 25 20-9 26H18l11-46Z" fill="#0F1113"/>
+</svg>

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN" data-i18n-title="提示词导演">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>提示词导演采集台</title>
+    <script src="theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="ui-foundation.css" />
+    <link rel="stylesheet" href="collector.css" />
+  </head>
+  <body>
+    <main>
+      <header class="collector-header">
+        <div class="brand"><img src="assets/icons/icon-source.svg" alt="" /><div><p>PromptDirector</p><h1>采集灵感</h1></div></div>
+      </header>
+
+      <button id="open-library" class="library-entry" type="button">
+        <span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-library"></use></svg><strong data-i18n="打开灵感库">打开灵感库</strong></span>
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg>
+      </button>
+
+      <section id="target-banner" class="target-banner" hidden>
+        <div><small>目标案例</small><strong id="target-label"></strong></div>
+        <button id="exit-target" class="quiet compact" type="button">退出</button>
+      </section>
+
+      <section id="start-state" class="start-state">
+        <div id="result-start" class="result-start" hidden>
+          <div class="start-copy">
+            <h2 data-i18n="保存本次生成结果">保存本次生成结果</h2>
+            <p id="result-prompt-title"></p>
+          </div>
+          <div class="capture-actions" aria-label="保存本次生成结果" data-i18n-aria-label="保存本次生成结果">
+            <button id="result-smart-visuals" class="primary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-image"></use></svg><strong data-i18n="选择图片">选择图片</strong></button>
+            <button id="result-screenshot" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-maximize-2"></use></svg><strong data-i18n="框选">框选</strong></button>
+          </div>
+          <button id="save-other-inspiration" class="switch-task" type="button" data-i18n="保存其他灵感">保存其他灵感</button>
+        </div>
+        <div id="normal-start" class="normal-start">
+          <div class="capture-actions" aria-label="从当前网页采集">
+            <button id="start-smart-visuals" class="primary smart-visuals" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-image"></use></svg><strong data-i18n="智能选图">智能选图</strong></button>
+            <button id="start-selection" class="direct-selection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-file-text"></use></svg><strong data-i18n="提取文字">提取文字</strong></button>
+            <button id="start-page-capture" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-library"></use></svg><strong>网页采集</strong></button>
+            <div id="other-capture-methods" class="other-capture-methods">
+              <button id="start-screenshot" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-maximize-2"></use></svg><strong data-i18n="框选截图">框选截图</strong></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-capture" class="page-capture" hidden aria-live="polite">
+        <header>
+          <div><small>网页批量预检</small><h2 id="page-capture-title">已识别 0 项</h2></div>
+          <button id="page-capture-scan" class="button-secondary compact" type="button">扫描整页</button>
+        </header>
+        <p id="page-capture-help">扫描不会自动保存。请确认正文、图片或视频。</p>
+        <div class="page-capture-bulk-actions" aria-label="批量选择网页内容">
+          <button id="page-capture-select-recommended" class="button-secondary compact" type="button">选择推荐内容</button>
+          <button id="page-capture-select-text" class="button-secondary compact" type="button">只选正文</button>
+          <button id="page-capture-select-images" class="button-secondary compact" type="button">选择全部图片</button>
+          <button id="page-capture-clear" class="button-secondary compact" type="button">清空选择</button>
+        </div>
+        <div id="page-capture-list" class="page-capture-list"></div>
+        <div class="page-capture-actions">
+          <button id="page-capture-cancel" class="button-secondary" type="button">取消</button>
+          <button id="page-capture-save" class="primary" type="button">批量保存</button>
+        </div>
+      </section>
+
+      <section id="region-capture-status" class="smart-selection region-capture-status" hidden aria-live="polite">
+        <div><small>框选截图</small><h2 id="region-capture-title">正在启动框选…</h2><p id="region-capture-help">请在网页中拖动选择画面；操作状态会持续显示在这里。</p></div>
+        <div class="smart-selection-actions"><button id="region-capture-cancel" class="button-secondary" type="button">取消框选</button></div>
+      </section>
+
+      <section id="smart-selection" class="smart-selection" hidden aria-live="polite">
+        <div>
+          <small>智能选图进行中</small>
+          <h2 id="smart-selection-count">已选 0 张</h2>
+          <p id="smart-selection-help">直接点击网页中的画面，可多选；确认操作留在这里。</p>
+        </div>
+        <p id="smart-selection-warning" class="smart-selection-warning" hidden></p>
+        <div class="smart-selection-actions">
+          <button id="smart-selection-cancel" class="button-secondary" type="button">取消</button>
+          <button id="smart-selection-confirm" class="primary" type="button" disabled>加入素材</button>
+        </div>
+      </section>
+
+      <section id="preview-state" class="preview-state" hidden>
+        <header class="preview-heading">
+          <div><small>待保存内容</small><h2 id="content-summary"></h2></div>
+          <span>临时保存在本机</span>
+        </header>
+        <div id="quick-preview" class="quick-preview"></div>
+        <section class="save-metadata" aria-label="保存设置">
+          <label>
+            <span data-i18n="一级分类">一级分类</span>
+            <select id="content-type"></select>
+          </label>
+          <details class="custom-label-editor">
+            <summary>自定义标签（可选）</summary>
+            <label>
+              <span class="sr-only">自定义标签</span>
+              <input id="custom-labels" autocomplete="off" placeholder="例如：喜欢、待复刻、广告参考" />
+            </label>
+            <small>用逗号分隔</small>
+          </details>
+        </section>
+        <div class="add-more-actions">
+          <button id="add-smart-visuals" class="quiet" type="button">＋ 智能选图</button>
+          <button id="add-selection" class="quiet" type="button">＋ 提取文字</button>
+          <button id="add-page-capture" class="quiet" type="button">＋ 网页采集</button>
+          <details id="add-other-capture-methods" class="other-capture-methods compact-capture-methods">
+            <summary>智能选图无法识别？</summary>
+            <div>
+              <button id="add-screenshot" class="quiet" type="button">＋ 框选截图</button>
+            </div>
+          </details>
+        </div>
+        <button id="organize-toggle" class="organize-toggle" type="button" aria-expanded="false">编辑与整理</button>
+
+        <div id="organizer" class="organizer" hidden>
+          <details class="title-editor">
+            <summary>修改案例标题</summary>
+            <label><span class="sr-only">案例标题</span><input id="draft-title" autocomplete="off" placeholder="默认使用来源网页标题" /></label>
+          </details>
+          <section id="fragment-section" class="draft-section" hidden>
+            <header><h3>文字内容</h3><small id="fragment-help"></small></header>
+            <div id="fragment-list" class="draft-list"></div>
+          </section>
+          <section id="visual-section" class="draft-section" hidden>
+            <header><h3>图片内容</h3><small id="visual-help"></small></header>
+            <div id="visual-list" class="visual-list"></div>
+          </section>
+        </div>
+
+        <section id="duplicate-panel" class="duplicate-panel" hidden>
+          <strong>这个来源已经保存过</strong>
+          <p id="duplicate-title"></p>
+          <div><button id="merge-duplicate" type="button">添加到原案例</button><button id="save-separate" class="quiet" type="button">仍然新建</button></div>
+        </section>
+      </section>
+
+      <p id="feedback" role="status" aria-live="polite"></p>
+
+      <footer id="collector-footer" class="collector-footer" hidden>
+        <button id="discard-draft" class="quiet" type="button">清空</button>
+        <button id="save-draft" class="primary" type="button">保存案例</button>
+      </footer>
+    </main>
+    <script type="module" src="collector.js"></script>
+  </body>
+</html>

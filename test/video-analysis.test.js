@@ -1,0 +1,78 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  analyzeVideoWithGemini,
+  analyzeVideoWithOpenRouter,
+  publicYouTubeUrl,
+  requireVideoAnalysisConfirmation,
+  videoAnalysisPrompt
+} from "../video-analysis.js";
+
+test("video analysis execution requires the current paid-media confirmation", () => {
+  assert.throws(() => requireVideoAnalysisConfirmation(), /确认框/);
+  assert.throws(() => requireVideoAnalysisConfirmation("true"), /确认框/);
+  assert.equal(requireVideoAnalysisConfirmation(true), true);
+});
+
+test("only public HTTPS YouTube URLs are accepted for URL video understanding", () => {
+  assert.equal(publicYouTubeUrl("https://youtu.be/abc"), "https://youtu.be/abc");
+  assert.equal(publicYouTubeUrl("https://www.bilibili.com/video/BV1"), "");
+  assert.equal(publicYouTubeUrl("javascript:alert(1)"), "");
+});
+
+test("custom video analysis requires an explicit question", () => {
+  assert.throws(() => videoAnalysisPrompt("custom", ""), /填写/);
+  assert.match(videoAnalysisPrompt("custom", "比较前后节奏"), /比较前后节奏/);
+});
+
+test("Gemini YouTube analysis reports the real source, model and usage", async () => {
+  const calls = [];
+  const result = await analyzeVideoWithGemini({
+    apiKey: "key", model: "video-model", mode: "content-summary", youtubeUrl: "https://www.youtube.com/watch?v=abc"
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(JSON.stringify({
+        modelVersion: "video-model-001",
+        candidates: [{ content: { parts: [{ text: "00:01 开场" }] } }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4, totalTokenCount: 14 }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].options.body, /youtube\.com/);
+  assert.equal(result.sourceKind, "public-youtube-url");
+  assert.equal(result.model, "video-model-001");
+  assert.equal(result.usage.totalTokens, 14);
+});
+
+test("non-YouTube social links are not disguised as full video analysis", async () => {
+  await assert.rejects(analyzeVideoWithGemini({ apiKey: "key", model: "model", mode: "creative-breakdown", youtubeUrl: "https://x.com/user/status/1" }), /附加本地视频/);
+});
+
+test("OpenRouter sends local video as video_url without changing the selected model", async () => {
+  const calls = [];
+  const result = await analyzeVideoWithOpenRouter({
+    apiKey: "router-key",
+    endpoint: "https://openrouter.ai/api/v1",
+    model: "declared/video-model",
+    mode: "content-summary",
+    videoBlob: new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" })
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return new Response(JSON.stringify({
+        model: "declared/video-model",
+        provider: "declared-provider",
+        choices: [{ message: { content: "00:01 开场" } }],
+        usage: { prompt_tokens: 12, completion_tokens: 3, total_tokens: 15, cost: 0.012 }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+  assert.equal(calls[0].url, "https://openrouter.ai/api/v1/chat/completions");
+  assert.equal(calls[0].body.model, "declared/video-model");
+  assert.match(calls[0].body.messages[0].content[1].video_url.url, /^data:video\/mp4;base64,/);
+  assert.equal(result.usage.totalTokens, 15);
+  assert.equal(result.cost, 0.012);
+  assert.deepEqual(result.routing, { provider: "declared-provider" });
+});

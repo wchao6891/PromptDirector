@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="zh-CN" data-i18n-title="提示词导演灵感库">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>提示词导演灵感库</title>
+    <script src="theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="ui-foundation.css" />
+    <link rel="stylesheet" href="library.css" />
+  </head>
+  <body data-library-state="loading">
+    <div id="library-loading" class="library-loading" role="status" aria-live="polite">
+      <div class="library-loading-bar"></div>
+      <div class="library-loading-body">
+        <div class="library-loading-sidebar"></div>
+        <div class="library-loading-content"><strong data-i18n="正在打开资料库">正在打开资料库</strong><div></div><div></div><div></div></div>
+      </div>
+    </div>
+    <header class="topbar">
+      <button id="toggle-filters" class="icon-button" type="button" aria-label="展开或收起筛选" data-i18n-aria-label="展开或收起筛选" title="展开或收起筛选" data-i18n-title="展开或收起筛选"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-menu"></use></svg></button>
+      <div class="brand">
+        <img class="brand-mark" src="assets/icons/icon-source.svg" alt="" />
+        <div><strong class="brand-wordmark">PromptDirector</strong><h1 id="library-title">视觉创作资料库</h1></div>
+      </div>
+      <label class="global-search">
+        <span class="sr-only" data-i18n="搜索提示词、来源或创作属性">搜索提示词、来源或创作属性</span>
+        <input id="search-input" type="search" placeholder="搜索画面、提示词，或输入 type:video…" data-i18n-placeholder="搜索画面、提示词，或输入 type:video…" />
+      </label>
+      <p id="library-summary"></p>
+      <div class="top-actions">
+        <details id="add-menu" class="package-menu add-menu">
+          <summary class="button-secondary" data-i18n="添加">添加</summary>
+          <div class="package-menu-panel">
+            <button id="add-media" type="button"><strong data-i18n="导入本机资料">导入本机资料</strong><span>选择文件或文件夹，统一确认后导入</span></button>
+            <button id="add-video-reference" class="button-secondary" type="button"><strong data-i18n="视频链接">视频链接</strong><span>保存 YouTube、Vimeo 或来源网页</span></button>
+            <button id="add-quick-note" class="button-secondary" type="button"><strong data-i18n="快速笔记">快速笔记</strong><span>立即记下一段创作想法</span></button>
+          </div>
+        </details>
+        <button id="start-compose" type="button" data-i18n="开始创作">开始创作</button>
+        <button id="open-settings" class="icon-button" type="button" aria-label="设置" data-i18n-aria-label="设置" title="设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-settings"></use></svg></button>
+        <input id="media-file" class="sr-only" type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-matroska,video/x-msvideo,application/pdf,text/plain,text/markdown,text/html,.gif,.mov,.mkv,.avi,.md,.txt,.html" />
+        <input id="media-folder" class="sr-only" type="file" multiple webkitdirectory />
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside id="filter-sidebar" class="filter-sidebar" aria-label="案例筛选" data-i18n-aria-label="案例筛选">
+        <nav class="workspace-navigation" aria-label="工作空间" data-i18n-aria-label="工作空间">
+          <div class="filter-heading"><strong data-i18n="工作空间">工作空间</strong></div>
+          <button id="workspace-library" class="workspace-navigation-item" type="button" aria-current="page"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-library"></use></svg><span data-i18n="案例库">案例库</span></button>
+          <button id="open-curated" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sparkles"></use></svg><span data-i18n="精选案例">精选案例</span></button>
+          <button id="open-skills" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-wand-sparkles"></use></svg><span data-i18n="创作 Skill">创作 Skill</span></button>
+        </nav>
+        <div class="sidebar-filter-tools">
+          <strong id="active-filter-badge" class="filter-count-badge" hidden></strong>
+          <button id="clear-filters" class="button-secondary" type="button" disabled data-i18n="清除全部筛选">清除全部筛选</button>
+        </div>
+        <section id="project-section" class="project-section">
+          <div class="filter-heading"><strong data-i18n="项目">项目</strong><button id="create-collection" type="button" data-i18n="新建项目">新建项目</button></div>
+          <div id="collection-filters" class="project-list"></div>
+        </section>
+        <section class="filter-section">
+          <div class="filter-heading"><strong data-i18n="内容类型">内容类型</strong><button id="manage-facets" type="button" data-i18n="分类与标签">整理</button></div>
+          <div id="content-filters" class="filter-options"></div>
+          <label class="pending-switch"><input id="pending-filter" type="checkbox" /><span data-i18n="只看待确认">只看待确认</span><strong id="pending-count"></strong></label>
+        </section>
+        <section class="filter-section tag-navigation-section">
+          <div class="filter-heading"><strong data-i18n="属性筛选">属性筛选</strong></div>
+          <div id="facet-filters" class="facet-filters"></div>
+        </section>
+      </aside>
+
+      <main class="gallery-shell">
+        <div id="gallery-heading" class="gallery-heading">
+          <strong id="result-count"></strong>
+          <button id="select-cases" class="icon-button gallery-select-button" type="button" aria-label="选择案例" data-i18n-aria-label="选择案例" title="选择案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-check"></use></svg></button>
+          <div id="share-bar" class="share-bar" hidden>
+            <strong id="share-count" data-i18n="选择案例">选择案例</strong>
+            <span id="selection-hint" data-i18n="选择后再决定如何使用">选择后再决定如何使用</span>
+            <div id="selection-simple-actions">
+              <select id="selection-project-target" aria-label="选择目标项目" data-i18n-aria-label="选择目标项目"><option value="" data-i18n="加入项目…">加入项目…</option></select>
+              <button id="selection-add-project" class="button-secondary" type="button" disabled data-i18n="加入">加入</button>
+              <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目">新建项目</button>
+              <button id="selection-combine" class="button-secondary" type="button" disabled data-i18n="组合">组合</button>
+              <button id="selection-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析画面">批量分析画面</button>
+              <button id="share-export" type="button" disabled data-i18n="分享">分享</button>
+              <button id="share-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button>
+            </div>
+          </div>
+          <strong id="project-selection-title" hidden></strong>
+          <div id="project-selection-actions" class="project-selection-actions" hidden>
+            <strong id="project-selection-count" class="project-selection-count" hidden></strong>
+            <button id="project-selection-select-filtered" class="button-secondary" type="button" hidden data-i18n="选中当前筛选">选中当前筛选</button>
+            <button id="project-selection-select-all" class="button-secondary" type="button" hidden data-i18n="选中全部可分析">选中全部可分析</button>
+            <button id="project-selection-clear" class="button-secondary" type="button" hidden data-i18n="清空已选">清空已选</button>
+            <button id="project-selection-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button>
+            <button id="project-selection-save" type="button" data-i18n="保存项目案例">保存项目案例</button>
+          </div>
+        </div>
+        <p id="feedback" role="status"></p>
+        <section id="case-list" class="masonry" aria-live="polite"></section>
+        <div id="load-sentinel" class="load-sentinel" aria-hidden="true"></div>
+        <button id="load-more" class="button-secondary load-more" type="button" hidden></button>
+        <div id="empty-state" class="empty-state" hidden>
+          <section id="empty-library" class="onboarding" hidden>
+            <p class="eyebrow">YOUR FIRST REFERENCE</p>
+            <strong data-i18n="先收藏一条真正想复用的灵感">先收藏一条真正想复用的灵感</strong>
+            <p data-i18n="回到普通网页，高亮提示词，再点击浏览器工具栏里的提示词导演并框选对应画面。">回到普通网页，高亮提示词，再点击浏览器工具栏里的提示词导演并框选对应画面。</p>
+            <ol>
+              <li><b data-i18n="一起保存">一起保存</b><span data-i18n="文字、画面、来源和时间自动配对">文字、画面、来源和时间自动配对</span></li>
+              <li><b data-i18n="理解它">理解它</b><span data-i18n="用你自己的风格、灯光、镜头等维度整理">用你自己的风格、灯光、镜头等维度整理</span></li>
+              <li><b data-i18n="再次使用">再次使用</b><span data-i18n="进入灵感库看图筛选，再从画面进入详情或开始创作">进入灵感库看图筛选，再从画面进入详情或开始创作</span></li>
+            </ol>
+          </section>
+          <section id="empty-filter" hidden><strong data-i18n="没有匹配的案例">没有匹配的案例</strong><p data-i18n="调整筛选条件，或保存新的图片、视频提示词。">调整筛选条件，或保存新的图片、视频提示词。</p></section>
+        </div>
+      </main>
+    </div>
+
+    <div id="library-drop-target" class="library-drop-target" hidden aria-hidden="true">
+      <div><strong>松开以检查本机资料</strong><span>导入前可确认项目、重复项和画面分析</span></div>
+    </div>
+
+    <dialog id="import-dialog" class="data-safety-dialog import-dialog" aria-labelledby="import-dialog-title">
+      <header class="data-safety-header">
+        <div><p class="eyebrow">LOCAL IMPORT</p><h2 id="import-dialog-title">确认导入</h2></div>
+        <button id="import-close" class="icon-button" type="button" aria-label="关闭导入" title="关闭导入"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      </header>
+      <div class="data-safety-body import-dialog-body">
+        <section id="import-source" class="import-source">
+          <div class="import-drop-zone">
+            <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-upload"></use></svg>
+            <strong>拖入文件或文件夹</strong>
+            <span>自动识别图片、视频、PDF、Markdown、HTML、RTF 和纯文本，统一进入预检与重复检测</span>
+            <button id="import-choose-files" type="button">选择文件</button>
+            <button id="add-folder" class="import-folder-link" type="button">选择整个文件夹</button>
+          </div>
+          <button id="import-last-job" class="import-last-job button-secondary" type="button" hidden>上次导入 · 查看</button>
+        </section>
+        <div id="import-preparing" class="import-preparing" role="status" aria-live="polite" hidden>正在检查文件…</div>
+        <section id="import-confirmation" class="import-confirmation" hidden>
+          <div class="import-summary" aria-label="导入摘要">
+            <span><strong id="import-supported-count">0</strong> 可导入</span>
+            <span><strong id="import-skipped-count">0</strong> 跳过</span>
+            <span><strong id="import-duplicate-count">0</strong> 重复</span>
+            <span><strong id="import-byte-size">0 B</strong> 预计占用</span>
+          </div>
+          <div class="import-options">
+            <label><span>目标项目</span><select id="import-project"></select></label>
+            <label class="import-check"><input id="import-auto-analyze" type="checkbox" /><span>导入后自动画面分析</span></label>
+          </div>
+          <div id="import-file-list" class="import-file-list" aria-label="待导入文件"></div>
+          <p id="import-feedback" class="import-feedback" role="status" aria-live="polite"></p>
+        </section>
+        <section id="import-job-panel" class="import-job-panel" hidden>
+          <div class="import-job-summary"><strong id="import-job-title">正在导入</strong><span id="import-job-count"></span></div>
+          <progress id="import-job-progress" max="1" value="0"></progress>
+          <p id="import-job-feedback" class="import-feedback" role="status" aria-live="polite"></p>
+        </section>
+      </div>
+      <footer id="import-actions" class="data-safety-actions import-actions" hidden>
+        <button id="import-cancel" class="button-secondary" type="button">取消</button>
+        <button id="import-retry" class="button-secondary" type="button" hidden>重试失败项</button>
+        <button id="import-undo" class="button-secondary quiet-danger" type="button" hidden>撤销本次导入</button>
+        <button id="import-view-project" class="button-secondary" type="button" hidden>查看导入项目</button>
+        <button id="import-start" type="button">开始导入</button>
+      </footer>
+    </dialog>
+
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <aside id="detail-drawer" class="detail-drawer" role="dialog" aria-modal="true" aria-label="案例详情" data-i18n-aria-label="案例详情" aria-hidden="true">
+      <header id="drawer-toolbar" class="drawer-toolbar">
+        <nav id="detail-navigation" class="detail-navigation" aria-label="切换案例"><button id="detail-prev" class="icon-button" type="button" aria-label="上一条" data-i18n-aria-label="上一条" title="上一条"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg></button><button id="detail-next" class="icon-button" type="button" aria-label="下一条" data-i18n-aria-label="下一条" title="下一条"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg></button></nav>
+        <button id="detail-close" class="icon-button" type="button" aria-label="关闭详情" data-i18n-aria-label="关闭详情" title="关闭详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      </header>
+      <div id="detail-content" class="detail-content"></div>
+    </aside>
+
+    <dialog id="image-lightbox" class="image-lightbox" aria-label="查看原图" data-i18n-aria-label="查看原图">
+      <button id="image-lightbox-close" class="icon-button" type="button" aria-label="关闭原图" data-i18n-aria-label="关闭原图" title="关闭原图"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      <img id="image-lightbox-image" alt="" />
+    </dialog>
+
+    <dialog id="settings-dialog" class="data-safety-dialog settings-dialog">
+      <header class="data-safety-header"><div><p class="eyebrow">PROMPTDIRECTOR</p><h2 data-i18n="设置">设置</h2></div><button id="settings-close" class="icon-button" type="button" aria-label="关闭设置" data-i18n-aria-label="关闭设置" title="关闭设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
+      <div class="data-safety-body settings-shell">
+        <nav class="settings-tabs" aria-label="设置视图">
+          <button type="button" data-settings-tab="general" aria-selected="true" data-i18n="界面与资料库">界面与资料库</button>
+          <button type="button" data-settings-tab="ai" aria-selected="false" data-i18n="AI 服务">AI 服务</button>
+          <button type="button" data-settings-tab="tasks" aria-selected="false" data-i18n="任务与维护">任务与维护</button>
+        </nav>
+        <section id="settings-general-panel" class="settings-panel package-preferences-body" data-settings-panel="general">
+          <label><span data-i18n="界面语言">界面语言</span><select id="ui-locale"><option value="system" data-i18n="跟随浏览器">跟随浏览器</option><option value="zh-CN" data-i18n="中文">中文</option><option value="en">English</option></select></label>
+          <label><span data-i18n="主题">主题</span><select id="ui-theme"><option value="system" data-i18n="跟随系统">跟随系统</option><option value="light" data-i18n="浅色">浅色</option><option value="dark" data-i18n="深色">深色</option></select></label>
+          <label><span data-i18n="动态效果">动态效果</span><select id="ui-motion"><option value="system" data-i18n="跟随系统">跟随系统</option><option value="reduced" data-i18n="减少动态效果">减少动态效果</option></select></label>
+          <section class="library-storage-settings">
+            <label><span data-i18n="资料库标题">资料库标题</span><input id="library-name-setting" autocomplete="off" /></label>
+            <label><span data-i18n="分享包下载路径">分享包下载路径</span><input id="export-path-setting" autocomplete="off" /></label>
+            <div><button id="save-library-settings" class="button-secondary" type="button" disabled data-i18n="保存设置">保存设置</button></div>
+          </section>
+          <section id="data-safety-dialog" class="settings-general-section settings-data-safety">
+            <div class="section-heading section-heading-tight"><div><h3 data-i18n="备份与同步">备份与同步</h3><p>备份、恢复或连接自己的同步文件夹。</p></div></div>
+            <section class="data-safety-summary">
+              <strong id="data-safety-count">0 个案例 · 0 张图片</strong>
+              <span id="data-safety-status" data-i18n="尚未连接同步文件夹">尚未连接同步文件夹</span>
+            </section>
+            <p id="data-safety-feedback" class="data-safety-feedback" role="status" aria-live="polite"></p>
+            <section class="share-package-import">
+              <div><strong>导入分享包</strong><span>添加别人分享的案例或项目，不覆盖现有资料</span></div>
+              <button id="import-library-package" class="button-secondary" type="button">选择 ZIP</button>
+              <input id="library-package-file" type="file" accept=".zip,application/zip" hidden />
+            </section>
+            <div class="data-safety-primary-actions">
+              <button id="create-folder-backup" type="button">备份资料库</button>
+              <button id="restore-folder-backup" class="button-secondary" type="button">恢复资料库</button>
+            </div>
+            <p class="data-safety-note">备份会把案例和本地媒体逐项写入资料夹；恢复前会先检查内容，不会覆盖现有资料。</p>
+            <details id="sync-settings" class="sync-settings">
+              <summary data-i18n="跨设备同步">跨设备同步</summary>
+              <div class="sync-settings-body">
+                <p class="data-safety-note" data-i18n="同一台电脑可选择普通本地文件夹；跨设备请选择已登录的 iCloud Drive、Dropbox 或 OneDrive 文件夹。两端选择同一个父文件夹并使用相同密码。插件会在其中创建 PromptDirector-Sync，请勿手动修改。">同一台电脑可选择普通本地文件夹；跨设备请选择已登录的 iCloud Drive、Dropbox 或 OneDrive 文件夹。两端选择同一个父文件夹并使用相同密码。插件会在其中创建 PromptDirector-Sync，请勿手动修改。</p>
+                <label id="data-safety-password" class="data-safety-password"><span data-i18n="同步密码">同步密码</span><input id="sync-password" type="password" minlength="8" autocomplete="off" placeholder="至少 8 个字符" data-i18n-placeholder="至少 8 个字符" /></label>
+                <div class="data-safety-secondary-actions">
+                  <button id="connect-sync-folder" type="button" data-i18n="连接同步文件夹">连接同步文件夹</button>
+                  <button id="unlock-sync-vault" type="button" data-i18n="解锁同步库">解锁同步库</button>
+                  <button id="sync-now" type="button" data-i18n="立即同步">立即同步</button>
+                  <button id="disconnect-sync-folder" class="quiet-danger" type="button" data-i18n="断开同步">断开同步</button>
+                </div>
+              </div>
+            </details>
+          </section>
+          <footer class="settings-about">
+            <strong id="about-version">PromptDirector</strong>
+            <span>免费、开源、本地优先 · Apache-2.0</span>
+            <a class="source-link" href="https://github.com/wchao6891/PromptDirector" target="_blank" rel="noopener noreferrer">github.com/wchao6891/PromptDirector</a>
+          </footer>
+        </section>
+        <section id="settings-tasks-panel" class="settings-panel settings-tasks-panel" data-settings-panel="tasks" hidden>
+          <div class="batch-card batch-primary">
+            <div class="batch-card-heading"><div><h3>批量文字分析</h3><p>使用“文字工作”中已分配的供应商和模型；只处理未分析或原文已变化的文字案例。</p></div><span id="batch-status-badge" data-i18n="尚未开始">尚未开始</span></div>
+            <div id="analysis-batch-summary" class="batch-summary" data-i18n="先生成预览，不会直接产生 API 请求。">先生成预览，不会直接产生 API 请求。</div>
+            <details id="analysis-diagnostics" class="analysis-diagnostics" hidden>
+              <summary><span>分析诊断</span><span id="analysis-runtime-version"></span></summary>
+              <div class="analysis-diagnostics-heading"><p>仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。</p><button id="copy-analysis-diagnostics" class="button-secondary" type="button">复制诊断日志</button></div>
+              <ol id="analysis-diagnostic-events"></ol>
+            </details>
+            <div id="analysis-progress" class="maintenance-progress" hidden><progress id="analysis-progress-bar" max="1" value="0"></progress></div>
+            <div class="batch-actions">
+              <button id="preview-analysis-batch" type="button" data-i18n="生成预览">生成预览</button>
+              <button id="start-analysis-batch" type="button" disabled data-i18n="确认并开始">确认并开始</button>
+              <button id="pause-analysis-batch" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>
+              <button id="resume-analysis-batch" type="button" hidden data-i18n="继续">继续</button>
+              <button id="retry-analysis-failures" class="button-secondary" type="button" hidden data-i18n="重试失败项">重试失败项</button>
+              <button id="apply-staged-analysis-rebuild" type="button" hidden>应用已成功结果</button>
+              <button id="cancel-analysis-batch" class="quiet-danger" type="button" hidden data-i18n="取消">取消</button>
+              <button id="undo-analysis-batch" class="button-secondary" type="button" hidden data-i18n="撤回本次分析">撤回本次分析</button>
+            </div>
+            <details class="advanced-reanalysis"><summary>重建标签系统</summary><p>付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。</p><div class="batch-actions"><button id="preview-analysis-reanalyze" class="button-secondary" type="button">预览重建费用</button><button id="start-analysis-reanalyze" type="button" disabled hidden>确认付费并重建</button></div></details>
+          </div>
+          <div class="batch-card">
+            <h3 data-i18n="本地资料补全">本地资料补全</h3>
+            <p data-i18n="在本机补齐内容类型和图片色卡，不调用 AI、不发送图片。任务会在后台分批运行，可以随时暂停。">在本机补齐内容类型和图片色卡，不调用 AI、不发送图片。任务会在后台分批运行，可以随时暂停。</p>
+            <div class="batch-actions">
+              <button id="preview-reanalyze" type="button" data-i18n="检查缺失项">检查缺失项</button>
+              <button id="apply-reanalyze" type="button" disabled data-i18n="开始后台补全">开始后台补全</button>
+              <button id="pause-library-maintenance" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>
+              <button id="resume-library-maintenance" type="button" hidden data-i18n="继续">继续</button>
+              <button id="retry-library-maintenance" class="button-secondary" type="button" hidden data-i18n="重试失败项">重试失败项</button>
+              <button id="cancel-library-maintenance" class="quiet-danger" type="button" hidden data-i18n="取消">取消</button>
+            </div>
+            <div id="maintenance-progress" class="maintenance-progress" hidden><progress id="maintenance-progress-bar" max="1" value="0"></progress></div>
+            <div id="reanalyze-preview" class="reanalyze-preview"></div>
+          </div>
+          <div id="legacy-candidates" class="batch-card"></div>
+        </section>
+        <section id="settings-ai-panel" class="settings-panel settings-ai-panel" data-settings-panel="ai" hidden>
+          <section class="ai-routing-card">
+            <div class="ai-routing-heading"><h3>AI 任务配置</h3><p id="ai-routing-summary">先按任务选择默认服务；API Key 只需在连接服务时填写一次。</p></div>
+            <div class="ai-routing-regions">
+              <section class="ai-task-region"><h4>各任务默认模型</h4><div id="ai-assignment-list" class="ai-assignment-list"></div></section>
+              <section><h4>已连接服务</h4><div id="ai-provider-list" class="ai-provider-list"></div></section>
+            </div>
+            <button id="open-ai-routing" type="button">添加 AI 服务</button>
+          </section>
+          <details class="ai-advanced-settings">
+            <summary><strong>分析规则与高级连接</strong><span>用于调整分析规则、本机模型或第三方兼容接口</span></summary>
+            <div class="ai-advanced-settings-body">
+          <div class="analysis-kind-tabs" role="tablist" aria-label="分析类型" data-i18n-aria-label="分析类型">
+            <button type="button" data-analysis-kind="text" aria-selected="true" data-i18n="文字标签">文字标签</button>
+            <button type="button" data-analysis-kind="vision" aria-selected="false" data-i18n="图片视觉">图片视觉</button>
+            <button type="button" data-analysis-kind="composer" aria-selected="false" data-i18n="创作装配">创作装配</button>
+          </div>
+          <form id="ai-settings-form" class="analysis-settings-form" data-analysis-kind-panel="text">
+            <div class="section-heading"><div><h3 data-i18n="文字分析规则">文字分析规则</h3><p data-i18n="这里只显示当前界面语言的规则；切换界面语言后可编辑另一语言。修改不会自动调用 API。">这里只显示当前界面语言的规则；切换界面语言后可编辑另一语言。修改不会自动调用 API。</p></div></div>
+            <section data-analysis-locale-panel="zh-CN">
+              <label><span data-i18n="中文分析规则">中文分析规则</span><textarea id="analysis-instructions-zh" rows="10"></textarea></label>
+            </section>
+            <section data-analysis-locale-panel="en" hidden>
+              <label><span>English analysis rules</span><textarea id="analysis-instructions-en" rows="10"></textarea></label>
+            </section>
+            <div class="analysis-rule-actions"><button id="restore-analysis-default" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button></div>
+            <div class="analysis-protocol"><strong data-i18n="固定输入与输出协议">固定输入与输出协议</strong><p id="analysis-protocol"></p></div>
+            <label><span>AI 服务</span><select id="text-ai-provider"><option value="deepseek">DeepSeek API</option><option value="compatible">OpenAI-compatible / 本机</option></select></label>
+            <div class="analysis-model-fields">
+              <label class="text-deepseek-field">API Key<input id="deepseek-api-key" type="password" autocomplete="off" placeholder="已配置时可留空" data-i18n-placeholder="已配置时可留空" /></label>
+              <label class="text-deepseek-field"><span data-i18n="批量分析模型">批量分析模型</span><input id="deepseek-analysis-model" value="deepseek-v4-flash" /></label>
+              <label class="text-compatible-field" hidden><span>兼容接口</span><input id="text-compatible-endpoint" type="url" placeholder="http://localhost:1234/v1/chat/completions" /></label>
+              <label class="text-compatible-field" hidden><span>模型</span><input id="text-compatible-model" list="vision-compatible-models" /></label>
+              <label class="text-compatible-field" hidden><span>API Key（本机可留空）</span><input id="text-compatible-api-key" type="password" autocomplete="off" /></label>
+            </div>
+            <div class="analysis-rule-actions text-compatible-field" hidden><button id="text-local-preset" class="button-secondary" type="button">LM Studio 本机模式</button><button id="test-text-ai-service" class="button-secondary" type="button">测试并读取模型</button></div>
+            <label class="ai-consent"><input id="deepseek-consent" type="checkbox" /><span>我了解：只有主动分析或创作时，所选案例文字才会发送到当前选择的 AI 服务。</span></label>
+            <label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label>
+            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存分析设置">保存分析设置</button><button id="clear-api-key" class="button-secondary" type="button" data-i18n="清除本地 API Key">清除本地 API Key</button></div>
+            <p id="ai-settings-status"></p>
+          </form>
+          <form id="composer-settings-form" class="analysis-settings-form" data-analysis-kind-panel="composer" hidden>
+            <div class="section-heading"><div><h3 data-i18n="轻量 Agent">轻量 Agent</h3><p data-i18n="系统指令和任务方法分开管理；所有输出语言共用同一份任务方法。">系统指令和任务方法分开管理；所有输出语言共用同一份任务方法。</p></div><span id="composer-method-version" class="status-badge"></span></div>
+            <label><span data-i18n="Agent 系统指令">Agent 系统指令</span><textarea id="composer-agent-instruction" rows="10"></textarea></label>
+            <div class="analysis-settings-actions"><button id="save-composer-agent" class="button-secondary" type="button" data-i18n="保存系统指令">保存系统指令</button><button id="restore-composer-agent" class="button-secondary" type="button" data-i18n="恢复默认系统指令">恢复默认系统指令</button></div>
+            <label><span data-i18n="任务方法">任务方法</span><select id="composer-task-key"><option value="compose.image" data-i18n="图片提示词">图片提示词</option><option value="compose.video" data-i18n="视频提示词">视频提示词</option><option value="analyze_materials" data-i18n="本地资料分析">本地资料分析</option><option value="chat" data-i18n="普通对话">普通对话</option></select></label>
+            <label><span data-i18n="当前任务方法">当前任务方法</span><textarea id="composer-task-method" rows="10"></textarea></label>
+            <p id="composer-method-migration" class="privacy-note"></p>
+            <details class="composer-method-default"><summary data-i18n="查看当前任务默认方法">查看当前任务默认方法</summary><pre id="composer-method-default-text"></pre></details>
+            <div class="analysis-protocol"><strong data-i18n="轻量执行协议">轻量执行协议</strong><p data-i18n="第一阶段只判断任务、必要问题和本地检索；第二阶段按自然语言执行说明流式生成。规划缺少可选字段时会透明提示，并按原始要求继续。">第一阶段只判断任务、必要问题和本地检索；第二阶段按自然语言执行说明流式生成。规划缺少可选字段时会透明提示，并按原始要求继续。</p></div>
+            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存任务方法">保存任务方法</button><button id="restore-composer-task" class="button-secondary" type="button" data-i18n="恢复当前任务默认方法">恢复当前任务默认方法</button></div>
+            <p id="composer-settings-status"></p>
+            <details class="creative-experiment-settings">
+              <summary data-i18n="创作实验（高级）">创作实验（高级）</summary>
+              <div>
+                <label class="ai-consent"><input id="creative-experiment-enabled" type="checkbox" /><span data-i18n="启用视觉对照与“继续优化”">启用视觉对照与“继续优化”</span></label>
+                <label class="ai-consent"><input id="creative-experiment-auto-analyze" type="checkbox" /><span data-i18n="保存后自动调用当前图片视觉服务做目标对照（会产生服务费用）。">保存后自动调用当前图片视觉服务做目标对照（会产生服务费用）。</span></label>
+                <p class="privacy-note" data-i18n="视觉对照只发送当前结果图、本轮目标、最终提示词和执行说明；不发送整库、其他案例、网址、标签或 API Key。">视觉对照只发送当前结果图、本轮目标、最终提示词和执行说明；不发送整库、其他案例、网址、标签或 API Key。</p>
+                <div class="analysis-settings-actions">
+                  <button id="save-creative-experiment" class="button-secondary" type="button" data-i18n="保存实验设置">保存实验设置</button>
+                  <button id="export-creative-experiments" class="button-secondary" type="button" data-i18n="导出实验包">导出实验包</button>
+                  <button id="import-creative-experiments" class="button-secondary" type="button" data-i18n="导入实验包">导入实验包</button>
+                  <input id="creative-experiment-file" type="file" accept=".zip,application/zip" hidden />
+                </div>
+                <p id="creative-experiment-status"></p>
+              </div>
+            </details>
+          </form>
+          <form id="vision-settings-form" class="analysis-settings-form" data-analysis-kind-panel="vision" hidden>
+            <div class="section-heading"><div><h3 data-i18n="图片视觉分析">图片视觉分析</h3><p data-i18n="可以主动分析单张图片，也可以在导入后自动分析全部内容图。">可以主动分析单张图片，也可以在导入后自动分析全部内容图。</p></div></div>
+            <section data-analysis-locale-panel="zh-CN">
+              <label><span data-i18n="中文图片分析规则">中文图片分析规则</span><textarea id="vision-instructions-zh" rows="10"></textarea></label>
+            </section>
+            <section data-analysis-locale-panel="en" hidden>
+              <label><span>English vision rules</span><textarea id="vision-instructions-en" rows="10"></textarea></label>
+            </section>
+            <div class="analysis-rule-actions"><button id="restore-vision-default" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button></div>
+            <div class="analysis-protocol"><strong data-i18n="固定输入与输出协议">固定输入与输出协议</strong><p id="vision-protocol"></p></div>
+            <label><span data-i18n="图片分析服务">图片分析服务</span><select id="vision-provider"><option value="openai">OpenAI</option><option value="compatible" data-i18n="兼容接口">兼容接口</option></select></label>
+            <div id="vision-openai-fields" class="analysis-model-fields">
+              <label>OpenAI API Key<input id="vision-openai-api-key" type="password" autocomplete="off" placeholder="已配置时可留空" data-i18n-placeholder="已配置时可留空" /></label>
+              <label><span data-i18n="图片分析模型">图片分析模型</span><input id="vision-openai-model" value="gpt-5-mini" /></label>
+              <label><span data-i18n="视频生成模型">视频生成模型</span><input id="vision-openai-video-model" placeholder="按账号已开通模型填写" data-i18n-placeholder="按账号已开通模型填写" /></label>
+              <label><span data-i18n="视频尺寸选项">视频尺寸选项</span><input id="vision-openai-video-sizes" placeholder="用逗号分隔服务支持值" data-i18n-placeholder="用逗号分隔服务支持值" /></label>
+              <label><span data-i18n="视频时长选项">视频时长选项</span><input id="vision-openai-video-durations" placeholder="用逗号分隔服务支持值" data-i18n-placeholder="用逗号分隔服务支持值" /></label>
+            </div>
+            <div id="vision-compatible-fields" class="analysis-settings-group" hidden>
+              <div class="analysis-settings-subgroup">
+                <div class="section-heading section-heading-tight"><div><h3 data-i18n="分析能力">分析能力</h3><p data-i18n="只配置看图分析与多模态输入所需连接。">只配置看图分析与多模态输入所需连接。</p></div></div>
+                <div class="compatibility-settings-grid">
+                  <label><span data-i18n="兼容协议">兼容协议</span><select id="vision-compatible-protocol"><option value="responses">OpenAI Responses</option><option value="chat_completions">Chat Completions</option></select></label>
+                  <label><span>兼容接口地址（本机可用 HTTP）</span><input id="vision-compatible-endpoint" type="url" placeholder="https://www.micuapi.ai/v1/responses" /></label>
+                  <label>API Key<input id="vision-compatible-api-key" type="password" autocomplete="off" placeholder="已配置时可留空" data-i18n-placeholder="已配置时可留空" /></label>
+                  <label><span data-i18n="图片分析模型">图片分析模型</span><input id="vision-compatible-model" list="vision-compatible-models" /><datalist id="vision-compatible-models"></datalist></label>
+                </div>
+                <p id="vision-compatible-target" class="field-note"></p>
+                <div class="vision-compatible-help"><button id="vision-local-preset" class="button-secondary" type="button">LM Studio 本机模式</button><button id="test-vision-service" class="button-secondary" type="button">测试连接并读取模型</button><button id="vision-micu-preset" class="button-secondary" type="button" data-i18n="填入米醋设置">填入米醋设置</button><span>本机服务不要求 Key；远程和局域网服务应配置认证。</span></div>
+              </div>
+            </div>
+            <label class="ai-consent"><input id="vision-consent" type="checkbox" /><span>我了解：主动分析时发送当前内容图；多模态创作时发送本轮手选内容图、对应原提示词和创作要求。</span></label>
+            <label class="ai-consent"><input id="vision-auto-analyze-imports" type="checkbox" /><span data-i18n="导入案例或加入新图片后，自动分析全部尚未分析的内容图（会产生服务费用）。">导入案例或加入新图片后，自动分析全部尚未分析的内容图（会产生服务费用）。</span></label>
+            <p class="privacy-note" data-i18n="OpenAI API 数据默认不用于训练，除非用户主动选择共享；滥用监控日志可能保留最多 30 天，图片会执行安全扫描。兼容服务的数据处理规则由对应服务商决定。">OpenAI API 数据默认不用于训练，除非用户主动选择共享；滥用监控日志可能保留最多 30 天，图片会执行安全扫描。兼容服务的数据处理规则由对应服务商决定。</p>
+            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存图片分析设置">保存图片分析设置</button><button id="clear-vision-api-key" class="button-secondary" type="button" data-i18n="清除所选 API Key">清除所选 API Key</button></div>
+            <p id="vision-settings-status"></p>
+          </form>
+            </div>
+          </details>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog id="vision-batch-dialog" class="data-safety-dialog vision-batch-dialog">
+      <header class="data-safety-header">
+        <div><p class="eyebrow">VISION TASK</p><h2 data-i18n="批量分析画面">批量分析画面</h2></div>
+        <button id="vision-batch-close" class="icon-button" type="button" aria-label="关闭批量画面分析" data-i18n-aria-label="关闭批量画面分析" title="关闭批量画面分析"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      </header>
+      <div class="data-safety-body">
+        <section class="data-safety-summary">
+          <strong id="vision-batch-summary">0 个案例 · 0 次图片请求</strong>
+          <span id="vision-batch-service"></span>
+        </section>
+        <label class="task-option"><input id="vision-batch-all-images" type="checkbox" /><span data-i18n="分析所选案例中的全部未分析图片">分析所选案例中的全部未分析图片</span></label>
+        <label class="task-option"><input id="vision-batch-reanalyze" type="checkbox" /><span data-i18n="重新分析已有画面描述">重新分析已有画面描述</span></label>
+        <p class="data-safety-note" data-i18n="每次分析一张图片；失败项需手动重试。">每次分析一张图片；失败项需手动重试。</p>
+        <div class="data-safety-primary-actions">
+          <button id="vision-batch-start" type="button" data-i18n="确认并开始">确认并开始</button>
+          <button id="vision-batch-pause" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>
+          <button id="vision-batch-resume" type="button" hidden data-i18n="继续">继续</button>
+          <button id="vision-batch-retry" class="button-secondary" type="button" hidden data-i18n="重试失败项">重试失败项</button>
+          <button id="vision-batch-cancel" class="quiet-danger" type="button" hidden data-i18n="取消任务">取消任务</button>
+        </div>
+        <p id="vision-batch-feedback" class="data-safety-feedback" role="status" aria-live="polite"></p>
+      </div>
+    </dialog>
+
+    <dialog id="manager-dialog" class="manager-dialog">
+      <header class="manager-header">
+        <div><p class="eyebrow">ORGANIZE LIBRARY</p><h2 data-i18n="分类与标签">分类与标签</h2></div>
+        <button id="manager-close" class="icon-button" type="button" aria-label="关闭管理" data-i18n-aria-label="关闭管理" title="关闭管理"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      </header>
+      <nav class="manager-tabs" aria-label="管理视图" data-i18n-aria-label="管理视图">
+        <button type="button" data-manager-tab="pending" aria-selected="false" data-i18n="待确认">待确认</button>
+        <button type="button" data-manager-tab="content-types" aria-selected="true" data-i18n="内容类型">内容类型</button>
+        <button type="button" data-manager-tab="vocabulary" aria-selected="false" data-i18n="标签导航">标签导航</button>
+      </nav>
+      <p id="manager-feedback" class="manager-feedback" role="status" aria-live="polite" hidden></p>
+      <section id="manager-pending" class="manager-panel" hidden></section>
+      <section id="manager-content-types" class="manager-panel">
+        <header class="content-types-heading">
+          <div><h3 data-i18n="内容类型">内容类型</h3><p data-i18n="独立管理案例用途，不属于标签树。">独立管理案例用途，不属于标签树。</p></div>
+          <button id="add-content-type" type="button" data-i18n="＋ 新增内容类型">＋ 新增内容类型</button>
+        </header>
+        <div id="content-type-list" class="content-type-list"></div>
+        <form id="content-type-editor" class="content-type-editor" hidden>
+          <header><div><small data-i18n="一级分类设置">一级分类设置</small><h3 id="content-type-editor-title"></h3></div><button id="cancel-content-type-edit" class="button-secondary" type="button" data-i18n="取消">取消</button></header>
+          <label><span data-i18n="分类名称">分类名称</span><input id="content-type-name" required /></label>
+          <label><span data-i18n="这个分类主要保存什么">这个分类主要保存什么</span><select id="content-type-role"></select></label>
+          <p id="content-type-role-help" class="field-note"></p>
+          <p id="content-type-count" class="field-note"></p>
+          <div class="content-type-actions"><button id="save-content-type" type="submit" data-i18n="保存修改">保存修改</button><button id="delete-content-type" class="quiet-danger" type="button" data-i18n="删除一级分类…">删除一级分类…</button></div>
+          <section id="content-type-delete-transfer" class="content-type-delete-transfer" hidden>
+            <strong data-i18n="删除前确认">删除前确认</strong>
+            <p id="content-type-delete-message"></p>
+            <label id="content-type-replacement-field"><span data-i18n="把现有案例转移到">把现有案例转移到</span><select id="content-type-replacement"></select></label>
+            <div><button id="confirm-delete-content-type" class="quiet-danger" type="button" data-i18n="确认删除并转移">确认删除并转移</button><button id="cancel-delete-content-type" class="button-secondary" type="button" data-i18n="取消">取消</button></div>
+          </section>
+        </form>
+      </section>
+      <section id="manager-vocabulary" class="manager-panel" hidden>
+        <div class="vocabulary-toolbar">
+          <label class="dimension-picker"><span data-i18n="当前维度">当前维度</span><select id="vocabulary-facet"></select></label>
+          <button id="organize-detail-tags" class="button-secondary" type="button">一键整理三级标签</button>
+          <button id="undo-facet" class="button-secondary" type="button" hidden data-i18n="撤回刚才修改">撤回刚才修改</button>
+        </div>
+        <p id="organize-detail-status" class="field-note"></p>
+
+        <section class="vocabulary-workspace">
+          <p class="field-note">一级维度固定；可在下方维护二级分组和三级标签。</p>
+
+          <div class="section-heading">
+            <div><h3 data-i18n="标签">标签</h3><p data-i18n="点击标签可改名、移动、合并或维护识别词。">点击标签可改名、移动、合并或维护识别词。</p></div>
+          </div>
+          <form id="create-node-form" class="tag-create-form">
+            <label><span data-i18n="放在">放在</span><select id="new-node-parent"></select></label>
+            <label class="tag-name-field"><span data-i18n="新标签">新标签</span><input id="new-node-name" required placeholder="输入标签名" data-i18n-placeholder="输入标签名" /></label>
+            <label class="tag-alias-field"><span data-i18n="别名（可选）">别名（可选）</span><input id="new-node-aliases" placeholder="用逗号分隔" data-i18n-placeholder="用逗号分隔" /></label>
+            <button type="submit" data-i18n="添加标签">添加标签</button>
+          </form>
+          <div id="vocabulary-tree" class="vocabulary-tree"></div>
+        </section>
+
+      </section>
+    </dialog>
+
+    <script type="module" src="library.js"></script>
+  </body>
+</html>
