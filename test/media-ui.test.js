@@ -120,12 +120,14 @@ test("complete folder backup writes a completion marker after library metadata",
   assert.ok(backup.indexOf('"library.json"') < backup.indexOf('"complete.json"'));
   assert.match(backup, /await writeDirectoryFile\(directory, assetPath, blob\)/);
   assert.match(backup, /byteSize:\s*blob\.size/);
+  assert.match(backup, /folderAssetPath\(entry\.id, asset, blob\.type \|\| asset\.mimeType\)/);
+  assert.match(source, /"application\/rtf":\s*"rtf"/);
 });
 
 test("complete folder restore validates aggregate and real per-media sizes before preview", () => {
   const restore = source.slice(source.indexOf("async function restoreCompleteFolderBackup"), source.indexOf("function backupMediaPaths"));
   const aggregateValidation = restore.indexOf("completion.mediaCount !== backupPaths.size");
-  const packageParsing = restore.indexOf("parseLibraryPackage(library, files");
+  const packageParsing = restore.indexOf("parseCompleteFolderBackup(library, files");
   assert.ok(aggregateValidation >= 0 && aggregateValidation < packageParsing);
   assert.match(restore, /PREVIEW_LIBRARY_IMPORT[^}]*library:\s*restoredLibrary/);
   assert.match(restore, /APPLY_LIBRARY_IMPORT[^}]*library:\s*restoredLibrary/);

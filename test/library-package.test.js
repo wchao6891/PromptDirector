@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   mergeLibraryPackage,
+  parseCompleteFolderBackup,
   parseLibraryPackage,
   selectLibraryPackage,
   selectProjectPackage
@@ -142,6 +143,54 @@ test("v3 packages restore video documents and time notes with their media relati
     ["videos/mixed/video-a.mp4", new Blob(["truncated"], { type: "video/mp4" })],
     ["documents/mixed/doc-a.pdf", new Blob(["pdf"], { type: "application/pdf" })]
   ])), /大小校验失败/);
+});
+
+test("complete folder backups restore genuine legacy RTF documents without trusting a .bin MIME type", async () => {
+  const rtf = String.raw`{\rtf1\ansi PromptDirector backup}`;
+  const path = "documents/rtf-case/rtf-asset.bin";
+  const data = packageData([], catalog());
+  data.entries = [{
+    ...entry("rtf-case"), hasScreenshot: undefined, screenshotPath: undefined,
+    mediaAssets: [{
+      id: "rtf-asset", kind: "document", storageMode: "managed", mimeType: "application/rtf",
+      byteSize: new Blob([rtf]).size, assetPath: path
+    }],
+    primaryMediaId: "rtf-asset"
+  }];
+
+  const parsed = await parseCompleteFolderBackup(data, new Map([[
+    path,
+    new Blob([rtf], { type: "application/octet-stream" })
+  ]]));
+  assert.equal(parsed.assets.get("rtf-asset").type, "application/rtf");
+
+  await assert.rejects(
+    () => parseCompleteFolderBackup(data, new Map([[
+      path,
+      new Blob(["not an RTF document"], { type: "application/octet-stream" })
+    ]])),
+    /来源没有返回有效文档文件/
+  );
+});
+
+test("portable packages accept the explicit .rtf path used by new complete backups", () => {
+  const rtf = String.raw`{\rtf1\ansi PromptDirector backup}`;
+  const path = "documents/rtf-case/rtf-asset.rtf";
+  const data = packageData([], catalog());
+  data.entries = [{
+    ...entry("rtf-case"), hasScreenshot: undefined, screenshotPath: undefined,
+    mediaAssets: [{
+      id: "rtf-asset", kind: "document", storageMode: "managed", mimeType: "application/rtf",
+      byteSize: new Blob([rtf]).size, assetPath: path
+    }],
+    primaryMediaId: "rtf-asset"
+  }];
+
+  const parsed = parseLibraryPackage(data, new Map([[
+    path,
+    new Blob([rtf], { type: "application/rtf" })
+  ]]));
+  assert.equal(parsed.assets.get("rtf-asset").type, "application/rtf");
 });
 
 test("metadata-only import preview never compares declared bytes to its 11-byte placeholder", () => {

@@ -11,7 +11,7 @@ import {
   saveDerivedMedia,
   saveMediaBlob
 } from "./media-store.js";
-import { parseLibraryPackage } from "./library-package.js";
+import { parseCompleteFolderBackup, parseLibraryPackage } from "./library-package.js";
 import { parseCreativeExperimentPackage } from "./creative-experiment-package.js";
 import { readZipBlob } from "./zip.js";
 import {
@@ -2075,7 +2075,7 @@ async function createCompleteFolderBackup() {
         }
         const blob = await getMediaBlob(asset.id);
         if (!blob) throw new Error(`“${entry.title || "未命名案例"}”的媒体缺失，完整备份已停止`);
-        const assetPath = folderAssetPath(entry.id, asset, blob.type);
+        const assetPath = folderAssetPath(entry.id, asset, blob.type || asset.mimeType);
         showDataSafetyFeedback(`正在写入第 ${mediaCount + 1} 项媒体 · ${formatBytes(byteSize + blob.size)}`);
         await writeDirectoryFile(directory, assetPath, blob);
         mediaAssets.push({
@@ -2185,7 +2185,7 @@ async function restoreCompleteFolderBackup() {
     if (completion.mediaCount !== backupPaths.size || completion.byteSize !== totalBytes) {
       throw new Error("完整备份的媒体数量或大小校验失败，未写入资料库");
     }
-    const parsed = parseLibraryPackage(library, files, { maxFileBytes: Number.MAX_SAFE_INTEGER });
+    const parsed = await parseCompleteFolderBackup(library, files, { maxFileBytes: Number.MAX_SAFE_INTEGER });
     await validateImportedImageDimensions(parsed.images);
     const restoredLibrary = { ...parsed };
     delete restoredLibrary.assets;
@@ -2377,6 +2377,7 @@ function folderExtension(mimeType, kind) {
   const known = {
     "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "video/mp4": "mp4", "video/webm": "webm",
     "video/quicktime": "mov", "video/x-matroska": "mkv", "video/x-msvideo": "avi", "application/pdf": "pdf",
+    "application/rtf": "rtf", "text/rtf": "rtf", "application/x-rtf": "rtf",
     "text/plain": "txt", "text/markdown": "md", "text/html": "html"
   };
   return known[mimeType] || (kind === "video" ? "video" : kind === "document" ? "bin" : "webp");

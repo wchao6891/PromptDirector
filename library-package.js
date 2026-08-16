@@ -13,6 +13,23 @@ import { isFixedTagTree, migrateLegacyFacetState } from "./tag-taxonomy.js";
 import { migrateLibraryState } from "./migration.js";
 import { LIBRARY_PACKAGE_FORMAT, isSupportedLibraryPackageVersion } from "./library-package-format.js";
 import { remapArticleDocumentAssets } from "./article-document.js";
+import { boundedMediaBlobFromResponse, isSupportedDocumentMimeType } from "./bounded-media.js";
+
+export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}) {
+  const preparedFiles = new Map(files);
+  const limits = portableLibraryLimits(limitsValue);
+  for (const [path, mimeType] of completeBackupDocumentPaths(value)) {
+    const blob = preparedFiles.get(path);
+    if (!(blob instanceof Blob)) continue;
+    const verified = await boundedMediaBlobFromResponse(new Response(blob), {
+      kind: "document",
+      expectedMimeType: mimeType,
+      maxBytes: limits.maxFileBytes
+    });
+    preparedFiles.set(path, verified);
+  }
+  return parseLibraryPackage(value, preparedFiles, limitsValue);
+}
 
 export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) {
   const limits = portableLibraryLimits(limitsValue);
@@ -625,6 +642,7 @@ function mediaType(path, kind) {
   if (/\.mkv$/i.test(path)) return "video/x-matroska";
   if (/\.avi$/i.test(path)) return "video/x-msvideo";
   if (/\.pdf$/i.test(path)) return "application/pdf";
+  if (/\.rtf$/i.test(path)) return "application/rtf";
   if (/\.html?$/i.test(path)) return "text/html";
   if (/\.md$/i.test(path)) return "text/markdown";
   return "text/plain";
@@ -634,7 +652,7 @@ function validMediaPath(path, kind) {
   if (!path || path.includes("..")) return false;
   if (kind === "image") return /^images\/[A-Za-z0-9._/-]+\.(?:png|jpe?g|webp)$/i.test(path);
   if (kind === "video") return /^videos\/[A-Za-z0-9._/-]+\.(?:mp4|webm|mov|mkv|avi|video)$/i.test(path);
-  return /^documents\/[A-Za-z0-9._/-]+\.(?:pdf|md|txt|html?|bin)$/i.test(path);
+  return /^documents\/[A-Za-z0-9._/-]+\.(?:pdf|rtf|md|txt|html?|bin)$/i.test(path);
 }
 
 function validCreativeResultPath(path, kind) {
@@ -646,7 +664,32 @@ function validCreativeResultPath(path, kind) {
 function blobMatchesKind(blob, kind) {
   if (kind === "image") return blob.type.startsWith("image/");
   if (kind === "video") return blob.type.startsWith("video/");
-  return ["application/pdf", "text/plain", "text/markdown", "text/html"].includes(blob.type);
+  return isSupportedDocumentMimeType(blob.type);
+}
+
+function completeBackupDocumentPaths(value = {}) {
+  const paths = new Map();
+  for (const entry of Array.isArray(value?.entries) ? value.entries : []) {
+    const mediaAssets = Array.isArray(entry?.mediaAssets)
+      ? entry.mediaAssets
+      : Array.isArray(entry?.visuals) ? entry.visuals : [];
+    for (const asset of mediaAssets) {
+      if (asset?.kind === "document" && asset.storageMode !== "reference" && asset.assetPath) {
+        paths.set(String(asset.assetPath), String(asset.mimeType ?? ""));
+      }
+    }
+  }
+  for (const session of Array.isArray(value?.composerSessions) ? value.composerSessions : []) {
+    for (const reference of Array.isArray(session?.referenceSnapshots) ? session.referenceSnapshots : []) {
+      if (reference?.sourceType !== "temporary") continue;
+      for (const asset of Array.isArray(reference.assetRefs) ? reference.assetRefs : []) {
+        if (asset?.kind === "document" && asset.archivePath) {
+          paths.set(String(asset.archivePath), String(asset.mimeType ?? ""));
+        }
+      }
+    }
+  }
+  return paths;
 }
 
 function uniqueId(prefix, used) {
