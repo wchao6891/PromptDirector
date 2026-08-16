@@ -74,6 +74,8 @@ def main() -> None:
         "authorId": "author-video-editorial",
         "author": "视频作者",
         "license": "权利归原作者",
+        "rightsStatus": "verified_authorized",
+        "rightsReviewUrl": "https://wchao6891.github.io/PromptDirector-Curated/reviews/video-workflow.json",
         "updatedAt": "2026-08-10T00:00:00.000Z",
         "coverUrl": COVER_URL,
         "previewUrl": PREVIEW_URL,

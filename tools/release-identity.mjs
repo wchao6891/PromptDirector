@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export function hasStableExtensionIdentity(manifest = {}) {
   const key = String(manifest.key ?? "").replace(/\s+/g, "");
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(key) || key.length < 128) return false;
@@ -17,9 +19,24 @@ export function requireStableExtensionIdentity(manifest = {}) {
   }
 }
 
+export function extensionIdFromPublicKey(manifest = {}) {
+  requireStableExtensionIdentity(manifest);
+  const digest = createHash("sha256").update(Buffer.from(String(manifest.key).replace(/\s+/g, ""), "base64")).digest("hex").slice(0, 32);
+  return [...digest].map((character) => String.fromCharCode(97 + Number.parseInt(character, 16))).join("");
+}
+
+export function chromeStoreUploadManifest(manifest = {}) {
+  requireStableExtensionIdentity(manifest);
+  const { key: _developmentIdentityKey, ...uploadManifest } = manifest;
+  return uploadManifest;
+}
+
 export function extensionArchiveName(manifest = {}, { release = false } = {}) {
   const version = String(manifest.version ?? "").trim();
-  if (release) requireStableExtensionIdentity(manifest);
-  const suffix = hasStableExtensionIdentity(manifest) ? "" : "-UNFIXED-ID-DEV";
+  if (release) {
+    requireStableExtensionIdentity(manifest);
+    return `PromptDirector-${version}.zip`;
+  }
+  const suffix = hasStableExtensionIdentity(manifest) ? "-FIXED-ID-DEV" : "-UNFIXED-ID-DEV";
   return `PromptDirector-${version}${suffix}.zip`;
 }

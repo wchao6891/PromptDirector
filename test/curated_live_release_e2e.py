@@ -22,17 +22,19 @@ def main() -> None:
             "async (url) => (await fetch(url, {cache: 'no-store', credentials: 'omit'})).json()",
             CATALOG_URL,
         )
-        item = min(catalog["themes"], key=lambda candidate: candidate["caseCount"])
+        assert len(catalog["themes"]) == 1, catalog
+        item = catalog["themes"][0]
+        assert item["id"] == "featured:vol-1", item
+        assert item["caseCount"] == 20, item
+        assert item["rightsStatus"] == "verified_original", item
+        assert item["rightsReviewUrl"].endswith("/reviews/featured-cases-vol-1.json"), item
         card = curated.locator(f'.pack-card[data-pack-id="{item["id"]}"]')
         expect(card).to_be_visible(timeout=30_000)
         card.click()
         expect(curated.locator(".case-card").first).to_be_visible(timeout=30_000)
-        expect(curated.locator(".case-video-badge").first).to_be_visible()
-        curated.locator(".case-card").first.hover()
-        expect(curated.locator(".case-card").first.locator(".case-video-preview")).to_have_count(1)
+        expect(curated.locator(".case-video-badge")).to_have_count(0)
         curated.locator(".case-card").first.click()
-        expect(curated.locator(".case-detail-video")).to_have_count(1)
-        curated.wait_for_function("() => document.querySelector('.case-detail-video')?.readyState >= 1", timeout=30_000)
+        expect(curated.locator(".case-detail-figure img")).to_have_count(1)
         save = curated.locator(".case-save-action")
         expect(save).to_have_text("保存到案例库")
         curated.evaluate(
@@ -65,7 +67,7 @@ def main() -> None:
             print({"save_timeout": diagnostics, "page_errors": page_errors, "console_errors": console_errors})
             raise
         expect(curated.locator("#detail-drawer")).to_have_class(re.compile(r"\bopen\b"))
-        expect(curated.locator(".detail-video")).to_have_count(1)
+        expect(curated.locator(".detail-image")).to_have_count(1)
         local_state = curated.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert len(local_state["entries"]) == 1, local_state
         labels = curated.evaluate("async () => (await chrome.storage.local.get('__curatedLiveLabels')).__curatedLiveLabels || []")
@@ -90,7 +92,8 @@ def main() -> None:
         print({
             "package": item["id"],
             "case_count": item["caseCount"],
-            "online_video": True,
+            "rights_status": item["rightsStatus"],
+            "online_video": False,
             "opened_saved_case": True,
             "progress": labels,
             "saved_entries": len(local_state["entries"]),

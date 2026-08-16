@@ -71,6 +71,8 @@ def main() -> None:
         "authorId": "author-editorial",
         "author": "PromptDirector 编辑精选",
         "license": "权利归原作者",
+        "rightsStatus": "verified_authorized",
+        "rightsReviewUrl": "https://wchao6891.github.io/PromptDirector-Curated/reviews/workflow.json",
         "updatedAt": "2026-08-08T00:00:00.000Z",
         "coverUrl": COVER_URL,
         "previewUrl": PREVIEW_URL,
@@ -221,6 +223,12 @@ def main() -> None:
 
         curated.locator("#case-detail-next").click()
         expect(curated.locator(".case-detail-heading h2")).to_have_text("竖版工作流案例")
+        curated.wait_for_function(
+            """() => {
+              const image = document.querySelector('.case-detail-figure img');
+              return image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
+            }"""
+        )
         portrait = curated.locator(".case-detail-figure img").evaluate(
             "img => ({natural: img.naturalWidth / img.naturalHeight, rendered: img.getBoundingClientRect().width / img.getBoundingClientRect().height})"
         )

@@ -1,6 +1,5 @@
 {
-  "extensionName": { "message": "提示词导演 - 视觉提示词灵感库" },
-  "extensionShortName": { "message": "提示词导演" },
+  "extensionName": { "message": "提示词导演 - 视觉创作资料库" },
   "extensionDescription": { "message": "收藏网页画面与提示词，在本地视觉案例库中检索、整理、备份和分享创作灵感。" },
   "actionTitle": { "message": "提示词导演：收藏与创作提示词" },
   "saveSelectionCommand": { "message": "把当前高亮文字加入采集草稿" },

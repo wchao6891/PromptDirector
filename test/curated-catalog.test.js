@@ -24,6 +24,8 @@ function catalogItem(overrides = {}) {
     authorId: "promptdirector-editorial",
     author: "PromptDirector Editorial",
     license: "CC BY 4.0",
+    rightsStatus: "verified_authorized",
+    rightsReviewUrl: "https://wchao6891.github.io/PromptDirector-Curated/reviews/cinematic-foundations.json",
     updatedAt: "2026-07-29T00:00:00.000Z",
     coverUrl: "https://wchao6891.github.io/PromptDirector-Curated/covers/cinematic.webp",
     previewUrl: "https://wchao6891.github.io/PromptDirector-Curated/previews/cinematic-foundations/preview.json",
@@ -57,6 +59,11 @@ test("curated catalogs expose ordered themes with trusted package assets", () =>
     version: 2,
     themes: [catalogItem({ sha256: "not-a-checksum" })]
   }), /校验值/);
+  assert.throws(() => normalizeCuratedCatalog({
+    format: "prompt-director-curated",
+    version: 2,
+    themes: [catalogItem({ rightsStatus: "unverified" })]
+  }), /缺少必填字段/);
   assert.throws(() => normalizeCuratedCatalog({
     format: "prompt-director-curated",
     version: 1,
@@ -147,6 +154,8 @@ test("installing a curated package records provenance without retaining service 
     packageVersion: item.packageVersion,
     author: item.author,
     license: item.license,
+    rightsStatus: item.rightsStatus,
+    rightsReviewUrl: item.rightsReviewUrl,
     sourceEntryId: "case:one",
     installedAt: "2026-07-29T01:00:00.000Z"
   });

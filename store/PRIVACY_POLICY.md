@@ -42,6 +42,10 @@
 
 本地数据会保留，直到用户在案例库中修改或删除、清除扩展数据，或卸载扩展。用户可在卸载前创建本地备份，并可在 AI 服务连接设置中清除本地 API Key 和发送授权。
 
+## Chrome Web Store Limited Use
+
+提示词导演对用户数据的使用遵守 Chrome Web Store User Data Policy 的 Limited Use 要求：权限和用户数据只用于提供或改进本政策所述、用户可见的单一用途与功能；不会将用户数据用于个性化广告、再营销或基于兴趣的广告；不会出售用户数据；不会允许人工读取用户数据，除非用户为解决其明确提出的支持请求而对特定内容另行授权，或法律与安全义务确有要求。
+
 ## 权限用途
 
 - `activeTab`：仅在用户主动触发的当前标签页操作中访问页面内容；用户明确启动列表批量采集时，可在同一标签页内滚动或沿列表分页继续，并在结束后返回原列表页。
@@ -52,11 +56,62 @@
 - `sidePanel`：在 Chrome 侧边栏显示扩展的收藏与创作界面。
 - `scripting`：仅在用户主动启动采集、选图或截图工具时向当前页面注入所需脚本。
 - `storage` 与 `unlimitedStorage`：保存用户主动收藏的资料、媒体、设置和本地 AI 服务配置。
-- `https://api.deepseek.com/*`：用于用户主动配置、授权并发起的 DeepSeek 请求。
+- `https://wchao6891.github.io/*`：读取 PromptDirector 官方精选目录、目录指标、封面和只读预览数据。
+- `https://github.com/*`：读取用户明确选择保存的官方精选 Release 包，并打开公开的问题反馈或投稿页面。
+- `https://objects.githubusercontent.com/*` 与 `https://release-assets.githubusercontent.com/*`：跟随 GitHub Release 的受信下载链读取用户明确选择的精选包及其媒体；不会读取其他 GitHub 账号数据。
 - 可选的 `<all_urls>`：不在安装时授予。只有用户主动使用需要相应站点权限的采集功能或保存第三方 AI 服务、自定义兼容接口时，扩展才会请求相应域名的运行时权限。
 - 可选的 `clipboardRead`：只在用户明确触发需要读取剪贴板内容的功能时请求。
 - 可选的 `declarativeNetRequestWithHostAccess`：只在用户已授予相应站点访问权限、且功能需要按该权限处理网络请求时使用。
 
 ## 联系方式
 
-请通过 [GitHub Issues](https://github.com/wchao6891/PromptDirector/issues) 联系项目维护者。
+请通过 [PromptDirector 精选案例 GitHub Issues](https://github.com/wchao6891/PromptDirector-Curated/issues) 联系项目维护者。
+
+---
+
+# PromptDirector Privacy Policy
+
+Effective date: August 16, 2026
+
+PromptDirector is a local-first Chrome extension for collecting, organizing, searching, backing up, and sharing personal creative references. It has no developer-operated data server or user account system, does not collect analytics, does not show ads, and does not sell user data.
+
+## Data handled
+
+PromptDirector handles data only when the user explicitly captures, imports, exports, analyzes, generates, or composes with it. This can include selected website text and resources, source URLs and attribution, screenshots, user prompts and notes, projects, tags, Creative Skills, settings, and credentials for AI services chosen by the user.
+
+Cases, media, tags, settings, Creative Skills, and API keys are stored in the browser's local extension storage by default. Image processing, document extraction, archive creation, and offline previews run locally. API keys are excluded from exports, shared packages, drafts, diagnostics, and logs.
+
+## Optional external services
+
+PromptDirector supports seven separately assigned AI tasks: text tagging, Skill extraction, creative planning, image analysis, video analysis, image generation, and video generation. No external AI request runs merely because the extension is installed. A real request requires the configured service, model, required site permission, and the user's sending consent. Paid media analysis or generation also requires a separate confirmation for the current action.
+
+Only content selected or submitted for the current operation is sent directly over HTTPS to the AI provider or compatible endpoint chosen by the user. PromptDirector does not silently send the full library, unselected cases, API keys, or retry a paid action through another provider. In text-only creation mode, images are neither read nor transmitted. The developer does not receive or proxy AI request content; each provider handles received data under its own terms and privacy policy.
+
+## Sharing, retention, and deletion
+
+Data leaves local storage only when the user explicitly sends it to a configured AI service, exports or migrates it, or creates and distributes a share package. Local data remains until the user edits or deletes it, clears extension storage, or uninstalls the extension. Users can create a local backup before uninstalling and can remove locally saved API keys and consent in AI service settings.
+
+## Chrome Web Store Limited Use
+
+PromptDirector complies with the Limited Use requirements of the Chrome Web Store User Data Policy. Permissions and user data are used only to provide or improve the disclosed, user-facing single purpose and features. User data is not sold or used for personalized, retargeted, or interest-based advertising. Humans are not allowed to read user data unless the user separately authorizes access to specific content for a support request, or access is required for security or legal obligations.
+
+## Permission purposes
+
+- `activeTab`: access the current page only after a user starts capture, visual selection, or another page action.
+- `alarms`: schedule or resume local background work; never for tracking.
+- `contextMenus`: provide the explicit right-click capture entry.
+- `downloads`: save a user-requested backup, share package, or media file.
+- `offscreen`: perform local screenshot, media, document, or ZIP work that needs a background document.
+- `sidePanel`: show capture and creation controls in the Chrome side panel.
+- `scripting`: inject the required capture, selection, or screenshot code only after a user starts that action.
+- `storage` and `unlimitedStorage`: retain the user's selected references, media, settings, and local AI configuration.
+- `https://wchao6891.github.io/*`: read the official curated catalog, metrics, covers, and read-only previews.
+- `https://github.com/*`: read an official curated Release package selected by the user and open public feedback or submission pages.
+- `https://objects.githubusercontent.com/*` and `https://release-assets.githubusercontent.com/*`: follow GitHub's trusted Release download chain for a curated package and its media selected by the user; no other GitHub account data is read.
+- Optional `<all_urls>`: not granted at installation. PromptDirector requests only the specific origin needed when the user starts a site-dependent capture or saves a third-party or compatible AI endpoint.
+- Optional `clipboardRead`: requested only for a user-triggered feature that reads clipboard content.
+- Optional `declarativeNetRequestWithHostAccess`: requested only when a user-granted site permission and the chosen feature require a bounded network rule.
+
+## Contact
+
+Contact the maintainer through [PromptDirector Curated GitHub Issues](https://github.com/wchao6891/PromptDirector-Curated/issues).

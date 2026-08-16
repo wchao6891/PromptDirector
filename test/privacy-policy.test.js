@@ -46,8 +46,18 @@ test("privacy policy accurately declares local-first handling and manifest permi
   for (const permission of [...manifest.permissions, ...manifest.optional_permissions]) {
     assert.match(policy, new RegExp("`" + permission + "`"), `policy must disclose ${permission}`);
   }
-  assert.match(policy, /`https:\/\/api\.deepseek\.com\/\*`/);
+  for (const origin of manifest.host_permissions) {
+    assert.ok(policy.includes(`\`${origin}\``), `policy must disclose ${origin}`);
+  }
   assert.match(policy, /`<all_urls>`/);
+});
+
+test("privacy policy states the Chrome Web Store Limited Use boundary", async () => {
+  const policy = await privacyPolicy();
+  assert.match(policy, /Chrome Web Store User Data Policy/);
+  assert.match(policy, /Limited Use/);
+  assert.match(policy, /不会将用户数据用于个性化广告/);
+  assert.match(policy, /不会允许人工读取用户数据/);
 });
 
 test("privacy policy explains corrected article regions and safe download handling", async () => {

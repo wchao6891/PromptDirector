@@ -1,6 +1,5 @@
 {
-  "extensionName": { "message": "Visual Prompt Archive by 提示词导演" },
-  "extensionShortName": { "message": "Visual Prompt Archive" },
+  "extensionName": { "message": "PromptDirector — Visual Creative Archive" },
   "extensionDescription": { "message": "Save web visuals with their prompts, then organize, back up, share, and reuse them in a local visual archive." },
   "actionTitle": { "message": "Visual Prompt Archive: capture and create" },
   "saveSelectionCommand": { "message": "Add highlighted text to the current capture draft" },

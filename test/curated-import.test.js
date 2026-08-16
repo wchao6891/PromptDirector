@@ -16,6 +16,8 @@ function item(version) {
     authorId: "editorial",
     author: "PromptDirector 编辑精选",
     license: "测试权利",
+    rightsStatus: "verified_authorized",
+    rightsReviewUrl: "https://wchao6891.github.io/PromptDirector-Curated/reviews/test-pack.json",
     updatedAt: "2026-08-14T00:00:00.000Z",
     coverUrl: "https://wchao6891.github.io/PromptDirector-Curated/covers/test.webp",
     previewUrl: "https://wchao6891.github.io/PromptDirector-Curated/previews/test/preview.json",

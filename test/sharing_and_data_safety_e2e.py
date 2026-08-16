@@ -53,6 +53,12 @@ def main() -> None:
               await saveMediaBlob('share-document', new Blob(['%PDF-1.4 fixture'], {type: 'application/pdf'}), {checkCapacity: false});
             }"""
         )
+        setup.wait_for_function(
+            """async () => {
+              const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+              return state?.entries?.length === 2;
+            }"""
+        )
         library = session.open_page("library.html", wait_until="networkidle")
         library.locator("#search-input").fill("share-")
         library.locator("#select-cases").click()

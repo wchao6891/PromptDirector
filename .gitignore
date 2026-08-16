@@ -16,4 +16,7 @@ __pycache__/
 .local-imports/
 .scratch/
 .omx/
-store/screenshots/
+store/screenshots/*
+!store/screenshots/01-library-1280x800.png
+!store/screenshots/02-skills-1280x800.png
+!store/screenshots/03-composer-1280x800.png

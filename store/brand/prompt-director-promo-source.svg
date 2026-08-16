@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280" role="img" aria-label="PromptDirector store promotional artwork">
+  <rect width="440" height="280" rx="0" fill="#F4F5F0"/>
+  <rect x="28" y="67" width="146" height="146" rx="27" fill="#D1FE17"/>
+  <path d="M72 100h55c22 0 37 14 37 35 0 16-8 29-23 36l-23-20c10-2 16-8 16-16 0-9-7-15-18-15H66l6-20Z" fill="#0F1113"/>
+  <path d="m71 144 29 23-10 30H59l12-53Z" fill="#0F1113"/>
+  <rect x="210" y="42" width="194" height="72" rx="12" fill="#0F1113"/>
+  <rect x="224" y="56" width="79" height="44" rx="7" fill="#D1FE17"/>
+  <rect x="315" y="58" width="72" height="8" rx="4" fill="#F4F5F0"/>
+  <rect x="315" y="74" width="54" height="7" rx="3.5" fill="#A7ABA2"/>
+  <rect x="315" y="89" width="42" height="7" rx="3.5" fill="#686D66"/>
+  <rect x="210" y="128" width="194" height="110" rx="12" fill="#FFFFFF" stroke="#D9DDD5"/>
+  <rect x="224" y="143" width="50" height="80" rx="7" fill="#1A1D20"/>
+  <rect x="282" y="143" width="50" height="80" rx="7" fill="#D1FE17"/>
+  <rect x="340" y="143" width="50" height="80" rx="7" fill="#AEB3AA"/>
+</svg>

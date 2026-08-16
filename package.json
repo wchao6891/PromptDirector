@@ -1,6 +1,6 @@
 {
   "name": "prompt-case-collector",
-  "version": "1.18.5",
+  "version": "1.18.7",
   "private": false,
   "license": "Apache-2.0",
   "repository": "https://github.com/wchao6891/PromptDirector",
@@ -10,17 +10,19 @@
     "build:documents": "node tools/document-runtime.mjs",
     "build:icons": "node tools/build-ui-icons.mjs",
     "build:pdfjs": "node tools/pdfjs-runtime.mjs",
+    "build:store": "node tools/build-store-assets.mjs",
     "test": "node --test",
     "check": "node tools/check-source.mjs",
     "check:public": "node tools/validate-public-source.mjs",
     "check:brand": "node tools/build-brand-icons.mjs --check",
     "check:documents": "node tools/document-runtime.mjs --check",
     "check:pdfjs": "node tools/pdfjs-runtime.mjs --check",
+    "check:store": "node tools/build-store-assets.mjs --check && node tools/check-store-readiness.mjs",
     "package": "npm run build:brand && npm run build:documents && npm run build:icons && node tools/package-extension.mjs",
     "package:release": "npm run build:brand && npm run build:documents && npm run build:icons && node tools/package-extension.mjs --release",
     "test:e2e": "python3 test/run_e2e.py",
     "test:smart-picker": "python3 test/smart_visual_picker_e2e.py",
-    "verify": "npm run check:public && npm run check && npm run check:brand && npm run check:documents && npm run check:pdfjs && npm test && npm run package"
+    "verify": "npm run check:public && npm run check && npm run check:brand && npm run check:documents && npm run check:pdfjs && npm run check:store && npm test && npm run package:release"
   },
   "dependencies": {
     "@jonahschulte/rtf-toolkit": "0.5.0",

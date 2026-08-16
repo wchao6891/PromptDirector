@@ -10,6 +10,7 @@ export const CURATED_METRICS_FORMAT = "prompt-director-curated-metrics";
 export const CURATED_METRICS_VERSION = 1;
 
 const TYPES = new Set(["editorial", "image_prompt", "video_prompt"]);
+const VERIFIED_RIGHTS_STATUSES = new Set(["verified_original", "verified_authorized"]);
 const COVER_HOSTS = new Set(["wchao6891.github.io"]);
 const DOWNLOAD_HOSTS = new Set([
   "github.com",
@@ -60,6 +61,8 @@ export function applyCuratedOrigin(entryValue, itemValue, installedAt = new Date
       packageVersion: item.packageVersion,
       author: item.author,
       license: item.license,
+      rightsStatus: item.rightsStatus,
+      rightsReviewUrl: item.rightsReviewUrl,
       sourceEntryId,
       installedAt: validIso(installedAt) || new Date().toISOString()
     }
@@ -304,12 +307,14 @@ function normalizeItem(value = {}) {
   const type = TYPES.has(value.type) ? value.type : "";
   const author = clean(value.author);
   const license = clean(value.license);
+  const rightsStatus = clean(value.rightsStatus);
+  const rightsReviewUrl = trustedUrl(value.rightsReviewUrl, COVER_HOSTS, "精选权利审核地址不受信任");
   const updatedAt = validIso(value.updatedAt);
   const coverUrl = trustedUrl(value.coverUrl, COVER_HOSTS, "精选封面地址不受信任");
   const previewUrl = trustedUrl(value.previewUrl, COVER_HOSTS, "精选预览地址不受信任");
   const downloadUrl = trustedUrl(value.downloadUrl, DOWNLOAD_HOSTS, "精选下载地址不受信任");
   const sha256 = String(value.sha256 ?? "").toLocaleLowerCase("en-US");
-  if (!id || !title || !type || !packageId || !packageVersion || !authorId || !author || !license || !updatedAt ||
+  if (!id || !title || !type || !packageId || !packageVersion || !authorId || !author || !license || !VERIFIED_RIGHTS_STATUSES.has(rightsStatus) || !updatedAt ||
       !/^[a-f0-9]{64}$/.test(sha256)) {
     throw new Error("精选目录条目缺少必填字段或校验值");
   }
@@ -322,6 +327,8 @@ function normalizeItem(value = {}) {
     authorId,
     author,
     license,
+    rightsStatus,
+    rightsReviewUrl,
     updatedAt,
     coverUrl,
     previewUrl,

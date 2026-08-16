@@ -305,13 +305,12 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(skills.locator("#skill-export")).to_have_count(1)
         skills.locator("#skill-context-back").click()
 
+        skills.evaluate("""async () => chrome.storage.local.set({
+          uiPreferences: { locale: 'zh-CN', theme: 'dark', motion: 'none' }
+        })""")
         skills.goto(composer_url, wait_until="domcontentloaded")
         composer = skills
         composer.set_viewport_size({"width": 1840, "height": 900})
-        composer.evaluate("""async () => chrome.storage.local.set({
-          uiPreferences: { locale: 'zh-CN', theme: 'dark', motion: 'none' }
-        })""")
-        composer.reload(wait_until="domcontentloaded")
         composer.locator("#composer-reference-open").click()
         composer.locator("#composer-reference-tab-skills").click()
         expect(composer.locator("#composer-projects-panel")).to_be_visible()

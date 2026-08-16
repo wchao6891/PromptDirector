@@ -38,6 +38,7 @@ GIF = bytes.fromhex(
 )
 
 PDF = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF"
+FIXTURE_ORIGIN = "https://wchao6891.github.io"
 
 
 def list_page(page: int) -> bytes:
@@ -54,7 +55,7 @@ def list_page(page: int) -> bytes:
 
 def main() -> None:
     with extension_session("prompt-director-page-capture-") as run:
-        fixture_url = "https://api.deepseek.com/promptdirector-capture-fixture"
+        fixture_url = f"{FIXTURE_ORIGIN}/promptdirector-capture-fixture"
         def route_fixture(route) -> None:
             request_url = route.request.url
             if request_url.endswith("/deferred-original.png"):
@@ -78,7 +79,7 @@ def main() -> None:
                 content_type="text/html; charset=utf-8" if request_url == fixture_url else "image/png",
             )
 
-        run.context.route("https://api.deepseek.com/**", route_fixture)
+        run.context.route(f"{FIXTURE_ORIGIN}/**", route_fixture)
         collector = run.open_page("collector.html", wait_until="networkidle")
         run.seed_storage(collector, {"schemaVersion": 24, "entries": []})
         fixture = run.context.new_page()
@@ -203,7 +204,7 @@ def main() -> None:
         assert selected_saved[0]["sourceFacts"]["captureScope"] == "selection", selected_saved[0]
 
         collector.evaluate("() => chrome.storage.local.set({entries: []})")
-        list_url = "https://api.deepseek.com/promptdirector-list?page=1"
+        list_url = f"{FIXTURE_ORIGIN}/promptdirector-list?page=1"
         fixture.goto(list_url, wait_until="networkidle")
         fixture.bring_to_front()
         collector.evaluate("() => document.querySelector('#start-page-capture').click()")
@@ -244,7 +245,7 @@ def main() -> None:
         assert combined_saved[0]["title"] == "Combined list inspiration", combined_saved[0]
         assert len(combined_saved[0].get("mediaAssets", [])) == 3, combined_saved[0]
         assert {asset.get("originalWorkUrl") for asset in combined_saved[0]["mediaAssets"]} == {
-            "https://api.deepseek.com/work/1", "https://api.deepseek.com/work/2", "https://api.deepseek.com/work/3"
+            f"{FIXTURE_ORIGIN}/work/1", f"{FIXTURE_ORIGIN}/work/2", f"{FIXTURE_ORIGIN}/work/3"
         }, combined_saved[0]
         print({"previewCandidates": 2, "mediaViewerItems": 5, "confirmedSubjects": 1, "savedWholeCaseMedia": 6, "savedLiveSelectionMedia": 0, "paginatedCases": 3, "combinedCases": 1, "clearedPageMarkers": 1})
 
