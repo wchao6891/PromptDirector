@@ -6,9 +6,9 @@ This file is the source-of-truth worksheet for the current PromptDirector manife
 
 - Chrome Web Store item public key: stored in the source `manifest.json` for local identity verification only; `package:release` removes `key` from the upload manifest.
 - Expected extension ID: `iahakaahijddcjjldidbclicedibgpjm`.
-- Current release candidate: `dist/PromptDirector-1.18.7.zip`.
-- Candidate size: `8,124,631` bytes.
-- Candidate SHA-256: `92b51bbe253b29a41e7e9869dd6d9d643812d16452a24e5e9140375f26d7e516`.
+- Current release candidate: `dist/PromptDirector-1.18.8.zip`.
+- Candidate size: `8,126,575` bytes.
+- Candidate SHA-256: `204ae3f814ce3a188c95f9bd92e650f863eb5a85ef2299832a502bb56d0c65f2`.
 - Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest.
 
 ## Store listing

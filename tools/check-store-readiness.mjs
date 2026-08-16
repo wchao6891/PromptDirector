@@ -28,6 +28,7 @@ for (const phrase of ["Chrome Web Store User Data Policy", "Limited Use", "不�
 const listingZh = await text("store/LISTING_ZH_CN.md");
 const listingEn = await text("store/LISTING_EN.md");
 const submission = await text("store/CHROME_WEB_STORE_SUBMISSION.md");
+requireText(submission, `dist/PromptDirector-${manifest.version}.zip`, "商店提交清单版本与 manifest 不一致");
 requireText(listingZh, locales.zh_CN.extensionName.message, "中文商店名称与 manifest 不一致");
 requireText(listingEn, locales.en.extensionName.message, "英文商店名称与 manifest 不一致");
 for (const permission of [
