@@ -45,14 +45,23 @@ test("X capture uses a compact account title while preserving the original sourc
   assert.equal(captureTitleForSource("https://example.com/post", original), original);
 });
 
-test("capture draft v2 groups repeated selections from one source into one ordered part", () => {
+test("capture draft v3 groups repeated selections and retains normalized source context", () => {
   let draft = createCaptureDraft({ targetCaseId: "compound:target" });
   ({ draft } = addDraftFragment(draft, { text: "第一段", sourceUrl: "https://a.example/post", sourceTitle: "A" }));
   ({ draft } = addDraftFragment(draft, { text: "第二段", sourceUrl: "https://a.example/post", sourceTitle: "A" }));
   ({ draft } = addDraftFragment(draft, { text: "第三段", sourceUrl: "https://b.example/work", sourceTitle: "B" }));
 
-  assert.equal(draft.version, 2);
+  draft = createCaptureDraft({
+    ...draft,
+    sourceContexts: [{
+      canonicalUrl: "https://a.example/post",
+      displayTitle: "作者甲 · 2026-08-13",
+      sourceFacts: { provider: "example", itemId: "work-1", author: "作者甲" }
+    }]
+  });
+  assert.equal(draft.version, 3);
   assert.equal(draft.targetCaseId, "compound:target");
+  assert.equal(draft.sourceContexts[0].sourceFacts.author, "作者甲");
   assert.deepEqual(draftParts(draft).map((part) => ({ url: part.sourceUrl, text: part.text })), [
     { url: "https://a.example/post", text: "第一段\n\n第二段" },
     { url: "https://b.example/work", text: "第三段" }

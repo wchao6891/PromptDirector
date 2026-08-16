@@ -3,21 +3,36 @@ import { entryMediaAssets } from "./media.js";
 export const CONTACT_SHEET_MAX_IMAGES = 9;
 export const CONTACT_SHEET_COLUMNS = 3;
 
-export function selectedSkillContentImages(entriesValue = [], entryIdsValue = []) {
-  const selected = new Set((Array.isArray(entryIdsValue) ? entryIdsValue : []).map(String));
+export function selectedSkillContentImages(entriesValue = [], selectionsValue = []) {
+  const selections = normalizeSelections(selectionsValue);
   const result = [];
   let caseNumber = 0;
   for (const entry of Array.isArray(entriesValue) ? entriesValue : []) {
-    if (!selected.has(String(entry?.id ?? ""))) continue;
+    const selection = selections.get(String(entry?.id ?? ""));
+    if (!selection) continue;
     caseNumber += 1;
     let imageNumber = 0;
     for (const asset of entryMediaAssets(entry)) {
       if (asset.kind !== "image" || asset.usage === "poster" || asset.storageMode === "reference") continue;
+      if (selection.assetIds && !selection.assetIds.has(String(asset.id))) continue;
       imageNumber += 1;
       result.push({ entryId: entry.id, visualId: asset.id, caseNumber, imageNumber });
     }
   }
   return result;
+}
+
+function normalizeSelections(values) {
+  const source = Array.isArray(values) ? values : [];
+  const legacyIds = source.every((item) => typeof item === "string" || typeof item === "number");
+  if (legacyIds) return new Map(source.map((id) => [String(id), { assetIds: null }]));
+  return new Map(source.flatMap((selection) => {
+    const entryId = String(selection?.entryId ?? "");
+    if (!entryId) return [];
+    return [[entryId, {
+      assetIds: new Set((Array.isArray(selection?.assetIds) ? selection.assetIds : []).map(String))
+    }]];
+  }));
 }
 
 export function contactSheetPlan(imagesValue = []) {

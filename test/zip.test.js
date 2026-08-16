@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
 
-import { createZipBlob, readZipBlob } from "../zip.js";
+import { createZipBlob, openZipBlob, readZipBlob } from "../zip.js";
 
 test("createZipBlob produces a UTF-8 ZIP containing markdown and image paths", async () => {
   const archive = await createZipBlob([
@@ -49,6 +49,38 @@ test("readZipBlob restores MP4 assets with their video MIME type", async () => {
   const files = await readZipBlob(archive);
 
   assert.equal(files.get("videos/case-1.mp4").type, "video/mp4");
+});
+
+test("readZipBlob reports each verified file while large packages are being opened", async () => {
+  const archive = await createZipBlob([
+    { name: "library.json", data: "{}" },
+    { name: "videos/case-1.mp4", data: new Uint8Array(64) },
+    { name: "images/case-1.webp", data: new Uint8Array(32) }
+  ]);
+  const progress = [];
+
+  await readZipBlob(archive, {}, { onProgress: (value) => progress.push(value) });
+
+  assert.deepEqual(progress.map(({ completed, total, name }) => ({ completed, total, name })), [
+    { completed: 1, total: 3, name: "library.json" },
+    { completed: 2, total: 3, name: "videos/case-1.mp4" },
+    { completed: 3, total: 3, name: "images/case-1.webp" }
+  ]);
+});
+
+test("openZipBlob validates the whole directory but materializes only requested files", async () => {
+  const archive = await createZipBlob([
+    { name: "library.json", data: "{}" },
+    { name: "videos/selected.mp4", data: new Uint8Array([1, 2, 3]) },
+    { name: "videos/unselected.mp4", data: new Uint8Array([4, 5, 6]) }
+  ]);
+  const reader = await openZipBlob(archive);
+
+  const files = await reader.read(["library.json", "videos/selected.mp4"]);
+
+  assert.deepEqual(reader.names, ["library.json", "videos/selected.mp4", "videos/unselected.mp4"]);
+  assert.deepEqual([...files.keys()], ["library.json", "videos/selected.mp4"]);
+  await assert.rejects(() => reader.read(["videos/missing.mp4"]), /ZIP 内缺少文件/);
 });
 
 test("readZipBlob rejects unsupported or damaged archives", async () => {

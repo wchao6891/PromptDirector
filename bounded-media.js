@@ -1,6 +1,16 @@
 import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 
-const MEDIA_KINDS = new Set(["image", "video"]);
+const MEDIA_KINDS = new Set(["image", "video", "document"]);
+export const SUPPORTED_DOCUMENT_MIME_TYPES = Object.freeze([
+  "application/pdf",
+  "application/rtf",
+  "text/rtf",
+  "application/x-rtf",
+  "text/html",
+  "text/markdown",
+  "text/plain"
+]);
+const DOCUMENT_MIME_TYPES = new Set(SUPPORTED_DOCUMENT_MIME_TYPES);
 
 export async function fetchBoundedMedia(value, options = {}) {
   const url = assertRemoteMediaUrl(value, options);
@@ -39,12 +49,50 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
   }
   const bytes = await readBoundedBytes(response, maxBytes, options.controller);
   const declaredType = cleanMimeType(response?.headers?.get?.("content-type"));
-  const detectedType = detectMediaMimeType(bytes);
-  const mimeType = detectedType || declaredType;
-  if (!mimeType.startsWith(`${kind}/`) || !detectedType) {
+  const detectedType = kind === "document" ? detectDocumentMimeType(bytes) : detectMediaMimeType(bytes);
+  const mimeType = kind === "document"
+    ? verifiedDocumentMimeType(bytes, detectedType, declaredType, options.expectedMimeType)
+    : detectedType || declaredType;
+  if (kind !== "document" && (!mimeType.startsWith(`${kind}/`) || !detectedType)) {
     throw new Error(`来源没有返回有效${kind === "image" ? "图片" : "视频"}文件`);
   }
+  const dimensions = kind === "image" ? detectImageDimensions(bytes, mimeType) : null;
+  const maxPixels = positiveInteger(options.maxPixels, 0);
+  if (dimensions && maxPixels && dimensions.width * dimensions.height > maxPixels) {
+    throw new Error(`图片像素超过 ${maxPixels.toLocaleString("en-US")} 上限`);
+  }
+  options.onMetadata?.({ mimeType, ...(dimensions || {}) });
   return new Blob([bytes], { type: mimeType });
+}
+
+export function isSupportedDocumentMimeType(value) {
+  return DOCUMENT_MIME_TYPES.has(cleanMimeType(value));
+}
+
+export function detectImageDimensions(bytesValue, mimeTypeValue = "") {
+  const bytes = bytesValue instanceof Uint8Array ? bytesValue : new Uint8Array(bytesValue || []);
+  const mimeType = cleanMimeType(mimeTypeValue) || detectMediaMimeType(bytes);
+  if (mimeType === "image/png" && bytes.length >= 24) {
+    return { width: readUint32BE(bytes, 16), height: readUint32BE(bytes, 20) };
+  }
+  if (mimeType === "image/gif" && bytes.length >= 10) {
+    return { width: readUint16LE(bytes, 6), height: readUint16LE(bytes, 8) };
+  }
+  if (mimeType === "image/jpeg") return jpegDimensions(bytes);
+  if (mimeType === "image/webp" && bytes.length >= 30) {
+    const chunk = ascii(bytes, 12, 16);
+    if (chunk === "VP8X") {
+      return { width: 1 + readUint24LE(bytes, 24), height: 1 + readUint24LE(bytes, 27) };
+    }
+    if (chunk === "VP8L" && bytes[20] === 0x2f) {
+      const bits = bytes[21] | bytes[22] << 8 | bytes[23] << 16 | bytes[24] << 24;
+      return { width: (bits & 0x3fff) + 1, height: (bits >>> 14 & 0x3fff) + 1 };
+    }
+    if (chunk === "VP8 " && bytes.length >= 30 && matches(bytes.subarray(23), [0x9d, 0x01, 0x2a])) {
+      return { width: readUint16LE(bytes, 26) & 0x3fff, height: readUint16LE(bytes, 28) & 0x3fff };
+    }
+  }
+  return null;
 }
 
 export function assertRemoteMediaUrl(value, options = {}) {
@@ -101,6 +149,93 @@ function detectMediaMimeType(bytes) {
   return "";
 }
 
+function detectDocumentMimeType(bytes) {
+  if (ascii(bytes, 0, 5) === "%PDF-") return "application/pdf";
+  const prefix = decodedPrefix(bytes, 256).trimStart().toLocaleLowerCase("en-US");
+  if (prefix.startsWith("{\\rtf")) return "application/rtf";
+  if (/^(?:<!doctype\s+html\b|<html\b|<head\b|<body\b)/u.test(prefix)) return "text/html";
+  return "";
+}
+
+function verifiedDocumentMimeType(bytes, detectedType, declaredType, expectedTypeValue) {
+  const expectedType = cleanMimeType(expectedTypeValue);
+  if (expectedType && !isSupportedDocumentMimeType(expectedType)) {
+    throw new Error("来源不是支持的安全文档类型");
+  }
+  const declaredDocumentType = isSupportedDocumentMimeType(declaredType) ? declaredType : "";
+  const requestedType = expectedType || declaredDocumentType || detectedType;
+  if (!requestedType) throw new Error("来源不是支持的安全文档类型");
+  if (detectedType && !sameDocumentFamily(detectedType, requestedType)) {
+    throw new Error("来源没有返回有效文档文件");
+  }
+  if (["application/pdf", "text/html"].includes(requestedType) && detectedType !== requestedType) {
+    throw new Error("来源没有返回有效文档文件");
+  }
+  if (["application/rtf", "text/rtf", "application/x-rtf"].includes(requestedType) && detectedType !== "application/rtf") {
+    throw new Error("来源没有返回有效文档文件");
+  }
+  if (["text/plain", "text/markdown"].includes(requestedType) && !isSafeUtf8Text(bytes)) {
+    throw new Error("来源没有返回有效文档文件");
+  }
+  return requestedType;
+}
+
+function sameDocumentFamily(left, right) {
+  const rtf = new Set(["application/rtf", "text/rtf", "application/x-rtf"]);
+  return left === right || (rtf.has(left) && rtf.has(right));
+}
+
+function isSafeUtf8Text(bytes) {
+  let text;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return false; }
+  if (text.includes("\u0000")) return false;
+  let controls = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    if ((code < 0x20 && ![0x09, 0x0a, 0x0d].includes(code)) || code === 0x7f) controls += 1;
+  }
+  return controls <= Math.max(1, Math.floor(text.length * 0.01));
+}
+
+function decodedPrefix(bytes, limit) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, Math.min(bytes.length, limit))); }
+  catch { return ""; }
+}
+
+function jpegDimensions(bytes) {
+  let offset = 2;
+  while (offset + 8 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = bytes[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0xd9) continue;
+    if (offset + 2 > bytes.length) break;
+    const length = bytes[offset] << 8 | bytes[offset + 1];
+    if (length < 2 || offset + length > bytes.length) break;
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      return { width: bytes[offset + 5] << 8 | bytes[offset + 6], height: bytes[offset + 3] << 8 | bytes[offset + 4] };
+    }
+    offset += length;
+  }
+  return null;
+}
+
+function readUint32BE(bytes, offset) {
+  return (bytes[offset] * 0x1000000 + (bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3])) >>> 0;
+}
+
+function readUint16LE(bytes, offset) {
+  return bytes[offset] | bytes[offset + 1] << 8;
+}
+
+function readUint24LE(bytes, offset) {
+  return bytes[offset] | bytes[offset + 1] << 8 | bytes[offset + 2] << 16;
+}
+
 function matches(bytes, signature) {
   return bytes.length >= signature.length && signature.every((value, index) => bytes[index] === value);
 }
@@ -117,7 +252,9 @@ function mediaKind(value) {
 }
 
 function defaultLimit(kind) {
-  return kind === "image" ? PORTABLE_LIBRARY_LIMITS.maxImageBytes : PORTABLE_LIBRARY_LIMITS.maxVideoBytes;
+  if (kind === "image") return PORTABLE_LIBRARY_LIMITS.maxImageBytes;
+  if (kind === "document") return PORTABLE_LIBRARY_LIMITS.maxFileBytes;
+  return PORTABLE_LIBRARY_LIMITS.maxVideoBytes;
 }
 
 function cleanMimeType(value) {

@@ -12,6 +12,7 @@ import { expandLogicalCaseIds, normalizeCompoundCases } from "./compound-cases.j
 import { isFixedTagTree, migrateLegacyFacetState } from "./tag-taxonomy.js";
 import { migrateLibraryState } from "./migration.js";
 import { LIBRARY_PACKAGE_FORMAT, isSupportedLibraryPackageVersion } from "./library-package-format.js";
+import { remapArticleDocumentAssets } from "./article-document.js";
 
 export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) {
   const limits = portableLibraryLimits(limitsValue);
@@ -355,6 +356,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       return { ...visual, id: targetVisualId };
     });
     entry.primaryMediaId = visualIdMap[entry.primaryMediaId] ?? entry.primaryMediaId;
+    entry.articleDocument = remapArticleDocumentAssets(entry.articleDocument, visualIdMap);
     entry.mediaAssets = entry.mediaAssets.map((asset) => ({
       ...asset,
       ...(asset.posterAssetId ? { posterAssetId: visualIdMap[asset.posterAssetId] ?? asset.posterAssetId } : {}),

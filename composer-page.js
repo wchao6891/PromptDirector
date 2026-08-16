@@ -116,6 +116,7 @@ let creativeExperimentSettings = { enabled: false, autoAnalyze: false };
 let composerSearchIndex = [];
 let composerDocumentTextByEntryId = new Map();
 let reuseRetrievedSourcesNextTurn = false;
+let creativeStateRefreshRevision = 0;
 
 const imageWorkspace = createComposerImageWorkspace({
   translate: t,
@@ -263,22 +264,31 @@ function bindEvents() {
 }
 
 async function refreshCreativeResultState() {
+  const revision = ++creativeStateRefreshRevision;
   const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-  if (!response?.ok) return;
-  physicalEntries = response.entries ?? physicalEntries;
-  compoundCases = normalizeCompoundCases(response.compoundCases ?? compoundCases, physicalEntries);
-  entries = materializeLogicalCases(physicalEntries, compoundCases);
-  await rebuildComposerSearchIndex();
+  if (!response?.ok || revision !== creativeStateRefreshRevision) return;
+  const nextPhysicalEntries = response.entries ?? physicalEntries;
+  const nextCompoundCases = normalizeCompoundCases(response.compoundCases ?? compoundCases, nextPhysicalEntries);
+  const nextEntries = materializeLogicalCases(nextPhysicalEntries, nextCompoundCases);
   creativeRuns = response.creativeRuns ?? creativeRuns;
   creativeJobs = response.creativeJobs ?? creativeJobs;
   creativeExperimentSettings = response.creativeExperimentSettings ?? creativeExperimentSettings;
   creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
-  await syncCreativeJobState();
-  renderTimeline();
+  if (!await syncCreativeJobState(revision)) return;
+  renderActiveState();
   renderSlashSkillMenu();
+
+  const searchState = await createComposerSearchState(nextEntries);
+  if (revision !== creativeStateRefreshRevision) return;
+  physicalEntries = nextPhysicalEntries;
+  compoundCases = nextCompoundCases;
+  entries = nextEntries;
+  composerDocumentTextByEntryId = searchState.documentTextByEntryId;
+  composerSearchIndex = searchState.searchIndex;
 }
 
-async function syncCreativeJobState() {
+async function syncCreativeJobState(expectedRevision = null) {
+  const current = () => expectedRevision === null || expectedRevision === creativeStateRefreshRevision;
   const items = Array.isArray(creativeJobs?.items) ? creativeJobs.items : [];
   const active = items.find((item) => ["queued", "running"].includes(item.status)) ?? null;
   lastCreativeJob = composerSession
@@ -287,6 +297,7 @@ async function syncCreativeJobState() {
   if (active) {
     if (!composerSession || composerSession.id === active.sessionId) {
       const response = await chrome.runtime.sendMessage({ type: "GET_COMPOSER_SESSION", sessionId: active.sessionId });
+      if (!current()) return false;
       if (!composerSession || composerSession.id === active.sessionId) {
         composerSession = response?.ok ? response.session : active.request.session;
       }
@@ -303,15 +314,17 @@ async function syncCreativeJobState() {
       session: composerSession?.id === active.sessionId ? composerSession : active.request.session,
       streamingText: ""
     };
-    return;
+    return true;
   }
   if (activeOperation?.durable) activeOperation = null;
-  if (!lastCreativeJob || lastCreativeJob.sessionId !== composerSession?.id) return;
+  if (!lastCreativeJob || lastCreativeJob.sessionId !== composerSession?.id) return current();
   const response = await chrome.runtime.sendMessage({ type: "GET_COMPOSER_SESSION", sessionId: composerSession.id });
+  if (!current()) return false;
   if (response?.ok) composerSession = response.session;
   if (["failed", "canceled", "interrupted"].includes(lastCreativeJob.status) && lastCreativeJob.error?.message) {
     composerFeedback(lastCreativeJob.error.message, true);
   }
+  return true;
 }
 
 async function initializeComposer() {
@@ -402,8 +415,8 @@ function renderComposer() {
   elements.composerProductionReview.checked = composerSession.productionReviewEnabled;
   elements.composerProductionReview.disabled = !["auto", "compose"].includes(composerSession.routeMode);
   renderComposerAiProfile();
-  elements.composerReferenceCount.textContent = String(composerSession.referenceSnapshots.length + composerSession.appliedSkills.length);
   const libraryReferences = composerSession.referenceSnapshots.filter((reference) => reference.sourceType !== TEMP_REFERENCE_SOURCE_TYPES.temporary);
+  elements.composerReferenceCount.textContent = String(libraryReferences.length);
   elements.composerAliases.replaceChildren(...libraryReferences.map(referenceAliasButton));
   elements.composerAliases.hidden = libraryReferences.length === 0;
   renderTempReferences();
@@ -1121,16 +1134,25 @@ function retrieveSourcesForTurn(session, search) {
 }
 
 async function rebuildComposerSearchIndex() {
-  const documentIds = [...new Set(entries.flatMap((entry) => entryMediaAssets(entry))
+  const state = await createComposerSearchState(entries);
+  composerDocumentTextByEntryId = state.documentTextByEntryId;
+  composerSearchIndex = state.searchIndex;
+}
+
+async function createComposerSearchState(sourceEntries) {
+  const documentIds = [...new Set(sourceEntries.flatMap((entry) => entryMediaAssets(entry))
     .filter((asset) => asset.kind === "document")
     .map((asset) => asset.id))];
   const derived = await Promise.all(documentIds.map(async (id) => [id, await getDerivedMedia(id).catch(() => null)]));
   const documentText = new Map(derived.flatMap(([id, value]) => value?.searchText ? [[id, value.searchText]] : []));
-  composerDocumentTextByEntryId = new Map(entries.flatMap((entry) => {
+  const documentTextByEntryId = new Map(sourceEntries.flatMap((entry) => {
     const text = entryMediaAssets(entry).map((asset) => documentText.get(asset.id)).filter(Boolean).join("\n").trim();
     return text ? [[entry.id, text]] : [];
   }));
-  composerSearchIndex = buildSearchIndex(entries, facetCatalog, documentText);
+  return {
+    documentTextByEntryId,
+    searchIndex: buildSearchIndex(sourceEntries, facetCatalog, documentText)
+  };
 }
 
 async function runAgentExecution(operation, settingsValue, route, instruction) {
@@ -1264,7 +1286,7 @@ function setActiveCreativeJob(job) {
 function renderActiveState() {
   renderSessions();
   renderSendState();
-  if (composerSession?.id === activeOperation?.sessionId) renderTimeline();
+  renderTimeline();
   if (elements.composerReferenceWorkspace.hidden === false) renderProjects();
 }
 
@@ -1403,14 +1425,27 @@ function renderImageGenerationSettings() {
   const state = videoTask
     ? normalizeVideoGenerationRequest(generationProfile, composerVisionSettings, composerSession.generationParameters)
     : normalizeImageGenerationRequest(generationProfile, composerVisionSettings, composerSession.generationParameters);
-  renderGenerationParameterField(elements.composerImageSizeField, elements.composerImageSize, capability, "size", composerSession.generationParameters.size, { showAutomatic: true });
   if (videoTask) {
+    renderGenerationParameterField(elements.composerImageSizeField, elements.composerImageSize, capability, "size", composerSession.generationParameters.size, {
+      showAutomatic: true,
+      fallbackLabel: "画幅与分辨率"
+    });
     elements.composerImageQualityField.hidden = true;
     elements.composerImageReferenceModeField.hidden = true;
-    renderGenerationParameterField(elements.composerVideoDurationField, elements.composerVideoDuration, capability, "duration", composerSession.generationParameters.duration);
+    renderGenerationParameterField(elements.composerVideoDurationField, elements.composerVideoDuration, capability, "duration", composerSession.generationParameters.duration, {
+      fallbackLabel: "时长"
+    });
   } else {
+    const primaryKey = generationParameterKey(capability, ["size", "aspectRatio"]);
+    const secondaryKey = generationParameterKey(capability, ["quality", "imageSize"]);
+    renderGenerationParameterField(elements.composerImageSizeField, elements.composerImageSize, capability, primaryKey, composerSession.generationParameters[primaryKey], {
+      showAutomatic: true,
+      fallbackLabel: "画幅与分辨率"
+    });
     elements.composerVideoDurationField.hidden = true;
-    renderGenerationParameterField(elements.composerImageQualityField, elements.composerImageQuality, capability, "quality", composerSession.generationParameters.quality);
+    renderGenerationParameterField(elements.composerImageQualityField, elements.composerImageQuality, capability, secondaryKey, composerSession.generationParameters[secondaryKey], {
+      fallbackLabel: "质量"
+    });
     const referenceMode = imageReferenceModeAvailability(composerSession.referenceSnapshots);
     elements.composerImageReferenceModeField.hidden = !composerSession.referenceSnapshots.some((item) => item.imageRefs?.length);
     elements.composerImageReferenceMode.value = composerSession.imageReferenceMode;
@@ -1419,11 +1454,11 @@ function renderImageGenerationSettings() {
   const messages = [
     ...state.issues,
     ...(!videoTask && !imageReferenceModeAvailability(composerSession.referenceSnapshots).canDisableImages
-      ? [`还有 ${imageReferenceModeAvailability(composerSession.referenceSnapshots).missingAssetIds.length} 张参考图缺少有效独立分析，暂时必须带原图`]
+      ? [`还有 ${imageReferenceModeAvailability(composerSession.referenceSnapshots).missingAssetIds.length} 张参考图既没有案例提示词，也没有有效分析文字，暂时必须带原图`]
       : []),
     ...(state.ignored.length ? [`当前服务不会发送：${state.ignored.join("、")}`] : [])
   ];
-  elements.composerGenerationParameterNote.textContent = messages.join("；");
+  elements.composerGenerationParameterNote.textContent = messages.map(translateUiMessage).join(currentLocale() === "en" ? "; " : "；");
   elements.composerGenerationParameterNote.classList.toggle("error", state.issues.length > 0);
 }
 
@@ -1433,14 +1468,21 @@ async function updateImageReferenceMode() {
   const availability = imageReferenceModeAvailability(composerSession.referenceSnapshots);
   if (mode !== "conditioned" && !availability.canDisableImages) {
     renderImageGenerationSettings();
-    return composerFeedback(`还有 ${availability.missingAssetIds.length} 张参考图缺少有效独立分析，不能关闭垫图`, true);
+    return composerFeedback(`还有 ${availability.missingAssetIds.length} 张参考图既没有案例提示词，也没有有效分析文字，不能关闭原图`, true);
   }
   composerSession = await saveSession(createComposerSession({ ...composerSession, imageReferenceMode: mode }));
   renderComposer();
 }
 
-function renderGenerationParameterField(field, select, capability, key, selectedValue, { showAutomatic = false } = {}) {
+function generationParameterKey(capability, preferredKeys) {
+  return preferredKeys.find((key) => capability.parameters.some((item) => item.key === key)) ?? preferredKeys[0];
+}
+
+function renderGenerationParameterField(field, select, capability, key, selectedValue, { showAutomatic = false, fallbackLabel = "" } = {}) {
   const parameter = capability.parameters.find((item) => item.key === key);
+  field.dataset.parameterKey = key;
+  const label = field.querySelector("span");
+  if (label) label.textContent = t(parameter?.label || fallbackLabel);
   field.hidden = !parameter && !showAutomatic;
   const supportedOptions = parameter?.options?.length
     ? parameter.options
@@ -1544,7 +1586,7 @@ function composerProfileForAssignment(assignment, fallback) {
     : providerId === "openai" ? "openai"
       : providerId === "xai" ? "xai"
         : providerId.startsWith("custom") ? "compatible"
-          : ["gemini", "openrouter", "minimax", "volcengine"].includes(providerId) ? providerId : "";
+          : ["kimi", "gemini", "openrouter", "minimax", "volcengine"].includes(providerId) ? providerId : "";
   if (!serviceId) return normalizeComposerAiProfile(fallback);
   return normalizeComposerAiProfile({ serviceId, model: assignment?.model, thinking: fallback?.thinking === true });
 }
@@ -1552,13 +1594,24 @@ function composerProfileForAssignment(assignment, fallback) {
 async function updateImageGenerationParameters() {
   if (!composerSession || activeOperation || !["create_image", "create_video"].includes(composerSession.outputMode)) return;
   const videoTask = composerSession.outputMode === "create_video";
+  const generationParameters = videoTask
+    ? {
+        ...composerSession.generationParameters,
+        size: elements.composerImageSize.value,
+        duration: elements.composerVideoDuration.value
+      }
+    : {
+        ...composerSession.generationParameters,
+        size: "",
+        aspectRatio: "",
+        quality: "",
+        imageSize: "",
+        [elements.composerImageSizeField.dataset.parameterKey || "size"]: elements.composerImageSize.value,
+        [elements.composerImageQualityField.dataset.parameterKey || "quality"]: elements.composerImageQuality.value
+      };
   composerSession = await saveSession(createComposerSession({
     ...composerSession,
-    generationParameters: {
-      ...composerSession.generationParameters,
-      size: elements.composerImageSize.value,
-      ...(videoTask ? { duration: elements.composerVideoDuration.value } : { quality: elements.composerImageQuality.value })
-    }
+    generationParameters
   }));
   renderComposer();
 }

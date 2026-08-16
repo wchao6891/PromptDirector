@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from playwright.sync_api import expect
 
-from e2e_support import base_entry, extension_session
+from e2e_support import ai_configuration_fixture, base_entry, extension_session
 
 
 PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -40,6 +40,7 @@ def main() -> None:
         "routeMode": "compose",
         "outputMode": "create_image",
         "aiProfile": {"serviceId": "openai", "model": "gpt-5-mini", "thinking": False},
+        "generationAiProfile": {"serviceId": "openai", "model": "gpt-5-mini", "thinking": False},
         "referenceSnapshots": [reference_snapshot],
         "messages": [
             {"id": "user-one", "role": "user", "type": "request", "content": "生成三人焦点构图", "createdAt": "2026-08-07T00:00:00.000Z"},
@@ -85,10 +86,24 @@ def main() -> None:
             "entries": [reference],
             "composerSessions": [session_value],
             "creativeRuns": [run_value],
-            "visionSettings": {
-                "consent": True,
-                "openai": {"apiKey": "openai-e2e-key", "model": "gpt-5-mini"},
-            },
+            **ai_configuration_fixture(
+                providers={
+                    "openai": {
+                        "apiKey": "openai-e2e-key",
+                        "consent": True,
+                        "models": {
+                            "creativePlanning": "gpt-5-mini",
+                            "imageAnalysis": "gpt-5-mini",
+                            "imageGeneration": "gpt-5-mini",
+                        },
+                    },
+                },
+                assignments={
+                    "creativePlanning": {"providerId": "openai", "model": "gpt-5-mini"},
+                    "imageAnalysis": {"providerId": "openai", "model": "gpt-5-mini"},
+                    "imageGeneration": {"providerId": "openai", "model": "gpt-5-mini"},
+                },
+            ),
         })
         setup.evaluate(
             f"""async () => {{

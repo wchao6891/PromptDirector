@@ -11,57 +11,66 @@
   <body>
     <header class="curated-header">
       <h1 data-i18n="精选案例">精选案例</h1>
-      <button id="return-library" class="button-secondary page-back-action" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span id="return-label">返回我的案例库</span></button>
-    </header>
-    <main>
-      <div class="curated-status-row">
-        <p id="curated-status" class="curated-status" role="status" aria-live="polite"></p>
-        <button id="retry-catalog" class="button-secondary" type="button" hidden data-i18n="重试">重试</button>
+      <label class="curated-search">
+        <span class="visually-hidden" data-i18n="搜索创作包或包内案例">搜索创作包或包内案例</span>
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-search"></use></svg>
+        <input id="curated-search" type="search" autocomplete="off" placeholder="搜索创作包或包内案例" data-i18n-placeholder="搜索创作包或包内案例" />
+      </label>
+      <div class="curated-header-actions">
+        <div class="filter-wrap">
+          <button id="filter-button" class="button-secondary tool-button" type="button" aria-expanded="false"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg><span data-i18n="筛选">筛选</span><span id="filter-count"></span></button>
+          <div id="filter-popover" class="menu-panel filter-panel" hidden>
+            <strong data-i18n="内容类型">内容类型</strong>
+            <label><input type="checkbox" value="image_prompt" /><span data-i18n="图片案例">图片案例</span></label>
+            <label><input type="checkbox" value="video_prompt" /><span data-i18n="视频案例">视频案例</span></label>
+            <label><input type="checkbox" value="followed" /><span data-i18n="已关注">已关注</span></label>
+            <button id="clear-filters" type="button" data-i18n="清除筛选">清除筛选</button>
+          </div>
+        </div>
+        <details id="sort-menu" class="sort-menu">
+          <summary class="button-secondary"><span id="sort-label" data-i18n="推荐">推荐</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-chevron-down"></use></svg></summary>
+          <div class="menu-panel sort-panel">
+            <button type="button" data-sort="recommended" aria-current="true"><span data-i18n="推荐">推荐</span><svg class="ui-icon sort-check" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-check"></use></svg></button>
+            <button type="button" data-sort="latest" aria-current="false"><span data-i18n="最新">最新</span><svg class="ui-icon sort-check" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-check"></use></svg></button>
+            <button id="sort-downloads" type="button" data-sort="downloads" aria-current="false" disabled><span data-i18n="下载">下载</span><svg class="ui-icon sort-check" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-check"></use></svg></button>
+          </div>
+        </details>
+        <button id="return-library" class="button-secondary page-back-action" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span data-i18n="返回案例库">返回案例库</span></button>
       </div>
+    </header>
 
-      <section id="themes-view" class="themes-view">
-        <header class="themes-heading">
-          <h2 data-i18n="按期浏览">按期浏览</h2>
-          <p data-i18n="选择一期主题，再浏览或保存其中的案例。">选择一期主题，再浏览或保存其中的案例。</p>
-        </header>
-        <section id="theme-grid" class="theme-grid" aria-live="polite"></section>
-      </section>
-
-      <section id="cases-view" class="cases-view" hidden>
-        <header class="theme-toolbar">
-          <div class="theme-toolbar-copy">
-            <h2 id="active-theme-title"></h2>
-            <p id="active-theme-summary"></p>
-          </div>
-          <div class="theme-save-actions">
-            <span class="theme-save-summary"><strong id="active-theme-count"></strong><small id="theme-save-status"></small></span>
-            <button id="save-theme" type="button" data-i18n="全部保存">全部保存</button>
-          </div>
-        </header>
-        <section id="curated-grid" class="curated-grid" aria-live="polite"></section>
-        <div id="load-sentinel" class="load-sentinel" aria-hidden="true"></div>
-        <button id="load-more" class="button-secondary load-more" type="button" hidden data-i18n="继续加载">继续加载</button>
-        <section id="curated-empty" class="curated-empty" hidden>
-          <strong data-i18n="还没有可显示的精选案例">还没有可显示的精选案例</strong>
-          <p data-i18n="联网检查目录，或稍后再试。已缓存的目录在离线时仍可查看。">联网检查目录，或稍后再试。已缓存的目录在离线时仍可查看。</p>
-        </section>
-      </section>
-
-      <section id="curated-loading" class="curated-loading" aria-label="正在加载精选案例" data-i18n-aria-label="正在加载精选案例" hidden>
-        <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+    <div id="curated-status-bar" class="curated-status-bar" hidden>
+      <span id="curated-status" role="status" aria-live="polite"></span>
+      <button id="retry-catalog" class="button-secondary" type="button" data-i18n="重试">重试</button>
+    </div>
+    <main id="curated-app" class="curated-app" aria-live="polite">
+      <section class="curated-loading" aria-label="正在加载精选案例" data-i18n-aria-label="正在加载精选案例">
+        <span></span><span></span><span></span><span></span>
       </section>
     </main>
-    <div id="detail-backdrop" class="detail-backdrop" hidden></div>
-    <aside id="detail-drawer" class="detail-drawer" role="dialog" aria-modal="true" aria-label="精选案例详情" data-i18n-aria-label="精选案例详情" aria-hidden="true">
-      <div class="detail-toolbar">
-        <div>
-          <button id="detail-prev" class="icon-button" type="button" aria-label="上一个案例" title="上一个案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg></button>
-          <button id="detail-next" class="icon-button" type="button" aria-label="下一个案例" title="下一个案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg></button>
-        </div>
-        <button id="detail-close" class="icon-button" type="button" aria-label="关闭详情" title="关闭详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+
+    <dialog id="detail-dialog" class="detail-dialog" aria-label="精选案例详情" data-i18n-aria-label="精选案例详情">
+      <button id="detail-close" class="icon-button detail-close" type="button" aria-label="关闭详情" data-i18n-aria-label="关闭详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      <div id="detail-content"></div>
+      <div id="case-detail-backdrop" class="case-detail-backdrop" hidden></div>
+      <aside id="case-detail-drawer" class="case-detail-drawer" role="dialog" aria-modal="true" aria-hidden="true" aria-label="案例详情" data-i18n-aria-label="案例详情">
+        <nav class="case-detail-toolbar" aria-label="案例切换" data-i18n-aria-label="案例切换">
+          <button id="case-detail-prev" class="icon-button" type="button" aria-label="上一个案例" data-i18n-aria-label="上一个案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg></button>
+          <button id="case-detail-next" class="icon-button" type="button" aria-label="下一个案例" data-i18n-aria-label="下一个案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg></button>
+          <button id="case-detail-close" class="icon-button" type="button" aria-label="关闭案例详情" data-i18n-aria-label="关闭案例详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+        </nav>
+        <div id="case-detail-content" class="case-detail-content"></div>
+      </aside>
+    </dialog>
+    <dialog id="pack-save-dialog" class="pack-save-dialog" aria-label="保存整包" data-i18n-aria-label="保存整包">
+      <h2></h2>
+      <p class="pack-save-meta"></p>
+      <div class="pack-save-actions">
+        <button class="pack-save-cancel button-secondary" type="button" data-i18n="取消">取消</button>
+        <button class="pack-save-confirm" type="button" data-i18n="保存整包">保存整包</button>
       </div>
-      <div id="detail-content" class="detail-content"></div>
-    </aside>
+    </dialog>
+    <div id="curated-toast" class="curated-toast" role="status" hidden></div>
     <script type="module" src="curated-page.js"></script>
   </body>
 </html>

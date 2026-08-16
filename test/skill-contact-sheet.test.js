@@ -21,6 +21,30 @@ test("one image stays direct while larger selections use at most nine images per
   assert.equal(plan.every((item) => item.kind === "contact-sheet"), true);
 });
 
+test("compound Skill sources include only explicitly selected assets", () => {
+  const entries = [{
+    id: "compound",
+    text: "共享案例文字",
+    mediaAssets: [
+      { id: "chosen", kind: "image", usage: "content", visionAnalysis: { description: "保留的构图" } },
+      { id: "hidden", kind: "image", usage: "content", visionAnalysis: { description: "不应发送的构图" } },
+      { id: "doc", kind: "document", usage: "content" }
+    ],
+    mediaPrompts: [
+      { assetId: "chosen", text: "选中图片提示词" },
+      { assetId: "hidden", text: "未选图片提示词" }
+    ]
+  }];
+  const selections = [{ entryId: "compound", includeEntryText: false, assetIds: ["chosen", "doc"] }];
+  const images = selectedSkillContentImages(entries, selections);
+  assert.deepEqual(images.map((item) => item.visualId), ["chosen"]);
+  const sources = anonymousSkillSources(entries, selections, { documentTextByAsset: new Map([["doc", "所选文档正文"]]) });
+  assert.equal(sources.length, 1);
+  assert.match(sources[0].prompt, /选中图片提示词[\s\S]*所选文档正文/);
+  assert.match(sources[0].analysis, /保留的构图/);
+  assert.doesNotMatch(JSON.stringify(sources), /共享案例文字|未选图片提示词|不应发送的构图|compound|chosen|doc/);
+});
+
 test("extraction payload contains anonymous selected text and no local identity fields", () => {
   const entries = [{ id: "local:secret", title: "Secret Project", url: "https://private.example", text: "original prompt", mediaAssets: [{ usage: "content", visionAnalysis: { description: "visible composition" } }] }];
   const request = buildSkillExtractionRequest({ goal: "提炼构图", sources: anonymousSkillSources(entries, ["local:secret"]), locale: "zh-CN" });

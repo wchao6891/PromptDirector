@@ -61,6 +61,30 @@ test("automatic text capture reads only the active highlight", async () => {
   assert.equal(result.draft.fragments[0].sourceUrl, "https://example.com/");
 });
 
+test("Jimeng highlight and smart visual capture reuse resolved work identity instead of the tab title", async () => {
+  const stored = {};
+  const sourceContext = {
+    canonicalUrl: "https://jimeng.jianying.com/ai-tool/work-detail/7490123456789012345",
+    displayTitle: "AIGC大叔 · 2026-05-30",
+    sourceFacts: { provider: "jimeng", itemId: "7490123456789012345", author: "AIGC大叔", model: "即梦 4.7" }
+  };
+  const chromeApi = fakeChrome(stored, {
+    query: async () => [{ id: 7, windowId: 3, url: sourceContext.canonicalUrl, title: "即梦AI - 一站式AI创作平台" }],
+    executeScript: async () => [{ result: "网页高亮文字" }]
+  });
+  const workspace = createCaptureWorkspace({
+    chromeApi, captureDraftStorageKey: "captureDraft",
+    ensureOffscreenDocument: async () => undefined, deleteVisual: async () => undefined,
+    resolveSourceContext: async () => sourceContext
+  });
+
+  const result = await workspace.dispatch("try-active-selection");
+
+  assert.equal(result.draft.title, "AIGC大叔 · 2026-05-30");
+  assert.equal(result.draft.fragments[0].sourceTitle, "AIGC大叔 · 2026-05-30");
+  assert.equal(result.draft.sourceContexts[0].sourceFacts.author, "AIGC大叔");
+});
+
 test("automatic text capture stays empty when there is no highlight", async () => {
   const stored = {};
   const chromeApi = fakeChrome(stored, {
@@ -202,6 +226,11 @@ test("smart visual capture verifies the active page, restores it, and persists t
     captureClipboardFingerprintStorageKey: "lastCommittedClipboardFingerprint",
     ensureOffscreenDocument: async () => calls.push("ensure-offscreen"),
     deleteVisual: async () => calls.push("delete"),
+    resolveSourceContext: async () => ({
+      canonicalUrl: "https://example.com/",
+      displayTitle: "作者甲 · 2026-08-13",
+      sourceFacts: { provider: "example", itemId: "work-1", author: "作者甲" }
+    }),
     createId: () => "visual-1",
     now: () => "2026-07-28T10:00:00.000Z"
   });
@@ -211,6 +240,8 @@ test("smart visual capture verifies the active page, restores it, and persists t
   assert.equal(result.ok, true);
   assert.equal(result.draft.visuals[0].id, "visual-1");
   assert.equal(result.draft.visuals[0].capturedAt, "2026-07-28T10:00:00.000Z");
+  assert.equal(result.draft.visuals[0].sourceTitle, "作者甲 · 2026-08-13");
+  assert.equal(result.draft.sourceContexts[0].sourceFacts.author, "作者甲");
   assert.deepEqual(calls, [
     "active-tab",
     "select-visual",
@@ -221,6 +252,54 @@ test("smart visual capture verifies the active page, restores it, and persists t
     "CROP_AND_STORE_SCREENSHOTS"
   ]);
   assert.equal(stored.captureDraft.visuals.length, 1);
+});
+
+test("region capture keeps its existing steps while attaching resolved work identity", async () => {
+  const stored = {};
+  let executeCount = 0;
+  const chromeApi = fakeChrome(stored, {
+    executeScript: async () => {
+      executeCount += 1;
+      if (executeCount === 1) {
+        return [{ result: {
+          captureToken: "region-token",
+          x: 10, y: 20, width: 640, height: 480,
+          viewportWidth: 1200, viewportHeight: 800
+        } }];
+      }
+      return [{ result: true }];
+    },
+    captureVisibleTab: async () => "data:image/png;base64,AA==",
+    sendMessage: async () => ({
+      ok: true,
+      width: 640,
+      height: 480,
+      mimeType: "image/webp",
+      byteSize: 1234,
+      palette: { colors: [] }
+    })
+  });
+  const workspace = createCaptureWorkspace({
+    chromeApi,
+    captureDraftStorageKey: "captureDraft",
+    ensureOffscreenDocument: async () => undefined,
+    deleteVisual: async () => undefined,
+    resolveSourceContext: async () => ({
+      canonicalUrl: "https://example.com/",
+      displayTitle: "作者乙 · 2026-08-13",
+      sourceFacts: { provider: "example", itemId: "work-2", author: "作者乙" }
+    }),
+    createId: () => "region-visual",
+    now: () => "2026-08-13T00:00:00.000Z"
+  });
+
+  const result = await workspace.dispatch("capture-tab", {
+    tab: { id: 7, windowId: 3, url: "https://example.com/", title: "Generic site title" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.draft.visuals[0].sourceTitle, "作者乙 · 2026-08-13");
+  assert.equal(result.draft.sourceContexts[0].sourceFacts.itemId, "work-2");
 });
 
 test("failed smart visual storage removes every partial visual and leaves the draft unchanged", async () => {

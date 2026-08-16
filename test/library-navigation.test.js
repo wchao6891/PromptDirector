@@ -88,6 +88,7 @@ test("classification manager keeps taxonomy work while settings owns AI services
   assert.match(settings, /id="ai-settings-form"/);
   assert.match(settings, /id="vision-settings-form"/);
   assert.match(settings, /id="composer-settings-form"/);
+  assert.doesNotMatch(settings, /id="deepseek-api-key"|id="text-ai-provider"|id="vision-provider"|id="vision-compatible-endpoint"/);
 });
 
 test("collector opens a new library tab and disables the side panel for that tab", async () => {

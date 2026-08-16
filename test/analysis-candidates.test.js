@@ -333,12 +333,6 @@ test("text compatible API key is cleared when the endpoint origin changes", () =
   assert.equal(settings.compatible.apiKey, "");
 });
 
-test("legacy AI model setting migrates to the remaining batch-analysis setting", () => {
-  const settings = normalizeAiSettings({ model: "legacy-analysis", apiKey: "secret", consent: true });
-  assert.equal(settings.analysisModel, "legacy-analysis");
-  assert.equal(Object.hasOwn(settings, "generationModel"), false);
-});
-
 test("composer planner sends only prompt originals and vision descriptions as untrusted text references", async () => {
   let request;
   const fetchStub = async (_url, options) => {

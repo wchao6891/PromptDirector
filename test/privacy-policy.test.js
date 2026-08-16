@@ -27,6 +27,13 @@ test("privacy policy makes the two independent execution confirmations explicit"
   assert.match(policy, /两者不能互相替代/);
 });
 
+test("privacy policy discloses that composer text-only mode reads and sends zero images", async () => {
+  const policy = await privacyPolicy();
+  assert.match(policy, /全程只用案例\/分析文字/);
+  assert.match(policy, /不会读取、分析或发送图片/);
+  assert.match(policy, /图片载荷为零/);
+});
+
 test("privacy policy accurately declares local-first handling and manifest permissions", async () => {
   const [policy, manifestSource] = await Promise.all([
     privacyPolicy(),
@@ -41,4 +48,19 @@ test("privacy policy accurately declares local-first handling and manifest permi
   }
   assert.match(policy, /`https:\/\/api\.deepseek\.com\/\*`/);
   assert.match(policy, /`<all_urls>`/);
+});
+
+test("privacy policy explains corrected article regions and safe download handling", async () => {
+  const policy = await privacyPolicy();
+  assert.match(policy, /添加遗漏内容、排除错误内容、整组修正、撤销或恢复自动识别/);
+  assert.match(policy, /正文在主体确认后默认纳入/);
+  assert.match(policy, /正文内已定位媒体默认进入保存方案/);
+  assert.match(policy, /无法确认文章位置的媒体默认不选/);
+  assert.match(policy, /“保存案例”按钮是当前媒体方案的最终授权/);
+  assert.match(policy, /“只保存正文”/);
+  assert.match(policy, /PDF、Markdown、SKILL\.md、TXT、HTML 和 RTF/);
+  assert.match(policy, /只有属于用户最终保存方案时/);
+  assert.match(policy, /真实文件类型和容量限制/);
+  assert.match(policy, /压缩包、程序和未知类型文件不会自动下载/);
+  assert.match(policy, /失败时只保留原始来源链接/);
 });

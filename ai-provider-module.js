@@ -1,7 +1,17 @@
 import { boundedMediaBlobFromResponse } from "./bounded-media.js";
+import { getAiModelCapability } from "./ai-model-capabilities.js";
+import { getAiProviderPreset } from "./ai-provider-presets.js";
 
 const TEXT_TASKS = Object.freeze(["textTags", "skillExtraction", "creativePlanning"]);
 const ALL_TASKS = Object.freeze([...TEXT_TASKS, "imageAnalysis", "videoAnalysis", "imageGeneration", "videoGeneration"]);
+const DISCOVERY_ADAPTERS = Object.freeze({
+  identity: discoverIdentityModels,
+  kimi: discoverKimi,
+  xai: discoverXai,
+  openrouter: discoverOpenRouter,
+  gemini: discoverGemini,
+  configured_video: discoverConfiguredVideo
+});
 
 export function createAiProviderModule(options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -80,17 +90,20 @@ export function createAiProviderModule(options = {}) {
 }
 
 async function discoverProviderModels(fetchImpl, profile, cache) {
-  if (profile.id === "xai") return discoverXai(fetchImpl, profile, cache);
-  if (profile.id === "openrouter") return discoverOpenRouter(fetchImpl, profile, cache);
-  if (profile.id === "gemini") return discoverGemini(fetchImpl, profile, cache);
-  if (["minimax", "volcengine"].includes(profile.id)) {
-    return {
-      models: configuredProtocolModels(profile, ["videoGeneration"]),
-      cache: {},
-      source: "configured_protocol"
-    };
-  }
-  return discoverIdentityModels(fetchImpl, profile, cache);
+  const preset = getAiProviderPreset(profile.id);
+  const adapterId = clean(profile.discovery?.adapter) || preset?.discovery?.adapter || "identity";
+  const adapter = DISCOVERY_ADAPTERS[adapterId];
+  if (!adapter) throw new Error(`${profile.id} 的模型发现方式 ${adapterId} 尚未适配`);
+  const result = await adapter(fetchImpl, profile, cache);
+  if (result.notModified) return result;
+  const allowedTasks = preset ? new Set(preset.capabilities) : null;
+  return {
+    ...result,
+    models: result.models.map((model) => ({
+      ...model,
+      tasks: allowedTasks ? model.tasks.filter((task) => allowedTasks.has(task)) : model.tasks
+    }))
+  };
 }
 
 async function discoverIdentityModels(fetchImpl, profile, cache) {
@@ -98,12 +111,46 @@ async function discoverIdentityModels(fetchImpl, profile, cache) {
   const response = await modelRequest(fetchImpl, url, profile, cache);
   if (response.notModified) return response;
   const list = requiredArrayFrom(response.payload, `${profile.id} 返回了当前版本尚未适配的模型列表结构`, "data", "models");
-  const confidence = profile.id === "deepseek" || profile.id === "openai" ? "protocol_inferred" : "manual_unverified";
-  const tasks = profile.id === "deepseek" || profile.id === "openai" ? TEXT_TASKS : [];
+  const preset = getAiProviderPreset(profile.id);
+  const protocolDeclared = preset?.discovery?.adapter === "identity" && preset.category !== "custom";
+  const confidence = protocolDeclared ? "protocol_inferred" : "manual_unverified";
+  const tasks = protocolDeclared ? TEXT_TASKS : [];
   return {
     models: list.map((item) => modelDescriptor(item, { confidence, tasks, source: "provider_models" })),
     cache: response.cache,
     source: "provider_models"
+  };
+}
+
+async function discoverKimi(fetchImpl, profile, cache) {
+  const response = await modelRequest(fetchImpl, modelsEndpoint(profile.endpoint), profile, cache);
+  if (response.notModified) return response;
+  const list = requiredArrayFrom(response.payload, "Kimi 返回了当前版本尚未适配的模型列表结构", "data", "models");
+  return {
+    models: list.map((item) => {
+      const inputModalities = [
+        "text",
+        ...(item.supports_image_in === true ? ["image"] : []),
+        ...(item.supports_video_in === true ? ["video"] : [])
+      ];
+      return modelDescriptor(item, {
+        confidence: "declared",
+        tasks: tasksFromModalities(inputModalities, ["text"]),
+        inputModalities,
+        outputModalities: ["text"],
+        source: "kimi_models"
+      });
+    }),
+    cache: response.cache,
+    source: "kimi_models"
+  };
+}
+
+async function discoverConfiguredVideo(_fetchImpl, profile) {
+  return {
+    models: configuredProtocolModels(profile, ["videoGeneration"]),
+    cache: {},
+    source: "configured_protocol"
   };
 }
 
@@ -159,20 +206,30 @@ async function discoverOpenRouter(fetchImpl, profile, cache) {
 
 async function discoverGemini(fetchImpl, profile, cache) {
   const base = apiBase(profile.endpoint, "");
-  const separator = base.includes("?") ? "&" : "?";
-  const url = `${base.replace(/\/$/, "")}/v1beta/models${profile.apiKey ? `${separator}key=${encodeURIComponent(profile.apiKey)}` : ""}`;
-  const response = await modelRequest(fetchImpl, url, { ...profile, apiKey: "" }, cache);
+  const url = `${base.replace(/\/$/, "")}/v1beta/models`;
+  const response = await modelRequest(fetchImpl, url, profile, cache,
+    profile.apiKey ? { "x-goog-api-key": profile.apiKey } : {});
   if (response.notModified) return response;
   return {
     models: requiredArrayFrom(response.payload, "Gemini 返回了当前版本尚未适配的模型列表结构", "models", "data").map((item) => {
       const methods = stringArray(item.supportedGenerationMethods ?? item.supported_generation_methods);
       const tasks = methods.includes("generateContent") ? [...TEXT_TASKS] : [];
       if (methods.includes("predictLongRunning")) tasks.push("videoGeneration");
+      const id = clean(item.id ?? item.name).replace(/^models\//, "");
+      const officialCapability = getAiModelCapability("gemini", id);
+      if (officialCapability) tasks.push(...officialCapability.tasks);
       return modelDescriptor(item, {
         confidence: "declared",
         tasks,
-        source: "gemini_models",
-        supportedMethods: methods
+        inputModalities: officialCapability?.inputModalities,
+        outputModalities: officialCapability?.outputModalities,
+        source: officialCapability ? "gemini_models+google_official_capabilities" : "gemini_models",
+        supportedMethods: methods,
+        supportedParameters: officialCapability?.supportedParameters,
+        parameterDescriptors: officialCapability?.parameterDescriptors,
+        supportedResolutions: officialCapability?.supportedResolutions,
+        supportedAspectRatios: officialCapability?.supportedAspectRatios,
+        referenceImages: officialCapability?.referenceImages
       });
     }),
     cache: response.cache,
@@ -208,15 +265,16 @@ function modelDescriptor(item = {}, options = {}) {
     tasks: uniqueTaskIds(options.tasks),
     inputModalities: normalizeModalities(options.inputModalities),
     outputModalities: normalizeModalities(options.outputModalities),
-    supportedParameters: parameterDescriptors
+    supportedParameters: options.supportedParameters ?? (parameterDescriptors
       ? Object.keys(parameterDescriptors)
-      : stringArray(item.supported_parameters ?? item.supportedParameters ?? item.allowed_passthrough_parameters),
-    parameterDescriptors,
+      : stringArray(item.supported_parameters ?? item.supportedParameters ?? item.allowed_passthrough_parameters)),
+    parameterDescriptors: options.parameterDescriptors ?? parameterDescriptors,
     supportedMethods: stringArray(options.supportedMethods),
     contextLength: positiveNumber(item.context_length ?? item.contextLength),
     pricing: cloneObject(item.pricing ?? item.pricing_skus),
-    supportedResolutions: stringArray(item.supported_resolutions ?? item.supportedResolutions ?? parameterDescriptors?.resolution?.values),
-    supportedAspectRatios: stringArray(item.supported_aspect_ratios ?? item.supportedAspectRatios ?? parameterDescriptors?.aspect_ratio?.values)
+    supportedResolutions: options.supportedResolutions ?? stringArray(item.supported_resolutions ?? item.supportedResolutions ?? parameterDescriptors?.resolution?.values),
+    supportedAspectRatios: options.supportedAspectRatios ?? stringArray(item.supported_aspect_ratios ?? item.supportedAspectRatios ?? parameterDescriptors?.aspect_ratio?.values),
+    referenceImages: options.referenceImages ? structuredClone(options.referenceImages) : undefined
   };
   return descriptor;
 }
@@ -257,34 +315,45 @@ function mergeModels(...collections) {
       merged.set(collection.id, structuredClone(collection));
       continue;
     }
+    const collectionHasStrongerMetadata = confidenceRank(collection.confidence) >= confidenceRank(before.confidence);
+    const metadataPrimary = collectionHasStrongerMetadata ? collection : before;
+    const metadataSecondary = collectionHasStrongerMetadata ? before : collection;
+    const trustedModels = [before, collection].filter((item) => item.confidence !== "manual_unverified");
     merged.set(collection.id, {
       ...before,
       ...collection,
       confidence: strongerConfidence(before.confidence, collection.confidence),
       source: collection.confidence === "manual_unverified" && before.confidence !== "manual_unverified" ? before.source : collection.source,
-      name: collection.name || before.name,
+      name: metadataPrimary.name || metadataSecondary.name,
       tasks: uniqueTaskIds([...(before.tasks ?? []), ...(collection.tasks ?? [])]),
       configuredTasks: uniqueTaskIds([...(before.configuredTasks ?? []), ...(collection.configuredTasks ?? [])]),
       inputModalities: uniqueStrings([...(before.inputModalities ?? []), ...(collection.inputModalities ?? [])]),
       outputModalities: uniqueStrings([...(before.outputModalities ?? []), ...(collection.outputModalities ?? [])]),
       supportedParameters: uniqueStrings([...(before.supportedParameters ?? []), ...(collection.supportedParameters ?? [])]),
+      parameterDescriptors: cloneObject(metadataPrimary.parameterDescriptors ?? metadataSecondary.parameterDescriptors),
+      supportedMethods: uniqueStrings(trustedModels.flatMap((item) => item.supportedMethods ?? [])),
       supportedResolutions: uniqueStrings([...(before.supportedResolutions ?? []), ...(collection.supportedResolutions ?? [])]),
       supportedAspectRatios: uniqueStrings([...(before.supportedAspectRatios ?? []), ...(collection.supportedAspectRatios ?? [])]),
-      pricing: collection.pricing ?? before.pricing
+      referenceImages: cloneObject(metadataPrimary.referenceImages ?? metadataSecondary.referenceImages),
+      contextLength: metadataPrimary.contextLength ?? metadataSecondary.contextLength,
+      pricing: metadataPrimary.pricing ?? metadataSecondary.pricing
     });
   }
   return [...merged.values()];
 }
 
 function strongerConfidence(left, right) {
-  const rank = { manual_unverified: 0, protocol_inferred: 1, declared: 2 };
-  return (rank[right] ?? 0) > (rank[left] ?? 0) ? right : left;
+  return confidenceRank(right) > confidenceRank(left) ? right : left;
 }
 
-async function modelRequest(fetchImpl, url, profile, cache = {}) {
+function confidenceRank(value) {
+  return ({ manual_unverified: 0, protocol_inferred: 1, declared: 2 })[value] ?? 0;
+}
+
+async function modelRequest(fetchImpl, url, profile, cache = {}, extraHeaders = {}) {
   validateRemoteUrl(url);
-  const headers = { Accept: "application/json" };
-  if (profile.apiKey) headers.Authorization = `Bearer ${profile.apiKey}`;
+  const headers = { Accept: "application/json", ...extraHeaders };
+  if (profile.apiKey && !headers.Authorization && !headers["x-goog-api-key"]) headers.Authorization = `Bearer ${profile.apiKey}`;
   if (cache.etag) headers["If-None-Match"] = cache.etag;
   const response = await fetchImpl(url, { method: "GET", headers });
   if (response.status === 304) return { notModified: true };

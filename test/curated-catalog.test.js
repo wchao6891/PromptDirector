@@ -5,10 +5,13 @@ import {
   applyCuratedOrigin,
   curatedSourceKey,
   normalizeCuratedCatalog,
+  normalizeCuratedMetrics,
+  normalizeCuratedPreview,
   prepareCuratedEntriesPackage,
   prepareCuratedEntryPackage,
   prepareCuratedPackageVersion,
-  validateCuratedPackageContents
+  validateCuratedPackageContents,
+  validateCuratedPackageIndex
 } from "../curated-catalog.js";
 
 function catalogItem(overrides = {}) {
@@ -18,12 +21,15 @@ function catalogItem(overrides = {}) {
     type: "image_prompt",
     packageId: "cinematic-foundations",
     packageVersion: "1.0.0",
+    authorId: "promptdirector-editorial",
     author: "PromptDirector Editorial",
     license: "CC BY 4.0",
     updatedAt: "2026-07-29T00:00:00.000Z",
     coverUrl: "https://wchao6891.github.io/PromptDirector-Curated/covers/cinematic.webp",
+    previewUrl: "https://wchao6891.github.io/PromptDirector-Curated/previews/cinematic-foundations/preview.json",
     downloadUrl: "https://github.com/wchao6891/PromptDirector-Curated/releases/download/cinematic-1.0.0/cinematic.zip",
     sha256: "a".repeat(64),
+    archiveBytes: 1024,
     caseCount: 2,
     imageCount: 2,
     videoCount: 0,
@@ -56,6 +62,75 @@ test("curated catalogs expose ordered themes with trusted package assets", () =>
     version: 1,
     items: [catalogItem()]
   }), /目录版本过旧/);
+});
+
+test("curated previews expose inert prompt text and trusted poster images for the exact package version", () => {
+  const preview = normalizeCuratedPreview({
+    format: "prompt-director-curated-preview",
+    version: 1,
+    catalogId: "feature:cinematic",
+    packageId: "cinematic-foundations",
+    packageVersion: "1.0.0",
+    entries: [
+      {
+        id: "one",
+        title: "案例一",
+        text: "只作为文字复制",
+        author: "@creator",
+        rights: "权利归原作者",
+        sourceUrl: "https://source.example/one",
+        mediaKind: "image",
+        previewImageUrl: "https://wchao6891.github.io/PromptDirector-Curated/previews/cinematic-foundations/media/one.webp",
+        width: 1200,
+        height: 900
+      },
+      {
+        id: "two",
+        title: "案例二",
+        text: "视频提示词",
+        author: "@creator",
+        rights: "权利归原作者",
+        sourceUrl: "",
+        mediaKind: "video",
+        previewImageUrl: "https://wchao6891.github.io/PromptDirector-Curated/previews/cinematic-foundations/media/two.webp",
+        videoUrl: "https://github.com/wchao6891/PromptDirector-Curated/releases/download/cinematic-media-1.0.0/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.mp4",
+        videoSha256: "b".repeat(64),
+        videoBytes: 2048,
+        videoMimeType: "video/mp4",
+        width: 1200,
+        height: 900
+      }
+    ]
+  }, catalogItem());
+  assert.equal(preview.entries[0].text, "只作为文字复制");
+  assert.equal(preview.entries[1].videoMimeType, "video/mp4");
+  assert.deepEqual(normalizeCuratedPreview(preview, catalogItem()), preview);
+  assert.throws(() => normalizeCuratedPreview({ ...preview, packageVersion: "2.0.0" }, catalogItem()), /版本不一致/);
+  assert.throws(() => normalizeCuratedPreview({
+    ...preview,
+    entries: preview.entries.map((entry, index) => index ? entry : { ...entry, previewImageUrl: "https://attacker.example/one.webp" })
+  }, catalogItem()), /不受信任/);
+});
+
+test("curated download sorting accepts only a complete real metric snapshot", () => {
+  const catalog = {
+    format: "prompt-director-curated",
+    version: 2,
+    updatedAt: "2026-07-29T00:00:00.000Z",
+    themes: [catalogItem()]
+  };
+  assert.deepEqual(normalizeCuratedMetrics({
+    format: "prompt-director-curated-metrics",
+    version: 1,
+    updatedAt: "2026-07-29T00:00:00.000Z",
+    downloads: { "feature:cinematic": 14 }
+  }, catalog).downloads, { "feature:cinematic": 14 });
+  assert.throws(() => normalizeCuratedMetrics({
+    format: "prompt-director-curated-metrics",
+    version: 1,
+    updatedAt: "2026-07-29T00:00:00.000Z",
+    downloads: {}
+  }, catalog), /不完整/);
 });
 
 test("installing a curated package records provenance without retaining service or private metadata", () => {
@@ -201,4 +276,35 @@ test("a curated mixed-media package must match its reviewed video count", () => 
     ...parsed,
     assets: new Map([...parsed.assets].filter(([id]) => id !== "video"))
   }), /视频数量与目录不一致/);
+});
+
+test("a curated package index validates every reviewed media path before extracting one case", () => {
+  const item = catalogItem({ imageCount: 2, videoCount: 1 });
+  const library = {
+    entries: [
+      {
+        id: "one",
+        mediaAssets: [
+          { id: "image-one", kind: "image", assetPath: "images/one.webp" },
+          { id: "video-one", kind: "video", assetPath: "videos/one.mp4" }
+        ]
+      },
+      {
+        id: "two",
+        mediaAssets: [{ id: "image-two", kind: "image", assetPath: "images/two.webp" }]
+      }
+    ]
+  };
+  const names = ["library.json", "images/one.webp", "videos/one.mp4", "images/two.webp"];
+
+  assert.doesNotThrow(() => validateCuratedPackageIndex(item, library, names));
+  assert.throws(() => validateCuratedPackageIndex(item, library, names.filter((name) => name !== "videos/one.mp4")), /ZIP 不一致/);
+  assert.throws(() => validateCuratedPackageIndex(item, {
+    ...library,
+    entries: [library.entries[0], {
+      ...library.entries[1],
+      mediaAssets: [{ id: "image-one", kind: "image", assetPath: "images/two.webp" }]
+    }]
+  }, names), /无效或重复/);
+  assert.throws(() => validateCuratedPackageIndex(catalogItem({ imageCount: 1, videoCount: 1 }), library, names), /图片数量与目录不一致/);
 });

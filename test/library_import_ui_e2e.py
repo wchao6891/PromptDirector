@@ -6,7 +6,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect
 
-from e2e_support import base_entry, extension_session
+from e2e_support import ai_configuration_fixture, base_entry, extension_session
 
 
 def wait_for_confirmation(page, supported: str) -> None:
@@ -90,12 +90,19 @@ def main() -> None:
                         "visibility": "library",
                     }],
                 },
-                "visionSettings": {
-                    "activeProvider": "openai",
-                    "consent": True,
-                    "autoAnalyzeImports": True,
-                    "openai": {"model": "gpt-4.1-mini", "apiKey": "test-only-key"},
-                },
+                **ai_configuration_fixture(
+                    providers={
+                        "openai": {
+                            "apiKey": "test-only-key",
+                            "consent": True,
+                            "models": {"imageAnalysis": "gpt-4.1-mini"},
+                        },
+                    },
+                    assignments={
+                        "imageAnalysis": {"providerId": "openai", "model": "gpt-4.1-mini"},
+                    },
+                    auto_analyze_imports=True,
+                ),
             })
             setup.evaluate(
                 """async () => {

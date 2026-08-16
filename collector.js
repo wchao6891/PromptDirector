@@ -1,22 +1,30 @@
-import { getScreenshotBlob } from "./image-store.js";
+import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
+import { addDraftFragment, addDraftVisual } from "./capture-draft.js";
+import { createTextCandidate } from "./capture-text-candidate.js";
 import {
   assignVisualPreviewSource,
   collectorViewState
 } from "./collector-view.js";
+import { prepareLocalMedia } from "./local-media.js";
 import { runCaptureTransaction } from "./capture-workspace.js";
 import {
   ensureClipboardReadPermission,
-  readClipboardTextAfterFocus
+  ensurePagePermission,
+  readClipboardContentAfterFocus
 } from "./capture-permissions.js";
 import { initializeUi, t } from "./i18n.js";
 import { confirmAppAction } from "./ui-dialogs.js";
+import { createUiIcon } from "./ui-icons.js";
 import { ingestHtmlDocument } from "./document-ingestion.js";
 import {
   applyPageCaptureSelections,
   normalizePageCaptureBatch,
   normalizePageCaptureSelection,
-  pageCapturePermissionOrigins
+  pageCaptureDefaultMediaIds,
+  pageCapturePermissionOrigins,
+  pageCaptureStructureMatches
 } from "./page-capture.js";
+import { PAGE_CAPTURE_LIMITS } from "./resource-limits.js";
 
 await initializeUi();
 
@@ -27,8 +35,13 @@ const elements = Object.fromEntries([
   "quick-preview", "result-prompt-title", "result-screenshot", "result-smart-visuals", "result-start", "save-draft", "save-other-inspiration",
   "save-separate", "start-screenshot", "start-selection", "start-smart-visuals", "start-state", "normal-start",
   "other-capture-methods", "add-other-capture-methods", "smart-selection", "smart-selection-count", "smart-selection-help", "smart-selection-warning", "smart-selection-cancel", "smart-selection-confirm",
-  "start-page-capture", "add-page-capture", "page-capture", "page-capture-title", "page-capture-help", "page-capture-list", "page-capture-scan", "page-capture-cancel", "page-capture-save",
-  "page-capture-select-recommended", "page-capture-select-text", "page-capture-select-images", "page-capture-clear",
+  "start-page-capture", "add-page-capture", "page-capture", "page-capture-title", "page-capture-help", "page-capture-list", "page-capture-scan", "page-capture-cancel", "page-capture-save", "page-capture-save-text-only",
+  "page-capture-clear", "page-capture-media-viewer", "page-capture-media-stage", "page-capture-media-position", "page-capture-media-title", "page-capture-media-meta",
+  "page-capture-media-review", "page-capture-media-review-status", "page-capture-media-review-list",
+  "page-capture-add-region", "page-capture-exclude-region", "page-capture-undo-region", "page-capture-reset-region",
+  "page-capture-media-close", "page-capture-media-prev", "page-capture-media-next",
+  "page-capture-list-setup", "page-capture-target-count", "page-capture-list-run", "page-capture-list-result", "page-capture-list-summary",
+  "page-capture-save-mode", "page-capture-combined-title-row", "page-capture-combined-title",
   "region-capture-status", "region-capture-title", "region-capture-help", "region-capture-cancel",
   "target-banner", "target-label", "visual-help", "visual-list", "visual-section"
 ].map((id) => [camel(id), document.getElementById(id)]));
@@ -49,7 +62,18 @@ let smartVisualCommitCreative = false;
 let regionCaptureState = null;
 let pageCaptureBatch = null;
 let pageCaptureSession = null;
+let pageCaptureMediaView = null;
+let pageCaptureEditHistory = [];
+let pageCaptureOriginalCandidates = new Map();
 const visualUrls = new Map();
+const FEEDBACK_DURATION_MS = 4000;
+const ERROR_FEEDBACK_DURATION_MS = 8000;
+let feedbackTimer = 0;
+const CLIPBOARD_IMAGE_EXTENSIONS = Object.freeze({
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp"
+});
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" || !(changes.captureDraft || changes.activeCreativeResult || changes.composerSessions)) return;
@@ -58,27 +82,45 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 await refresh();
 await tryAutoSelection();
+elements.pageCaptureTargetCount.max = String(PAGE_CAPTURE_LIMITS.maxCandidates);
 
 elements.openLibrary.addEventListener("click", () => void openLibraryTab());
 window.addEventListener("focus", () => void tryAutoSelection());
-elements.startSelection.addEventListener("click", () => extractText(elements.startSelection));
+window.addEventListener("pagehide", () => void clearPageCaptureMarkers());
+elements.startSelection.addEventListener("click", () => extractClipboardOrSelection(elements.startSelection));
 elements.startScreenshot.addEventListener("click", () => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.startScreenshot));
 elements.startSmartVisuals.addEventListener("click", () => beginSmartVisualSelection(elements.startSmartVisuals));
 elements.startPageCapture.addEventListener("click", () => startPageCapture("loaded", elements.startPageCapture));
 elements.resultScreenshot.addEventListener("click", () => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.resultScreenshot, true));
 elements.resultSmartVisuals.addEventListener("click", () => beginSmartVisualSelection(elements.resultSmartVisuals, true));
 elements.saveOtherInspiration.addEventListener("click", () => clearActiveCreativeResult());
-elements.addSelection.addEventListener("click", () => extractText(elements.addSelection));
+elements.addSelection.addEventListener("click", () => extractClipboardOrSelection(elements.addSelection));
 elements.addScreenshot.addEventListener("click", () => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.addScreenshot));
 elements.addSmartVisuals.addEventListener("click", () => beginSmartVisualSelection(elements.addSmartVisuals));
 elements.addPageCapture.addEventListener("click", () => startPageCapture("loaded", elements.addPageCapture));
-elements.pageCaptureScan.addEventListener("click", () => startPageCapture("whole", elements.pageCaptureScan));
+elements.pageCaptureScan.addEventListener("click", () => {
+  elements.pageCaptureListSetup.open = true;
+  elements.pageCaptureTargetCount.focus();
+});
+elements.pageCaptureListRun.addEventListener("click", () => startPageListCapture(elements.pageCaptureListRun));
+elements.pageCaptureSaveMode.addEventListener("change", () => {
+  pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, saveMode: elements.pageCaptureSaveMode.value });
+  render();
+});
+elements.pageCaptureCombinedTitle.addEventListener("change", () => {
+  pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, combinedTitle: elements.pageCaptureCombinedTitle.value });
+});
 elements.pageCaptureCancel.addEventListener("click", cancelPageCapture);
-elements.pageCaptureSave.addEventListener("click", savePageCapture);
-elements.pageCaptureSelectRecommended.addEventListener("click", () => selectPageCaptureComponents("recommended"));
-elements.pageCaptureSelectText.addEventListener("click", () => selectPageCaptureComponents("text"));
-elements.pageCaptureSelectImages.addEventListener("click", () => selectPageCaptureComponents("images"));
-elements.pageCaptureClear.addEventListener("click", () => selectPageCaptureComponents("clear"));
+elements.pageCaptureSave.addEventListener("click", () => savePageCapture(false));
+elements.pageCaptureSaveTextOnly.addEventListener("click", () => savePageCapture(true));
+elements.pageCaptureClear.addEventListener("click", clearPageCaptureConfirmation);
+elements.pageCaptureAddRegion.addEventListener("click", () => editConfirmedPageCaptureRegion("include", elements.pageCaptureAddRegion));
+elements.pageCaptureExcludeRegion.addEventListener("click", () => editConfirmedPageCaptureRegion("exclude", elements.pageCaptureExcludeRegion));
+elements.pageCaptureUndoRegion.addEventListener("click", undoPageCaptureRegionEdit);
+elements.pageCaptureResetRegion.addEventListener("click", resetPageCaptureRegionEdit);
+elements.pageCaptureMediaClose.addEventListener("click", closePageCaptureMediaViewer);
+elements.pageCaptureMediaPrev.addEventListener("click", () => movePageCaptureMediaViewer(-1));
+elements.pageCaptureMediaNext.addEventListener("click", () => movePageCaptureMediaViewer(1));
 elements.regionCaptureCancel.addEventListener("click", cancelRegionCapture);
 elements.smartSelectionCancel.addEventListener("click", cancelSmartVisualSelection);
 elements.smartSelectionConfirm.addEventListener("click", confirmSmartVisualSelection);
@@ -175,50 +217,100 @@ async function tryAutoSelection() {
   }
 }
 
-async function extractText(button) {
+async function extractClipboardOrSelection(button) {
   await withButton(button, async () => {
     try {
-      const selection = await runCaptureTransaction({
-        type: "ADD_ACTIVE_SELECTION_TO_DRAFT",
-        chromeApi: chrome,
-        onStatus: showFeedback
-      });
-      if (selection.captured?.added || selection.captured?.reason !== "empty-selection") {
+      let selection = null;
+      try {
+        selection = await runCaptureTransaction({
+          type: "ADD_ACTIVE_SELECTION_TO_DRAFT",
+          chromeApi: chrome,
+          onStatus: showFeedback
+        });
+      } catch {
+      }
+      if (selection && (selection.captured?.added || selection.captured?.reason !== "empty-selection")) {
         draft = selection.draft;
         showFeedback(selection.message || "已提取网页高亮文字");
         await refresh();
         return;
       }
 
-      showFeedback("当前网页没有高亮文字；Chrome 将询问一次剪贴板读取权限");
+      showFeedback("当前网页没有可提取的高亮；Chrome 将询问一次剪贴板读取权限");
       if (!await ensureClipboardReadPermission(chrome.permissions)) {
-        showFeedback("未获得剪贴板读取权限，未提取任何文字", true);
+        showFeedback("未获得剪贴板读取权限，未提取文字或图片", true);
         return;
       }
-      let clipboardText;
+      let clipboardContent;
       try {
-        clipboardText = await readClipboardTextAfterFocus();
+        clipboardContent = await readClipboardContentAfterFocus();
       } catch {
         showFeedback("剪贴板读取失败，请保持采集台获得焦点后再试", true);
         return;
       }
-      const response = await chrome.runtime.sendMessage({
-        type: "ADD_CLIPBOARD_TEXT_TO_DRAFT",
-        text: clipboardText
-      });
-      if (!response?.ok || !response.added) {
-        showFeedback(response?.message || "剪贴板里没有可提取的文字", true);
+      const response = await addClipboardContentToDraft(clipboardContent);
+      if (!response.added) {
+        showFeedback(response.message, true);
         return;
       }
       draft = response.draft;
-      showFeedback("已提取剪贴板文字");
+      showFeedback(response.message);
       await refresh();
     } catch (error) {
       if (error?.draft) draft = error.draft;
       if (draft) render();
-      showFeedback(error.message || "文字提取失败", true);
+      showFeedback(error.message || "文字或图片提取失败", true);
     }
   });
+}
+
+async function addClipboardContentToDraft({ text: clipboardText, image } = {}) {
+  let nextDraft = draft;
+  let addedText = false;
+  let addedImage = false;
+  let storedVisualId = "";
+  const candidate = await createTextCandidate({ clipboard: clipboardText });
+  if (candidate) {
+    const result = addDraftFragment(nextDraft, candidate);
+    nextDraft = result.draft;
+    addedText = result.added;
+  }
+  if (image instanceof Blob) {
+    const extension = CLIPBOARD_IMAGE_EXTENSIONS[image.type.toLocaleLowerCase("en-US")];
+    if (!extension) throw new Error("剪贴板图片格式暂不支持");
+    const visualId = crypto.randomUUID();
+    const prepared = await prepareLocalMedia(
+      new File([image], `clipboard.${extension}`, { type: image.type }),
+      visualId,
+      { estimateStorage: () => navigator.storage?.estimate?.() ?? {} }
+    );
+    const duplicate = prepared.asset.contentHash && nextDraft.visuals.some((visual) => visual.contentHash === prepared.asset.contentHash);
+    if (!duplicate) {
+      await saveScreenshotBlob(visualId, prepared.blob);
+      storedVisualId = visualId;
+      nextDraft = addDraftVisual(nextDraft, { ...prepared.asset, sourceTitle: "剪贴板" });
+      addedImage = true;
+    }
+  }
+  if (!addedText && !addedImage) {
+    return {
+      added: false,
+      message: candidate || image ? "剪贴板里的文字或图片已经在当前草稿中" : "剪贴板里没有可提取的文字或图片",
+      draft
+    };
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "UPDATE_CAPTURE_DRAFT", draft: nextDraft });
+    if (!response?.ok) throw new Error(response?.message || "剪贴板内容没有写入草稿");
+    return {
+      added: true,
+      message: addedText && addedImage ? "已提取剪贴板文字和图片" : addedImage ? "已提取剪贴板图片" : "已提取剪贴板文字",
+      draft: response.draft
+    };
+  } catch (error) {
+    if (storedVisualId) await deleteScreenshotBlob(storedVisualId).catch(() => undefined);
+    throw error;
+  }
 }
 
 function render() {
@@ -319,74 +411,189 @@ function render() {
 
 function renderPageCapture() {
   const selections = new Map(pageCaptureBatch.selections.map((selection) => [selection.candidateId, selection]));
-  const selectedCount = pageCaptureBatch.selections.reduce((total, selection) => total + Number(selection.includeText) + selection.selectedMediaIds.length, 0);
-  elements.pageCaptureTitle.textContent = t("已识别 {count} 项 · 已确认 {selected} 项内容", { count: pageCaptureBatch.candidates.length, selected: selectedCount });
+  const selectedCount = pageCaptureBatch.selections.length;
+  const listMode = pageCaptureBatch.captureMode === "list";
+  elements.pageCaptureTitle.textContent = t("已识别 {count} 个主体方案 · 已确认 {selected} 个", { count: pageCaptureBatch.candidates.length, selected: selectedCount });
   elements.pageCaptureHelp.textContent = pageCaptureBatch.status === "scanning"
     ? t("正在扫描已加载内容；可随时停止，结束后会恢复原滚动位置。")
-    : t("扫描不会自动保存。请确认正文、图片或视频，未勾选的内容不会进入案例库。");
-  elements.pageCaptureSave.disabled = !selectedCount || pageCaptureBatch.status === "saving";
+    : t("先查看并修正网页区域，再确认一个创作主体。确认后会按原始顺序保存完整文章和相关资源。");
+  const selectedMediaCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
+  const saveBlocked = !selectedCount || pageCaptureBatch.status === "saving" || (listMode && !["multiple", "combined"].includes(pageCaptureBatch.saveMode));
+  elements.pageCaptureSave.disabled = saveBlocked;
+  elements.pageCaptureSaveTextOnly.disabled = saveBlocked;
+  elements.pageCaptureSaveTextOnly.hidden = selectedMediaCount === 0;
+  elements.pageCaptureSave.textContent = listMode
+    ? selectedMediaCount
+      ? t("保存 {cases} 个案例 · 含 {media} 项媒体", { cases: selectedCount, media: selectedMediaCount })
+      : t("只保存 {count} 个正文案例", { count: selectedCount })
+    : selectedMediaCount ? t("保存案例 · 含 {count} 项媒体", { count: selectedMediaCount }) : t("只保存正文");
+  elements.pageCaptureScan.hidden = listMode;
+  elements.pageCaptureListSetup.hidden = listMode;
+  elements.pageCaptureListResult.hidden = !listMode;
+  if (listMode) {
+    const reviewCount = pageCaptureBatch.candidates.filter((candidate) => candidate.batchStructureStatus === "review").length;
+    elements.pageCaptureListSummary.textContent = t("目标 {target} 个，实际识别 {actual} 个。{reason}", {
+      target: pageCaptureBatch.targetCount,
+      actual: pageCaptureBatch.candidates.length,
+      reason: pageCaptureStopReasonLabel(pageCaptureBatch.stopReason)
+    }) + (reviewCount ? t(" · {count} 个结构不同的案例未自动加入，请单独确认。", { count: reviewCount }) : "");
+    if (document.activeElement !== elements.pageCaptureSaveMode) elements.pageCaptureSaveMode.value = pageCaptureBatch.saveMode;
+    elements.pageCaptureCombinedTitleRow.hidden = pageCaptureBatch.saveMode !== "combined";
+    if (document.activeElement !== elements.pageCaptureCombinedTitle) elements.pageCaptureCombinedTitle.value = pageCaptureBatch.combinedTitle;
+  }
   elements.pageCaptureList.replaceChildren(...pageCaptureBatch.candidates.map((candidate) => {
     const card = document.createElement("article");
-    card.className = "page-capture-item";
+    const confirmed = selections.has(candidate.id);
+    card.className = `page-capture-item${confirmed ? " confirmed" : ""}`;
+    if (candidate.batchStructureStatus === "review") card.classList.add("structure-review");
     const heading = document.createElement("header");
     const copy = document.createElement("div");
     const title = document.createElement("strong");
     title.textContent = candidate.title;
     const meta = document.createElement("small");
-    meta.textContent = `${pageCaptureTypeLabel(candidate.pageType)} · ${hostname(candidate.canonicalUrl) || t("当前网页")}${candidate.sourceFacts.author ? ` · ${candidate.sourceFacts.author}` : ""}`;
+    const captureScope = candidate.extraction.scope === "selection" ? t("原网页选区") : pageCaptureExtractionLabel(candidate.extraction.method);
+    meta.textContent = `${pageCaptureTypeLabel(candidate.pageType)} · ${hostname(candidate.canonicalUrl) || t("当前网页")} · ${captureScope}${candidate.sourceFacts.author ? ` · ${candidate.sourceFacts.author}` : ""}${candidate.batchStructureStatus === "review" ? ` · ${t("结构需复核")}` : ""}`;
     copy.append(title, meta);
+    const inspect = document.createElement("button");
+    inspect.type = "button";
+    inspect.className = "button-secondary compact page-capture-inspect";
+    inspect.textContent = t("查看网页区域");
+    inspect.addEventListener("click", () => previewPageCaptureRegion(candidate));
     heading.append(copy);
+    if (!listMode) heading.append(inspect);
     card.append(heading);
-    const selection = selections.get(candidate.id) || { candidateId: candidate.id, includeText: false, selectedMediaIds: [] };
-    if (candidate.contentText || candidate.excerpt) {
-      const textChoice = document.createElement("label");
-      textChoice.className = "page-capture-component page-capture-text";
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.checked = selection.includeText;
-      input.addEventListener("change", () => updatePageCaptureSelection(candidate.id, { includeText: input.checked }));
-      const textCopy = document.createElement("span");
-      const words = [...String(candidate.contentText || candidate.excerpt)].length;
-      textCopy.append(textNode("strong", t("正文")), textNode("small", t("{count} 字", { count: words })), textNode("p", candidate.excerpt || candidate.contentText.slice(0, 180)));
-      textChoice.append(input, textCopy);
-      card.append(textChoice);
+    card.append(createPageCaptureArticlePreview(candidate, selections.get(candidate.id)));
+    if (candidate.possibleOmissions?.length) {
+      const omissions = document.createElement("details");
+      omissions.className = "page-capture-omissions";
+      const summary = document.createElement("summary");
+      summary.textContent = t("可能遗漏（{count}）", { count: candidate.possibleOmissions.length });
+      const list = document.createElement("div");
+      list.append(...candidate.possibleOmissions.map((item) => {
+        const block = document.createElement("p");
+        block.textContent = item.text;
+        return block;
+      }));
+      omissions.append(summary, list);
+      card.append(omissions);
     }
-    if (candidate.media.length) {
-      const mediaGrid = document.createElement("div");
-      mediaGrid.className = "page-capture-media-grid";
-      for (const media of candidate.media) {
-        const mediaChoice = document.createElement("label");
-        mediaChoice.className = "page-capture-component page-capture-media";
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.checked = selection.selectedMediaIds.includes(media.id);
-        input.addEventListener("change", () => {
-          const ids = new Set(selection.selectedMediaIds);
-          if (input.checked) ids.add(media.id); else ids.delete(media.id);
-          updatePageCaptureSelection(candidate.id, { selectedMediaIds: [...ids] });
-        });
-        const preview = document.createElement("span");
-        preview.className = "page-capture-media-preview";
-        const previewUrl = media.kind === "video" ? media.posterUrl : media.dataUrl || media.url;
-        if (previewUrl) {
-          const image = document.createElement("img");
-          image.src = previewUrl;
-          image.alt = "";
-          image.referrerPolicy = "no-referrer";
-          preview.append(image);
-        } else {
-          preview.textContent = media.kind === "video" ? "VIDEO" : "IMAGE";
-        }
-        const mediaCopy = document.createElement("span");
-        const dimensions = media.width && media.height ? ` · ${media.width}×${media.height}` : "";
-        mediaCopy.append(textNode("strong", media.kind === "video" ? t("视频引用") : t("图片")), textNode("small", `${media.alt || hostname(media.url || media.posterUrl) || t("可见媒体")}${dimensions}`));
-        mediaChoice.append(input, preview, mediaCopy);
-        mediaGrid.append(mediaChoice);
-      }
-      card.append(mediaGrid);
-    }
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = confirmed ? "button-secondary page-capture-confirm" : "primary page-capture-confirm";
+    confirm.textContent = listMode && confirmed ? t("移除此案例") : confirmed ? t("已确认这个主体") : t("确认这个主体");
+    confirm.disabled = confirmed && !listMode;
+    confirm.addEventListener("click", () => listMode && confirmed ? removePageCaptureCandidate(candidate.id) : confirmPageCaptureCandidate(candidate));
+    card.append(confirm);
     return card;
   }));
+  const canEditRegion = !listMode && selectedCount === 1;
+  elements.pageCaptureAddRegion.disabled = !canEditRegion;
+  elements.pageCaptureExcludeRegion.disabled = !canEditRegion;
+  elements.pageCaptureUndoRegion.disabled = !canEditRegion || !pageCaptureEditHistory.length;
+  elements.pageCaptureResetRegion.disabled = !canEditRegion || !pageCaptureEditHistory.length;
+  elements.pageCaptureAddRegion.hidden = listMode;
+  elements.pageCaptureExcludeRegion.hidden = listMode;
+  elements.pageCaptureUndoRegion.hidden = listMode;
+  elements.pageCaptureResetRegion.hidden = listMode;
+  renderPageCaptureMediaReview(selections);
+}
+
+function createPageCaptureArticlePreview(candidate, selection) {
+  const section = document.createElement("section");
+  section.className = "page-capture-article";
+  const heading = document.createElement("header");
+  const blocks = candidate.articleDocument?.blocks?.length
+    ? candidate.articleDocument.blocks
+    : [
+        ...candidate.textBlocks.map((block, sourceOrder) => ({ ...block, kind: block.kind === "section" ? "paragraph" : block.kind, sourceOrder })),
+        ...candidate.media.filter((media) => media.placement === "inline").map((media, index) => ({ id: `fallback:${media.id}`, kind: media.kind, assetId: media.id, sourceUrl: media.url, label: media.alt, sourceOrder: candidate.textBlocks.length + index }))
+      ];
+  heading.append(
+    textNode("strong", candidate.extraction.scope === "selection" ? t("原网页选区") : "完整文章预览"),
+    textNode("small", `${blocks.length} 个有序内容块`)
+  );
+  section.append(heading);
+  const mediaById = new Map(candidate.media.map((media) => [media.id, media]));
+  for (const block of blocks.toSorted((left, right) => left.sourceOrder - right.sourceOrder)) {
+    const media = block.assetId ? mediaById.get(block.assetId) : null;
+    if (["image", "video"].includes(block.kind)) {
+      section.append(createPageCaptureArticleMedia(candidate, media, block, selection));
+      continue;
+    }
+    if (["document", "link"].includes(block.kind)) {
+      section.append(createPageCaptureArticleResource(media, block, selection));
+      continue;
+    }
+    const tagName = block.kind === "heading" ? `h${Math.min(6, Math.max(1, Number(block.level) || 2))}`
+      : block.kind === "quote" ? "blockquote" : block.kind === "code" ? "pre" : "p";
+    const node = textNode(tagName, block.text || "");
+    if (block.kind === "list") node.textContent = block.text.split("\n").map((item) => `• ${item}`).join("\n");
+    section.append(node);
+  }
+  return section;
+}
+
+function createPageCaptureArticleMedia(candidate, media, block, selection) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "page-capture-article-media";
+  setPageCaptureMediaDecisionClass(button, media?.id, selection);
+  const mediaIndex = media ? candidate.media.findIndex((item) => item.id === media.id) : -1;
+  if (mediaIndex >= 0) button.addEventListener("click", () => openPageCaptureMediaViewer(candidate, mediaIndex));
+  else if (block.sourceUrl) button.addEventListener("click", () => openPageCaptureArticleUrl(block.sourceUrl));
+  const preview = document.createElement("span");
+  preview.className = "page-capture-media-preview";
+  const previewUrl = media?.kind === "video" ? media.posterUrl : media?.previewDataUrl || media?.dataUrl || media?.url || block.posterUrl || block.sourceUrl;
+  if (previewUrl) {
+    const image = document.createElement("img");
+    image.src = previewUrl;
+    image.alt = "";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener("error", () => {
+      preview.replaceChildren(textNode("span", t("预览不可用")));
+      button.classList.add("preview-unavailable");
+    }, { once: true });
+    preview.append(image);
+  } else preview.textContent = block.kind === "video" ? "VIDEO" : t("预览不可用");
+  const copy = document.createElement("span");
+  const evidence = [];
+  if (media?.width && media?.height) evidence.push(`${media.width}×${media.height}`);
+  if (media?.declaredWidth) evidence.push(t("候选 {count}px", { count: media.declaredWidth }));
+  else if (media?.density > 1) evidence.push(t("候选 {count}x", { count: media.density }));
+  if (media?.kind === "image") evidence.push(pageCaptureMediaSourceLabel(media.sourceKind, media.captureMethod));
+  copy.append(
+    textNode("strong", block.kind === "video" ? t("视频引用") : t("图片")),
+    textNode("small", [block.label || media?.alt || hostname(block.sourceUrl || media?.url) || t("可见媒体"), ...evidence].filter(Boolean).join(" · "))
+  );
+  button.append(preview, copy);
+  return button;
+}
+
+function createPageCaptureArticleResource(media, block, selection) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "page-capture-article-resource";
+  if (block.kind === "document") setPageCaptureMediaDecisionClass(button, media?.id, selection);
+  const sourceUrl = block.sourceUrl || media?.url || "";
+  button.disabled = !sourceUrl;
+  if (sourceUrl) button.addEventListener("click", () => openPageCaptureArticleUrl(sourceUrl));
+  button.append(
+    textNode("span", block.kind === "document" ? "DOC" : "LINK"),
+    textNode("span", block.label || media?.filename || hostname(sourceUrl) || "下载资源")
+  );
+  return button;
+}
+
+function openPageCaptureArticleUrl(url) {
+  chrome.tabs.create({ url, active: true }).catch(() => showFeedback("无法打开这个文章资源", true));
+}
+
+function removePageCaptureCandidate(candidateId) {
+  pageCaptureBatch = normalizePageCaptureBatch({
+    ...pageCaptureBatch,
+    selections: pageCaptureBatch.selections.filter((item) => item.candidateId !== candidateId)
+  });
+  render();
 }
 
 function textNode(tagName, value) {
@@ -395,46 +602,273 @@ function textNode(tagName, value) {
   return node;
 }
 
-function updatePageCaptureSelection(candidateId, patch) {
-  const current = pageCaptureBatch.selections.find((item) => item.candidateId === candidateId)
-    || { candidateId, includeText: false, selectedMediaIds: [] };
-  const next = normalizePageCaptureSelection({ ...current, ...patch }, pageCaptureBatch.candidates);
+function confirmPageCaptureCandidate(candidate) {
+  const next = normalizePageCaptureSelection({
+    candidateId: candidate.id,
+    selectedTextBlockIds: candidate.textBlocks.map((item) => item.id),
+    selectedMediaIds: pageCaptureDefaultMediaIds(candidate),
+    mediaDecision: "pending"
+  }, pageCaptureBatch.candidates);
   pageCaptureBatch = normalizePageCaptureBatch({
     ...pageCaptureBatch,
-    selections: [...pageCaptureBatch.selections.filter((item) => item.candidateId !== candidateId), ...(next ? [next] : [])]
+    selections: next ? [next] : []
   });
+  previewPageCaptureRegion(candidate);
   render();
 }
 
-function selectPageCaptureComponents(mode) {
-  const current = new Map(pageCaptureBatch.selections.map((item) => [item.candidateId, item]));
-  const selections = pageCaptureBatch.candidates.flatMap((candidate) => {
-    if (mode === "clear") return [];
-    const previous = current.get(candidate.id) || { candidateId: candidate.id, includeText: false, selectedMediaIds: [] };
-    const value = mode === "text"
-      ? { candidateId: candidate.id, includeText: Boolean(candidate.contentText || candidate.excerpt), selectedMediaIds: [] }
-      : mode === "images"
-        ? { ...previous, selectedMediaIds: candidate.media.filter((item) => item.kind === "image").map((item) => item.id) }
-        : {
-            candidateId: candidate.id,
-            includeText: Boolean(candidate.contentText || candidate.excerpt),
-            selectedMediaIds: candidate.media.map((item) => item.id)
-          };
-    const selection = normalizePageCaptureSelection(value, pageCaptureBatch.candidates);
-    return selection ? [selection] : [];
+function clearPageCaptureConfirmation() {
+  pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selections: [] });
+  previewPageCaptureRegion(null);
+  render();
+}
+
+function previewPageCaptureRegion(candidate) {
+  chrome.runtime.sendMessage({
+    type: "PREVIEW_PAGE_CAPTURE_REGION",
+    tabId: pageCaptureBatch?.tabId,
+    marker: candidate?.region?.marker || ""
+  }).catch(() => undefined);
+}
+
+async function editConfirmedPageCaptureRegion(mode, button) {
+  const selectedId = pageCaptureBatch?.selections?.[0]?.candidateId;
+  const candidate = pageCaptureBatch?.candidates?.find((item) => item.id === selectedId);
+  if (!candidate) return showFeedback("请先确认一个主体方案", true);
+  await withButton(button, async () => {
+    const response = await chrome.runtime.sendMessage({
+      type: "EDIT_PAGE_CAPTURE_REGION",
+      tabId: pageCaptureBatch.tabId,
+      candidate,
+      mode
+    });
+    if (!response?.ok) {
+      if (!response?.cancelled) showFeedback(response?.message || "网页区域没有修改", true);
+      return;
+    }
+    pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate) });
+    replacePageCaptureCandidate(response.candidate);
+    showFeedback(response.message);
+  });
+}
+
+function replacePageCaptureCandidate(candidate) {
+  const candidates = pageCaptureBatch.candidates.map((item) => item.id === candidate.id ? candidate : item);
+  const selection = normalizePageCaptureSelection({
+    candidateId: candidate.id,
+    selectedTextBlockIds: candidate.textBlocks.map((item) => item.id),
+    selectedMediaIds: pageCaptureDefaultMediaIds(candidate),
+    mediaDecision: "pending"
+  }, candidates);
+  pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, candidates, selections: selection ? [selection] : [] });
+  previewPageCaptureRegion(candidate);
+  render();
+}
+
+function renderPageCaptureMediaReview(selections) {
+  const selected = pageCaptureBatch.candidates.flatMap((candidate) => {
+    const selection = selections.get(candidate.id);
+    return selection ? candidate.media.map((media, mediaIndex) => ({ candidate, media, mediaIndex, selection })) : [];
+  });
+  elements.pageCaptureMediaReview.hidden = pageCaptureBatch.selections.length === 0;
+  if (!pageCaptureBatch.selections.length) {
+    elements.pageCaptureMediaReviewList.replaceChildren();
+    return;
+  }
+  const proposedCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
+  elements.pageCaptureMediaReviewStatus.textContent = selected.length
+    ? t("保存时将确认 {count} 项媒体", { count: proposedCount })
+    : t("未识别到媒体，可返回网页补选");
+  const createRow = ({ candidate, media, mediaIndex, selection }) => {
+    const row = document.createElement("div");
+    row.className = "page-capture-media-review-item";
+    setPageCaptureMediaDecisionClass(row, media.id, selection);
+    const preview = document.createElement("button");
+    preview.type = "button";
+    preview.className = "page-capture-media-review-preview";
+    preview.addEventListener("click", () => openPageCaptureMediaViewer(candidate, mediaIndex));
+    const previewUrl = media.kind === "video" ? media.posterUrl : media.previewDataUrl || media.dataUrl || media.url;
+    if (previewUrl) {
+      const image = document.createElement("img");
+      image.src = previewUrl;
+      image.alt = "";
+      image.referrerPolicy = "no-referrer";
+      image.addEventListener("error", () => preview.replaceChildren(textNode("span", t("预览不可用"))), { once: true });
+      preview.append(image);
+    } else preview.append(textNode("span", media.kind === "video" ? "VIDEO" : "DOC"));
+    const copy = document.createElement("span");
+    copy.append(
+      textNode("strong", media.kind === "video" ? t("视频") : media.kind === "document" ? t("文档") : media.captureMethod === "pixel-fallback" ? t("页面截图") : t("图片")),
+      textNode("small", media.alt || media.filename || hostname(media.url || media.posterUrl) || t("可见媒体"))
+    );
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "button-secondary compact";
+    const included = selection.mediaDecision !== "none" && selection.selectedMediaIds.includes(media.id);
+    toggle.textContent = included ? t("排除") : t("恢复");
+    toggle.addEventListener("click", () => updatePageCaptureMediaSelection(candidate.id, media.id));
+    row.append(preview, copy, toggle);
+    return row;
+  };
+  const inline = selected.filter(({ media }) => media.placement === "inline");
+  const unplaced = selected.filter(({ media }) => media.placement !== "inline");
+  const nodes = inline.map(createRow);
+  if (unplaced.length) {
+    const group = document.createElement("details");
+    group.className = "page-capture-media-review-group";
+    const summary = document.createElement("summary");
+    summary.textContent = t("可能遗漏媒体（{count}）", { count: unplaced.length });
+    const list = document.createElement("div");
+    list.append(...unplaced.map(createRow));
+    group.append(summary, list);
+    nodes.push(group);
+  }
+  elements.pageCaptureMediaReviewList.replaceChildren(...nodes);
+}
+
+function setPageCaptureMediaDecisionClass(node, mediaId, selection) {
+  if (!selection || !mediaId) return;
+  const included = selection.mediaDecision !== "none" && selection.selectedMediaIds.includes(mediaId);
+  node.classList.add(included ? "media-proposed" : "media-excluded");
+  if (selection.mediaDecision === "pending") node.classList.add("media-pending");
+}
+
+function updatePageCaptureMediaSelection(candidateId, mediaId) {
+  const selections = pageCaptureBatch.selections.map((selection) => {
+    if (selection.candidateId !== candidateId) return selection;
+    const selected = new Set(selection.mediaDecision === "none" ? [] : selection.selectedMediaIds);
+    if (selected.has(mediaId)) selected.delete(mediaId);
+    else selected.add(mediaId);
+    return { ...selection, selectedMediaIds: [...selected], mediaDecision: "pending" };
   });
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selections });
   render();
 }
 
+function finalizePageCaptureSelectionsForSave(batchValue, textOnly = false) {
+  const batch = normalizePageCaptureBatch(batchValue);
+  return normalizePageCaptureBatch({
+    ...batch,
+    selections: batch.selections.map((selection) => {
+      const selectedMediaIds = textOnly ? [] : selection.selectedMediaIds;
+      return {
+        ...selection,
+        selectedMediaIds,
+        mediaDecision: selectedMediaIds.length ? "confirmed" : "none"
+      };
+    })
+  });
+}
+
+function undoPageCaptureRegionEdit() {
+  const previous = pageCaptureEditHistory.pop();
+  if (!previous) return;
+  replacePageCaptureCandidate(previous.candidate);
+  showFeedback("已撤销上一次主体修正");
+}
+
+function resetPageCaptureRegionEdit() {
+  const selectedId = pageCaptureBatch?.selections?.[0]?.candidateId;
+  const original = pageCaptureOriginalCandidates.get(selectedId);
+  if (!original) return;
+  pageCaptureEditHistory = [];
+  replacePageCaptureCandidate(structuredClone(original));
+  showFeedback("已恢复本次扫描的自动识别结果");
+}
+
+function openPageCaptureMediaViewer(candidate, mediaIndex) {
+  pageCaptureMediaView = { candidateId: candidate.id, mediaIndex };
+  renderPageCaptureMediaViewer();
+  if (!elements.pageCaptureMediaViewer.open) elements.pageCaptureMediaViewer.showModal();
+}
+
+function closePageCaptureMediaViewer() {
+  pageCaptureMediaView = null;
+  elements.pageCaptureMediaStage.replaceChildren();
+  if (elements.pageCaptureMediaViewer.open) elements.pageCaptureMediaViewer.close();
+}
+
+function movePageCaptureMediaViewer(offset) {
+  const candidate = pageCaptureBatch?.candidates.find((item) => item.id === pageCaptureMediaView?.candidateId);
+  if (!candidate?.media.length) return;
+  pageCaptureMediaView.mediaIndex = (pageCaptureMediaView.mediaIndex + offset + candidate.media.length) % candidate.media.length;
+  renderPageCaptureMediaViewer();
+}
+
+function renderPageCaptureMediaViewer() {
+  const candidate = pageCaptureBatch?.candidates.find((item) => item.id === pageCaptureMediaView?.candidateId);
+  const media = candidate?.media[pageCaptureMediaView?.mediaIndex];
+  if (!media) return closePageCaptureMediaViewer();
+  const sourceUrl = media.kind === "video" ? media.url : media.previewDataUrl || media.dataUrl || media.url;
+  const visual = document.createElement(media.kind === "video" ? "video" : "img");
+  visual.src = sourceUrl || media.posterUrl || "";
+  visual.setAttribute("referrerpolicy", "no-referrer");
+  if (media.kind === "video") {
+    visual.controls = true;
+    visual.poster = media.posterUrl || "";
+  } else {
+    visual.alt = media.alt || candidate.title;
+  }
+  elements.pageCaptureMediaStage.replaceChildren(visual);
+  elements.pageCaptureMediaPosition.textContent = t("媒体 {current} / {count}", { current: pageCaptureMediaView.mediaIndex + 1, count: candidate.media.length });
+  elements.pageCaptureMediaTitle.textContent = media.alt || candidate.title;
+  elements.pageCaptureMediaMeta.textContent = [
+    media.width && media.height ? `${media.width}×${media.height}` : "",
+    pageCaptureMediaSourceLabel(media.sourceKind, media.captureMethod),
+    hostname(media.url || media.posterUrl)
+  ].filter(Boolean).join(" · ");
+  elements.pageCaptureMediaPrev.disabled = candidate.media.length < 2;
+  elements.pageCaptureMediaNext.disabled = candidate.media.length < 2;
+}
+
+function pageCaptureStopReasonLabel(value) {
+  return ({
+    "target-reached": t("已达到目标数量。"),
+    "no-new-items": t("列表没有新增案例，已按实际数量结束。"),
+    "no-next-page": t("没有可继续的列表页，已按实际数量结束。"),
+    "layout-changed": t("列表结构发生变化，已停止。"),
+    "pagination-failed": t("列表翻页失败，已按当前结果结束。"),
+    cancelled: t("采集已由用户停止。")
+  })[value] || t("已按当前列表可识别结果结束。");
+}
+
+function pageCaptureExtractionLabel(value) {
+  return ({ readability: t("智能正文"), structured: t("结构化正文"), page: t("页面正文") })[value] || t("页面正文");
+}
+
+function pageCaptureMediaSourceLabel(value, captureMethod = "") {
+  if (captureMethod === "pixel-fallback") return t("页面可见画面");
+  return ({
+    "site-original": t("站点原图"),
+    structured: t("结构化原图"),
+    "picture-srcset": t("picture 响应图"),
+    "deferred-srcset": t("延迟加载原图"),
+    "deferred-src": t("延迟加载原图"),
+    "img-srcset": t("srcset 响应图"),
+    "css-background": t("CSS 背景图"),
+    current: t("页面当前图"),
+    source: t("页面当前图")
+  })[value] || t("页面当前图");
+}
+
 async function cancelPageCapture() {
   if (pageCaptureBatch?.status !== "scanning" || !pageCaptureSession?.sessionId) {
+    await clearPageCaptureMarkers();
     pageCaptureBatch = null;
     pageCaptureSession = null;
+    pageCaptureEditHistory = [];
+    pageCaptureOriginalCandidates = new Map();
     return render();
   }
   const response = await chrome.runtime.sendMessage({ type: "CANCEL_PAGE_CAPTURE", sessionId: pageCaptureSession.sessionId });
+  await clearPageCaptureMarkers();
   showFeedback(response?.message || t("正在停止整页扫描"), !response?.ok);
+}
+
+async function clearPageCaptureMarkers() {
+  const tabId = pageCaptureBatch?.tabId;
+  if (!Number.isInteger(tabId)) return;
+  await chrome.runtime.sendMessage({ type: "CLEAR_PAGE_CAPTURE_MARKERS", tabId, removeRegionMarkers: true }).catch(() => undefined);
 }
 
 function pageCaptureTypeLabel(value) {
@@ -443,24 +877,28 @@ function pageCaptureTypeLabel(value) {
 
 function createQuickPreview() {
   const nodes = [];
-  if (draft.fragments.length) {
-    const first = draft.fragments[0];
+  draft.fragments.forEach((fragment, index) => {
     const card = div("quick-item quick-text");
     const marker = text("Aa", "strong");
     const copy = div("quick-copy");
-    copy.append(text(first.text, "p"), text(first.sourceTitle || hostname(first.sourceUrl) || "当前网页", "small"));
-    if (draft.fragments.length > 1) copy.append(text(`还有 ${draft.fragments.length - 1} 段文字`, "em"));
-    card.append(marker, copy);
+    copy.append(text(fragment.text, "p"), text(fragment.sourceTitle || hostname(fragment.sourceUrl) || "当前网页", "small"));
+    const remove = createQuickRemoveButton(`删除第 ${index + 1} 段文字`, (button) =>
+      sendDraftAction(button, "REMOVE_CAPTURE_FRAGMENT", { fragmentId: fragment.id }));
+    card.append(marker, copy, remove);
     nodes.push(card);
-  }
+  });
   if (draft.visuals.length) {
     const card = div("quick-item quick-visuals");
     const strip = div("quick-image-strip");
     draft.visuals.forEach((visual, index) => {
+      const item = div("quick-image-item");
       const image = document.createElement("img");
       image.alt = visual.sourceTitle || `截图 ${index + 1}`;
       loadVisual(image, visual.id);
-      strip.append(image);
+      const remove = createQuickRemoveButton(`删除第 ${index + 1} 张图片`, (button) =>
+        sendDraftAction(button, "REMOVE_CAPTURE_VISUAL", { visualId: visual.id }));
+      item.append(image, remove);
+      strip.append(item);
     });
     const copy = div("quick-copy");
     copy.append(text(`${draft.visuals.length} 张图片`, "strong"), text(draft.visuals[0].sourceTitle || hostname(draft.visuals[0].sourceUrl) || "当前网页", "small"));
@@ -468,6 +906,13 @@ function createQuickPreview() {
     nodes.push(card);
   }
   return nodes;
+}
+
+function createQuickRemoveButton(ariaLabel, handler) {
+  const button = action("", handler, false, "quick-remove", ariaLabel);
+  button.title = ariaLabel;
+  button.append(createUiIcon("x"));
+  return button;
 }
 
 function createFragmentCard(fragment, index, canReorder) {
@@ -602,22 +1047,52 @@ async function beginSmartVisualSelection(button, commitCreative = false) {
 async function startPageCapture(mode, button) {
   await withButton(button, async () => {
     try {
+      const representative = mode === "list"
+        ? pageCaptureBatch?.candidates.find((candidate) => candidate.id === pageCaptureBatch.selections[0]?.candidateId) || null
+        : null;
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.url) throw new Error(t("请先切换到需要采集的普通网页"));
+      if (!await ensurePagePermission(tab.url, chrome.permissions)) {
+        throw new Error(t("没有获得当前网站权限，待保存内容没有改变"));
+      }
       if (mode === "whole" && pageCaptureBatch) {
         pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, status: "scanning" });
         render();
       }
-      const response = await chrome.runtime.sendMessage({ type: "START_PAGE_CAPTURE", mode });
+      const targetCount = mode === "list" ? Number(elements.pageCaptureTargetCount.value) : 0;
+      const response = await chrome.runtime.sendMessage({ type: "START_PAGE_CAPTURE", mode, targetCount });
       if (!response?.ok) throw new Error(response?.message || t("网页采集失败"));
       const candidates = response.batch.candidates.map((candidate) => {
-        if (!candidate.contentHtml) return candidate;
+        let contentText = candidate.contentText;
         try {
-          const documentResult = ingestHtmlDocument(candidate.contentHtml);
-          return { ...candidate, contentText: documentResult.contentText || candidate.contentText };
+          if (candidate.contentHtml) contentText = ingestHtmlDocument(candidate.contentHtml).contentText || contentText;
         } catch {
-          return candidate;
         }
+        const textBlocks = candidate.textBlocks.map((block) => {
+          if (!block.html) return block;
+          try {
+            return { ...block, text: ingestHtmlDocument(block.html).contentText || block.text };
+          } catch {
+            return block;
+          }
+        });
+        const normalized = { ...candidate, contentText, textBlocks };
+        return representative
+          ? { ...normalized, batchStructureStatus: pageCaptureStructureMatches(representative, normalized) ? "matched" : "review" }
+          : normalized;
       });
-      pageCaptureBatch = normalizePageCaptureBatch({ ...response.batch, candidates, status: "preview" });
+      const batch = normalizePageCaptureBatch({ ...response.batch, candidates, status: "preview" });
+      const selections = mode === "list"
+        ? batch.candidates.filter((candidate) => candidate.batchStructureStatus !== "review").map((candidate) => normalizePageCaptureSelection({
+            candidateId: candidate.id,
+            selectedTextBlockIds: candidate.textBlocks.map((item) => item.id),
+            selectedMediaIds: pageCaptureDefaultMediaIds(candidate),
+            mediaDecision: "pending"
+          }, batch.candidates)).filter(Boolean)
+        : batch.selections;
+      pageCaptureBatch = normalizePageCaptureBatch({ ...batch, selections });
+      pageCaptureEditHistory = [];
+      pageCaptureOriginalCandidates = new Map(pageCaptureBatch.candidates.map((candidate) => [candidate.id, structuredClone(candidate)]));
       pageCaptureSession = null;
       showFeedback(response.message);
       render();
@@ -630,26 +1105,52 @@ async function startPageCapture(mode, button) {
   });
 }
 
-async function savePageCapture() {
+async function startPageListCapture(button) {
+  const targetCount = Number(elements.pageCaptureTargetCount.value);
+  if (!pageCaptureBatch?.selections.length) {
+    showFeedback(t("请先查看并确认一个代表案例，再开始列表采集"), true);
+    return;
+  }
+  if (!Number.isSafeInteger(targetCount) || targetCount < 1 || targetCount > PAGE_CAPTURE_LIMITS.maxCandidates) {
+    showFeedback(t("请输入 1 到 {count} 之间的目标案例数", { count: PAGE_CAPTURE_LIMITS.maxCandidates }), true);
+    return;
+  }
+  await startPageCapture("list", button);
+}
+
+async function savePageCapture(textOnly = false) {
   if (!pageCaptureBatch) return;
-  await withButton(elements.pageCaptureSave, async () => {
-    const selected = applyPageCaptureSelections(pageCaptureBatch);
+  const trigger = textOnly ? elements.pageCaptureSaveTextOnly : elements.pageCaptureSave;
+  await withButton(trigger, async () => {
+    const reviewBatch = pageCaptureBatch;
+    const saveBatch = finalizePageCaptureSelectionsForSave(reviewBatch, textOnly);
+    const selected = applyPageCaptureSelections(saveBatch);
     const origins = pageCapturePermissionOrigins(selected);
-    pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, status: "saving" });
+    pageCaptureBatch = normalizePageCaptureBatch({ ...saveBatch, status: "saving" });
     render();
     try {
+      let sessionMediaAllowed = true;
       if (origins.length) {
         const granted = await chrome.permissions.request({ origins });
-        if (!granted) showFeedback(t("媒体域名权限未获授权；仍会保存正文和可用引用，并逐项显示下载失败原因。"), true);
+        if (!granted) {
+          sessionMediaAllowed = false;
+          showFeedback(t("媒体域名权限未获授权；仍会保存正文和可用引用，并逐项显示下载失败原因。"), true);
+        }
       }
-      const response = await chrome.runtime.sendMessage({ type: "COMMIT_PAGE_CAPTURE", batch: pageCaptureBatch });
+      const response = await chrome.runtime.sendMessage({
+        type: "COMMIT_PAGE_CAPTURE",
+        batch: normalizePageCaptureBatch({ ...pageCaptureBatch, sessionMediaAllowed })
+      });
       if (!response?.ok) throw new Error(response?.message || t("网页内容保存失败"));
       const partial = response.results?.filter((item) => item.status === "partial" || item.status === "failed") || [];
+      await clearPageCaptureMarkers();
       pageCaptureBatch = null;
+      pageCaptureEditHistory = [];
+      pageCaptureOriginalCandidates = new Map();
       showFeedback(partial.length ? t("{message}；{count} 项存在媒体下载问题", { message: response.message, count: partial.length }) : response.message, partial.length > 0);
       await refresh();
     } catch (error) {
-      pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, status: "preview", error: error.message });
+      pageCaptureBatch = normalizePageCaptureBatch({ ...reviewBatch, status: "preview", error: error.message });
       showFeedback(error.message || t("网页内容保存失败"), true);
       render();
     }
@@ -707,10 +1208,13 @@ async function clearActiveCreativeResult() {
 }
 
 async function sendDraftAction(button, type, payload = {}) {
+  const removedVisualUrl = type === "REMOVE_CAPTURE_VISUAL" ? visualUrls.get(payload.visualId) : "";
   await withButton(button, async () => {
     try {
       const response = await chrome.runtime.sendMessage({ type, ...payload });
       if (!response?.ok) throw new Error(response?.message || "内容更新失败");
+      if (removedVisualUrl) URL.revokeObjectURL(removedVisualUrl);
+      if (type === "REMOVE_CAPTURE_VISUAL") visualUrls.delete(payload.visualId);
       draft = response.draft;
       showFeedback(response.message || "待保存内容已更新");
       await refresh();
@@ -828,8 +1332,18 @@ async function withButton(button, task) {
 }
 
 function showFeedback(message, error = false) {
-  elements.feedback.textContent = message || "";
+  if (feedbackTimer) window.clearTimeout(feedbackTimer);
+  feedbackTimer = 0;
+  const value = message || "";
+  elements.feedback.textContent = value;
   elements.feedback.classList.toggle("error", error);
+  if (value) {
+    feedbackTimer = window.setTimeout(() => {
+      elements.feedback.textContent = "";
+      elements.feedback.classList.remove("error");
+      feedbackTimer = 0;
+    }, error ? ERROR_FEEDBACK_DURATION_MS : FEEDBACK_DURATION_MS);
+  }
 }
 
 function action(label, handler, disabled = false, className = "", ariaLabel = "") {

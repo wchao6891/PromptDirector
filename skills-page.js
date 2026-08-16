@@ -1,6 +1,6 @@
-import { normalizeAiSettings } from "./deepseek.js";
+import { DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS, normalizeAiSettings } from "./deepseek.js";
 import { normalizeComposerSettings } from "./composer.js";
-import { composerServiceCatalog } from "./composer-service.js";
+import { requireAiRuntimeProtocolVersion } from "./ai-runtime.js";
 import {
   currentCreativeSkillVersion,
   normalizeCreativeSkillsState
@@ -14,6 +14,8 @@ import {
 import {
   analyzeCreativeSkillVisualBatch,
   anonymousSkillSources,
+  defaultSkillExtractionInstruction,
+  defaultSkillVisualInstruction,
   creativeRunEvidenceCandidates,
   selectedCreativeRunEvidenceSources,
   extractCreativeSkillDraftBatched,
@@ -25,11 +27,20 @@ import {
   selectedSkillContentImages
 } from "./skill-contact-sheet.js";
 import {
+  SKILL_SOURCE_BATCH_SIZE,
+  availableSkillSourceAssets,
+  cloneSkillSourceSelection,
+  filterSkillSourceEntries,
+  pageSkillSourceEntries,
+  skillSourceSelectionSummary
+} from "./skill-source-picker.js";
+import {
   deleteMediaBlobs,
+  getDerivedMedia,
   getMediaBlob,
   saveSkillPackageBlob
 } from "./media-store.js";
-import { primaryImageAsset } from "./media.js";
+import { entryMediaAssets, primaryImageAsset } from "./media.js";
 import { renderMarkdownDocument } from "./markdown-renderer.js";
 import { blobToDataUrl, normalizeVisionSettings } from "./vision.js";
 import { currentLocale, initializeUi, t, translateUiMessage } from "./i18n.js";
@@ -42,14 +53,15 @@ import {
 import { bindTransientMenus } from "./transient-menu.js";
 
 await initializeUi();
-bindTransientMenus(document, ".skill-detail-more");
+bindTransientMenus(document, ".skill-detail-more, .skill-project-picker");
 
 const elements = Object.fromEntries([
   "skill-search", "skill-import", "skill-create", "skill-context-back", "skill-zip-file", "skill-folder-files", "skill-library", "skill-summary", "skill-feedback", "skill-list", "skill-empty", "skill-empty-create",
   "skill-detail", "skill-detail-title", "skill-detail-call-name", "skill-detail-feedback", "skill-detail-description", "skill-detail-version", "skill-detail-source", "skill-detail-updated", "skill-detail-markdown", "skill-detail-edit", "skill-detail-more", "skill-detail-refine", "skill-export",
-  "skill-workspace", "skill-workspace-kicker", "skill-workspace-title", "skill-delete", "skill-builder", "skill-source-sidebar", "skill-source-step", "skill-target-step", "skill-selected-count", "skill-project-filter", "skill-case-search", "skill-visible-select", "skill-case-grid",
+  "skill-workspace", "skill-workspace-kicker", "skill-workspace-title", "skill-delete", "skill-builder", "skill-source-sidebar", "skill-source-step", "skill-target-step", "skill-selected-count", "skill-project-picker", "skill-project-label", "skill-project-filter", "skill-case-search", "skill-clear-selection", "skill-visible-select", "skill-selection-summary", "skill-case-scroll", "skill-case-grid", "skill-case-load-more",
   "skill-run-evidence-step", "skill-run-evidence-count", "skill-run-evidence-list",
-  "skill-goal", "skill-vision-preview", "skill-generate", "skill-retry-vision", "skill-generation-status", "skill-draft-step", "skill-version-label", "skill-call-name", "skill-description", "skill-markdown", "skill-save", "skill-test", "skill-save-status", "skill-versions-step", "skill-version-list",
+  "skill-goal", "skill-use-vision", "skill-vision-toggle-note", "skill-vision-preview", "skill-advanced", "skill-text-provider-menu", "skill-vision-provider-menu", "skill-text-instruction", "skill-vision-instruction", "skill-restore-instructions", "skill-request-preview", "skill-generate", "skill-retry-vision", "skill-run-panel", "skill-generation-status", "skill-run-elapsed", "skill-stop-run", "skill-run-progress", "skill-run-stages", "skill-run-log", "skill-generation-feedback", "skill-draft-step", "skill-draft-editor", "skill-version-label", "skill-call-name", "skill-description", "skill-markdown", "skill-save", "skill-test", "skill-save-status", "skill-versions-step", "skill-version-list",
+  "skill-source-inspector-backdrop", "skill-source-inspector", "skill-source-inspector-title", "skill-source-inspector-close", "skill-source-select-all", "skill-source-clear", "skill-source-text-option", "skill-source-include-text", "skill-source-asset-list", "skill-source-cancel", "skill-source-apply",
   "skill-import-dialog", "skill-import-close", "skill-import-zip", "skill-import-folder"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
@@ -61,12 +73,22 @@ let activeView = "list";
 let sourcePage = "library";
 let activeSkillId = "";
 let selectedEntryIds = new Set();
+let sourceSelections = new Map();
 let selectedEvidenceIds = new Set();
 let visibleEntryIds = [];
+let selectedProjectId = "";
+let inspectedEntryId = "";
+let inspectorDraftSelection = null;
+let inspectorReturnFocus = null;
+let renderedSourceCount = SKILL_SOURCE_BATCH_SIZE;
 let thumbnailUrls = new Map();
 let visualSuccesses = [];
 let visualFailures = [];
 let pendingAfterVision = false;
+let runtimeOverrides = { text: null, vision: null };
+let skillRuntimeSettings = null;
+let activeSkillRun = null;
+let visionPreferenceTouched = false;
 
 bindEvents();
 await refreshState();
@@ -86,17 +108,33 @@ function bindEvents() {
   elements.skillImportFolder.addEventListener("click", () => elements.skillFolderFiles.click());
   elements.skillZipFile.addEventListener("change", () => safely(importZip)());
   elements.skillFolderFiles.addEventListener("change", () => safely(importFolder)());
-  elements.skillProjectFilter.addEventListener("change", renderCases);
-  elements.skillCaseSearch.addEventListener("input", renderCases);
+  elements.skillCaseSearch.addEventListener("input", () => renderCases({ reset: true }));
+  elements.skillClearSelection.addEventListener("click", clearAllSourceSelections);
   elements.skillVisibleSelect.addEventListener("click", toggleVisibleCases);
-  document.querySelectorAll('input[name="skill-analysis-mode"]').forEach((input) => input.addEventListener("change", renderVisionPreview));
+  elements.skillCaseLoadMore.addEventListener("click", loadMoreSourceCases);
+  elements.skillGoal.addEventListener("input", renderRequestPreview);
+  elements.skillUseVision.addEventListener("change", () => { visionPreferenceTouched = true; renderVisionPreview(); renderRequestPreview(); });
+  elements.skillTextInstruction.addEventListener("input", renderRequestPreview);
+  elements.skillVisionInstruction.addEventListener("input", renderRequestPreview);
+  elements.skillRestoreInstructions.addEventListener("click", restoreDefaultInstructions);
   elements.skillGenerate.addEventListener("click", () => safely(generateDraft)());
   elements.skillRetryVision.addEventListener("click", () => safely(retryVisualFailures)());
+  elements.skillStopRun.addEventListener("click", stopSkillRun);
+  elements.skillSourceInspectorClose.addEventListener("click", cancelSourceInspector);
+  elements.skillSourceInspectorBackdrop.addEventListener("click", cancelSourceInspector);
+  elements.skillSourceSelectAll.addEventListener("click", selectAllInspectedSource);
+  elements.skillSourceClear.addEventListener("click", clearInspectedSource);
+  elements.skillSourceIncludeText.addEventListener("change", updateInspectedTextSelection);
+  elements.skillSourceCancel.addEventListener("click", cancelSourceInspector);
+  elements.skillSourceApply.addEventListener("click", applySourceInspector);
   elements.skillSave.addEventListener("click", () => safely(saveSkill)());
   elements.skillTest.addEventListener("click", () => safely(testSkill)());
   elements.skillDelete.addEventListener("click", () => safely(deleteSkill)());
   addEventListener("popstate", renderLocation);
-  addEventListener("beforeunload", releaseThumbnails);
+  addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !elements.skillSourceInspector.hidden) cancelSourceInspector();
+  });
+  addEventListener("beforeunload", () => { activeSkillRun?.controller.abort(); releaseThumbnails(); });
 }
 
 async function refreshState() {
@@ -274,11 +312,21 @@ function renderSkillDetail() {
 function renderWorkspace(view, skillId = "") {
   activeSkillId = skillId;
   selectedEntryIds = new Set();
+  sourceSelections = new Map();
   selectedEvidenceIds = new Set();
   visibleEntryIds = [];
+  selectedProjectId = "";
+  inspectedEntryId = "";
+  inspectorDraftSelection = null;
+  inspectorReturnFocus = null;
+  renderedSourceCount = SKILL_SOURCE_BATCH_SIZE;
   visualSuccesses = [];
   visualFailures = [];
   pendingAfterVision = false;
+  runtimeOverrides = { text: null, vision: null };
+  skillRuntimeSettings = null;
+  visionPreferenceTouched = false;
+  finishSkillRun();
   const skill = activeSkill();
   const selectingSources = view === "create" || view === "refine";
   elements.skillBuilder.dataset.mode = view;
@@ -290,10 +338,11 @@ function renderWorkspace(view, skillId = "") {
   elements.skillDelete.hidden = !skill;
   elements.skillGoal.value = "";
   elements.skillCaseSearch.value = "";
-  document.querySelector('input[name="skill-analysis-mode"][value="text"]').checked = true;
+  elements.skillUseVision.checked = false;
+  restoreDefaultInstructions();
   if (selectingSources) {
     renderProjectControls();
-    renderCases();
+    renderCases({ reset: true });
   }
   renderRunEvidence(view);
   if (skill) {
@@ -302,6 +351,7 @@ function renderWorkspace(view, skillId = "") {
     elements.skillDescription.value = skill.description;
     elements.skillMarkdown.value = version.skillMarkdown;
     elements.skillDraftStep.hidden = false;
+    elements.skillDraftEditor.open = view === "editor";
     elements.skillVersionsStep.hidden = false;
     elements.skillVersionLabel.textContent = t("当前 v{version}", { version: versionNumber(skill, version.id) });
     renderVersions(skill);
@@ -310,11 +360,13 @@ function renderWorkspace(view, skillId = "") {
     elements.skillDescription.value = "";
     elements.skillMarkdown.value = "";
     elements.skillDraftStep.hidden = true;
+    elements.skillDraftEditor.open = false;
     elements.skillVersionsStep.hidden = true;
   }
   setFeedback(elements.skillGenerationStatus, "");
+  setFeedback(elements.skillGenerationFeedback, "");
   setFeedback(elements.skillSaveStatus, "");
-  if (selectingSources) renderVisionPreview();
+  if (selectingSources) prepareSkillRuntimeControls();
 }
 
 function renderRunEvidence(view = activeView) {
@@ -341,38 +393,70 @@ function renderRunEvidence(view = activeView) {
 }
 
 function renderProjectControls() {
-  const selected = elements.skillProjectFilter.value;
   const options = [["", t("全部项目")], ...organizerState.collections.map((project) => [project.id, project.name])];
+  if (!options.some(([value]) => value === selectedProjectId)) selectedProjectId = "";
+  elements.skillProjectLabel.textContent = options.find(([value]) => value === selectedProjectId)?.[1] || t("全部项目");
   elements.skillProjectFilter.replaceChildren(...options.map(([value, name]) => {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = name;
-    return option;
+    const button = textEl("button", name);
+    button.type = "button";
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(value === selectedProjectId));
+    button.addEventListener("click", () => {
+      selectedProjectId = value;
+      elements.skillProjectPicker.open = false;
+      renderProjectControls();
+      renderCases({ reset: true });
+    });
+    return button;
   }));
-  elements.skillProjectFilter.value = options.some(([value]) => value === selected) ? selected : "";
 }
 
-function renderCases() {
+function renderCases(options = {}) {
   releaseThumbnails();
-  const projectId = elements.skillProjectFilter.value;
+  const projectId = selectedProjectId;
   const members = projectId ? new Set(organizerState.collections.find((item) => item.id === projectId)?.entryIds ?? []) : null;
-  const query = elements.skillCaseSearch.value.trim().toLocaleLowerCase();
-  const visible = entries.filter((entry) => {
-    if (members && !members.has(entry.id)) return false;
-    if (!query) return true;
-    return `${entry.title ?? ""}\n${entry.text ?? ""}`.toLocaleLowerCase().includes(query);
+  const visible = filterSkillSourceEntries(entries, {
+    projectEntryIds: members,
+    query: elements.skillCaseSearch.value
   });
+  if (options.reset) {
+    renderedSourceCount = SKILL_SOURCE_BATCH_SIZE;
+    elements.skillCaseScroll.scrollTop = 0;
+  }
   visibleEntryIds = visible.map((entry) => entry.id);
-  elements.skillCaseGrid.replaceChildren(...visible.map(caseCard));
-  elements.skillSelectedCount.textContent = String(selectedEntryIds.size);
+  const rendered = pageSkillSourceEntries(visible, renderedSourceCount);
+  elements.skillCaseGrid.replaceChildren(...rendered.map(caseCard));
+  elements.skillCaseLoadMore.hidden = rendered.length >= visible.length;
+  elements.skillCaseLoadMore.textContent = t("加载更多案例（已显示 {shown}/{total}）", {
+    shown: rendered.length,
+    total: visible.length
+  });
+  renderSourceSelectionSummary();
   renderVisibleSelectionAction();
+}
+
+function loadMoreSourceCases() {
+  renderedSourceCount += SKILL_SOURCE_BATCH_SIZE;
+  renderCases();
 }
 
 function toggleVisibleCases() {
   const allSelected = visibleEntryIds.length > 0 && visibleEntryIds.every((id) => selectedEntryIds.has(id));
-  for (const id of visibleEntryIds) allSelected ? selectedEntryIds.delete(id) : selectedEntryIds.add(id);
+  for (const id of visibleEntryIds) {
+    if (allSelected) removeSourceSelection(id);
+    else if (!selectedEntryIds.has(id)) selectSourceDefaults(entries.find((entry) => entry.id === id));
+  }
   renderCases();
   renderVisionPreview();
+}
+
+function clearAllSourceSelections() {
+  sourceSelections.clear();
+  selectedEntryIds.clear();
+  closeSourceInspector();
+  renderCases();
+  renderVisionPreview();
+  renderRequestPreview();
 }
 
 function renderVisibleSelectionAction() {
@@ -382,29 +466,232 @@ function renderVisibleSelectionAction() {
 }
 
 function caseCard(entry) {
-  const button = el("button", "skill-case");
+  const card = el("article", "skill-case");
+  card.dataset.selected = String(selectedEntryIds.has(entry.id));
+  const button = el("button", "skill-case-toggle");
   button.type = "button";
-  button.dataset.selected = String(selectedEntryIds.has(entry.id));
   button.setAttribute("aria-pressed", String(selectedEntryIds.has(entry.id)));
   button.setAttribute("aria-label", entry.title || t("未命名案例"));
+  const visual = el("span", "skill-case-visual");
   const asset = primaryImageAsset(entry);
   if (asset) {
     const image = document.createElement("img");
     image.alt = "";
     image.loading = "lazy";
     hydrateThumbnail(image, asset.id);
-    button.append(image);
+    visual.append(image);
+  } else {
+    const kind = availableSkillAssets(entry)[0]?.kind;
+    visual.append(textEl("span", kind === "video" ? t("视频") : kind === "document" ? t("文档") : t("文字")));
   }
-  button.append(textEl("span", entry.title || excerpt(entry.text, 48) || t("未命名案例")));
+  const selectedState = textEl("span", "✓");
+  selectedState.className = "skill-case-state";
+  visual.append(selectedState);
+  const copy = el("span", "skill-case-copy");
+  copy.append(
+    textEl("strong", entry.title || excerpt(entry.text, 48) || t("未命名案例")),
+    textEl("small", sourceCompositionLabel(entry))
+  );
+  button.append(visual, copy);
   button.addEventListener("click", () => {
-    selectedEntryIds.has(entry.id) ? selectedEntryIds.delete(entry.id) : selectedEntryIds.add(entry.id);
-    button.dataset.selected = String(selectedEntryIds.has(entry.id));
+    selectedEntryIds.has(entry.id) ? removeSourceSelection(entry.id) : selectSourceDefaults(entry);
+    card.dataset.selected = String(selectedEntryIds.has(entry.id));
     button.setAttribute("aria-pressed", String(selectedEntryIds.has(entry.id)));
-    elements.skillSelectedCount.textContent = String(selectedEntryIds.size);
+    renderCaseState(card, entry);
+    renderSourceSelectionSummary();
     renderVisibleSelectionAction();
     renderVisionPreview();
+    renderRequestPreview();
   });
-  return button;
+  card.append(button);
+  const assets = availableSkillAssets(entry);
+  if (assets.length > 1 || String(entry.text ?? "").trim()) {
+    const details = textEl("button", sourceSelectionCountLabel(entry));
+    details.type = "button";
+    details.className = "skill-case-detail";
+    details.setAttribute("aria-label", t("精确选择 {title} 的内容", { title: entry.title || t("未命名案例") }));
+    details.addEventListener("click", () => openSourceInspector(entry.id, details));
+    card.append(details);
+  }
+  renderCaseState(card, entry);
+  return card;
+}
+
+function renderCaseState(card, entry) {
+  card.dataset.selected = String(selectedEntryIds.has(entry.id));
+  const state = card.querySelector(".skill-case-state");
+  if (state) state.hidden = !selectedEntryIds.has(entry.id);
+  const detail = card.querySelector(".skill-case-detail");
+  if (detail) detail.textContent = sourceSelectionCountLabel(entry);
+}
+
+function availableSkillAssets(entry) {
+  return availableSkillSourceAssets(entry);
+}
+
+function selectSourceDefaults(entry) {
+  if (!entry) return;
+  sourceSelections.set(entry.id, defaultSourceSelection(entry));
+  selectedEntryIds.add(entry.id);
+}
+
+function defaultSourceSelection(entry) {
+  const assets = availableSkillAssets(entry);
+  const primary = assets.find((asset) => asset.id === entry.primaryMediaId) ?? assets[0];
+  return {
+    entryId: entry.id,
+    includeEntryText: Boolean(String(entry.text ?? "").trim()),
+    assetIds: primary ? new Set([primary.id]) : new Set()
+  };
+}
+
+function removeSourceSelection(entryId) {
+  sourceSelections.delete(entryId);
+  selectedEntryIds.delete(entryId);
+  if (inspectedEntryId === entryId) closeSourceInspector();
+}
+
+function sourceSelectionSnapshots() {
+  return [...sourceSelections.values()].map((selection) => ({
+    entryId: selection.entryId,
+    includeEntryText: selection.includeEntryText,
+    assetIds: [...selection.assetIds]
+  }));
+}
+
+function sourceSelectionCountLabel(entry) {
+  const selection = sourceSelections.get(entry.id);
+  const total = availableSkillAssets(entry).length + (String(entry.text ?? "").trim() ? 1 : 0);
+  if (!selection) return total > 1 ? t("{count} 项内容", { count: total }) : t("查看内容");
+  const selected = selection.assetIds.size + (selection.includeEntryText ? 1 : 0);
+  return t("已选 {selected}/{total}", { selected, total });
+}
+
+function sourceCompositionLabel(entry) {
+  const assets = availableSkillAssets(entry);
+  const images = assets.filter((asset) => asset.kind === "image").length;
+  const videos = assets.filter((asset) => asset.kind === "video").length;
+  const documents = assets.filter((asset) => asset.kind === "document").length;
+  const parts = [
+    images ? t("{count} 图", { count: images }) : "",
+    videos ? t("{count} 视频", { count: videos }) : "",
+    documents ? t("{count} 文档", { count: documents }) : "",
+    String(entry.text ?? "").trim() ? t("案例文字") : ""
+  ].filter(Boolean);
+  return parts.join(" · ") || t("无可用内容");
+}
+
+function renderSourceSelectionSummary() {
+  const summary = skillSourceSelectionSummary(entries, sourceSelections);
+  elements.skillSelectedCount.textContent = String(summary.cases);
+  elements.skillClearSelection.disabled = summary.cases === 0;
+  if (!summary.cases) {
+    elements.skillSelectionSummary.replaceChildren(
+      textEl("strong", t("尚未选择案例")),
+      textEl("span", t("选择案例后，可点击“内容”精确调整图片、视频、文档和文字。"))
+    );
+    return;
+  }
+  elements.skillSelectionSummary.replaceChildren(
+    textEl("strong", t("已选 {count} 个案例", { count: summary.cases })),
+    textEl("span", t("图片 {images} · 视频 {videos} · 文档 {documents} · 案例文字 {texts}", summary)),
+    textEl("small", t("点击内容可精确调整"))
+  );
+}
+
+function openSourceInspector(entryId, returnFocus = null) {
+  const entry = entries.find((item) => item.id === entryId);
+  if (!entry) return;
+  inspectedEntryId = entryId;
+  inspectorDraftSelection = cloneSkillSourceSelection(sourceSelections.get(entryId) ?? defaultSourceSelection(entry));
+  inspectorReturnFocus = returnFocus;
+  renderSourceInspector();
+  elements.skillSourceInspector.hidden = false;
+  elements.skillSourceInspectorBackdrop.hidden = false;
+  elements.skillSourceInspectorClose.focus();
+}
+
+function closeSourceInspector() {
+  inspectedEntryId = "";
+  inspectorDraftSelection = null;
+  elements.skillSourceInspector.hidden = true;
+  elements.skillSourceInspectorBackdrop.hidden = true;
+  inspectorReturnFocus?.focus();
+  inspectorReturnFocus = null;
+}
+
+function cancelSourceInspector() {
+  closeSourceInspector();
+}
+
+function applySourceInspector() {
+  const entry = entries.find((item) => item.id === inspectedEntryId);
+  if (!entry || !inspectorDraftSelection) return closeSourceInspector();
+  if (inspectorDraftSelection.includeEntryText || inspectorDraftSelection.assetIds.size) {
+    sourceSelections.set(entry.id, cloneSkillSourceSelection(inspectorDraftSelection));
+    selectedEntryIds.add(entry.id);
+  } else removeSourceSelection(entry.id);
+  closeSourceInspector();
+  renderCases();
+  renderVisionPreview();
+  renderRequestPreview();
+}
+
+function renderSourceInspector() {
+  const entry = entries.find((item) => item.id === inspectedEntryId);
+  const selection = inspectorDraftSelection;
+  if (!entry || !selection) return closeSourceInspector();
+  elements.skillSourceInspectorTitle.textContent = entry.title || t("未命名案例");
+  const hasText = Boolean(String(entry.text ?? "").trim());
+  elements.skillSourceTextOption.hidden = !hasText;
+  elements.skillSourceIncludeText.checked = hasText && selection.includeEntryText;
+  elements.skillSourceAssetList.replaceChildren(...availableSkillAssets(entry).map((asset, index) => sourceAssetOption(entry, asset, index)));
+}
+
+function sourceAssetOption(entry, asset, index) {
+  const selection = inspectorDraftSelection;
+  const row = el("label", "skill-source-asset");
+  row.dataset.selected = String(selection.assetIds.has(asset.id));
+  const preview = el("span", "skill-source-asset-preview");
+  if (asset.kind === "image") {
+    const image = document.createElement("img");
+    image.alt = "";
+    hydrateThumbnail(image, asset.id);
+    preview.append(image);
+  } else preview.textContent = asset.kind === "video" ? t("视频") : t("文档");
+  const copy = el("span", "skill-source-asset-copy");
+  copy.append(textEl("strong", `${asset.kind === "image" ? t("图片") : asset.kind === "video" ? t("视频") : t("文档")} ${index + 1}`), textEl("small", asset.sourceTitle || asset.mimeType || t("本地素材")));
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = selection.assetIds.has(asset.id);
+  input.addEventListener("change", () => {
+    input.checked ? selection.assetIds.add(asset.id) : selection.assetIds.delete(asset.id);
+    renderSourceInspector();
+  });
+  row.append(preview, copy, input);
+  return row;
+}
+
+function updateInspectedTextSelection() {
+  if (!inspectorDraftSelection) return;
+  inspectorDraftSelection.includeEntryText = elements.skillSourceIncludeText.checked;
+}
+
+function selectAllInspectedSource() {
+  const entry = entries.find((item) => item.id === inspectedEntryId);
+  const selection = inspectorDraftSelection;
+  if (!entry || !selection) return;
+  selection.assetIds = new Set(availableSkillAssets(entry).map((asset) => asset.id));
+  if (String(entry.text ?? "").trim()) selection.includeEntryText = true;
+  renderSourceInspector();
+}
+
+function clearInspectedSource() {
+  const selection = inspectorDraftSelection;
+  if (!selection) return;
+  selection.assetIds.clear();
+  selection.includeEntryText = false;
+  renderSourceInspector();
 }
 
 async function hydrateThumbnail(image, assetId) {
@@ -417,40 +704,127 @@ async function hydrateThumbnail(image, assetId) {
   } catch {}
 }
 
+async function prepareSkillRuntimeControls() {
+  try {
+    skillRuntimeSettings = await getPrivateSettings({ allowUnconfiguredVision: true });
+    renderRuntimeMenus(skillRuntimeSettings);
+    const images = selectedSkillContentImages(entries, sourceSelectionSnapshots());
+    if (images.length && skillRuntimeSettings.visionRuntime.available) elements.skillUseVision.checked = true;
+    renderVisionPreview();
+    renderRequestPreview();
+  } catch (error) {
+    setFeedback(elements.skillGenerationFeedback, error.message || t("无法读取 Skill 服务配置"), true);
+  }
+}
+
+function renderRuntimeMenus(settings) {
+  renderRuntimeOptionMenu(elements.skillTextProviderMenu, settings.textRuntime, "text");
+  renderRuntimeOptionMenu(elements.skillVisionProviderMenu, settings.visionRuntime, "vision");
+}
+
+function renderRuntimeOptionMenu(container, runtime, kind) {
+  const currentKey = `${runtime.assignment?.providerId || ""}:${runtime.assignment?.model || ""}`;
+  const options = runtime.availableProviders.flatMap((provider) => provider.models.map((model) => ({
+    key: `${provider.id}:${model}`,
+    providerId: provider.id,
+    model,
+    label: `${provider.label} · ${model}`
+  })));
+  const selected = options.find((option) => option.key === currentKey);
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = selected?.label || runtime.label || t("未配置");
+  const panel = el("div", "skill-option-panel");
+  panel.append(...options.map((option) => {
+    const button = textEl("button", option.label);
+    button.type = "button";
+    button.setAttribute("aria-current", String(option.key === currentKey));
+    button.addEventListener("click", () => {
+      runtimeOverrides[kind] = { providerId: option.providerId, model: option.model };
+      details.open = false;
+      safely(prepareSkillRuntimeControls)();
+    });
+    return button;
+  }));
+  details.append(summary, panel);
+  container.replaceChildren(details);
+}
+
+function restoreDefaultInstructions() {
+  elements.skillTextInstruction.value = defaultSkillExtractionInstruction(currentLocale());
+  elements.skillVisionInstruction.value = defaultSkillVisualInstruction(currentLocale());
+  renderRequestPreview();
+}
+
 function renderVisionPreview() {
-  const vision = selectedAnalysisMode() === "vision";
-  elements.skillVisionPreview.hidden = !vision;
-  if (!vision) return;
-  const images = selectedSkillContentImages(entries, [...selectedEntryIds]);
+  const images = selectedSkillContentImages(entries, sourceSelectionSnapshots());
   const plan = contactSheetPlan(images);
-  getPrivateSettings().then(({ vision: settings }) => {
-    const service = visionServiceProfile(settings);
-    elements.skillVisionPreview.textContent = service
-      ? t("{service} · {images} 张内容图 · {batches} 个视觉批次 · 预计 {requests} 次付费请求。联系表仅在本轮内存中生成，不会保存。", {
-        service: service.label, images: images.length, batches: plan.length, requests: plan.length
-      })
-      : t("尚未配置可用的视觉模型 · {images} 张内容图 · {batches} 个视觉批次。请先在资料库设置中完成视觉服务配置。", {
-        images: images.length, batches: plan.length
-      });
-  }).catch(() => undefined);
+  const runtime = skillRuntimeSettings?.visionRuntime;
+  if (!visionPreferenceTouched && images.length && runtime?.available) elements.skillUseVision.checked = true;
+  elements.skillUseVision.disabled = images.length === 0 || !runtime?.available;
+  if (elements.skillUseVision.disabled) elements.skillUseVision.checked = false;
+  elements.skillVisionToggleNote.textContent = !images.length
+    ? t("当前没有选择可分析的图片")
+    : runtime?.available ? `${runtime.label} · ${images.length} ${t("张图片")}` : t("尚未配置可用的图片分析模型");
+  elements.skillVisionPreview.hidden = !elements.skillUseVision.checked;
+  if (!elements.skillUseVision.checked) return;
+  elements.skillVisionPreview.textContent = t("{service} · {images} 张内容图 · {batches} 个视觉批次 · 预计 {requests} 次付费请求。", {
+    service: runtime.label,
+    images: images.length,
+    batches: plan.length,
+    requests: plan.length
+  });
+}
+
+function renderRequestPreview() {
+  if (!elements.skillRequestPreview) return;
+  const snapshots = sourceSelectionSnapshots();
+  const images = selectedSkillContentImages(entries, snapshots);
+  const assetCount = snapshots.reduce((sum, item) => sum + item.assetIds.length, 0);
+  const visionCapability = skillRuntimeSettings?.visionRuntime.descriptor?.capabilities;
+  const capabilityText = !elements.skillUseVision.checked ? "" : visionCapability?.image === true
+    ? t("图片输入：已声明支持")
+    : visionCapability?.image === false ? t("图片输入：明确不支持") : t("图片输入：能力来源未知，运行前仍按任务配置校验");
+  elements.skillRequestPreview.textContent = t("发送范围：{cases} 个匿名案例 · {assets} 项素材 · {images} 张图片\n模型：{textModel}{visionModel}\n地址：{textEndpoint}{visionEndpoint}\n{capability}\n只发送明确选择的文字、已有分析和图片；标题、网址、本地编号与未选内容不会发送。", {
+    cases: snapshots.length,
+    assets: assetCount,
+    images: elements.skillUseVision.checked ? images.length : 0,
+    textModel: skillRuntimeSettings?.textRuntime.label || t("未读取"),
+    visionModel: elements.skillUseVision.checked ? ` · ${skillRuntimeSettings?.visionRuntime.label || t("未读取")}` : "",
+    textEndpoint: skillRuntimeSettings?.textRuntime.endpointOrigin || t("未读取"),
+    visionEndpoint: elements.skillUseVision.checked ? ` · ${skillRuntimeSettings?.visionRuntime.endpointOrigin || t("未读取")}` : "",
+    capability: capabilityText
+  });
 }
 
 async function generateDraft() {
   const goal = elements.skillGoal.value.trim();
-  if (!selectedEntryIds.size && !selectedEvidenceIds.size) throw new Error(t("请先选择至少一项案例或人工判断证据"));
+  if (!sourceSelections.size && !selectedEvidenceIds.size) throw new Error(t("请先选择至少一项案例或人工判断证据"));
   if (!goal) throw new Error(t("请先说明希望提炼什么"));
   elements.skillGenerate.disabled = true;
-  setFeedback(elements.skillGenerationStatus, t("正在准备匿名来源资料…"));
+  setFeedback(elements.skillGenerationFeedback, "");
+  startSkillRun();
   try {
-    const sources = selectedSkillSources();
-    const workload = skillExtractionWorkload({ goal, sources });
-    const images = selectedSkillContentImages(entries, [...selectedEntryIds]);
+    updateSkillRun("prepare", t("正在准备发送内容"), 0, 1);
+    const sources = await selectedSkillSources();
+    const workload = skillExtractionWorkload({
+      goal,
+      sources,
+      locale: currentLocale(),
+      instructionOverride: elements.skillTextInstruction.value
+    });
+    const images = selectedSkillContentImages(entries, sourceSelectionSnapshots());
     const visualPlan = selectedAnalysisMode() === "vision" ? contactSheetPlan(images) : [];
-    const privateSettings = routedSkillSettings(await getPrivateSettings());
+    const privateSettings = await getPrivateSettings({ allowUnconfiguredVision: selectedAnalysisMode() !== "vision" });
     const approved = await confirmSkillExtractionWorkload({ workload, visualPlan, settings: privateSettings });
-    if (!approved) return;
+    if (!approved) {
+      finishSkillRun(t("已取消，没有发送内容"));
+      return;
+    }
+    activeSkillRun.totalUnits = Math.max(1, visualPlan.length + workload.requestCount);
+    updateSkillRun("prepare", t("发送范围已确认"), 1, 1, true);
     if (selectedAnalysisMode() === "vision") {
-      if (!selectedEntryIds.size) throw new Error(t("视觉分析需要至少一个带内容图的来源案例"));
+      if (!visualPlan.length) throw new Error(t("视觉分析需要至少一张已选择的内容图"));
       visualSuccesses = [];
       visualFailures = [];
       pendingAfterVision = true;
@@ -458,6 +832,13 @@ async function generateDraft() {
       if (!completed) return;
     }
     await generateTextDraft(privateSettings, sources);
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      failSkillRun(t("已停止，本次不完整输出没有保存"), false);
+      return;
+    }
+    failSkillRun(error.message || t("提炼失败"), true);
+    throw error;
   } finally {
     elements.skillGenerate.disabled = false;
   }
@@ -465,26 +846,12 @@ async function generateDraft() {
 
 async function runVisualBatches(plan, options = {}) {
   if (!plan.length) throw new Error(t("所选案例没有可用于视觉分析的内容图"));
-  const settings = options.settings ?? routedSkillSettings(await getPrivateSettings());
-  const service = visionServiceProfile(settings.vision);
-  if (!service) throw new Error(t("当前没有已配置且已同意使用的视觉模型，请先在设置中完成配置"));
-  const approved = options.skipConfirmation || await confirmAppAction({
-    title: t("确认付费视觉分析"),
-    description: t("{service}\n内容图：{images} 张\n视觉批次：{batches}\n预计请求：{requests} 次\n\n这些请求会产生额外费用。", {
-    service: service.label,
-    images: plan.reduce((sum, item) => sum + item.items.length, 0),
-    batches: plan.length,
-    requests: plan.length
-    }),
-    confirmLabel: t("确认并继续")
-  });
-  if (!approved) {
-    setFeedback(elements.skillGenerationStatus, t("已取消视觉分析，没有发送图片"));
-    return false;
-  }
+  const settings = options.settings ?? await getPrivateSettings({ allowUnconfiguredVision: false });
+  const service = settings.visionRuntime;
+  if (!service.available) throw new Error(t("当前没有已配置且已同意使用的视觉模型，请先在设置中完成配置"));
   const failures = [];
   for (const [index, batch] of plan.entries()) {
-    setFeedback(elements.skillGenerationStatus, t("正在分析视觉批次 {current}/{total}…", { current: index + 1, total: plan.length }));
+    updateSkillRun("vision", t("正在分析图片 {current}/{total}", { current: index + 1, total: plan.length }), index, plan.length);
     try {
       const rendered = await renderContactSheetBatch(batch, getMediaBlob);
       const dataUrl = await blobToDataUrl(rendered.blob);
@@ -494,17 +861,26 @@ async function runVisualBatches(plan, options = {}) {
         items: batch.items,
         dataUrl,
         mimeType: rendered.blob.type,
-        aiProfile: service.profile
-      }, settings);
+        aiProfile: service.profile,
+        instructionOverride: elements.skillVisionInstruction.value
+      }, settings, {
+        signal: activeSkillRun?.controller.signal,
+        timeoutMs: null,
+        onDelta: () => touchSkillRun(t("正在接收图片分析结果"))
+      });
       visualSuccesses.push(result.description);
+      completeSkillRunUnit();
+      appendSkillRunLog(t("图片批次 {current}/{total} 完成 · {model}", { current: index + 1, total: plan.length, model: result.model }));
     } catch (error) {
+      if (error?.name === "AbortError") throw error;
       failures.push({ batch, error: error.message || t("视觉批次失败") });
+      appendSkillRunLog(t("图片批次 {current}/{total} 失败：{message}", { current: index + 1, total: plan.length, message: error.message || t("服务错误") }));
     }
   }
   visualFailures = failures;
   elements.skillRetryVision.hidden = failures.length === 0;
   if (failures.length) {
-    setFeedback(elements.skillGenerationStatus, t("{success} 个视觉批次成功，{failures} 个失败。可只重试失败批次，或切回文字提炼。", {
+    failSkillRun(t("{success} 个视觉批次成功，{failures} 个失败。可只重试失败批次。", {
       success: visualSuccesses.length, failures: failures.length
     }), true);
     return false;
@@ -517,6 +893,8 @@ async function retryVisualFailures() {
   elements.skillRetryVision.disabled = true;
   const plan = visualFailures.map((item) => item.batch);
   visualFailures = [];
+  startSkillRun();
+  activeSkillRun.totalUnits = Math.max(1, plan.length + (pendingAfterVision ? 1 : 0));
   try {
     const completed = await runVisualBatches(plan);
     if (completed && pendingAfterVision) await generateTextDraft();
@@ -526,25 +904,32 @@ async function retryVisualFailures() {
 }
 
 async function generateTextDraft(settingsValue = null, sourcesValue = null) {
-  const settings = settingsValue ?? routedSkillSettings(await getPrivateSettings());
-  const sources = sourcesValue ?? selectedSkillSources();
-  setFeedback(elements.skillGenerationStatus, t("正在围绕你的目标提炼可复用方法…"));
+  const settings = settingsValue ?? await getPrivateSettings({ allowUnconfiguredVision: true });
+  const sources = sourcesValue ?? await selectedSkillSources();
   const result = await extractCreativeSkillDraftBatched({
     goal: elements.skillGoal.value,
     sources,
     visualAnalyses: visualSuccesses,
     locale: currentLocale(),
-    aiProfile: settings.skillTextProfile
+    aiProfile: settings.skillTextProfile,
+    instructionOverride: elements.skillTextInstruction.value
   }, settings, {
-    onProgress: ({ phase, current, total }) => setFeedback(elements.skillGenerationStatus,
-      phase === "synthesis" ? t("正在汇总全部批次…") : t("正在提炼文字批次 {current}/{total}…", { current, total }))
+    signal: activeSkillRun?.controller.signal,
+    timeoutMs: null,
+    onDelta: () => touchSkillRun(t("正在接收 Skill 草稿")),
+    onProgress: ({ phase, current, total }) => {
+      updateSkillRun("text", phase === "synthesis" ? t("正在汇总全部批次") : t("正在提炼文字 {current}/{total}", { current, total }), current - 1, total);
+      if (current > 1 || phase === "synthesis") completeSkillRunUnit();
+    }
   });
+  completeSkillRunUnit();
   elements.skillMarkdown.value = result.markdown;
-  if (!elements.skillDescription.value.trim()) elements.skillDescription.value = elements.skillGoal.value.trim().slice(0, 240);
+  if (!elements.skillCallName.value.trim()) elements.skillCallName.value = result.callName;
+  if (!elements.skillDescription.value.trim()) elements.skillDescription.value = result.description;
   elements.skillDraftStep.hidden = false;
-  elements.skillDraftStep.scrollIntoView({ behavior: "smooth", block: "start" });
   pendingAfterVision = false;
-  setFeedback(elements.skillGenerationStatus, t("草稿已生成 · {model}", { model: result.model }));
+  finishSkillRun(t("草稿已生成 · {model}", { model: result.model }));
+  appendSkillRunLog(t("文字提炼完成 · {model}", { model: result.model }));
 }
 
 async function saveSkill() {
@@ -556,12 +941,12 @@ async function saveSkill() {
   elements.skillSave.disabled = true;
   try {
     const evidenceSources = selectedCreativeRunEvidenceSources(creativeRuns, [...selectedEvidenceIds], activeSkillId);
-    const hasSelectedEvidence = selectedEntryIds.size > 0 || evidenceSources.length > 0;
+    const hasSelectedEvidence = sourceSelections.size > 0 || evidenceSources.length > 0;
     const provenanceMarkdown = hasSelectedEvidence ? buildProvenanceMarkdown({
       locale: currentLocale(),
       target: elements.skillGoal.value,
       contributions: [
-        ...anonymousSkillSources(entries, [...selectedEntryIds]).map((_source, index) =>
+        ...sourceSelectionSnapshots().map((_source, index) =>
           t("匿名案例来源 {index} 参与了本次方法提炼。", { index: index + 1 })
         ),
         ...evidenceSources.map((_source, index) =>
@@ -742,31 +1127,64 @@ async function importParsedSkill(parsed, sourceName) {
   }
 }
 
-async function getPrivateSettings() {
+async function getPrivateSettings(options = {}) {
   const [text, image, stored] = await Promise.all([
-    chrome.runtime.sendMessage({ type: "GET_AI_TASK_RUNTIME", taskId: "skillExtraction" }),
-    chrome.runtime.sendMessage({ type: "GET_AI_TASK_RUNTIME", taskId: "imageAnalysis", allowUnconfigured: true }),
+    chrome.runtime.sendMessage({ type: "GET_AI_TASK_RUNTIME", taskId: "skillExtraction", assignment: runtimeOverrides.text }),
+    chrome.runtime.sendMessage({
+      type: "GET_AI_TASK_RUNTIME",
+      taskId: "imageAnalysis",
+      allowUnconfigured: options.allowUnconfiguredVision === true,
+      assignment: runtimeOverrides.vision
+    }),
     chrome.storage.local.get("composerSettings")
   ]);
   if (!text?.ok || !image?.ok) throw new Error(text?.message || image?.message || t("无法读取 Skill 服务配置"));
+  requireAiRuntimeProtocolVersion(text.aiRuntimeProtocolVersion);
+  requireAiRuntimeProtocolVersion(image.aiRuntimeProtocolVersion);
+  const visionSettings = normalizeVisionSettings(image.visionSettings);
+  const visionProfile = {
+    serviceId: visionSettings.activeProvider === "compatible" ? "compatible" : "openai",
+    model: image.assignment?.model,
+    thinking: false
+  };
   return {
     ai: normalizeAiSettings(text.aiSettings),
-    vision: normalizeVisionSettings(image.visionSettings),
+    vision: visionSettings,
     composer: normalizeComposerSettings(stored.composerSettings),
     skillTextProfile: { serviceId: "deepseek", model: text.assignment?.model },
-    skillTextLabel: `${text.providerLabel || t("文字服务")} · ${text.assignment?.model || t("未选择模型")}`
+    skillTextLabel: `${text.providerLabel || t("文字服务")} · ${text.assignment?.model || t("未选择模型")}`,
+    textRuntime: runtimePresentation(text, { profile: { serviceId: "deepseek", model: text.assignment?.model } }),
+    visionRuntime: runtimePresentation(image, { profile: visionProfile })
   };
 }
 
-function selectedSkillSources() {
-  return [
-    ...anonymousSkillSources(entries, [...selectedEntryIds]),
-    ...selectedCreativeRunEvidenceSources(creativeRuns, [...selectedEvidenceIds], activeSkillId)
-  ];
+function runtimePresentation(response, extras = {}) {
+  const descriptor = response.runtimeDescriptor ?? {};
+  const configured = (response.availableProviders ?? []).some((provider) => provider.id === response.assignment?.providerId && provider.models.includes(response.assignment?.model));
+  return {
+    ...extras,
+    assignment: response.assignment,
+    descriptor,
+    availableProviders: Array.isArray(response.availableProviders) ? response.availableProviders : [],
+    available: configured,
+    label: `${response.providerLabel || t("AI 服务")} · ${response.assignment?.model || t("未选择模型")}`,
+    endpointOrigin: descriptor.endpointOrigin || ""
+  };
 }
 
-function routedSkillSettings(value) {
-  return value;
+async function selectedSkillSources() {
+  const selections = sourceSelectionSnapshots();
+  const documentIds = selections.flatMap((selection) => {
+    const entry = entries.find((item) => item.id === selection.entryId);
+    const selected = new Set(selection.assetIds);
+    return entryMediaAssets(entry).filter((asset) => asset.kind === "document" && selected.has(asset.id)).map((asset) => asset.id);
+  });
+  const derived = await Promise.all(documentIds.map(async (assetId) => [assetId, await getDerivedMedia(assetId).catch(() => null)]));
+  const documentTextByAsset = new Map(derived.flatMap(([assetId, value]) => value?.searchText ? [[assetId, value.searchText]] : []));
+  return [
+    ...anonymousSkillSources(entries, selections, { documentTextByAsset }),
+    ...selectedCreativeRunEvidenceSources(creativeRuns, [...selectedEvidenceIds], activeSkillId)
+  ];
 }
 
 async function confirmSkillExtractionWorkload({ workload, visualPlan, settings }) {
@@ -776,14 +1194,17 @@ async function confirmSkillExtractionWorkload({ workload, visualPlan, settings }
   }] : [];
   const result = await showAppDialog({
     title: t("确认 Skill 提炼"),
-    description: t("案例与证据：{cases} 项\n文字量：{characters} 字符 · 文字批次：{textBatches}\n图片：{images} 张 · 视觉批次：{visualBatches}\n预计请求：{requests} 次\n文字服务：{service}\n\n不会抽样或截断；视觉请求会产生额外费用。", {
+    description: t("案例与证据：{cases} 项\n文字量：{characters} 字符 · 约 {tokenMin}–{tokenMax} tokens\n文字批次：{textBatches} · 图片：{images} 张 · 视觉批次：{visualBatches}\n预计请求：{requests} 次\n文字模型：{service}\n图片模型：{visionService}\n\n不会抽样、截断、自动换模型或自动重试。", {
       cases: workload.sourceCount,
       characters: workload.textCharacters.toLocaleString(),
+      tokenMin: workload.tokenEstimate.min.toLocaleString(),
+      tokenMax: workload.tokenEstimate.max.toLocaleString(),
       textBatches: workload.textBatchCount,
       images: visualPlan.reduce((sum, batch) => sum + batch.items.length, 0),
       visualBatches: visualPlan.length,
       requests: workload.requestCount + visualPlan.length,
-      service: settings.skillTextLabel
+      service: settings.skillTextLabel,
+      visionService: visualPlan.length ? settings.visionRuntime.label : t("不发送图片")
     }),
     fields,
     confirmLabel: workload.overSingleRequest ? t("继续") : t("开始提炼")
@@ -796,15 +1217,131 @@ async function confirmSkillExtractionWorkload({ workload, visualPlan, settings }
   return true;
 }
 
-function visionServiceProfile(visionSettings) {
-  const catalog = composerServiceCatalog({}, visionSettings).filter((item) => item.vision && item.configured);
-  const active = visionSettings.activeProvider === "compatible" ? "compatible" : "openai";
-  const service = catalog.find((item) => item.serviceId === active) ?? catalog[0];
-  return service ? { label: service.label, profile: { serviceId: service.serviceId, model: service.model, thinking: false } } : null;
+function selectedAnalysisMode() {
+  return elements.skillUseVision.checked ? "vision" : "text";
 }
 
-function selectedAnalysisMode() {
-  return document.querySelector('input[name="skill-analysis-mode"]:checked')?.value === "vision" ? "vision" : "text";
+function startSkillRun() {
+  if (activeSkillRun?.controller && !activeSkillRun.controller.signal.aborted) activeSkillRun.controller.abort();
+  activeSkillRun = {
+    controller: new AbortController(),
+    startedAt: Date.now(),
+    completedUnits: 0,
+    totalUnits: 1,
+    elapsedTimer: null,
+    slowTimer: null,
+    stage: "prepare"
+  };
+  elements.skillRunPanel.hidden = false;
+  elements.skillStopRun.hidden = false;
+  elements.skillStopRun.disabled = false;
+  elements.skillRunLog.replaceChildren();
+  elements.skillRunProgress.style.width = "0%";
+  renderSkillRunStages("prepare");
+  activeSkillRun.elapsedTimer = setInterval(renderSkillRunElapsed, 1000);
+  renderSkillRunElapsed();
+  touchSkillRun(t("正在准备发送内容"));
+}
+
+function updateSkillRun(stage, message, current = 0, total = 1) {
+  if (!activeSkillRun) return;
+  activeSkillRun.stage = stage;
+  setFeedback(elements.skillGenerationStatus, message);
+  renderSkillRunStages(stage);
+  const detail = total > 1 ? ` ${Math.max(0, current)}/${total}` : "";
+  appendSkillRunLog(`${stageLabel(stage)}${detail} · ${message}`);
+  touchSkillRun();
+}
+
+function completeSkillRunUnit() {
+  if (!activeSkillRun) return;
+  activeSkillRun.completedUnits = Math.min(activeSkillRun.totalUnits, activeSkillRun.completedUnits + 1);
+  const percent = Math.round(activeSkillRun.completedUnits / activeSkillRun.totalUnits * 100);
+  elements.skillRunProgress.style.width = `${percent}%`;
+}
+
+function touchSkillRun(message = "") {
+  if (!activeSkillRun) return;
+  if (message) setFeedback(elements.skillGenerationStatus, message);
+  if (activeSkillRun.slowTimer !== null) clearTimeout(activeSkillRun.slowTimer);
+  activeSkillRun.slowTimer = setTimeout(() => {
+    if (!activeSkillRun) return;
+    setFeedback(elements.skillGenerationStatus, t("服务响应较慢，仍在等待；你可以继续等待或停止"));
+    appendSkillRunLog(t("服务响应较慢，未自动中止"));
+  }, DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS);
+}
+
+function finishSkillRun(message = "") {
+  if (!activeSkillRun) {
+    elements.skillRunPanel.hidden = !message;
+    return;
+  }
+  clearSkillRunTimers();
+  if (!message) {
+    elements.skillRunPanel.hidden = true;
+    activeSkillRun = null;
+    return;
+  }
+  activeSkillRun.completedUnits = activeSkillRun.totalUnits;
+  elements.skillRunProgress.style.width = "100%";
+  setFeedback(elements.skillGenerationStatus, message);
+  renderSkillRunStages("complete", true);
+  elements.skillStopRun.hidden = true;
+  activeSkillRun = null;
+}
+
+function failSkillRun(message, error = true) {
+  if (activeSkillRun) clearSkillRunTimers();
+  setFeedback(elements.skillGenerationStatus, message, error);
+  elements.skillStopRun.hidden = true;
+  appendSkillRunLog(message);
+  activeSkillRun = null;
+}
+
+function stopSkillRun() {
+  if (!activeSkillRun) return;
+  elements.skillStopRun.disabled = true;
+  activeSkillRun.controller.abort();
+}
+
+function clearSkillRunTimers() {
+  if (!activeSkillRun) return;
+  if (activeSkillRun.elapsedTimer !== null) clearInterval(activeSkillRun.elapsedTimer);
+  if (activeSkillRun.slowTimer !== null) clearTimeout(activeSkillRun.slowTimer);
+}
+
+function renderSkillRunElapsed() {
+  if (!activeSkillRun) return;
+  const seconds = Math.max(0, Math.floor((Date.now() - activeSkillRun.startedAt) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  elements.skillRunElapsed.textContent = minutes ? `${minutes}:${String(seconds % 60).padStart(2, "0")}` : `${seconds}s`;
+}
+
+function renderSkillRunStages(activeStage, complete = false) {
+  const stages = [
+    ["prepare", t("准备")],
+    ["vision", t("图片分析")],
+    ["text", t("文字提炼")],
+    ["complete", t("完成")]
+  ];
+  const activeIndex = stages.findIndex(([id]) => id === activeStage);
+  elements.skillRunStages.replaceChildren(...stages.map(([id, label], index) => {
+    const item = textEl("li", label);
+    item.dataset.state = complete || index < activeIndex ? "done" : index === activeIndex ? "active" : "pending";
+    return item;
+  }));
+}
+
+function appendSkillRunLog(message) {
+  if (!elements.skillRunLog || !message) return;
+  const row = textEl("p", `${new Date().toLocaleTimeString(currentLocale() === "en" ? "en" : "zh-CN", { hour12: false })}  ${translateUiMessage(message)}`);
+  elements.skillRunLog.append(row);
+  while (elements.skillRunLog.children.length > 80) elements.skillRunLog.firstElementChild.remove();
+  elements.skillRunLog.scrollTop = elements.skillRunLog.scrollHeight;
+}
+
+function stageLabel(stage) {
+  return ({ prepare: t("准备"), vision: t("图片分析"), text: t("文字提炼"), complete: t("完成") })[stage] || stage;
 }
 
 function activeSkill() {
@@ -842,7 +1379,7 @@ function safely(action) {
         ? elements.skillDetailFeedback
         : activeView === "list"
           ? elements.skillFeedback
-          : elements.skillGenerationStatus;
+          : elements.skillGenerationFeedback;
       setFeedback(target, error.message || t("操作失败"), true);
     }
   };

@@ -77,7 +77,7 @@ def main() -> None:
                 expect(collector.locator("#normal-start")).to_be_visible()
                 expect(collector.locator("#normal-start .start-copy")).to_have_count(0)
                 expect(collector.locator("#start-smart-visuals")).to_have_text("智能选图")
-                expect(collector.locator("#start-selection")).to_have_text("提取文字")
+                expect(collector.locator("#start-selection")).to_have_text("提取文字/图片")
                 expect(collector.locator("#start-screenshot")).to_have_text("框选截图")
                 normal_geometry = collector.evaluate(
                     """() => {

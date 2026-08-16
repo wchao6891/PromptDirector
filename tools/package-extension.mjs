@@ -73,7 +73,7 @@ function validateManifest(value, paths) {
   if (value.manifest_version !== 3) throw new Error("只允许打包 Manifest V3 扩展");
   if (!/^\d+\.\d+\.\d+$/.test(value.version ?? "")) throw new Error("manifest 版本号无效");
   if (!/^__MSG_[A-Za-z0-9_]+__$/.test(String(value.name ?? ""))) throw new Error("manifest 品牌名未使用本地化消息");
-  for (const required of ["manifest.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "ui-foundation.css", "ui-icons.js", "assets/ui-icons.svg", "collector.html", "collector.js", "collector-view.js", "collector.css", "capture-draft.js", "compound-cases.js", "media.js", "media-store.js", "visuals.js", "composer.html", "composer-page.js", "composer-page.css", "composer-diagnostics.js", "creative-skills.js", "creative-skill-package.js", "creative-skill-service.js", "skill-contact-sheet.js", "skills.html", "skills-page.js", "skills-page.css", "curated.html", "curated-page.js", "curated.css", "curated-catalog.js", "curated-config.js", "background.js", "image-transaction.js", "assets/icons/icon-128.png", "_locales/zh_CN/messages.json", "_locales/en/messages.json"]) {
+  for (const required of ["manifest.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "ui-foundation.css", "ui-icons.js", "assets/ui-icons.svg", "collector.html", "collector.js", "collector-view.js", "collector.css", "capture-draft.js", "compound-cases.js", "media.js", "media-store.js", "visuals.js", "composer.html", "composer-page.js", "composer-page.css", "composer-diagnostics.js", "creative-skills.js", "creative-skill-package.js", "creative-skill-service.js", "skill-contact-sheet.js", "skills.html", "skills-page.js", "skills-page.css", "curated.html", "curated-page.js", "curated.css", "curated-catalog.js", "curated-import.js", "curated-config.js", "background.js", "image-transaction.js", "assets/icons/icon-128.png", "_locales/zh_CN/messages.json", "_locales/en/messages.json"]) {
     if (!paths.includes(required)) throw new Error(`发布包缺少 ${required}`);
   }
   if (!paths.includes("ui-dialogs.js")) throw new Error("发布包缺少 ui-dialogs.js");
@@ -81,8 +81,11 @@ function validateManifest(value, paths) {
   if (!paths.includes("page-capture.js") || !paths.includes("vendor/document-ingestion/Readability.js")) {
     throw new Error("发布包缺少网页采集运行时");
   }
-  if (!paths.includes("ai-task-routing.js") || !paths.includes("video-analysis.js")) {
-    throw new Error("发布包缺少 AI 任务分工或视频分析运行时");
+  if (!paths.includes("page-capture-adapter-registry.js") || !paths.includes("page-capture-site-adapters.js") || !paths.includes("page-session-media.js")) {
+    throw new Error("发布包缺少网页站点适配或页面会话媒体运行时");
+  }
+  if (!paths.includes("ai-provider-registry.js") || !paths.includes("ai-model-capabilities.js") || !paths.includes("ai-runtime.js") || !paths.includes("video-analysis.js")) {
+    throw new Error("发布包缺少 AI 配置或视频分析运行时");
   }
   if (paths.some((path) => /(?:^|\/)(?:test|tools|store|dist)(?:\/|$)/.test(path))) {
     throw new Error("发布包混入了测试、工具或商店素材");

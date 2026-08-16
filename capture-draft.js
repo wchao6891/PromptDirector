@@ -1,12 +1,13 @@
 import { normalizeVisual } from "./visuals.js";
 import { uniqueNames } from "./facets.js";
 
-export const CAPTURE_DRAFT_VERSION = 2;
+export const CAPTURE_DRAFT_VERSION = 3;
 
 export function createCaptureDraft(value = {}) {
   const now = new Date().toISOString();
   const fragments = uniqueFragments(value.fragments);
   const visuals = uniqueDraftVisuals(value.visuals);
+  const sourceContexts = uniqueSourceContexts(value.sourceContexts);
   const visualIds = new Set(visuals.map((item) => item.id));
   return {
     version: CAPTURE_DRAFT_VERSION,
@@ -16,6 +17,7 @@ export function createCaptureDraft(value = {}) {
     title: clean(value.title),
     fragments,
     visuals,
+    sourceContexts,
     primaryVisualId: visualIds.has(clean(value.primaryVisualId)) ? clean(value.primaryVisualId) : visuals[0]?.id || "",
     primaryVisualExplicit: value.primaryVisualExplicit === true,
     contentTypeId: clean(value.contentTypeId),
@@ -25,6 +27,20 @@ export function createCaptureDraft(value = {}) {
     createdAt: validIso(value.createdAt) || now,
     updatedAt: validIso(value.updatedAt) || now
   };
+}
+
+export function addDraftSourceContext(draftValue, contextValue = {}) {
+  const draft = createCaptureDraft(draftValue);
+  const context = normalizeSourceContext(contextValue);
+  if (!context) return draft;
+  const wasEmpty = !draft.fragments.length && !draft.visuals.length;
+  draft.sourceContexts = [
+    ...draft.sourceContexts.filter((item) => item.canonicalUrl !== context.canonicalUrl),
+    context
+  ];
+  if (wasEmpty && context.displayTitle) draft.title = context.displayTitle;
+  touch(draft);
+  return draft;
 }
 
 export function addDraftFragment(draftValue, fragmentValue = {}) {
@@ -126,11 +142,19 @@ export function captureTitleForSource(sourceUrlValue, sourceTitleValue) {
 
 export function draftSourcePages(draftValue) {
   const seen = new Set();
-  return createCaptureDraft(draftValue).fragments.flatMap((item) => {
+  const draft = createCaptureDraft(draftValue);
+  return draft.fragments.flatMap((item) => {
     if (!item.sourceUrl || seen.has(item.sourceUrl)) return [];
     seen.add(item.sourceUrl);
-    return [{ url: item.sourceUrl, title: item.sourceTitle }];
+    const context = sourceContextForUrl(draft, item.sourceUrl);
+    return [{ url: item.sourceUrl, title: context?.displayTitle || item.sourceTitle }];
   });
+}
+
+export function sourceContextForUrl(draftValue, sourceUrlValue) {
+  const sourceUrl = safeHttpUrl(sourceUrlValue);
+  if (!sourceUrl) return null;
+  return createCaptureDraft(draftValue).sourceContexts.find((item) => item.canonicalUrl === sourceUrl) ?? null;
 }
 
 export function draftParts(draftValue) {
@@ -147,9 +171,11 @@ export function draftParts(draftValue) {
     const sourceUrl = safeHttpUrl(item.value.sourceUrl);
     const key = sourceUrl || "source:unknown";
     if (!groups.has(key)) {
+      const sourceContext = sourceContextForUrl(draft, sourceUrl);
       groups.set(key, {
         sourceUrl,
-        sourceTitle: clean(item.value.sourceTitle),
+        sourceTitle: sourceContext?.displayTitle || clean(item.value.sourceTitle),
+        sourceContext,
         fragments: [],
         visuals: []
       });
@@ -162,6 +188,43 @@ export function draftParts(draftValue) {
     ...part,
     text: part.fragments.map((fragment) => fragment.text).join("\n\n")
   }));
+}
+
+function normalizeSourceContext(value = {}) {
+  const canonicalUrl = safeHttpUrl(value.canonicalUrl || value.url);
+  if (!canonicalUrl) return null;
+  const sourceFactsValue = value.sourceFacts && typeof value.sourceFacts === "object" ? value.sourceFacts : {};
+  const engagement = Object.fromEntries(Object.entries(sourceFactsValue.engagement || {}).flatMap(([key, amount]) => {
+    const number = Number(amount);
+    return clean(key) && Number.isFinite(number) && number >= 0 ? [[clean(key), number]] : [];
+  }));
+  return {
+    canonicalUrl,
+    displayTitle: clean(value.displayTitle || value.title),
+    completeness: value.completeness === "complete" ? "complete" : "partial",
+    sourceFacts: {
+      provider: clean(sourceFactsValue.provider),
+      pageType: clean(sourceFactsValue.pageType),
+      itemId: clean(sourceFactsValue.itemId),
+      author: clean(sourceFactsValue.author),
+      handle: clean(sourceFactsValue.handle),
+      publishedAt: validIso(sourceFactsValue.publishedAt),
+      model: clean(sourceFactsValue.model),
+      dimensions: clean(sourceFactsValue.dimensions),
+      engagement,
+      extractionMethod: clean(sourceFactsValue.extractionMethod),
+      status: sourceFactsValue.status === "complete" ? "complete" : "partial"
+    }
+  };
+}
+
+function uniqueSourceContexts(values) {
+  const byUrl = new Map();
+  for (const value of Array.isArray(values) ? values : []) {
+    const context = normalizeSourceContext(value);
+    if (context) byUrl.set(context.canonicalUrl, context);
+  }
+  return [...byUrl.values()];
 }
 
 export function isMeaningfulCaptureDraft(draftValue) {

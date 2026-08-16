@@ -110,8 +110,13 @@ def main() -> None:
                 batch = library.evaluate(
                     """async () => {
                       await chrome.runtime.sendMessage({
-                        type: 'UPDATE_AI_SETTINGS',
-                        settings: {apiKey: 'isolated-e2e-key', consent: true}
+                        type: 'UPDATE_AI_PROVIDER_CONFIGURATION',
+                        registry: {providers: {deepseek: {
+                          apiKey: 'isolated-e2e-key',
+                          consent: true,
+                          models: {textTags: 'isolated-e2e'}
+                        }}},
+                        assignments: {textTags: {providerId: 'deepseek', model: 'isolated-e2e'}}
                       });
                       const created = await chrome.runtime.sendMessage({type: 'CREATE_ANALYSIS_BATCH'});
                       const claimed = await chrome.runtime.sendMessage({

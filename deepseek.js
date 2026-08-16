@@ -52,12 +52,11 @@ export function deepSeekErrorDetails(error) {
 }
 
 export function normalizeAiSettings(value = {}) {
-  const legacyModel = String(value.model ?? "").trim();
   return {
     activeProvider: value.activeProvider === "compatible" ? "compatible" : "deepseek",
     apiKey: String(value.apiKey ?? "").trim(),
     consent: value.consent === true,
-    analysisModel: String(value.analysisModel ?? "").trim() || legacyModel || DEFAULT_ANALYSIS_MODEL,
+    analysisModel: String(value.analysisModel ?? "").trim() || DEFAULT_ANALYSIS_MODEL,
     analysisInstructionsByLocale: normalizeAnalysisInstructions(value.analysisInstructionsByLocale),
     compatible: {
       endpoint: String(value.compatible?.endpoint ?? "").trim(),
@@ -77,7 +76,7 @@ export function mergeAiSettings(currentValue = {}, incomingValue = {}) {
   const credentialReset = Boolean(current.compatible.apiKey && currentOrigin && nextOrigin !== currentOrigin && !incomingCompatibleKey);
   const settings = normalizeAiSettings({
     activeProvider: incoming.activeProvider ?? current.activeProvider,
-    analysisModel: incoming.analysisModel ?? incoming.model ?? current.analysisModel,
+    analysisModel: incoming.analysisModel ?? current.analysisModel,
     apiKey: String(incoming.apiKey ?? "").trim() || current.apiKey,
     consent: incoming.consent === true,
     analysisInstructionsByLocale: {
@@ -430,12 +429,14 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
   }, profile);
   assertComposerRequestBudget(body.messages);
   const controller = new AbortController();
-  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_COMPOSER_STREAM_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs === null
+    ? null
+    : Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_COMPOSER_STREAM_TIMEOUT_MS;
   let timedOut = false;
   const onAbort = () => controller.abort();
   if (options.signal?.aborted) controller.abort();
   options.signal?.addEventListener("abort", onAbort, { once: true });
-  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const timeoutId = timeoutMs === null ? null : setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
     const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, controller.signal);
     const result = await readDeepSeekSse(response, options.onDelta);
@@ -445,7 +446,7 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
     if (timedOut) throw new DeepSeekApiError("DeepSeek 流式输出超时，本次结果未保存", 408);
     throw error;
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId !== null) clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", onAbort);
   }
 }

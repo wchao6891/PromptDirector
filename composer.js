@@ -25,7 +25,7 @@ import {
 export const COMPOSER_METHOD_VERSION = COMPOSER_AGENT_VERSION;
 export const COMPOSER_AI_MODELS = Object.freeze(["deepseek-v4-flash", "deepseek-v4-pro"]);
 export const COMPOSER_SERVICE_IDS = Object.freeze([
-  "deepseek", "openai", "compatible", "xai", "gemini", "openrouter", "minimax", "volcengine"
+  "deepseek", "openai", "compatible", "xai", "kimi", "gemini", "openrouter", "minimax", "volcengine"
 ]);
 export const DEFAULT_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "deepseek", model: "deepseek-v4-flash", thinking: false });
 export const COMPOSER_INPUT_MAX_CHARACTERS = 750_000;
@@ -334,8 +334,14 @@ export function createComposerSession(input = {}) {
 export function imageReferenceModeAvailability(referenceSnapshots = []) {
   const missingAssetIds = [];
   for (const reference of Array.isArray(referenceSnapshots) ? referenceSnapshots : []) {
+    const promptBacked = Boolean(
+      String(reference?.originalText ?? "").trim()
+      || (["prompt", "prompt_vision"].includes(reference?.referenceKind)
+        && String(reference?.referenceText ?? "").trim())
+    );
     const assets = new Map((Array.isArray(reference?.assets) ? reference.assets : []).map((item) => [item.assetId, item]));
     for (const imageRef of Array.isArray(reference?.imageRefs) ? reference.imageRefs : []) {
+      if (promptBacked) continue;
       const assetId = String(imageRef?.visualId ?? "").trim();
       const asset = assets.get(assetId);
       const fingerprintMatches = Boolean(asset?.imageFingerprint && asset?.analysisImageFingerprint
@@ -361,7 +367,9 @@ export function normalizeGenerationParameters(value = {}, targetType = "image") 
   }
   return {
     size: cleanParameter(source.size),
-    quality: cleanParameter(source.quality)
+    quality: cleanParameter(source.quality),
+    aspectRatio: cleanParameter(source.aspectRatio),
+    imageSize: cleanParameter(source.imageSize)
   };
 }
 

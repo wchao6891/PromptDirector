@@ -54,7 +54,12 @@ export async function createZipBlob(files) {
   );
 }
 
-export async function readZipBlob(archive, limitsValue = {}) {
+export async function readZipBlob(archive, limitsValue = {}, options = {}) {
+  const reader = await openZipBlob(archive, limitsValue);
+  return reader.read(null, options);
+}
+
+export async function openZipBlob(archive, limitsValue = {}) {
   const limits = portableLibraryLimits(limitsValue);
   if (!(archive instanceof Blob) || archive.size < 22) throw invalidZip();
   if (archive.size > limits.maxArchiveBytes) {
@@ -79,8 +84,9 @@ export async function readZipBlob(archive, limitsValue = {}) {
   }
   if (directoryOffset + directorySize !== endOffset) throw invalidZip();
 
-  const files = new Map();
-  let extractedBytes = 0;
+  const records = [];
+  const names = new Set();
+  let declaredBytes = 0;
   let cursor = directoryOffset;
   for (let index = 0; index < fileCount; index += 1) {
     if (cursor + 46 > endOffset || view.getUint32(cursor, true) !== 0x02014b50) throw invalidZip();
@@ -114,7 +120,7 @@ export async function readZipBlob(archive, limitsValue = {}) {
       continue;
     }
     const name = normalizeArchivePath(decodedName);
-    if (name !== decodedName || files.has(name)) throw new Error("ZIP 内包含不安全或重复的文件路径");
+    if (name !== decodedName || names.has(name)) throw new Error("ZIP 内包含不安全或重复的文件路径");
 
     if (localOffset + 30 > directoryOffset || view.getUint32(localOffset, true) !== 0x04034b50) throw invalidZip();
     const localFlags = view.getUint16(localOffset + 6, true);
@@ -136,17 +142,45 @@ export async function readZipBlob(archive, limitsValue = {}) {
     const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
     const dataEnd = dataOffset + compressedSize;
     if (dataEnd > directoryOffset) throw invalidZip();
-    const compressed = bytes.subarray(dataOffset, dataEnd);
-    const data = method === STORE_METHOD ? compressed : await inflateRaw(compressed, size, name);
-    if (data.byteLength !== size) throw new Error(`ZIP 内的文件解压大小不符：${name}`);
-    extractedBytes += data.byteLength;
-    if (extractedBytes > limits.maxArchiveBytes) throw new Error("ZIP 解压内容超过安全上限");
-    if (crc32(data) !== checksum) throw new Error(`ZIP 内的文件已损坏：${name}`);
-    files.set(name, new Blob([data], { type: mimeTypeForPath(name) }));
+    declaredBytes += size;
+    if (declaredBytes > limits.maxArchiveBytes) throw new Error("ZIP 解压内容超过安全上限");
+    names.add(name);
+    records.push({ name, method, checksum, compressedSize, size, dataOffset, dataEnd });
     cursor = nameEnd + extraLength + entryCommentLength;
   }
   if (cursor !== endOffset) throw invalidZip();
-  return files;
+  return {
+    names: Object.freeze([...names]),
+    async read(selectedNames = null, options = {}) {
+      const requested = selectedNames == null
+        ? null
+        : new Set((Array.isArray(selectedNames) ? selectedNames : [...selectedNames]).map(normalizeArchivePath));
+      if (requested) {
+        for (const name of requested) {
+          if (!names.has(name)) throw new Error(`ZIP 内缺少文件：${name}`);
+        }
+      }
+      const targets = requested ? records.filter((record) => requested.has(record.name)) : records;
+      const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => undefined;
+      const files = new Map();
+      let extractedBytes = 0;
+      for (let index = 0; index < targets.length; index += 1) {
+        const record = targets[index];
+        const compressed = bytes.subarray(record.dataOffset, record.dataEnd);
+        const data = record.method === STORE_METHOD
+          ? compressed
+          : await inflateRaw(compressed, record.size, record.name);
+        if (data.byteLength !== record.size) throw new Error(`ZIP 内的文件解压大小不符：${record.name}`);
+        extractedBytes += data.byteLength;
+        if (extractedBytes > limits.maxArchiveBytes) throw new Error("ZIP 解压内容超过安全上限");
+        if (crc32(data) !== record.checksum) throw new Error(`ZIP 内的文件已损坏：${record.name}`);
+        files.set(record.name, new Blob([data], { type: mimeTypeForPath(record.name) }));
+        onProgress({ completed: index + 1, total: targets.length, name: record.name, extractedBytes });
+        if ((index + 1) % 8 === 0 && index + 1 < targets.length) await yieldToMain();
+      }
+      return files;
+    }
+  };
 }
 
 async function inflateRaw(bytes, expectedSize, name) {
@@ -285,10 +319,14 @@ function ensureUint32(value, message) {
 
 function crc32(bytes) {
   let checksum = 0xffffffff;
-  for (const byte of bytes) {
-    checksum = CRC_TABLE[(checksum ^ byte) & 0xff] ^ (checksum >>> 8);
+  for (let index = 0; index < bytes.length; index += 1) {
+    checksum = CRC_TABLE[(checksum ^ bytes[index]) & 0xff] ^ (checksum >>> 8);
   }
   return (checksum ^ 0xffffffff) >>> 0;
+}
+
+function yieldToMain() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 const CRC_TABLE = new Uint32Array(256);

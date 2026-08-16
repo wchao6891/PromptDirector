@@ -17,7 +17,18 @@ export const PAGE_CAPTURE_LIMITS = Object.freeze({
   maxCandidates: 100,
   maxMediaPerCandidate: 24,
   maxScrollSteps: 30,
+  navigationTimeoutMs: 30_000,
   maxInlinePixelDataCharacters: Math.ceil(PORTABLE_LIBRARY_LIMITS.maxImageBytes * 4 / 3) + 512
+});
+
+// Product limits confirmed for the local, non-AI page-capture review flow.
+export const PAGE_CAPTURE_QUALITY_LIMITS = Object.freeze({
+  maxRegionCandidates: 5,
+  maxCandidateChoices: 10,
+  maxCreativeSections: 5,
+  maxPossibleOmissions: 5,
+  maxContentTargetsPerCandidate: 200,
+  minOrdinarySectionCharacters: 200
 });
 
 export function portableLibraryLimits(value = {}) {

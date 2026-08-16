@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import zipfile
@@ -29,6 +30,8 @@ def main() -> None:
         {"id": "share-image-two", "kind": "image", "storageMode": "managed", "mimeType": "image/png", "width": 1, "height": 1, "palette": {"colors": ["#123456", "#345678"]}}
     ]
     entries[1]["primaryMediaId"] = "share-image-two"
+    entries[1]["note"] = "不应公开的私人笔记"
+    entries[1]["metadataLabels"] = ["作者：测试作者", "权利：本人原创", "秘密：sk-private"]
     with extension_session("prompt-director-share-") as session:
         setup = session.open_page("collector.html")
         current_schema = setup.evaluate("async () => (await import(chrome.runtime.getURL('taxonomy.js'))).SCHEMA_VERSION")
@@ -58,8 +61,11 @@ def main() -> None:
         library.locator(".case-card").nth(1).click()
         expect(library.locator("#share-count")).to_have_text("已选择 2 个案例")
         library.locator("#share-export").click()
+        expect(library.locator("#share-dialog")).to_be_visible()
+        expect(library.locator("#share-dialog-submit")).to_be_disabled()
+        library.locator("#share-dialog-export").click()
         expect(library.locator("#feedback")).to_contain_text("分享包已导出")
-        archive_path, _ = wait_for_download(library)
+        archive_path, download_id = wait_for_download(library)
         with zipfile.ZipFile(archive_path) as archive:
             shared = json.loads(archive.read("library.json"))
             assert len(shared["entries"]) == 2
@@ -113,12 +119,48 @@ def main() -> None:
         offline.screenshot(path=str(screenshots / "share-preview-detail-mobile.png"), full_page=True)
         offline.close()
 
+        library.locator("#select-cases").click()
+        library.locator('.case-card[data-entry-id="share-two"]').click()
+        library.locator("#share-export").click()
+        expect(library.locator("#share-dialog")).to_be_visible()
+        expect(library.locator("#share-dialog-disclosure")).not_to_be_checked()
+        library.locator("#share-dialog-disclosure").check()
+        expect(library.locator("#share-dialog-submit")).to_be_enabled()
+        library.locator("#share-dialog-submit").click()
+        expect(library.locator("#share-dialog-result")).to_be_visible(timeout=15_000)
+        expect(library.locator("#share-dialog-result")).to_contain_text("投稿包已生成")
+        expect(library.locator("#share-dialog-show-files")).to_be_visible()
+        expect(library.locator("#share-dialog-open-form")).to_be_visible()
+        submission_path, _ = wait_for_download(library, after_id=download_id)
+        with zipfile.ZipFile(submission_path) as transport:
+            assert sorted(transport.namelist()) == ["payload.zip", "submission.json"]
+            manifest = json.loads(transport.read("submission.json"))
+            payload_bytes = transport.read("payload.zip")
+            assert manifest["format"] == "prompt-director-curated-submission"
+            assert manifest["version"] == 1
+            assert manifest["caseCount"] == 1
+            assert manifest["mediaCount"] == 1
+            assert manifest["payloadBytes"] == len(payload_bytes)
+            import hashlib
+            assert manifest["submissionId"] == hashlib.sha256(payload_bytes).hexdigest()
+            with zipfile.ZipFile(io.BytesIO(payload_bytes)) as payload:
+                submission_library = json.loads(payload.read("library.json"))
+                assert len(submission_library["entries"]) == 1
+                assert submission_library["entries"][0]["title"] == "分享案例二"
+                serialized = json.dumps(submission_library, ensure_ascii=False)
+                assert "不应公开的私人笔记" not in serialized
+                assert "sk-private" not in serialized
+                assert "作者：测试作者" in serialized
+                assert "权利：本人原创" in serialized
+                assert payload.testzip() is None
+        library.locator("#share-dialog-close").click()
+
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="general"]').click()
         expect(library.locator("#create-folder-backup")).to_be_visible()
         expect(library.locator("#restore-folder-backup")).to_be_visible()
         assert library.locator("#create-portable-backup").count() == 0
-        print({"shared_entries": 2, "private_drafts_removed": True, "data_safety": True, "offline_preview": True, "mobile_width": 390, "screenshots": str(screenshots)})
+        print({"shared_entries": 2, "curated_submission": True, "private_drafts_removed": True, "data_safety": True, "offline_preview": True, "mobile_width": 390, "screenshots": str(screenshots)})
 
 
 if __name__ == "__main__":

@@ -237,8 +237,10 @@
 .composer-reference-header p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
 .composer-reference-body { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); min-height: 0; }
 .composer-reference-workspace[data-mode="references"] .composer-reference-body,
-.composer-reference-workspace[data-mode="methods"] .composer-reference-body { grid-template-columns: minmax(0, 1fr); }
-.composer-reference-workspace[data-mode="methods"] .composer-projects-panel { border-right: 0; }
+.composer-reference-workspace[data-mode="skills"] .composer-reference-body { grid-template-columns: minmax(0, 1fr); }
+.composer-reference-workspace[data-mode="skills"] .composer-projects-panel { border-right: 0; }
+.composer-reference-workspace[data-mode="skills"] .composer-reference-heading,
+.composer-reference-workspace[data-mode="skills"] .composer-project-list { width: min(1120px, 100%); margin-right: auto; margin-left: auto; }
 .composer-projects-panel { min-height: 0; overflow: auto; border-right: 1px solid var(--line); padding: 22px 18px; background: var(--sidebar); }
 .composer-case-picker { min-width: 0; min-height: 0; overflow: auto; padding: 22px clamp(18px, 3vw, 38px) 34px; }
 .composer-reference-heading { display: flex; min-height: 42px; align-items: start; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
@@ -249,12 +251,12 @@
 .composer-reference-filters select, .composer-reference-filters input { min-height: 36px; font-size: 11px; }
 .composer-reference-filters select { width: 160px; }
 .composer-reference-search { width: min(320px, 36vw); }
-.composer-project-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 9px; }
-.composer-project-card { border: 1px solid var(--line); border-radius: 13px; padding: 12px; background: var(--card); }
+.composer-project-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-content: start; gap: 9px; }
+.composer-project-card { min-height: 154px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 13px; padding: 12px; background: var(--card); }
 .composer-project-card > header { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
 .composer-project-card strong { font-size: 11px; }
 .composer-project-card small { color: var(--muted); font-size: 9px; }
-.composer-project-card p { margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.composer-project-card p { display: -webkit-box; flex: 1; overflow: hidden; margin: 8px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .composer-project-card > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .composer-project-card button { min-height: 30px; padding: 5px 8px; font-size: 10px; }
 .composer-project-card .composer-project-active { border-color: var(--selection-edge); color: var(--ink); background: var(--selection); box-shadow: inset 2px 0 var(--selection-indicator); }

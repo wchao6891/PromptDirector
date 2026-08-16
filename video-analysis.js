@@ -10,7 +10,7 @@ export const GEMINI_VIDEO_API_ROOT = "https://generativelanguage.googleapis.com/
 export const GEMINI_FILE_POLL_INTERVAL_MS = 2_000;
 export const GEMINI_FILE_POLL_LIMIT = 150;
 const GEMINI_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/mpeg", "video/quicktime", "video/avi", "video/x-flv", "video/mpg", "video/webm", "video/wmv", "video/3gpp"]);
-const OPENROUTER_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/mpeg", "video/quicktime", "video/webm"]);
+const CHAT_COMPLETIONS_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/mpeg", "video/quicktime", "video/webm"]);
 
 export function requireVideoAnalysisConfirmation(value) {
   if (value !== true) throw new Error("请从视频分析确认框开始本次付费媒体分析");
@@ -74,28 +74,36 @@ export async function analyzeVideoWithGemini(input = {}, dependencies = {}) {
 }
 
 export async function analyzeVideoWithOpenRouter(input = {}, dependencies = {}) {
+  return analyzeVideoWithChatCompletions({
+    ...input,
+    providerLabel: clean(input.providerLabel) || "OpenRouter"
+  }, dependencies);
+}
+
+export async function analyzeVideoWithChatCompletions(input = {}, dependencies = {}) {
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const apiKey = clean(input.apiKey);
   const model = clean(input.model);
-  if (!apiKey || !model) throw new Error("OpenRouter 视频分析尚未完成配置");
+  const providerLabel = clean(input.providerLabel) || "兼容视频服务";
+  if (!apiKey || !model) throw new Error(`${providerLabel} 视频分析尚未完成配置`);
   const prompt = videoAnalysisPrompt(input.mode, input.customQuestion);
   const onStage = typeof input.onStage === "function" ? input.onStage : () => {};
   let videoUrl;
   let sourceKind;
   if (input.videoBlob instanceof Blob) {
-    if (!OPENROUTER_VIDEO_MIME_TYPES.has(input.videoBlob.type)) {
-      throw new Error(`OpenRouter 当前不支持 ${input.videoBlob.type || "未知格式"} 视频；请先转换为 MP4、WebM、MOV 或 MPEG`);
+    if (!CHAT_COMPLETIONS_VIDEO_MIME_TYPES.has(input.videoBlob.type)) {
+      throw new Error(`${providerLabel} 当前不支持 ${input.videoBlob.type || "未知格式"} 视频；请先转换为 MP4、WebM、MOV 或 MPEG`);
     }
     sourceKind = "local-video";
     onStage("encoding");
     videoUrl = await blobDataUrl(input.videoBlob);
   } else {
     videoUrl = safeHttpsUrl(input.youtubeUrl);
-    if (!videoUrl) throw new Error("该视频链接不能安全发送给 OpenRouter，请改用 HTTPS 地址或附加本地视频文件");
+    if (!videoUrl) throw new Error(`该视频链接不能安全发送给 ${providerLabel}，请改用 HTTPS 地址或附加本地视频文件`);
     sourceKind = "public-video-url";
   }
   onStage("analyzing");
-  const endpoint = openRouterChatEndpoint(input.endpoint);
+  const endpoint = chatCompletionsEndpoint(input.endpoint, providerLabel);
   const response = await fetchImpl(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -113,17 +121,22 @@ export async function analyzeVideoWithOpenRouter(input = {}, dependencies = {}) 
       }]
     })
   });
-  const payload = await readJsonResponse(response, "OpenRouter 视频分析");
-  const text = openRouterMessageText(payload?.choices?.[0]?.message?.content);
-  if (!text) throw new Error("OpenRouter 没有返回可保存的视频分析文字");
+  let payload;
+  try {
+    payload = await readJsonResponse(response, `${providerLabel} 视频分析`);
+  } catch (error) {
+    throw new Error(`${providerLabel} 视频分析失败：${redactSecret(error?.message, apiKey)}`, { cause: error });
+  }
+  const text = chatCompletionsMessageText(payload?.choices?.[0]?.message?.content);
+  if (!text) throw new Error(`${providerLabel} 没有返回可保存的视频分析文字`);
   onStage("completed");
   return {
     text,
-    provider: "OpenRouter",
+    provider: providerLabel,
     model: clean(payload.model) || model,
     sourceKind,
     prompt,
-    usage: normalizeOpenRouterUsage(payload.usage),
+    usage: normalizeChatCompletionsUsage(payload.usage),
     cost: Number.isFinite(Number(payload.usage?.cost)) ? Number(payload.usage.cost) : null,
     routing: clean(payload.provider) ? { provider: clean(payload.provider) } : null
   };
@@ -200,9 +213,9 @@ function safeGoogleUploadUrl(value) {
   }
 }
 
-function openRouterChatEndpoint(value) {
-  const endpoint = safeHttpsUrl(value || "https://openrouter.ai/api/v1");
-  if (!endpoint) throw new Error("OpenRouter 接口地址无效");
+function chatCompletionsEndpoint(value, providerLabel) {
+  const endpoint = safeHttpsUrl(value);
+  if (!endpoint) throw new Error(`${providerLabel} 接口地址无效`);
   const url = new URL(endpoint);
   url.pathname = `${url.pathname.replace(/\/$/, "").replace(/\/chat\/completions$/, "")}/chat/completions`;
   url.search = "";
@@ -227,7 +240,7 @@ async function blobDataUrl(blob) {
   return `data:${blob.type};base64,${btoa(binary)}`;
 }
 
-function openRouterMessageText(value) {
+function chatCompletionsMessageText(value) {
   if (typeof value === "string") return clean(value);
   return (Array.isArray(value) ? value : [])
     .map((part) => clean(part?.text ?? part?.content))
@@ -235,12 +248,18 @@ function openRouterMessageText(value) {
     .join("\n\n");
 }
 
-function normalizeOpenRouterUsage(value = {}) {
+function normalizeChatCompletionsUsage(value = {}) {
   return {
     inputTokens: Math.max(0, Number(value.prompt_tokens ?? value.input_tokens) || 0),
     outputTokens: Math.max(0, Number(value.completion_tokens ?? value.output_tokens) || 0),
     totalTokens: Math.max(0, Number(value.total_tokens) || 0)
   };
+}
+
+function redactSecret(value, secretValue) {
+  const message = clean(value);
+  const secret = clean(secretValue);
+  return secret ? message.split(secret).join("[已隐藏 API Key]") : message;
 }
 
 async function readJsonResponse(response, label) {

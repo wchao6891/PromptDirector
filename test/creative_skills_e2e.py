@@ -14,6 +14,19 @@ from e2e_support import base_entry, extension_session, wait_for_download
 def main() -> None:
     first = base_entry("skill-source-a", "本地标题甲", "低饱和庭院，主体偏左，前景遮挡形成纵深。", "content:prompt:image")
     second = base_entry("skill-source-b", "本地标题乙", "柔和逆光勾勒人物轮廓，背景保持克制。", "content:prompt:image", 1)
+    first["mediaAssets"] = [
+        {
+            "id": "skill-image-a1", "kind": "image", "usage": "content", "storageMode": "managed",
+            "mimeType": "image/png", "capturedAt": "2026-08-02T08:00:00.000Z", "reviewStatus": "verified",
+            "visionAnalysis": {"description": "默认选中的主体构图", "invalidated": False},
+        },
+        {
+            "id": "skill-image-a2", "kind": "image", "usage": "content", "storageMode": "managed",
+            "mimeType": "image/png", "capturedAt": "2026-08-02T08:00:01.000Z", "reviewStatus": "verified",
+            "visionAnalysis": {"description": "未选择素材绝不能发送", "invalidated": False},
+        },
+    ]
+    first["primaryMediaId"] = "skill-image-a1"
     with tempfile.TemporaryDirectory(prefix="prompt-director-skill-fixture-") as fixture_dir, extension_session("prompt-director-skills-") as session:
         fixture_root = Path(fixture_dir)
         external_zip = fixture_root / "external-method.zip"
@@ -49,6 +62,18 @@ Run `scripts/helper.py` before applying the composition guidance.
                 "consent": True,
                 "analysisModel": "deepseek-v4-flash",
             },
+            "aiProviderRegistry": {"providers": {
+                "deepseek": {
+                    "endpoint": "https://api.deepseek.com/chat/completions", "protocol": "chat_completions",
+                    "apiKey": "skill-e2e-key", "consent": True,
+                    "models": {"textTags": "deepseek-v4-flash", "skillExtraction": "deepseek-v4-flash", "creativePlanning": "deepseek-v4-flash"},
+                },
+                "xai": {
+                    "endpoint": "https://api.x.ai/v1", "protocol": "xai", "apiKey": "xai-e2e-key", "consent": True,
+                    "models": {"skillExtraction": "grok-skill"},
+                },
+            }},
+            "aiTaskAssignments": {"skillExtraction": {"providerId": "deepseek", "model": "deepseek-v4-flash"}},
             "uiPreferences": {"locale": "zh-CN", "theme": "light", "motion": "none"},
         })
 
@@ -69,11 +94,46 @@ Run `scripts/helper.py` before applying the composition guidance.
 
         session.context.route("https://api.deepseek.com/**", mock_deepseek)
         skills = session.open_page("skills.html")
+        runtime = skills.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'skillExtraction'})")
+        assert runtime["aiRuntimeProtocolVersion"] == 1
+        assert runtime["runtimeDescriptor"]["providerLabel"] == "DeepSeek"
+        assert runtime["runtimeDescriptor"]["model"] == "deepseek-v4-flash"
+        overridden = skills.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'skillExtraction', assignment: {providerId: 'xai', model: 'grok-skill'}})")
+        assert overridden["runtimeDescriptor"]["providerLabel"] == "xAI"
+        assert overridden["runtimeDescriptor"]["model"] == "grok-skill"
+        assert overridden["aiSettings"]["compatible"]["model"] == "grok-skill"
         skills.locator("#skill-create").click()
+        skills.locator("#skill-advanced").click()
+        expect(skills.locator("#skill-text-provider-menu summary")).to_contain_text("DeepSeek")
+        skills.locator("#skill-text-provider-menu summary").click()
+        expect(skills.locator("#skill-text-provider-menu .skill-option-panel")).to_contain_text("xAI")
+        skills.locator("#skill-text-provider-menu summary").click()
         expect(skills.locator(".skill-case")).to_have_count(2)
         expect(skills.locator("#skill-project-actions")).to_have_count(0)
+        expect(skills.locator("#skill-project-picker")).not_to_have_attribute("open", "")
+        skills.locator("#skill-project-picker > summary").click()
+        expect(skills.locator("#skill-project-filter")).to_contain_text("风格来源")
+        skills.locator("#skill-workspace-title").click()
+        expect(skills.locator("#skill-project-picker")).not_to_have_attribute("open", "")
+        skills.locator("#skill-project-picker > summary").click()
+        skills.locator("#skill-project-filter button", has_text="全部项目").click()
         skills.locator("#skill-case-search").fill("标题甲")
         expect(skills.locator(".skill-case")).to_have_count(1)
+        skills.locator("#skill-visible-select").click()
+        expect(skills.locator("#skill-selected-count")).to_have_text("1")
+        skills.locator(".skill-case-detail").click()
+        expect(skills.locator("#skill-source-inspector")).to_be_visible()
+        expect(skills.locator(".skill-source-asset")).to_have_count(2)
+        expect(skills.locator(".skill-source-asset input:checked")).to_have_count(1)
+        skills.screenshot(path="/tmp/promptdirector-skills-inspector-light.png")
+        skills.locator("#skill-source-clear").click()
+        expect(skills.locator("#skill-selected-count")).to_have_text("1")
+        skills.locator("#skill-source-cancel").click()
+        expect(skills.locator("#skill-selected-count")).to_have_text("1")
+        skills.locator(".skill-case-detail").click()
+        skills.locator("#skill-source-clear").click()
+        skills.locator("#skill-source-apply").click()
+        expect(skills.locator("#skill-selected-count")).to_have_text("0")
         skills.locator("#skill-visible-select").click()
         expect(skills.locator("#skill-selected-count")).to_have_text("1")
         skills.locator("#skill-case-search").fill("")
@@ -82,19 +142,27 @@ Run `scripts/helper.py` before applying the composition guidance.
         skills.locator("#skill-visible-select").click()
         expect(skills.locator("#skill-selected-count")).to_have_text("2")
         skills.locator("#skill-goal").fill("只提炼我喜欢的构图、色彩和人物光线")
+        skills.screenshot(path="/tmp/promptdirector-skills-create-light.png", full_page=True)
         skills.locator("#skill-generate").click()
         preflight = skills.locator("#promptdirector-app-dialog")
         expect(preflight).to_be_visible()
         expect(preflight).to_contain_text("案例与证据：2 项")
+        expect(preflight).to_contain_text("tokens")
         expect(preflight).to_contain_text("预计请求：1 次")
         preflight.get_by_role("button", name="开始提炼").click()
         expect(skills.locator("#skill-draft-step")).to_be_visible()
         expect(skills.locator("#skill-markdown")).to_have_value(re.compile("视觉组织方法"))
+        expect(skills.locator("#skill-run-panel")).to_be_visible()
+        expect(skills.locator("#skill-generation-status")).to_contain_text("草稿已生成")
+        expect(skills.locator("#skill-run-progress")).to_have_attribute("style", re.compile("100%"))
+        expect(skills.locator("#skill-run-log")).to_contain_text("文字提炼完成")
         assert len(requests) == 1
         sent = json.dumps(requests[0], ensure_ascii=False)
         assert "本地标题甲" not in sent
         assert "本地标题乙" not in sent
         assert "fixture.invalid" not in sent
+        assert "默认选中的主体构图" in sent
+        assert "未选择素材绝不能发送" not in sent
         assert "只提炼我喜欢的构图、色彩和人物光线" in sent
 
         skills.locator("#skill-call-name").fill("国风视觉")
@@ -136,6 +204,10 @@ Run `scripts/helper.py` before applying the composition guidance.
         assert len(session.context.pages) == page_count
         composer = skills
         expect(composer.locator(".composer-skill-chip")).to_contain_text("/国风视觉")
+        composer.locator("#composer-reference-open").click()
+        composer.locator(".composer-case-option", has_text="本地标题甲").locator(".composer-case-preview-checkbox").check()
+        composer.locator("#composer-reference-apply").click()
+        expect(composer.locator("#composer-reference-count")).to_have_text("1")
 
         composer.locator("#composer-new").click()
         composer.locator("#composer-instruction").fill("/国")
@@ -227,7 +299,7 @@ Run `scripts/helper.py` before applying the composition guidance.
           };
         }""")
         assert card_layout["alignItems"] == "start", card_layout
-        assert card_layout["lineClamp"] == "3", card_layout
+        assert card_layout["lineClamp"] == "2", card_layout
         assert card_layout["verboseHeight"] < 220, card_layout
         skills.locator(".skill-card", has_text="external-method").click()
         expect(skills.locator("#skill-export")).to_have_count(1)
@@ -235,6 +307,36 @@ Run `scripts/helper.py` before applying the composition guidance.
 
         skills.goto(composer_url, wait_until="domcontentloaded")
         composer = skills
+        composer.set_viewport_size({"width": 1840, "height": 900})
+        composer.evaluate("""async () => chrome.storage.local.set({
+          uiPreferences: { locale: 'zh-CN', theme: 'dark', motion: 'none' }
+        })""")
+        composer.reload(wait_until="domcontentloaded")
+        composer.locator("#composer-reference-open").click()
+        composer.locator("#composer-reference-tab-skills").click()
+        expect(composer.locator("#composer-projects-panel")).to_be_visible()
+        expect(composer.locator(".composer-project-card")).to_have_count(2)
+        composer.screenshot(path="/tmp/promptdirector-composer-skills-after.png")
+        skill_workspace_layout = composer.evaluate("""() => {
+          const body = document.querySelector('.composer-reference-body').getBoundingClientRect();
+          const panel = document.querySelector('#composer-projects-panel').getBoundingClientRect();
+          const descriptions = [...document.querySelectorAll('.composer-project-state')];
+          const cards = [...document.querySelectorAll('.composer-project-card')];
+          return {
+            mode: document.querySelector('#composer-reference-workspace').dataset.mode,
+            panelRatio: panel.width / body.width,
+            descriptionClamp: descriptions.map((item) => getComputedStyle(item).webkitLineClamp),
+            maxCardHeight: Math.max(...cards.map((item) => item.getBoundingClientRect().height)),
+            pageWidth: document.documentElement.scrollWidth,
+            viewportWidth: innerWidth
+          };
+        }""")
+        assert skill_workspace_layout["mode"] == "skills", skill_workspace_layout
+        assert skill_workspace_layout["panelRatio"] >= 0.75, skill_workspace_layout
+        assert set(skill_workspace_layout["descriptionClamp"]) == {"3"}, skill_workspace_layout
+        assert skill_workspace_layout["maxCardHeight"] < 240, skill_workspace_layout
+        assert skill_workspace_layout["pageWidth"] <= skill_workspace_layout["viewportWidth"], skill_workspace_layout
+        composer.locator("#composer-reference-close").click()
         composer.locator("#composer-instruction").fill("/external")
         expect(composer.locator("#composer-skill-menu")).to_be_visible()
         composer.locator("#composer-skill-menu button").first.click()

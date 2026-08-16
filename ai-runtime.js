@@ -1,7 +1,6 @@
 import { normalizeAiSettings } from "./deepseek.js";
 import { normalizeVisionSettings } from "./vision.js";
 import {
-  migrateLegacyAiConfiguration,
   normalizeAiProviderRegistry,
   normalizeAiTaskAssignments,
   resolveAiProviderAssignment
@@ -19,21 +18,17 @@ export function requireAiRuntimeProtocolVersion(value) {
 }
 
 export function aiConfigurationFromStorage(stored = {}) {
-  const migrated = stored.aiProviderRegistry
-    ? {
-        registry: normalizeAiProviderRegistry(stored.aiProviderRegistry),
-        assignments: normalizeAiTaskAssignments(stored.aiTaskAssignments, stored.aiProviderRegistry)
-      }
-    : migrateLegacyAiConfiguration(stored);
+  const registry = normalizeAiProviderRegistry(stored.aiProviderRegistry);
   return {
-    ...migrated,
-    preferences: normalizeAiPreferences(stored.aiPreferences, stored)
+    registry,
+    assignments: normalizeAiTaskAssignments(stored.aiTaskAssignments, registry),
+    preferences: normalizeAiPreferences(stored.aiPreferences)
   };
 }
 
-export function normalizeAiPreferences(value = {}, legacy = {}) {
-  const text = normalizeAiSettings(legacy.aiSettings);
-  const vision = normalizeVisionSettings(legacy.visionSettings);
+export function normalizeAiPreferences(value = {}) {
+  const text = normalizeAiSettings();
+  const vision = normalizeVisionSettings();
   const source = value && typeof value === "object" ? value : {};
   return {
     version: 1,
@@ -55,35 +50,41 @@ export function projectAiRuntime(configurationValue = {}) {
   const configuration = normalizeConfiguration(configurationValue);
   const { registry, assignments, preferences } = configuration;
   const providers = registry.providers;
-  const planning = settingsForTextAssignment(assignments.textTags, providers, preferences, false);
+  const planning = settingsForTextAssignment(assignments.creativePlanning, providers, preferences, false);
   const openai = providers.openai;
-  const compatible = providers["custom-media"] || providers.custom;
+  const compatible = providers["custom-media"];
   const imageAnalysis = assignments.imageAnalysis;
   const vision = normalizeVisionSettings({
-    activeProvider: ["custom-media", "custom"].includes(imageAnalysis.providerId) ? "compatible" : "openai",
+    activeProvider: imageAnalysis.providerId === "custom-media" ? "compatible" : "openai",
     consent: true,
     autoAnalyzeImports: preferences.autoAnalyzeImports,
     instructionsByLocale: preferences.visionInstructionsByLocale,
     openai: {
-      model: assignments.imageAnalysis.providerId === "openai" ? assignments.imageAnalysis.model : openai?.models?.imageAnalysis,
+      model: assignments.imageAnalysis.providerId === "openai" ? assignments.imageAnalysis.model : "",
       apiKey: usableKey(openai),
       videoGeneration: {
         ...(openai?.videoGeneration ?? {}),
-        model: openai?.models?.videoGeneration || openai?.videoGeneration?.model
+        model: assignments.videoGeneration.providerId === "openai" ? assignments.videoGeneration.model : ""
       }
     },
     compatible: {
       protocol: compatible?.protocol,
       endpoint: compatible?.endpoint,
-      model: compatible?.models?.imageAnalysis,
+      model: assignments.imageAnalysis.providerId === "custom-media" ? assignments.imageAnalysis.model : "",
       apiKey: usableKey(compatible),
       imageGeneration: {
         ...(compatible?.imageGeneration ?? {}),
-        model: compatible?.models?.imageGeneration || compatible?.imageGeneration?.model,
+        model: assignments.imageGeneration.providerId === "custom-media" ? assignments.imageGeneration.model : "",
         apiKey: usableKey(compatible, true, "imageGeneration")
       }
     }
   });
+  if (!clean(imageAnalysis?.providerId)) {
+    vision.activeProvider = "compatible";
+    vision.openai.model = "";
+    vision.compatible.endpoint = "";
+    vision.compatible.model = "";
+  }
   const xai = providers.xai;
   return {
     aiSettings: planning,
@@ -92,23 +93,29 @@ export function projectAiRuntime(configurationValue = {}) {
       providerProfiles: providers,
       xai: {
         apiKey: usableKey(xai),
-        textModel: xai?.models?.creativePlanning,
-        imageModel: xai?.models?.imageGeneration || xai?.models?.imageAnalysis,
-        videoModel: xai?.models?.videoGeneration,
+        textModel: assignments.creativePlanning.providerId === "xai" ? assignments.creativePlanning.model : "",
+        imageModel: assignments.imageGeneration.providerId === "xai"
+          ? assignments.imageGeneration.model
+          : assignments.imageAnalysis.providerId === "xai" ? assignments.imageAnalysis.model : "",
+        videoModel: assignments.videoGeneration.providerId === "xai" ? assignments.videoGeneration.model : "",
         mediaConsent: xai?.consent === true
       }
     },
     aiServiceProfiles: {
-      gemini: { apiKey: usableKey(providers.gemini, false), model: providers.gemini?.models?.videoAnalysis },
+      gemini: {
+        apiKey: usableKey(providers.gemini, false),
+        model: assignments.videoAnalysis.providerId === "gemini" ? assignments.videoAnalysis.model : ""
+      },
       xai: {
         apiKey: usableKey(xai),
-        textModel: xai?.models?.creativePlanning,
-        imageModel: xai?.models?.imageGeneration || xai?.models?.imageAnalysis,
-        videoModel: xai?.models?.videoGeneration,
+        textModel: assignments.creativePlanning.providerId === "xai" ? assignments.creativePlanning.model : "",
+        imageModel: assignments.imageGeneration.providerId === "xai"
+          ? assignments.imageGeneration.model
+          : assignments.imageAnalysis.providerId === "xai" ? assignments.imageAnalysis.model : "",
+        videoModel: assignments.videoGeneration.providerId === "xai" ? assignments.videoGeneration.model : "",
         mediaConsent: xai?.consent === true
       }
     },
-    aiTaskRoutes: legacyRuntimeRoutes(assignments),
     aiTaskAssignments: assignments,
     aiProviderRegistry: registry,
     aiPreferences: preferences
@@ -133,11 +140,23 @@ export function resolveVisionTaskSettings(taskId, configurationValue = {}, optio
   const resolved = options.requireConfigured === false
     ? configuration.assignments[taskId]
     : resolveAiProviderAssignment(taskId, configuration.registry, configuration.assignments);
+  if (options.requireConfigured === false && !clean(resolved?.providerId)) {
+    const settings = normalizeVisionSettings({
+      activeProvider: "compatible",
+      consent: false,
+      autoAnalyzeImports: configuration.preferences.autoAnalyzeImports,
+      instructionsByLocale: configuration.preferences.visionInstructionsByLocale
+    });
+    settings.openai.model = "";
+    settings.compatible.endpoint = "";
+    settings.compatible.model = "";
+    return settings;
+  }
   const profile = configuration.registry.providers[resolved.providerId];
   if (options.requireConfigured !== false) requireConsent(profile, resolved.provider);
   const openai = resolved.providerId === "openai";
   const endpoint = chatEndpoint(profile);
-  return normalizeVisionSettings({
+  const settings = normalizeVisionSettings({
     activeProvider: openai ? "openai" : "compatible",
     consent: true,
     autoAnalyzeImports: configuration.preferences.autoAnalyzeImports,
@@ -165,6 +184,9 @@ export function resolveVisionTaskSettings(taskId, configurationValue = {}, optio
       model: resolved.model
     } : null
   });
+  settings.openai.model = openai ? clean(resolved.model) : "";
+  settings.compatible.model = openai ? "" : clean(resolved.model);
+  return settings;
 }
 
 export function resolveVideoAnalysisTask(configurationValue = {}) {
@@ -174,35 +196,31 @@ export function resolveVideoAnalysisTask(configurationValue = {}) {
   requireConsent(profile, resolved.provider);
   return {
     ...resolved,
+    providerLabel: resolved.provider,
+    protocol: profile.protocol,
     apiKey: profile.apiKey,
     endpoint: profile.endpoint
   };
 }
 
-export function legacyRuntimeRoutes(assignmentsValue = {}) {
-  const assignments = assignmentsValue && typeof assignmentsValue === "object" ? assignmentsValue : {};
-  const route = (taskId, fallback) => ({
-    serviceId: assignments[taskId]?.providerId === "xai" ? "xai" : fallback,
-    model: clean(assignments[taskId]?.model)
-  });
-  return {
-    "text-tags": route("textTags", "current-text"),
-    "skill-extraction": route("skillExtraction", "current-text"),
-    "creative-planning": route("creativePlanning", "current-text"),
-    "image-analysis": route("imageAnalysis", "current-vision"),
-    "video-analysis": { serviceId: assignments.videoAnalysis?.providerId || "gemini", model: clean(assignments.videoAnalysis?.model) },
-    "image-generation": route("imageGeneration", "current-vision"),
-    "video-generation": route("videoGeneration", "current-vision")
-  };
-}
-
 function settingsForTextAssignment(assignmentValue, providers, preferences, strict) {
-  const providerId = clean(assignmentValue?.providerId) || "deepseek";
-  const profile = providers[providerId] || providers.deepseek;
+  const providerId = clean(assignmentValue?.providerId);
+  if (!providerId) {
+    if (strict) throw new Error("文字任务尚未分配 AI 服务");
+    const settings = normalizeAiSettings({
+      activeProvider: "compatible",
+      consent: false,
+      analysisInstructionsByLocale: preferences.textInstructionsByLocale,
+      compatible: { endpoint: "", model: "", apiKey: "" }
+    });
+    settings.analysisModel = "";
+    return settings;
+  }
+  const profile = providers[providerId];
   if (strict) requireConsent(profile, profile?.label || providerId);
-  const model = clean(assignmentValue?.model) || profile?.models?.textTags || profile?.models?.creativePlanning;
+  const model = clean(assignmentValue?.model);
   const deepseek = providerId === "deepseek";
-  return normalizeAiSettings({
+  const settings = normalizeAiSettings({
     activeProvider: deepseek ? "deepseek" : "compatible",
     apiKey: deepseek ? profile?.apiKey : "",
     analysisModel: deepseek ? model : undefined,
@@ -214,6 +232,9 @@ function settingsForTextAssignment(assignmentValue, providers, preferences, stri
       apiKey: profile?.apiKey
     }
   });
+  settings.analysisModel = model;
+  settings.compatible.model = deepseek ? "" : model;
+  return settings;
 }
 
 function normalizeConfiguration(value = {}) {

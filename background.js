@@ -1,4 +1,5 @@
 import { showPageToast } from "./capture-region.js";
+import { articleDocumentText, finalizeArticleDocumentAssets } from "./article-document.js";
 import {
   classifyContent,
   classifyImportedMedia,
@@ -44,8 +45,6 @@ import {
   ANALYSIS_PROMPT_VERSION,
   analysisProfileFingerprint,
   analysisTaxonomyPrompt,
-  mergeAiSettings,
-  normalizeAiSettings,
   publicAiSettings,
   summarizeVisualSetWithAi
 } from "./deepseek.js";
@@ -170,6 +169,8 @@ import {
   selectLibraryPackage,
   selectProjectPackage
 } from "./library-package.js";
+import { mergeCuratedLibraryPackage } from "./curated-import.js";
+import { prepareCuratedSubmissionState } from "./curated-submission.js";
 import {
   createCollection,
   deleteCollection,
@@ -211,19 +212,38 @@ import {
   createCaptureDraft,
   draftParts,
   draftSourcePages,
-  draftText
+  draftText,
+  sourceContextForUrl
 } from "./capture-draft.js";
 import { createCaptureWorkspace } from "./capture-workspace.js";
 import {
   applyPageCaptureSelections,
+  combinePageCaptureCandidates,
   collectPageCaptureSnapshot,
+  mergePageCaptureRegionEdit,
   PAGE_CAPTURE_ADAPTERS,
-  normalizePageCaptureBatch
+  PAGE_CAPTURE_PLATFORM_ADAPTERS,
+  normalizePageCaptureBatch,
+  normalizePageCaptureCandidate,
+  pageCaptureMediaFetchCandidates,
+  resolvePageCaptureImage
 } from "./page-capture.js";
-import { fetchBoundedMedia } from "./bounded-media.js";
-import { PAGE_CAPTURE_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
-import { publicAiServiceProfiles } from "./ai-task-routing.js";
 import {
+  collectPageCaptureSitePayload,
+  installPageCaptureSiteObserver,
+  normalizePageCaptureSitePayload
+} from "./page-capture-site-adapters.js";
+import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
+import {
+  discardPageSessionMedia,
+  PAGE_SESSION_MEDIA_CHUNK_BYTES,
+  preparePageSessionMedia,
+  readPageSessionMediaChunk
+} from "./page-session-media.js";
+import { PAGE_CAPTURE_LIMITS, PAGE_CAPTURE_QUALITY_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { publicAiServiceProfiles } from "./ai-service-profiles.js";
+import {
+  availableAiProvidersForTask,
   mergeAiProviderRegistry,
   normalizeAiTaskAssignments,
   publicAiProviderRegistry
@@ -238,6 +258,7 @@ import {
   resolveVisionTaskSettings
 } from "./ai-runtime.js";
 import {
+  analyzeVideoWithChatCompletions,
   analyzeVideoWithGemini,
   analyzeVideoWithOpenRouter,
   requireVideoAnalysisConfirmation
@@ -264,10 +285,6 @@ import {
   analyzeImageWithVision,
   blobToDataUrl,
   imageFingerprint,
-  mergeVisionSettings,
-  normalizeVisionSettings,
-  permissionPatternForVisionSettings,
-  probeCompatibleModels,
   publicVisionSettings
 } from "./vision.js";
 import {
@@ -321,10 +338,6 @@ const STORAGE_KEYS = Object.freeze({
   classificationResetBackup: "classificationResetBackup",
   facetMigrationBackup: "creativeFacetMigrationBackupV5",
   facetUndo: "facetUndo",
-  aiSettings: "aiSettings",
-  visionSettings: "visionSettings",
-  aiServiceProfiles: "aiServiceProfiles",
-  aiTaskRoutes: "aiTaskRoutes",
   aiProviderRegistry: "aiProviderRegistry",
   aiTaskAssignments: "aiTaskAssignments",
   aiPreferences: "aiPreferences",
@@ -373,6 +386,11 @@ let automaticSyncScheduled = false;
 let creatingOffscreenDocument = null;
 let visionAnalysisInFlight = false;
 const aiProviderModule = createAiProviderModule();
+const VIDEO_ANALYSIS_ADAPTERS = Object.freeze({
+  gemini: analyzeVideoWithGemini,
+  chat_completions: analyzeVideoWithChatCompletions,
+  openrouter: analyzeVideoWithOpenRouter
+});
 let activePageCapture = null;
 let syncInFlight = null;
 let syncApplyInProgress = false;
@@ -392,7 +410,8 @@ const captureRuntime = createCaptureWorkspace({
   captureDraftStorageKey: STORAGE_KEYS.captureDraft,
   uiPreferencesStorageKey: STORAGE_KEYS.uiPreferences,
   ensureOffscreenDocument,
-  deleteVisual: deleteScreenshotBlob
+  deleteVisual: deleteScreenshotBlob,
+  resolveSourceContext: resolveCaptureSourceContext
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -445,7 +464,8 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target === "offscreen") return false;
   const interaction = {
-    sidePanelOpening: openCreativeResultSidePanel(message, sender)
+    sidePanelOpening: openCreativeResultSidePanel(message, sender),
+    sender
   };
   handleMessage(message, interaction)
     .then(sendResponse)
@@ -508,11 +528,19 @@ async function handleMessage(message, interaction = {}) {
     case "CANCEL_REGION_CAPTURE":
       return captureRuntime.dispatch("cancel-region-capture", { sessionId: message.sessionId });
     case "START_PAGE_CAPTURE":
-      return enqueueCapture(async () => startPageCapture(message.mode));
+      return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount));
     case "CANCEL_PAGE_CAPTURE":
       return cancelPageCapture(message.sessionId);
+    case "PREVIEW_PAGE_CAPTURE_REGION":
+      return previewPageCaptureRegion(message.tabId, message.marker);
+    case "CLEAR_PAGE_CAPTURE_MARKERS":
+      return clearPageCaptureMarkers(message.tabId, message.removeRegionMarkers !== false);
+    case "EDIT_PAGE_CAPTURE_REGION":
+      return editPageCaptureRegion(message.tabId, message.candidate, message.mode);
     case "COMMIT_PAGE_CAPTURE":
       return enqueueCapture(async () => enqueue(async () => commitPageCapture(message.batch)));
+    case "PAGE_CAPTURE_VIEWPORT_FALLBACKS":
+      return capturePageCaptureViewportFallbacks(message, interaction.sender);
     case "SMART_VISUAL_SELECTION_CHANGED":
     case "SMART_VISUAL_SELECTION_ENDED":
     case "REGION_CAPTURE_CHANGED":
@@ -575,6 +603,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => exportArchive(await readState(), message.entryIds));
     case "EXPORT_PROJECT":
       return enqueue(async () => exportProjectArchive(await readState(), message.collectionId));
+    case "EXPORT_CURATED_SUBMISSION":
+      return enqueue(async () => exportCuratedSubmission(await readState(), message));
     case "EXPORT_CREATIVE_EXPERIMENTS":
       return enqueue(async () => exportCreativeExperiments(await readState()));
     case "PREVIEW_CREATIVE_EXPERIMENT_IMPORT":
@@ -587,6 +617,10 @@ async function handleMessage(message, interaction = {}) {
       }));
     case "APPLY_LIBRARY_IMPORT":
       return enqueue(async () => applyLibraryImport(await readState(), message));
+    case "PREVIEW_CURATED_IMPORT":
+      return enqueue(async () => previewCuratedImport(await readState(), message));
+    case "APPLY_CURATED_IMPORT":
+      return enqueue(async () => applyCuratedImport(await readState(), message));
     case "UPDATE_SETTINGS":
       return enqueue(async () => {
         const state = await readState();
@@ -605,12 +639,6 @@ async function handleMessage(message, interaction = {}) {
         await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
         return { ok: true, uiPreferences };
       });
-    case "UPDATE_AI_SETTINGS":
-    case "UPDATE_AI_TEXT_PROVIDER":
-      return enqueue(async () => updateAiTextProvider(message.settings));
-    case "UPDATE_VISION_SETTINGS":
-    case "UPDATE_AI_VISION_PROVIDER":
-      return enqueue(async () => updateAiVisionProvider(message.settings));
     case "UPDATE_AI_PROVIDER_CONFIGURATION":
       return enqueue(async () => updateAiProviderConfiguration(message));
     case "VERIFY_AI_IMAGE_GENERATION_CREDENTIAL":
@@ -618,11 +646,9 @@ async function handleMessage(message, interaction = {}) {
     case "DISCOVER_AI_PROVIDER_MODELS":
       return discoverAiProviderModels(message.providerId, message.force === true);
     case "GET_AI_TASK_RUNTIME":
-      return enqueue(async () => getAiTaskRuntime(message.taskId, message.allowUnconfigured === true));
+      return enqueue(async () => getAiTaskRuntime(message.taskId, message.allowUnconfigured === true, message.assignment));
     case "GET_COMPOSER_AI_RUNTIME":
       return enqueue(async () => getComposerAiRuntime());
-    case "PROBE_VISION_MODELS":
-      return enqueue(async () => probeVisionModels(message.settings));
     case "GET_COMPOSER_SESSION":
       return enqueue(async () => getComposerSession(message.sessionId));
     case "START_CREATIVE_JOB":
@@ -879,43 +905,110 @@ async function captureWorkspace() {
   };
 }
 
-async function startPageCapture(mode = "loaded") {
+async function startPageCapture(mode = "loaded", targetCountValue = 0) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) {
     return { ok: false, message: "请先切换到需要采集的普通网页" };
   }
+  await clearPageCaptureMarkers(tab.id, true).catch(() => undefined);
   const sessionId = crypto.randomUUID();
-  activePageCapture = { sessionId, tabId: tab.id };
-  await chrome.runtime.sendMessage({ type: "PAGE_CAPTURE_CHANGED", sessionId, phase: mode === "whole" ? "scanning" : "starting" }).catch(() => undefined);
-  let result;
+  const listMode = mode === "list";
+  const targetCount = listMode
+    ? Math.min(PAGE_CAPTURE_LIMITS.maxCandidates, Math.max(1, Math.trunc(Number(targetCountValue) || 1)))
+    : 0;
+  activePageCapture = { sessionId, tabId: tab.id, cancelled: false };
+  await chrome.runtime.sendMessage({ type: "PAGE_CAPTURE_CHANGED", sessionId, phase: mode === "whole" || listMode ? "scanning" : "starting" }).catch(() => undefined);
+  const originalUrl = tab.url;
+  let result = null;
+  let stopReason = "";
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["vendor/document-ingestion/Readability.js"]
-    });
-    [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: collectPageCaptureSnapshot,
-      args: [{
+    if (!listMode) {
+      result = { result: await collectPageCaptureTab(tab, {
         sessionId,
-        adapters: PAGE_CAPTURE_ADAPTERS,
         mode: mode === "whole" ? "whole" : "loaded",
-        maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates,
-        maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
-        maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
-        maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters
-      }]
-    });
+        maxCandidates: mode === "loaded" ? PAGE_CAPTURE_QUALITY_LIMITS.maxRegionCandidates : PAGE_CAPTURE_LIMITS.maxCandidates
+      }) };
+    } else {
+      const candidates = new Map();
+      let currentTab = tab;
+      let adapter = "";
+      for (let pageIndex = 0; pageIndex < targetCount && !activePageCapture?.cancelled; pageIndex += 1) {
+        const snapshot = await collectPageCaptureTab(currentTab, { sessionId, mode: "whole", maxCandidates: targetCount });
+        if (!adapter) adapter = snapshot.adapter;
+        else if (snapshot.adapter !== adapter) {
+          stopReason = "layout-changed";
+          break;
+        }
+        const before = candidates.size;
+        for (const candidate of snapshot.candidates || []) {
+          const key = `${candidate.canonicalUrl || ""}\n${candidate.sourceFacts?.itemId || ""}\n${candidate.title || ""}`;
+          if (!candidates.has(key)) candidates.set(key, candidate);
+          if (candidates.size >= targetCount) break;
+        }
+        if (candidates.size >= targetCount) {
+          stopReason = "target-reached";
+          break;
+        }
+        const nextUrl = await findNextPageCaptureListUrl(currentTab.id, currentTab.url);
+        if (activePageCapture?.cancelled) {
+          stopReason = "cancelled";
+          break;
+        }
+        if (!nextUrl) {
+          stopReason = candidates.size === before ? "no-new-items" : "no-next-page";
+          break;
+        }
+        try {
+          await chrome.tabs.update(currentTab.id, { url: nextUrl });
+          await waitForPageCaptureTab(currentTab.id, nextUrl);
+          currentTab = await chrome.tabs.get(currentTab.id);
+        } catch {
+          stopReason = "pagination-failed";
+          break;
+        }
+      }
+      if (activePageCapture?.cancelled) stopReason = "cancelled";
+      result = { result: {
+        id: sessionId,
+        sourceUrl: originalUrl,
+        adapter,
+        candidates: [...candidates.values()].slice(0, targetCount),
+        capturedAt: new Date().toISOString()
+      } };
+    }
   } finally {
+    if (listMode) {
+      try {
+        const current = await chrome.tabs.get(tab.id);
+        if (current.url !== originalUrl) {
+          await chrome.tabs.update(tab.id, { url: originalUrl });
+          await waitForPageCaptureTab(tab.id, originalUrl);
+        }
+      } catch {
+      }
+    }
     activePageCapture = null;
   }
   const batch = normalizePageCaptureBatch({
     ...result?.result,
+    ...(listMode ? {
+      captureMode: "list",
+      saveMode: "",
+      targetCount,
+      stopReason: stopReason || ((result?.result?.candidates?.length || 0) >= targetCount ? "target-reached" : "no-new-items"),
+      candidates: (result?.result?.candidates || []).slice(0, targetCount)
+    } : {}),
     tabId: tab.id,
     status: "preview"
   });
   if (!batch.candidates.length) {
-    return { ok: false, message: "当前网页没有识别到可保存的正文、作品或媒体" };
+    const jimengHome = /^https:\/\/jimeng\.jianying\.com\/ai-tool\/home(?:\/|$)/iu.test(tab.url);
+    return {
+      ok: false,
+      message: jimengHome
+        ? "即梦主页作品信息尚未完整取得，请刷新页面后再次扫描"
+        : "当前网页没有识别到可保存的正文、作品或媒体"
+    };
   }
   return {
     ok: true,
@@ -924,9 +1017,187 @@ async function startPageCapture(mode = "loaded") {
   };
 }
 
+async function collectPageCaptureTab(tab, options) {
+  let siteData = await readPageCaptureSiteData(tab);
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["vendor/document-ingestion/Readability.js"]
+  });
+  const [injected] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: collectPageCaptureSnapshot,
+    args: [{
+      sessionId: options.sessionId,
+      adapters: PAGE_CAPTURE_ADAPTERS,
+      platformAdapters: PAGE_CAPTURE_PLATFORM_ADAPTERS,
+      mode: options.mode,
+      maxCandidates: options.maxCandidates,
+      maxRegionCandidates: PAGE_CAPTURE_QUALITY_LIMITS.maxRegionCandidates,
+      maxContentTargets: PAGE_CAPTURE_QUALITY_LIMITS.maxContentTargetsPerCandidate,
+      maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
+      maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
+      maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
+      editedRegion: options.editedRegion || null,
+      siteData
+    }]
+  });
+  let snapshot = injected?.result || {};
+  if (siteData?.pageKind === "feed") {
+    siteData = await readPageCaptureSiteData(tab, { installObserver: false }) || siteData;
+    snapshot = { ...snapshot, candidates: siteData.candidates, siteStatus: siteData.completeness };
+  }
+  return addVisiblePageCaptureFallbacks(snapshot, tab);
+}
+
+async function findNextPageCaptureListUrl(tabId, currentUrlValue) {
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const direct = document.querySelector('a[rel~="next"]');
+        const paginationLinks = [...document.querySelectorAll('nav[aria-label*="pagination" i] a[href],[role="navigation"] a[href],[class*="pagination"] a[href]')];
+        const next = direct || paginationLinks.find((link) => /^(?:next|下一页|下页|后页|›|»|→)$/iu.test(String(link.textContent || link.getAttribute("aria-label") || link.title || "").trim()));
+        return next?.href || "";
+      }
+    });
+    const nextUrl = new URL(result?.result || "", currentUrlValue);
+    const currentUrl = new URL(currentUrlValue);
+    return nextUrl.origin === currentUrl.origin && nextUrl.href !== currentUrl.href ? nextUrl.href : "";
+  } catch {
+    return "";
+  }
+}
+
+async function waitForPageCaptureTab(tabId, expectedUrl) {
+  const current = await chrome.tabs.get(tabId);
+  if (current.status === "complete" && current.url === expectedUrl) return;
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      reject(new Error("列表翻页超时"));
+    }, PAGE_CAPTURE_LIMITS.navigationTimeoutMs);
+    const onUpdated = (updatedTabId, changeInfo, updatedTab) => {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete" || updatedTab.url !== expectedUrl) return;
+      clearTimeout(timeout);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve();
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+async function readPageCaptureSiteData(tab, { installObserver = true } = {}) {
+  if (!tab?.id || !/^https?:/iu.test(tab.url || "")) return null;
+  try {
+    if (installObserver) {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: installPageCaptureSiteObserver,
+        args: [{
+          maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates,
+          maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate
+        }]
+      });
+    }
+    const [sitePayloadResult] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      func: collectPageCaptureSitePayload,
+      args: [{
+        maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates,
+        maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
+        maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes
+      }]
+    });
+    return normalizePageCaptureSitePayload(sitePayloadResult?.result, tab.url);
+  } catch {
+    return null;
+  }
+}
+
+async function resolveCaptureSourceContext(tab) {
+  const siteData = await readPageCaptureSiteData(tab);
+  const candidates = Array.isArray(siteData?.candidates)
+    ? siteData.candidates
+    : siteData?.sourceFacts ? [siteData] : [];
+  if (!candidates.length) return null;
+  let workId = "";
+  try {
+    const lastPart = new URL(tab.url).pathname.split("/").filter(Boolean).at(-1) || "";
+    if (/^\d{8,32}$/u.test(lastPart)) workId = lastPart;
+  } catch {
+  }
+  const candidate = candidates.find((item) => item.sourceFacts?.itemId === workId) || (candidates.length === 1 ? candidates[0] : null);
+  if (!candidate) return null;
+  return {
+    canonicalUrl: candidate.canonicalUrl,
+    displayTitle: candidate.displayTitle || candidate.title,
+    completeness: candidate.completeness,
+    sourceFacts: candidate.sourceFacts
+  };
+}
+
+async function addVisiblePageCaptureFallbacks(snapshot, tab) {
+  const positions = [];
+  const candidates = (Array.isArray(snapshot?.candidates) ? snapshot.candidates : []).map((candidate, candidateIndex) => ({
+    ...candidate,
+    media: (Array.isArray(candidate?.media) ? candidate.media : []).map((media, mediaIndex) => {
+      if (media.kind === "image" && media.fallbackRect && !media.dataUrl) positions.push({ candidateIndex, mediaIndex, selection: media.fallbackRect });
+      return media;
+    })
+  }));
+  if (!positions.length || !Number.isInteger(tab.windowId)) return { ...snapshot, candidates };
+  try {
+    const [current] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+    if (current?.id !== tab.id) return { ...snapshot, candidates };
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    await ensureOffscreenDocument();
+    const response = await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "CROP_PAGE_CAPTURE_PREVIEWS",
+      dataUrl,
+      selections: positions.map((item) => item.selection),
+      maxDataUrlCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters
+    });
+    if (!response?.ok || response.dataUrls?.length !== positions.length) return { ...snapshot, candidates };
+    response.dataUrls.forEach((pixelData, index) => {
+      if (!pixelData) return;
+      const position = positions[index];
+      candidates[position.candidateIndex].media[position.mediaIndex] = {
+        ...candidates[position.candidateIndex].media[position.mediaIndex],
+        dataUrl: pixelData,
+        previewDataUrl: pixelData
+      };
+    });
+  } catch {
+  }
+  return { ...snapshot, candidates };
+}
+
+async function capturePageCaptureViewportFallbacks(message, sender) {
+  if (!activePageCapture || message?.sessionId !== activePageCapture.sessionId || sender?.tab?.id !== activePageCapture.tabId) {
+    return { ok: false, message: "整页扫描会话已经结束" };
+  }
+  const selections = (Array.isArray(message?.selections) ? message.selections : []).slice(0, PAGE_CAPTURE_LIMITS.maxCandidates);
+  if (!selections.length || !Number.isInteger(sender.tab.windowId)) return { ok: true, dataUrls: [] };
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId: sender.tab.windowId });
+  if (activeTab?.id !== sender.tab.id) return { ok: false, message: "扫描页面已不在前台" };
+  const dataUrl = await chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" });
+  await ensureOffscreenDocument();
+  return chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "CROP_PAGE_CAPTURE_PREVIEWS",
+    dataUrl,
+    selections,
+    maxDataUrlCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters
+  });
+}
+
 async function cancelPageCapture(sessionIdValue) {
   const sessionId = String(sessionIdValue ?? "").trim();
   if (!activePageCapture || sessionId && sessionId !== activePageCapture.sessionId) return { ok: false, message: "整页扫描已经结束" };
+  activePageCapture.cancelled = true;
   try {
     const response = await chrome.tabs.sendMessage(activePageCapture.tabId, {
       type: "PROMPTDIRECTOR_PAGE_CAPTURE", sessionId: activePageCapture.sessionId, action: "cancel"
@@ -937,9 +1208,329 @@ async function cancelPageCapture(sessionIdValue) {
   }
 }
 
+async function previewPageCaptureRegion(tabIdValue, markerValue) {
+  const tabId = Number(tabIdValue);
+  if (!Number.isInteger(tabId)) return { ok: false, message: "采集页面已经关闭" };
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: renderPageCaptureRegionPreview,
+      args: [String(markerValue || "")]
+    });
+    return result?.result
+      ? { ok: true }
+      : { ok: false, message: markerValue ? "原网页区域已经变化，请重新扫描" : "区域高亮已关闭" };
+  } catch {
+    return { ok: false, message: "无法在当前网页显示区域高亮" };
+  }
+}
+
+async function clearPageCaptureMarkers(tabIdValue, removeRegionMarkers = true) {
+  const tabId = Number(tabIdValue);
+  if (!Number.isInteger(tabId)) return { ok: false, message: "采集页面已经关闭" };
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: clearPageCapturePageState,
+      args: [{ removeRegionMarkers, removePreview: true, removeEditor: true }]
+    });
+    return { ok: true };
+  } catch {
+    return { ok: false, message: "采集页面已经关闭或刷新" };
+  }
+}
+
+async function clearPageCaptureEditorMarkers(tabIdValue) {
+  const tabId = Number(tabIdValue);
+  if (!Number.isInteger(tabId)) return;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: clearPageCapturePageState,
+    args: [{ removeRegionMarkers: false, removePreview: false, removeEditor: true }]
+  });
+}
+
+function clearPageCapturePageState(optionsValue = {}) {
+  const options = optionsValue && typeof optionsValue === "object" ? optionsValue : {};
+  if (options.removePreview !== false) document.getElementById("promptdirector-page-capture-region-preview")?.remove();
+  if (options.removeEditor !== false) document.getElementById("promptdirector-page-capture-region-editor")?.remove();
+  for (const element of document.querySelectorAll("[data-promptdirector-page-edit-include],[data-promptdirector-page-edit-exclude],[data-promptdirector-page-edit-hover]")) {
+    element.removeAttribute("data-promptdirector-page-edit-include");
+    element.removeAttribute("data-promptdirector-page-edit-exclude");
+    element.removeAttribute("data-promptdirector-page-edit-hover");
+  }
+  if (options.removeRegionMarkers) {
+    for (const element of document.querySelectorAll("[data-promptdirector-capture-region]")) {
+      element.removeAttribute("data-promptdirector-capture-region");
+    }
+  }
+  return true;
+}
+
+async function editPageCaptureRegion(tabIdValue, candidateValue, modeValue) {
+  const tabId = Number(tabIdValue);
+  const candidate = normalizePageCaptureCandidate(candidateValue);
+  const mode = modeValue === "exclude" ? "exclude" : "include";
+  if (!Number.isInteger(tabId) || !candidate?.region?.marker) return { ok: false, message: "请先确认一个仍在当前网页中的主体" };
+  const token = crypto.randomUUID();
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: runPageCaptureRegionEditor,
+      args: [candidate.region.marker, mode, token, candidate.region.edits || [], candidate.region.contentTargets || []]
+    });
+    if (!result?.result?.ok) return result?.result || { ok: false, message: "网页区域修正已取消" };
+    if (!result.result.changed) return { ok: false, cancelled: true, message: "没有修改主体区域" };
+    const tab = await chrome.tabs.get(tabId);
+    const snapshot = await collectPageCaptureTab(tab, {
+      sessionId: `edit:${token}`,
+      mode: "loaded",
+      maxCandidates: 1,
+      editedRegion: { marker: candidate.region.marker, token, region: { ...candidate.region, edits: result.result.edits || [] } }
+    });
+    const revised = snapshot.candidates?.[0];
+    if (!revised) return { ok: false, message: "修正后的区域没有可保存内容，原结果保持不变" };
+    return {
+      ok: true,
+      candidate: mergePageCaptureRegionEdit(candidate, revised),
+      message: mode === "include" ? "已加入遗漏区域并重建文章预览" : "已排除错误区域并重建文章预览"
+    };
+  } catch (error) {
+    return { ok: false, message: userMessage(error) || "无法修正当前网页区域" };
+  } finally {
+    await clearPageCaptureEditorMarkers(tabId).catch(() => undefined);
+  }
+}
+
+function runPageCaptureRegionEditor(markerValue, modeValue, tokenValue, priorEditsValue, contentTargetsValue) {
+  const overlayId = "promptdirector-page-capture-region-editor";
+  document.getElementById(overlayId)?.remove();
+  const marker = String(markerValue || "");
+  const mode = modeValue === "exclude" ? "exclude" : "include";
+  const token = String(tokenValue || "");
+  const baseRoot = [...document.querySelectorAll("[data-promptdirector-capture-region]")]
+    .find((element) => element.getAttribute("data-promptdirector-capture-region") === marker);
+  if (!baseRoot || !token) return { ok: false, message: "原网页区域已经变化，请重新扫描" };
+  const includeAttribute = "data-promptdirector-page-edit-include";
+  const excludeAttribute = "data-promptdirector-page-edit-exclude";
+  const hoverAttribute = "data-promptdirector-page-edit-hover";
+  const priorEdits = (Array.isArray(priorEditsValue) ? priorEditsValue : []).filter((edit) => ["include", "exclude"].includes(edit?.mode) && typeof edit?.path === "string");
+  const contentTargets = (Array.isArray(contentTargetsValue) ? contentTargetsValue : []).filter((target) =>
+    typeof target?.path === "string" && ["text", "image", "video", "document", "group"].includes(target?.kind));
+  let edits = priorEdits.map((edit) => ({ mode: edit.mode, path: edit.path }));
+  let groupMode = false;
+  const root = document.createElement("div");
+  root.id = overlayId;
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-label", mode === "include" ? "添加遗漏区域" : "排除错误区域");
+  Object.assign(root.style, {
+    position: "fixed", left: "16px", right: "16px", top: "16px", zIndex: "2147483647",
+    display: "flex", alignItems: "center", gap: "8px", padding: "10px 12px",
+    border: "1px solid rgba(255,255,255,.22)", borderRadius: "10px", color: "#fff",
+    background: "rgba(18,20,22,.96)", boxShadow: "0 12px 40px rgba(0,0,0,.42)",
+    font: "600 13px/1.4 -apple-system,BlinkMacSystemFont,sans-serif"
+  });
+  const copy = document.createElement("span");
+  copy.style.flex = "1";
+  copy.textContent = mode === "include"
+    ? "添加遗漏：点击正文、图片、视频或下载区，可连续选择"
+    : "排除错误：点击主体内不需要的段落、图片或区域，可连续选择";
+  const count = document.createElement("span");
+  const makeButton = (label) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    Object.assign(button.style, { border: "1px solid rgba(255,255,255,.25)", borderRadius: "7px", padding: "6px 10px", color: "#fff", background: "rgba(255,255,255,.1)", cursor: "pointer" });
+    return button;
+  };
+  const undo = makeButton("撤销");
+  const group = makeButton("整组选择");
+  const cancel = makeButton("取消");
+  const finish = makeButton("完成");
+  finish.style.background = "#86a31d";
+  root.append(copy, count, group, undo, cancel, finish);
+  const style = document.createElement("style");
+  style.textContent = `[${includeAttribute}="${token}"]{outline:4px solid #8fcf3a!important;outline-offset:3px!important}[${excludeAttribute}="${token}"]{outline:4px solid #ff6b5f!important;outline-offset:3px!important;opacity:.48!important}[${hoverAttribute}="${token}"]{outline:3px dashed #ffd65c!important;outline-offset:2px!important}`;
+  root.append(style);
+  document.documentElement.append(root);
+  baseRoot.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+  const changes = [];
+  const targetSelector = "img,video,iframe,a[download],a[href$='.pdf' i],a[href$='.md' i],a[href$='.txt' i],a[href$='.rtf' i],h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,figure,article,section,div";
+  const updateCount = () => {
+    count.textContent = `本次修改 ${changes.length} 处`;
+    undo.disabled = !changes.length;
+  };
+  const elementPath = (element) => {
+    const parts = [];
+    let current = element;
+    while (current && current.nodeType === 1) {
+      const tag = current.tagName.toLocaleLowerCase("en-US");
+      const siblings = [...(current.parentElement?.children || [])].filter((item) => item.tagName === current.tagName);
+      parts.unshift(`${tag}:nth-of-type(${Math.max(1, siblings.indexOf(current) + 1)})`);
+      if (current === document.body) break;
+      current = current.parentElement;
+    }
+    return parts.join(" > ");
+  };
+  const applyEdits = () => {
+    document.querySelectorAll(`[${includeAttribute}],[${excludeAttribute}]`).forEach((element) => {
+      element.removeAttribute(includeAttribute);
+      element.removeAttribute(excludeAttribute);
+    });
+    for (const edit of edits) {
+      let element = null;
+      try { element = document.querySelector(edit.path); } catch { continue; }
+      if (!element) continue;
+      element.removeAttribute(edit.mode === "include" ? excludeAttribute : includeAttribute);
+      element.setAttribute(edit.mode === "include" ? includeAttribute : excludeAttribute, token);
+    }
+  };
+  const resolvedTargets = contentTargets.flatMap((target) => {
+    try {
+      const element = document.querySelector(target.path);
+      return element ? [{ ...target, element }] : [];
+    } catch {
+      return [];
+    }
+  });
+  const elementDepth = (element) => {
+    let depth = 0;
+    for (let current = element; current?.parentElement; current = current.parentElement) depth += 1;
+    return depth;
+  };
+  const meaningfulFallback = (eventTarget) => {
+    const closest = eventTarget.closest?.(targetSelector);
+    if (!closest) return null;
+    if (!closest.matches?.("div")) return closest;
+    const text = String(closest.innerText || closest.textContent || "").replace(/\s+/gu, " ").trim();
+    const hasMediaOrResource = Boolean(closest.querySelector?.("img,video,iframe,a[download],a[href$='.pdf' i],a[href$='.md' i],a[href$='.txt' i],a[href$='.rtf' i]"));
+    const hasDirectText = [...(closest.childNodes || [])].some((node) => node.nodeType === 3 && String(node.textContent || "").trim());
+    return hasDirectText || hasMediaOrResource || text ? closest : null;
+  };
+  const cleanup = (restore) => {
+    document.removeEventListener("click", onClick, true);
+    document.removeEventListener("keydown", onKeydown, true);
+    document.removeEventListener("pointerover", onPointerOver, true);
+    if (restore) {
+      edits = priorEdits.map((edit) => ({ mode: edit.mode, path: edit.path }));
+      applyEdits();
+    }
+    root.remove();
+  };
+  const targetFor = (eventTarget) => {
+    if (!(eventTarget instanceof Element)) return null;
+    const matching = resolvedTargets.filter((target) => target.element === eventTarget || target.element.contains?.(eventTarget));
+    const leaf = matching.filter((target) => target.kind !== "group").sort((left, right) => elementDepth(right.element) - elementDepth(left.element))[0];
+    const selectedTarget = groupMode
+      ? matching.filter((target) => target.kind === "group" && (!leaf?.groupId || target.id === leaf.groupId))
+        .sort((left, right) => elementDepth(right.element) - elementDepth(left.element))[0]
+      : leaf;
+    const element = selectedTarget?.element || meaningfulFallback(eventTarget);
+    if (!element || root.contains(element) || element.closest("nav,header,footer,[role=navigation],[role=banner],[role=contentinfo]")) return null;
+    if (mode === "exclude" && (!baseRoot.contains(element) || element === baseRoot)) return null;
+    if (mode === "include" && baseRoot.contains(element) && element.getAttribute(excludeAttribute) !== token) return null;
+    return element;
+  };
+  const onPointerOver = (event) => {
+    document.querySelectorAll(`[${hoverAttribute}]`).forEach((element) => element.removeAttribute(hoverAttribute));
+    const element = targetFor(event.target);
+    if (element) element.setAttribute(hoverAttribute, token);
+  };
+  const onClick = (event) => {
+    const element = targetFor(event.target);
+    if (!element) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const edit = { mode, path: elementPath(element) };
+    edits.push(edit);
+    changes.push(edit);
+    applyEdits();
+    updateCount();
+  };
+  const onKeydown = (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    cancel.click();
+  };
+  document.addEventListener("click", onClick, true);
+  document.addEventListener("keydown", onKeydown, true);
+  document.addEventListener("pointerover", onPointerOver, true);
+  applyEdits();
+  updateCount();
+  return new Promise((resolve) => {
+    group.addEventListener("click", (event) => {
+      event.stopPropagation();
+      groupMode = !groupMode;
+      group.textContent = groupMode ? "整组选择：开" : "整组选择";
+      group.style.background = groupMode ? "#5f7613" : "rgba(255,255,255,.1)";
+    });
+    undo.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (changes.pop()) edits.pop();
+      applyEdits();
+      updateCount();
+    });
+    cancel.addEventListener("click", (event) => {
+      event.stopPropagation();
+      cleanup(true);
+      resolve({ ok: false, cancelled: true, message: "网页区域修正已取消" });
+    });
+    finish.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const changed = changes.length > 0;
+      cleanup(false);
+      resolve({ ok: true, changed, token, edits });
+    });
+  });
+}
+
+function renderPageCaptureRegionPreview(markerValue) {
+  const overlayId = "promptdirector-page-capture-region-preview";
+  document.getElementById(overlayId)?.remove();
+  const marker = String(markerValue || "");
+  if (!marker) return true;
+  const target = [...document.querySelectorAll("[data-promptdirector-capture-region]")]
+    .find((element) => element.getAttribute("data-promptdirector-capture-region") === marker);
+  if (!target) return false;
+  target.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+  const rect = target.getBoundingClientRect();
+  const overlay = document.createElement("div");
+  overlay.id = overlayId;
+  overlay.setAttribute("aria-hidden", "true");
+  Object.assign(overlay.style, {
+    position: "fixed",
+    left: `${Math.max(0, rect.left)}px`,
+    top: `${Math.max(0, rect.top)}px`,
+    width: `${Math.max(1, Math.min(window.innerWidth, rect.right) - Math.max(0, rect.left))}px`,
+    height: `${Math.max(1, Math.min(window.innerHeight, rect.bottom) - Math.max(0, rect.top))}px`,
+    border: "3px solid Highlight",
+    borderRadius: "8px",
+    background: "color-mix(in srgb, Highlight 12%, transparent)",
+    boxSizing: "border-box",
+    pointerEvents: "none",
+    zIndex: "2147483647"
+  });
+  document.documentElement.append(overlay);
+  return true;
+}
+
 async function commitPageCapture(batchValue) {
-  const batch = normalizePageCaptureBatch(batchValue);
-  const selected = applyPageCaptureSelections(batch);
+  let batch = normalizePageCaptureBatch(batchValue);
+  if (Number.isInteger(batch.tabId) && batch.candidates.some((candidate) => candidate.media.some((media) => media.fallbackRect && !media.dataUrl))) {
+    try {
+      const tab = await chrome.tabs.get(batch.tabId);
+      batch = normalizePageCaptureBatch(await addVisiblePageCaptureFallbacks(batch, tab));
+    } catch {
+    }
+  }
+  let selected = applyPageCaptureSelections(batch);
+  if (batch.captureMode === "list" && batch.saveMode === "combined" && selected.length) {
+    const combined = combinePageCaptureCandidates(selected, {
+      title: batch.combinedTitle,
+      canonicalUrl: batch.sourceUrl
+    });
+    selected = combined ? [combined] : [];
+  }
   if (!selected.length) return { ok: false, message: "请至少选择一项网页内容" };
   const state = await readState();
   const results = [];
@@ -955,66 +1546,135 @@ async function commitPageCapture(batchValue) {
         continue;
       }
       const mediaAssets = [];
+      const articleAssetIds = new Map();
       const warnings = [];
       for (const media of candidate.media) {
+        if (media.kind === "document") {
+          if (!isSupportedDocumentMimeType(media.mimeType)) {
+            warnings.push(`${media.filename || media.alt || media.url}：已保留来源链接，未知或高风险文件不会自动下载`);
+            continue;
+          }
+          const assetId = crypto.randomUUID();
+          try {
+            const blob = await fetchBoundedMedia(media.url, {
+              kind: "document",
+              expectedMimeType: media.mimeType,
+              maxBytes: PORTABLE_LIBRARY_LIMITS.maxFileBytes,
+              timeoutMs: 60_000,
+              accept: "application/pdf,text/markdown,text/plain,text/html,application/rtf,text/rtf,application/x-rtf"
+            });
+            const contentHash = await sha256Blob(blob);
+            const existing = entries.flatMap(entryMediaAssets).find((asset) => asset.contentHash === contentHash);
+            if (existing) {
+              if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push(existing);
+              articleAssetIds.set(media.id, existing.id);
+              warnings.push(`已复用重复文档：${media.filename || media.alt || media.url}`);
+              continue;
+            }
+            await saveMediaBlob(assetId, blob);
+            savedAssetIds.push(assetId);
+            const documentAsset = {
+              id: assetId,
+              kind: "document",
+              storageMode: "managed",
+              sourceUrl: media.url,
+              sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
+              sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
+              originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl,
+              mimeType: blob.type,
+              byteSize: blob.size,
+              contentHash,
+              extractedTextFormat: ["text/markdown", "text/html", "application/rtf", "text/rtf", "application/x-rtf"].includes(blob.type) ? "markdown" : "plain",
+              capturedAt: new Date().toISOString(),
+              reviewStatus: "verified"
+            };
+            mediaAssets.push(documentAsset);
+            articleAssetIds.set(media.id, documentAsset.id);
+          } catch (error) {
+            warnings.push(`${media.filename || media.alt || media.url}：本地副本未保存，已保留来源链接（${userMessage(error)}）`);
+          }
+          continue;
+        }
         if (media.kind === "video") {
           const referenceUrl = media.url || candidate.canonicalUrl;
           const provider = detectMediaReferenceProvider(referenceUrl);
           const playbackMode = ["youtube", "vimeo", "bilibili", "douyin", "x"].includes(provider) ? "embed" : "source";
-          mediaAssets.push({
+          const videoAsset = {
             id: crypto.randomUUID(),
             kind: "video",
             storageMode: "reference",
             sourceUrl: referenceUrl,
-            sourceTitle: candidate.title,
+            sourceTitle: media.sourceTitle || candidate.title,
+            sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
+            originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl,
             width: media.width,
             height: media.height,
             capturedAt: new Date().toISOString(),
             playbackCapability: playbackMode === "embed" ? "embedded" : "external",
             reference: { url: referenceUrl, provider, playbackMode },
             reviewStatus: "verified"
-          });
+          };
+          mediaAssets.push(videoAsset);
+          articleAssetIds.set(media.id, videoAsset.id);
           continue;
         }
         const assetId = crypto.randomUUID();
         try {
-          const blob = media.dataUrl
-            ? await dataUrlToImageBlob(media.dataUrl)
-            : await fetchBoundedMedia(media.url, {
+          const resolved = await resolvePageCaptureImage(media, {
+            sessionMediaAllowed: batch.sessionMediaAllowed,
+            fetchMedia: async (url) => {
+              let metadata = null;
+              const blob = await fetchBoundedMedia(url, {
                 kind: "image",
                 maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+                maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels,
                 timeoutMs: 60_000,
-                accept: "image/avif,image/webp,image/png,image/jpeg,image/gif"
+                accept: "image/avif,image/webp,image/png,image/jpeg,image/gif",
+                onMetadata: (value) => { metadata = value; }
               });
+              return { blob, metadata };
+            },
+            fetchSessionMedia: async (url) => fetchSelectedPageSessionImage(batch, candidate, url),
+            decodeDataUrl: dataUrlToImageBlob
+          });
+          const blob = resolved.blob;
           const contentHash = await sha256Blob(blob);
           const existing = entries.flatMap(entryMediaAssets).find((asset) => asset.contentHash === contentHash);
           if (existing) {
-            warnings.push(`已跳过重复媒体：${media.alt || media.url}`);
+            if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push(existing);
+            articleAssetIds.set(media.id, existing.id);
+            warnings.push(`已复用重复媒体：${media.alt || media.url}`);
             continue;
           }
           await saveMediaBlob(assetId, blob);
           savedAssetIds.push(assetId);
-          mediaAssets.push({
+          const imageAsset = {
             id: assetId,
             kind: "image",
             storageMode: "managed",
-            sourceUrl: media.url || candidate.canonicalUrl,
-            sourceTitle: media.alt || candidate.title,
+            sourceUrl: resolved.sourceUrl || media.url || candidate.canonicalUrl,
+            sourceTitle: media.sourceTitle || media.alt || candidate.title,
+            sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
+            originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl,
             mimeType: blob.type,
             byteSize: blob.size,
-            width: media.width,
-            height: media.height,
+            width: resolved.metadata?.width || media.width,
+            height: resolved.metadata?.height || media.height,
             contentHash,
-            captureMethod: media.captureMethod,
+            captureMethod: resolved.captureMethod || media.captureMethod,
             capturedAt: new Date().toISOString(),
             reviewStatus: "verified"
-          });
+          };
+          mediaAssets.push(imageAsset);
+          articleAssetIds.set(media.id, imageAsset.id);
+          if (resolved.usedPixelFallback) warnings.push(`${media.alt || candidate.title}：原图不可用，已保存页面可见画面`);
         } catch (error) {
           warnings.push(`${media.alt || media.url}：${userMessage(error)}`);
         }
       }
+      const articleText = articleDocumentText(candidate.articleDocument);
       const base = buildEntry({
-        text: candidate.contentText || candidate.excerpt,
+        text: articleText || candidate.contentText || candidate.excerpt,
         title: candidate.title,
         url: candidate.canonicalUrl,
         allowEmptyText: mediaAssets.length > 0
@@ -1023,14 +1683,16 @@ async function commitPageCapture(batchValue) {
         results.push({ candidateId: candidate.id, status: "failed", title: candidate.title, warnings: [...warnings, "没有可保存的正文或媒体"] });
         continue;
       }
+      const classificationMediaAssets = candidate.sourceFacts.pageType === "post" && base.text ? [] : mediaAssets;
       const entry = normalizeEntryMedia({
         ...base,
         schemaVersion: SCHEMA_VERSION,
+        articleDocument: finalizeArticleDocumentAssets(candidate.articleDocument, articleAssetIds),
         sourceFacts: candidate.sourceFacts,
         sourcePages: [{ url: candidate.canonicalUrl, title: candidate.title }],
         mediaAssets,
         primaryMediaId: mediaAssets.find((asset) => asset.kind === "image")?.id || mediaAssets[0]?.id || "",
-        classification: classifyContent({ ...base, mediaAssets }, state.classificationRules, state.taxonomy),
+        classification: classifyContent({ ...base, mediaAssets: classificationMediaAssets }, state.classificationRules, state.taxonomy),
         customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
         rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
       });
@@ -1063,6 +1725,88 @@ async function commitPageCapture(batchValue) {
     if (!metadataCommitted) await Promise.allSettled(savedAssetIds.map((assetId) => deleteMediaBlob(assetId)));
     throw error;
   }
+}
+
+async function fetchSelectedPageSessionImage(batch, candidate, value) {
+  if (!Number.isInteger(batch?.tabId)) throw new Error("原网页标签页已经不可用");
+  const tab = await chrome.tabs.get(batch.tabId);
+  let currentOrigin;
+  let capturedOrigin;
+  try {
+    currentOrigin = new URL(tab.url).origin;
+    capturedOrigin = new URL(batch.sourceUrl || candidate.canonicalUrl).origin;
+  } catch {
+    throw new Error("原网页地址已经不可用");
+  }
+  if (currentOrigin !== capturedOrigin) throw new Error("原网页已经跳转，未使用页面登录状态读取媒体");
+  const allowedUrls = pageCaptureMediaFetchCandidatesForSession(candidate, value);
+  if (!allowedUrls.includes(value)) throw new Error("页面媒体地址不在已选择内容中");
+  const token = crypto.randomUUID();
+  try {
+    const [preparedResult] = await chrome.scripting.executeScript({
+      target: { tabId: batch.tabId },
+      world: "MAIN",
+      func: preparePageSessionMedia,
+      args: [{
+        token,
+        url: value,
+        allowedUrls,
+        maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+        chunkBytes: PAGE_SESSION_MEDIA_CHUNK_BYTES
+      }]
+    });
+    const prepared = preparedResult?.result;
+    if (!prepared || prepared.token !== token || !Number.isSafeInteger(prepared.chunkCount) || prepared.chunkCount <= 0) {
+      throw new Error("页面没有返回有效媒体");
+    }
+    const chunks = [];
+    let totalBytes = 0;
+    for (let index = 0; index < prepared.chunkCount; index += 1) {
+      const [chunkResult] = await chrome.scripting.executeScript({
+        target: { tabId: batch.tabId },
+        world: "MAIN",
+        func: readPageSessionMediaChunk,
+        args: [{ token, index }]
+      });
+      const binary = globalThis.atob(String(chunkResult?.result || ""));
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      totalBytes += bytes.byteLength;
+      if (totalBytes > PORTABLE_LIBRARY_LIMITS.maxImageBytes) throw new Error("页面媒体超过本地容量上限");
+      chunks.push(bytes);
+    }
+    if (totalBytes !== prepared.totalBytes) throw new Error("页面媒体传输不完整");
+    const combined = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    let metadata = null;
+    const blob = await boundedMediaBlobFromResponse(new Response(combined, {
+      headers: { "content-type": String(prepared.contentType || "application/octet-stream") }
+    }), {
+      kind: "image",
+      maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+      maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels,
+      onMetadata: (value) => { metadata = value; }
+    });
+    return { blob, metadata };
+  } finally {
+    await chrome.scripting.executeScript({
+      target: { tabId: batch.tabId },
+      world: "MAIN",
+      func: discardPageSessionMedia,
+      args: [{ token }]
+    }).catch(() => undefined);
+  }
+}
+
+function pageCaptureMediaFetchCandidatesForSession(candidate, selectedUrl) {
+  const urls = new Set();
+  for (const media of candidate?.media || []) {
+    for (const url of pageCaptureMediaFetchCandidates(media)) urls.add(url);
+  }
+  return urls.has(selectedUrl) ? [...urls] : [];
 }
 
 async function startCaptureForCase(caseId, partEntryId = "") {
@@ -1332,13 +2076,15 @@ async function commitCaptureDraft(duplicateAction = "") {
     .find((compound) => compound.id === draft.targetCaseId) ?? null;
   if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound);
   const text = draftText(draft);
-  const sourcePages = mergeSourcePages(draftSourcePages(draft), draft.visuals.map((visual) => ({
-    url: visual.sourceUrl,
-    title: visual.sourceTitle
-  })));
+  const sourcePages = mergeSourcePages(draftSourcePages(draft), draft.visuals.map((visual) => {
+    const context = sourceContextForUrl(draft, visual.sourceUrl);
+    return { url: visual.sourceUrl, title: context?.displayTitle || visual.sourceTitle };
+  }));
   const firstVisual = draft.visuals[0];
   const sourceUrl = sourcePages[0]?.url || firstVisual?.sourceUrl || "";
-  const sourceTitle = draft.title || sourcePages[0]?.title || firstVisual?.sourceTitle || "未命名案例";
+  const sourceContext = sourceContextForUrl(draft, sourceUrl);
+  const sourceFacts = sourceFactsForCaptureContext(sourceContext);
+  const sourceTitle = draft.title || sourceContext?.displayTitle || sourcePages[0]?.title || firstVisual?.sourceTitle || "未命名案例";
   const candidateBase = buildEntry({ text, title: sourceTitle, url: sourceUrl, allowEmptyText: draft.visuals.length > 0 });
   const explicitTarget = draft.targetCaseId
     ? state.entries.find((entryValue) => entryValue.id === draft.targetCaseId) ?? null
@@ -1357,6 +2103,7 @@ async function commitCaptureDraft(duplicateAction = "") {
     entry = {
       ...markEntryTextChanged(entry, nextText),
       sourcePages: mergeSourcePages(entry.sourcePages, sourcePages),
+      ...(sourceFacts ? { sourceFacts } : {}),
       customLabels: draft.customLabelsExplicit ? uniqueNames(draft.customLabels) : uniqueNames(entry.customLabels)
     };
     if (draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])) {
@@ -1376,6 +2123,7 @@ async function commitCaptureDraft(duplicateAction = "") {
       schemaVersion: SCHEMA_VERSION,
       title: sourceTitle,
       sourcePages,
+      ...(sourceFacts ? { sourceFacts } : {}),
       visuals: draft.visuals,
       primaryVisualId: draft.primaryVisualId,
       classification: draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])
@@ -1477,6 +2225,7 @@ function mergeCapturePartIntoEntry(entryValue, part, draft, state) {
   entry = {
     ...markEntryTextChanged(entry, nextText),
     sourcePages: mergeSourcePages(entry.sourcePages, [{ url: part.sourceUrl, title: part.sourceTitle }]),
+    ...(sourceFactsForCaptureContext(part.sourceContext) ? { sourceFacts: sourceFactsForCaptureContext(part.sourceContext) } : {}),
     customLabels: draft.customLabelsExplicit ? uniqueNames(draft.customLabels) : uniqueNames(entry.customLabels)
   };
   if (draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])) {
@@ -1499,6 +2248,7 @@ function createEntryFromCapturePart(part, draft, state, options = {}) {
     ...base,
     schemaVersion: SCHEMA_VERSION,
     sourcePages: mergeSourcePages([], [{ url: part.sourceUrl, title: part.sourceTitle }]),
+    ...(sourceFactsForCaptureContext(part.sourceContext) ? { sourceFacts: sourceFactsForCaptureContext(part.sourceContext) } : {}),
     visuals: part.visuals,
     primaryVisualId: part.visuals.some((visual) => visual.id === draft.primaryVisualId)
       ? draft.primaryVisualId
@@ -1511,6 +2261,12 @@ function createEntryFromCapturePart(part, draft, state, options = {}) {
     facetAssignments: [], analysisCandidates: [], analysisBreakdown: [], rejectedCandidateKeys: [],
     negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
   });
+}
+
+function sourceFactsForCaptureContext(context) {
+  const facts = context?.sourceFacts;
+  if (!facts || typeof facts !== "object" || !String(facts.provider || facts.itemId || facts.author || "").trim()) return null;
+  return facts;
 }
 
 function captureDraftClassification(draft, state) {
@@ -1761,12 +2517,6 @@ async function readState() {
     stored[STORAGE_KEYS.aiTaskAssignments] = aiConfiguration.assignments;
     stored[STORAGE_KEYS.aiPreferences] = aiConfiguration.preferences;
   }
-  if ([STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes]
-    .some((key) => Object.hasOwn(stored, key))) {
-    await chrome.storage.local.remove([
-      STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes
-    ]);
-  }
   const shouldMigrate = needsMigration(stored);
   const migration = shouldMigrate ? migrateLibraryState(stored) : null;
   let state = migration?.state ?? {
@@ -1848,7 +2598,6 @@ async function readState() {
     aiSettings: publicAiSettings(aiRuntime.aiSettings),
     visionSettings: publicVisionSettings(aiRuntime.visionSettings),
     aiServiceProfiles: publicAiServiceProfiles(aiRuntime.aiServiceProfiles),
-    aiTaskRoutes: aiRuntime.aiTaskRoutes,
     aiProviderRegistry: publicAiProviderRegistry(aiConfiguration.registry),
     aiTaskAssignments: aiConfiguration.assignments,
     composerSettings: normalizeComposerSettings(stored[STORAGE_KEYS.composerSettings]),
@@ -2015,7 +2764,7 @@ async function creativeJobExecutionState() {
     compoundCases: stored[STORAGE_KEYS.compoundCases],
     facetCatalog: stored[STORAGE_KEYS.facetCatalog],
     composerSettings: stored[STORAGE_KEYS.composerSettings],
-    aiSettings: resolveTextTaskSettings("creativePlanning", aiConfigurationFromStorage(stored)),
+    aiSettings: aiRuntime.aiSettings,
     visionSettings: aiRuntime.visionSettings,
     aiServiceProfiles: aiRuntime.aiServiceProfiles,
     aiTaskAssignments: aiRuntime.aiTaskAssignments
@@ -2203,7 +2952,7 @@ async function rememberObservedReferenceLimit(value) {
   const configuration = await loadAiConfiguration();
   const assignment = configuration.assignments.imageGeneration;
   const profile = configuration.registry.providers[assignment?.providerId];
-  const modelId = String(profile?.models?.imageGeneration ?? assignment?.model ?? "").trim();
+  const modelId = String(assignment?.model ?? "").trim();
   if (!profile || !modelId) return;
   const before = profile.discoveredModels.find((model) => model.id === modelId);
   const descriptor = {
@@ -3407,16 +4156,30 @@ async function discoverAiProviderModels(providerIdValue, force = false) {
   const profile = configuration.registry.providers[providerId];
   if (!profile) throw new Error("没有找到要刷新的 AI 厂商");
   if (!profile.endpoint || !profile.apiKey) throw new Error(`${profile.label} 需要先保存接口地址和 API Key`);
-  const result = await aiProviderModule.discoverModels(profile, {
-    etag: force ? "" : profile.discovery?.etag
-  });
+  let result;
+  try {
+    result = await aiProviderModule.discoverModels(profile, {
+      etag: force ? "" : profile.discovery?.etag
+    });
+  } catch (error) {
+    const visibleError = discoveryErrorMessage(error, profile.apiKey);
+    await enqueue(async () => {
+      const current = await loadAiConfiguration();
+      const currentProfile = current.registry.providers[providerId];
+      if (!sameProviderConnection(currentProfile, profile)) return;
+      const registry = mergeAiProviderRegistry(current.registry, { providers: {
+        [providerId]: {
+          discovery: { ...currentProfile.discovery, error: visibleError }
+        }
+      } });
+      await persistAiConfiguration({ ...current, registry });
+    });
+    throw new Error(visibleError, { cause: error });
+  }
   return enqueue(async () => {
     const current = await loadAiConfiguration();
     const currentProfile = current.registry.providers[providerId];
-    if (!currentProfile
-      || currentProfile.endpoint !== profile.endpoint
-      || currentProfile.protocol !== profile.protocol
-      || currentProfile.apiKey !== profile.apiKey) {
+    if (!sameProviderConnection(currentProfile, profile)) {
       throw new Error(`${profile.label} 的连接已在模型读取期间变更，请重新刷新`);
     }
     const registry = mergeAiProviderRegistry(current.registry, { providers: {
@@ -3437,105 +4200,22 @@ async function discoverAiProviderModels(providerIdValue, force = false) {
   });
 }
 
-async function updateAiTextProvider(value = {}) {
-  const current = await loadAiConfiguration();
-  const { settings, credentialReset } = mergeAiSettings(projectAiRuntime(current).aiSettings, value);
-  const providerId = settings.activeProvider === "compatible" ? "custom-text" : "deepseek";
-  const source = settings.activeProvider === "compatible" ? settings.compatible : settings;
-  const registry = mergeAiProviderRegistry(current.registry, { providers: {
-    [providerId]: {
-      endpoint: settings.activeProvider === "compatible" ? source.endpoint : "https://api.deepseek.com/chat/completions",
-      protocol: "chat_completions",
-      apiKey: source.apiKey,
-      clearApiKey: value.clearApiKey === (settings.activeProvider === "compatible" ? "compatible" : "deepseek"),
-      consent: settings.consent,
-      models: { textTags: settings.activeProvider === "compatible" ? source.model : settings.analysisModel }
-    }
-  } });
-  const configuration = {
-    registry,
-    assignments: normalizeAiTaskAssignments({
-      ...current.assignments,
-      textTags: { providerId, model: settings.activeProvider === "compatible" ? source.model : settings.analysisModel }
-    }, registry),
-    preferences: normalizeAiPreferences({
-      ...current.preferences,
-      textInstructionsByLocale: settings.analysisInstructionsByLocale
-    })
-  };
-  await persistAiConfiguration(configuration);
-  return aiConfigurationResponse(configuration, credentialReset
-    ? "兼容接口域名已变更；旧 API Key 未沿用，请重新填写新服务的 Key"
-    : "文字标签服务已保存");
+function sameProviderConnection(current, requested) {
+  return Boolean(current
+    && current.endpoint === requested.endpoint
+    && current.protocol === requested.protocol
+    && current.apiKey === requested.apiKey);
 }
 
-async function updateAiVisionProvider(value = {}) {
-  const current = await loadAiConfiguration();
-  const { settings, credentialReset } = mergeVisionSettings(projectAiRuntime(current).visionSettings, value);
-  permissionPatternForVisionSettings(settings);
-  if (!settings[settings.activeProvider].model) throw new Error("请填写所选图片服务的模型名称");
-  const providerId = settings.activeProvider === "compatible" ? "custom-media" : "openai";
-  const clear = String(value.clearApiKey ?? "");
-  const registry = mergeAiProviderRegistry(current.registry, { providers: {
-    openai: {
-      endpoint: "https://api.openai.com/v1/responses",
-      apiKey: settings.openai.apiKey,
-      clearApiKey: clear === "openai",
-      consent: settings.consent,
-      models: {
-        imageAnalysis: settings.openai.model,
-        videoGeneration: settings.openai.videoGeneration.model
-      },
-      videoGeneration: settings.openai.videoGeneration
-    },
-    "custom-media": {
-      endpoint: settings.compatible.endpoint,
-      protocol: settings.compatible.protocol,
-      apiKey: settings.compatible.apiKey,
-      clearApiKey: clear === "compatible",
-      consent: settings.consent,
-      models: {
-        imageAnalysis: settings.compatible.model,
-        imageGeneration: settings.compatible.imageGeneration.model
-      },
-      imageGeneration: {
-        ...settings.compatible.imageGeneration,
-        apiKey: clear === "compatible_image" ? "" : settings.compatible.imageGeneration.apiKey
-      }
-    }
-  } });
-  const assignments = { ...current.assignments, imageAnalysis: {
-    providerId,
-    model: providerId === "openai" ? settings.openai.model : settings.compatible.model
-  } };
-  for (const taskId of ["imageGeneration", "videoGeneration"]) {
-    if (assignments[taskId]?.providerId === providerId) {
-      assignments[taskId] = { ...assignments[taskId], model: registry.providers[providerId]?.models?.[taskId] };
-    }
-  }
-  const configuration = {
-    registry,
-    assignments: normalizeAiTaskAssignments(assignments, registry),
-    preferences: normalizeAiPreferences({
-      ...current.preferences,
-      visionInstructionsByLocale: settings.instructionsByLocale,
-      autoAnalyzeImports: settings.autoAnalyzeImports
-    })
-  };
-  const selected = registry.providers[providerId];
-  if (configuration.preferences.autoAnalyzeImports && (!selected?.consent || !selected?.credentialConfigured)) {
-    throw new Error("自动分析导入图片需要先完成视觉服务配置，并确认图片发送范围");
-  }
-  await persistAiConfiguration(configuration);
-  return aiConfigurationResponse(configuration, credentialReset
-    ? "兼容接口域名已变更；旧 API Key 未沿用，请重新填写新服务的 Key"
-    : "图片视觉分析设置已保存");
+function discoveryErrorMessage(error, apiKey) {
+  const message = userMessage(error);
+  const secret = String(apiKey ?? "").trim();
+  return secret ? message.split(secret).join("[已隐藏 API Key]") : message;
 }
 
 async function loadAiConfiguration() {
   const stored = await chrome.storage.local.get([
-    STORAGE_KEYS.aiProviderRegistry, STORAGE_KEYS.aiTaskAssignments, STORAGE_KEYS.aiPreferences,
-    STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes
+    STORAGE_KEYS.aiProviderRegistry, STORAGE_KEYS.aiTaskAssignments, STORAGE_KEYS.aiPreferences
   ]);
   return aiConfigurationFromStorage(stored);
 }
@@ -3546,9 +4226,6 @@ async function persistAiConfiguration(configuration) {
     [STORAGE_KEYS.aiTaskAssignments]: configuration.assignments,
     [STORAGE_KEYS.aiPreferences]: configuration.preferences
   });
-  await chrome.storage.local.remove([
-    STORAGE_KEYS.aiSettings, STORAGE_KEYS.visionSettings, STORAGE_KEYS.aiServiceProfiles, STORAGE_KEYS.aiTaskRoutes
-  ]);
 }
 
 function aiConfigurationResponse(configuration, message) {
@@ -3560,25 +4237,86 @@ function aiConfigurationResponse(configuration, message) {
     aiTaskAssignments: configuration.assignments,
     aiSettings: publicAiSettings(runtime.aiSettings),
     visionSettings: publicVisionSettings(runtime.visionSettings),
-    aiServiceProfiles: publicAiServiceProfiles(runtime.aiServiceProfiles),
-    aiTaskRoutes: runtime.aiTaskRoutes
+    aiServiceProfiles: publicAiServiceProfiles(runtime.aiServiceProfiles)
   };
 }
 
-async function getAiTaskRuntime(taskIdValue, allowUnconfigured = false) {
+async function getAiTaskRuntime(taskIdValue, allowUnconfigured = false, assignmentOverride = null) {
   const taskId = canonicalAiTaskId(taskIdValue);
-  const configuration = await loadAiConfiguration();
+  const storedConfiguration = await loadAiConfiguration();
+  const requestedProviderId = String(assignmentOverride?.providerId ?? "").trim();
+  const requestedModel = String(assignmentOverride?.model ?? "").trim();
+  const configuration = requestedProviderId || requestedModel ? {
+    ...storedConfiguration,
+    assignments: normalizeAiTaskAssignments({
+      ...storedConfiguration.assignments,
+      [taskId]: {
+        providerId: requestedProviderId || storedConfiguration.assignments[taskId]?.providerId,
+        model: requestedModel || storedConfiguration.assignments[taskId]?.model
+      }
+    }, storedConfiguration.registry)
+  } : storedConfiguration;
   const assignment = configuration.assignments[taskId];
   const providerLabel = configuration.registry.providers[assignment?.providerId]?.label || assignment?.providerId;
+  const common = {
+    ok: true,
+    aiRuntimeProtocolVersion: AI_RUNTIME_PROTOCOL_VERSION,
+    taskId,
+    assignment,
+    providerLabel,
+    runtimeDescriptor: aiTaskRuntimeDescriptor(taskId, configuration),
+    availableProviders: aiTaskProviderOptions(taskId, configuration)
+  };
   if (["textTags", "skillExtraction", "creativePlanning"].includes(taskId)) {
-    return { ok: true, taskId, assignment, providerLabel, aiSettings: resolveTextTaskSettings(taskId, configuration, { requireConfigured: !allowUnconfigured }) };
+    return { ...common, aiSettings: resolveTextTaskSettings(taskId, configuration, { requireConfigured: !allowUnconfigured }) };
   }
   if (["imageAnalysis", "imageGeneration"].includes(taskId)) {
-    return { ok: true, taskId, assignment, providerLabel, visionSettings: resolveVisionTaskSettings(taskId, configuration, { requireConfigured: !allowUnconfigured }) };
+    return { ...common, visionSettings: resolveVisionTaskSettings(taskId, configuration, { requireConfigured: !allowUnconfigured }) };
   }
-  if (taskId === "videoAnalysis") return { ok: true, taskId, videoAnalysis: resolveVideoAnalysisTask(configuration) };
-  if (taskId === "videoGeneration") return { ok: true, taskId, runtime: projectAiRuntime(configuration) };
+  if (taskId === "videoAnalysis") {
+    if (allowUnconfigured && !assignment?.providerId) return { ...common, videoAnalysis: null };
+    return { ...common, videoAnalysis: resolveVideoAnalysisTask(configuration) };
+  }
+  if (taskId === "videoGeneration") return { ...common, runtime: projectAiRuntime(configuration) };
   throw new Error("未知 AI 任务");
+}
+
+function aiTaskProviderOptions(taskId, configuration) {
+  return availableAiProvidersForTask(taskId, configuration.registry).filter((provider) =>
+    configuration.registry.providers[provider.id]?.consent === true
+  ).map((provider) => {
+    const profile = configuration.registry.providers[provider.id];
+    const models = [...new Set([
+      profile?.models?.[taskId],
+      ...(profile?.discoveredModels ?? [])
+        .filter((model) => model.status !== "unavailable" && model.tasks.includes(taskId))
+        .map((model) => model.id)
+    ].filter(Boolean))];
+    return { id: provider.id, label: provider.label, models };
+  });
+}
+
+function aiTaskRuntimeDescriptor(taskId, configuration) {
+  const assignment = configuration.assignments[taskId] ?? {};
+  const profile = configuration.registry.providers[assignment.providerId] ?? {};
+  const model = (profile.discoveredModels ?? []).find((item) => item.id === assignment.model);
+  let endpointOrigin = "";
+  try { endpointOrigin = new URL(profile.endpoint).origin; } catch {}
+  const imageSupport = model?.inputModalities?.includes("image")
+    ? true
+    : model?.inputModalities?.length ? false : taskId === "imageAnalysis" ? null : false;
+  return {
+    providerId: assignment.providerId || "",
+    providerLabel: profile.label || assignment.providerId || "",
+    model: assignment.model || "",
+    endpointOrigin,
+    capabilities: {
+      text: true,
+      image: imageSupport,
+      imageSource: model?.confidence || "unknown",
+      maxImages: Number.isInteger(model?.referenceImages?.maxItems) ? model.referenceImages.maxItems : null
+    }
+  };
 }
 
 async function getComposerAiRuntime() {
@@ -3594,13 +4332,6 @@ function canonicalAiTaskId(value) {
   };
   const id = String(value ?? "").trim();
   return map[id] || id;
-}
-
-async function probeVisionModels(value) {
-  const current = projectAiRuntime(await loadAiConfiguration()).visionSettings;
-  const { settings } = mergeVisionSettings(current, { activeProvider: "compatible", compatible: value });
-  const result = await probeCompatibleModels(settings.compatible);
-  return { ok: true, message: `连接成功 · 找到 ${result.models.length} 个模型`, ...result };
 }
 
 async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "") {
@@ -3731,15 +4462,12 @@ async function analyzeEntryVideo(message) {
   const videoBlob = asset.storageMode === "managed" ? await getMediaBlob(asset.id) : null;
   if (asset.storageMode === "managed" && !videoBlob) return { ok: false, message: "本地视频文件缺失，无法分析" };
   const sourceUrl = asset.reference?.url || asset.sourceUrl;
-  const analyzeVideo = route.providerId === "gemini"
-    ? analyzeVideoWithGemini
-    : route.providerId === "openrouter"
-      ? analyzeVideoWithOpenRouter
-      : null;
+  const analyzeVideo = VIDEO_ANALYSIS_ADAPTERS[route.protocol];
   if (!analyzeVideo) throw new Error(`${route.provider} 的视频理解请求协议当前版本尚未适配`);
   const analysis = await analyzeVideo({
     apiKey: route.apiKey,
     endpoint: route.endpoint,
+    providerLabel: route.providerLabel,
     model: route.model,
     mode: message.mode,
     customQuestion: message.customQuestion,
@@ -5045,6 +5773,53 @@ async function exportProjectArchive(state, collectionId) {
   };
 }
 
+async function exportCuratedSubmission(state, message = {}) {
+  const prepared = prepareCuratedSubmissionState(state, {
+    entryIds: message.entryIds,
+    collectionId: message.collectionId
+  });
+  await migrateLegacyScreenshots(prepared.entries);
+  await ensureOffscreenDocument();
+  const result = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "CREATE_CURATED_SUBMISSION_URLS",
+    ...prepared.state
+  });
+  if (!result?.ok || !Array.isArray(result.outputs) || !result.outputs.length) {
+    throw new Error(result?.message || "无法生成精选投稿包");
+  }
+  const downloadIds = [];
+  try {
+    for (const output of result.outputs) {
+      const downloadId = await chrome.downloads.download({
+        url: output.url,
+        filename: output.filename,
+        conflictAction: "uniquify",
+        saveAs: false
+      });
+      downloadIds.push(downloadId);
+      await waitForDownload(downloadId);
+    }
+  } finally {
+    await Promise.allSettled(result.outputs.map((output) => chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "REVOKE_BLOB_URL",
+      url: output.url
+    })));
+  }
+  return {
+    ok: true,
+    submissionId: result.submissionId,
+    count: result.caseCount,
+    mediaCount: result.mediaCount,
+    partCount: result.partCount,
+    downloadIds,
+    message: result.partCount > 1
+      ? `投稿包已生成，共 ${result.partCount} 个分卷`
+      : "投稿包已生成"
+  };
+}
+
 async function exportCreativeExperiments(state) {
   if (!state.creativeRuns.some((run) => run.outputs.length)) {
     return { ok: false, message: "还没有可导出的真实生成结果" };
@@ -5168,6 +5943,61 @@ async function applyLibraryImport(state, message) {
     importedOutputCount: result.importedOutputCount,
     importedSkillCount: result.importedSkillCount,
     skippedSkillCount: result.skippedSkillCount
+  };
+}
+
+function previewCuratedImport(state, message) {
+  const result = mergeCuratedLibraryPackage(state, message.library, {
+    packageId: message.packageId,
+    projectName: message.projectName,
+    mode: message.mode
+  });
+  return curatedImportResponse(result);
+}
+
+async function applyCuratedImport(state, message) {
+  const result = mergeCuratedLibraryPackage(state, message.library, {
+    packageId: message.packageId,
+    projectName: message.projectName,
+    mode: message.mode,
+    entryIdMap: message.entryIdMap,
+    compoundIdMap: message.compoundIdMap,
+    visualIdMap: message.visualIdMap,
+    sessionIdMap: message.sessionIdMap,
+    runIdMap: message.runIdMap
+  });
+  await commitLocalChanges({
+    ...storagePayload(result.state),
+    [STORAGE_KEYS.settings]: normalizeSettings(result.state.settings ?? state.settings),
+    [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(result.state.composerSettings ?? state.composerSettings),
+    [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(result.state.composerSessions ?? state.composerSessions),
+    [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
+      result.state.creativeExperimentSettings ?? state.creativeExperimentSettings
+    ),
+    [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.state.creativeRuns ?? state.creativeRuns),
+    [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills)
+  });
+  if (result.importedEntryIds.length) await queueAutomaticVisionAnalysis(result.importedEntryIds);
+  return curatedImportResponse(result);
+}
+
+function curatedImportResponse(result) {
+  return {
+    ok: true,
+    entryIdMap: result.entryIdMap,
+    compoundIdMap: result.compoundIdMap,
+    visualIdMap: result.visualIdMap,
+    sessionIdMap: result.sessionIdMap,
+    runIdMap: result.runIdMap,
+    importedCount: result.importedCount,
+    existingCount: result.existingCount,
+    sourceEntryIds: result.sourceEntryIds,
+    importedSourceEntryIds: result.importedSourceEntryIds,
+    entriesBySourceEntryId: result.entriesBySourceEntryId,
+    importedEntryIds: result.importedEntryIds,
+    importedVisualIds: result.importedVisualIds,
+    projectId: result.projectId,
+    count: result.state.entries.length
   };
 }
 

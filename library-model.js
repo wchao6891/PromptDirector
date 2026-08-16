@@ -91,13 +91,33 @@ export function entrySourceMetadataRows(entry = {}, sourceLabel = "来源") {
   const descriptors = [];
   const fields = [];
   const seen = new Set();
+  const english = sourceLabel === "Source";
+  const labels = english
+    ? { provider: "Provider", itemId: "Work ID", author: "Author", handle: "Account", publishedAt: "Published", model: "Model", dimensions: "Dimensions", favorites: "Favorites", likes: "Likes", uses: "Uses", views: "Views", shares: "Shares" }
+    : { provider: "来源", itemId: "作品 ID", author: "作者", handle: "账号", publishedAt: "发布时间", model: "模型", dimensions: "尺寸", favorites: "收藏", likes: "点赞", uses: "使用", views: "浏览", shares: "分享" };
+  const addField = (label, value) => {
+    const text = String(value ?? "").trim();
+    const key = `${label}\n${text}`;
+    if (!label || !text || seen.has(key)) return;
+    seen.add(key);
+    fields.push({ label, value: text });
+  };
+  const sourceFacts = entry.sourceFacts && typeof entry.sourceFacts === "object" ? entry.sourceFacts : {};
+  for (const name of ["provider", "itemId", "author", "handle", "publishedAt", "model", "dimensions"]) {
+    addField(labels[name], sourceFacts[name]);
+  }
+  for (const [name, amount] of Object.entries(sourceFacts.engagement || {})) {
+    if (Number.isFinite(Number(amount)) && Number(amount) >= 0) addField(labels[name] || name, String(amount));
+  }
   for (const value of entry.metadataLabels ?? []) {
     const text = String(value ?? "").trim();
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
+    if (!text) continue;
     const match = text.match(/^([^：:]{1,24})[：:]\s*(.+)$/);
-    if (match) fields.push({ label: match[1].trim(), value: match[2].trim() });
-    else descriptors.push(text);
+    if (match) addField(match[1].trim(), match[2].trim());
+    else if (!seen.has(text)) {
+      seen.add(text);
+      descriptors.push(text);
+    }
   }
   return [
     ...(descriptors.length ? [{ label: sourceLabel, value: descriptors.join(" · ") }] : []),
@@ -123,8 +143,20 @@ export function entrySearchText(entry, catalogValue, nodeByIdValue) {
     const node = nodeById.get(item.nodeId);
     return node ? [node.name, ...node.aliases] : [];
   });
+  const sourceFacts = entry.sourceFacts && typeof entry.sourceFacts === "object" ? entry.sourceFacts : {};
+  const sourceFactValues = [
+    sourceFacts.provider,
+    sourceFacts.itemId,
+    sourceFacts.author,
+    sourceFacts.handle,
+    sourceFacts.publishedAt,
+    sourceFacts.model,
+    sourceFacts.dimensions,
+    ...Object.entries(sourceFacts.engagement || {}).flatMap(([key, value]) => [key, value])
+  ];
   return [
     entry.title, entry.text, entry.url, ...tags, ...(entry.customLabels ?? []), ...(entry.metadataLabels ?? []),
+    ...sourceFactValues,
     ...visualDescriptions(entry),
     ...(entry.negativeTerms ?? []), ...(entry.legacyFacetCandidates ?? []),
     ...(entry.timeNotes ?? []).map((note) => note.text),

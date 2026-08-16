@@ -44,8 +44,7 @@ import {
   analyzeTextDetailedWithDeepSeek,
   isRetryableDeepSeekError,
   normalizeAiSettings,
-  organizeDetailTagsWithDeepSeek,
-  permissionPatternForAiSettings
+  organizeDetailTagsWithDeepSeek
 } from "./deepseek.js";
 import { runAnalysisClaimsIndependently } from "./analysis-runner.js";
 import {
@@ -68,11 +67,10 @@ import {
 import { createStableMasonry } from "./stable-masonry.js";
 import {
   DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE,
-  DEFAULT_VISION_MODEL,
-  MICU_DEFAULT_CHAT_MODEL,
+  MICU_IMAGE_EDITS_ENDPOINT,
+  MICU_IMAGE_GENERATIONS_ENDPOINT,
   MICU_RESPONSES_ENDPOINT,
   normalizeVisionSettings,
-  permissionPatternsForVisionSettings,
   blobToDataUrl,
   visionProtocolDescription
 } from "./vision.js";
@@ -104,7 +102,6 @@ import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { CONTENT_ROLES, CONTENT_TYPE_VISIBILITY, contentRoleForEntry } from "./taxonomy.js";
 import { createUiIcon } from "./ui-icons.js";
 import { confirmAppAction, promptAppText, showAppDialog } from "./ui-dialogs.js";
-import { normalizeAiTaskRoutes } from "./ai-task-routing.js";
 import {
   AI_ASSIGNMENT_TASKS,
   availableAiProvidersForTask
@@ -130,6 +127,7 @@ import {
   parseLibraryReturnSnapshot,
   serializeLibraryReturnSnapshot
 } from "./navigation-state.js";
+import { CURATED_SUBMISSION_URL } from "./curated-config.js";
 
 const uiPreferences = await initializeUi();
 bindUiPreferenceReload();
@@ -138,26 +136,25 @@ const libraryWindowId = (await chrome.windows.getCurrent()).id;
 
 const elements = Object.fromEntries([
   "about-version", "active-filter-badge", "add-folder", "add-media", "add-video-reference", "ai-settings-form", "ai-settings-status", "ai-routing-summary", "ai-provider-list", "ai-assignment-list", "open-ai-routing", "analysis-instructions-en", "analysis-instructions-zh", "analysis-protocol", "apply-reanalyze", "case-list", "cancel-library-maintenance",
-  "clear-api-key", "clear-filters", "content-filters", "content-type-count", "content-type-name", "content-type-replacement", "content-type-replacement-field", "content-type-role", "content-type-role-help",
+  "clear-filters", "content-filters", "content-type-count", "content-type-name", "content-type-replacement", "content-type-replacement-field", "content-type-role", "content-type-role-help",
   "content-type-list", "content-type-editor", "content-type-editor-title", "content-type-delete-transfer", "content-type-delete-message",
   "add-content-type", "cancel-content-type-edit", "cancel-delete-content-type", "confirm-delete-content-type", "save-content-type",
   "collection-filters", "create-collection",
   "analysis-batch-summary", "analysis-diagnostics", "analysis-diagnostic-events", "analysis-progress", "analysis-progress-bar", "analysis-runtime-version", "apply-staged-analysis-rebuild", "batch-status-badge", "cancel-analysis-batch", "composer-agent-instruction", "composer-method-default-text", "composer-method-migration", "composer-method-version", "composer-settings-form", "composer-settings-status", "composer-task-key", "composer-task-method", "copy-analysis-diagnostics", "restore-composer-agent", "restore-composer-task", "save-composer-agent",
   "creative-experiment-auto-analyze", "creative-experiment-enabled", "creative-experiment-status", "save-creative-experiment",
   "creative-experiment-file", "export-creative-experiments", "import-creative-experiments",
-  "create-node-form", "deepseek-analysis-model", "deepseek-api-key", "deepseek-consent", "delete-content-type", "detail-close", "detail-content", "detail-drawer", "detail-navigation", "detail-next",
+  "create-node-form", "delete-content-type", "detail-close", "detail-content", "detail-drawer", "detail-navigation", "detail-next",
   "detail-prev", "drawer-backdrop", "drawer-toolbar", "empty-filter", "empty-library", "empty-state",
   "facet-filters", "feedback", "filter-sidebar", "gallery-heading", "legacy-candidates", "library-summary",
   "image-lightbox", "image-lightbox-close", "image-lightbox-image", "library-title", "load-more", "load-sentinel", "manage-facets", "manager-close", "manager-dialog", "manager-feedback",
   "manager-pending", "manager-content-types", "manager-vocabulary", "new-node-aliases",
   "new-node-name", "new-node-parent", "pending-count", "pending-filter",
-  "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze", "text-ai-provider", "text-compatible-endpoint", "text-compatible-model", "text-compatible-api-key", "text-local-preset", "test-text-ai-service",
+  "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "restore-analysis-default", "search-input", "selection-hint", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library",
+  "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
   "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-add-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-project-target", "open-settings", "settings-dialog", "settings-close",
   "project-section", "selection-simple-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree", "maintenance-progress", "maintenance-progress-bar",
-  "vision-auto-analyze-imports", "vision-compatible-api-key", "vision-compatible-endpoint", "vision-compatible-fields", "vision-compatible-model", "vision-compatible-protocol", "vision-compatible-target", "vision-consent",
-  "vision-instructions-en", "vision-instructions-zh", "vision-openai-api-key", "vision-openai-fields", "vision-openai-model", "vision-openai-video-model", "vision-openai-video-sizes", "vision-openai-video-durations", "vision-provider",
-  "vision-protocol", "vision-settings-form", "vision-settings-status", "vision-micu-preset", "vision-local-preset", "test-vision-service", "vision-compatible-models", "restore-vision-default", "clear-vision-api-key",
+  "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "open-curated", "open-skills", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
   "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder",
   "vision-batch-dialog", "vision-batch-close", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze",
@@ -214,12 +211,10 @@ let organizerState = { collections: [] };
 let aiSettings = { configured: false, consent: false, analysisModel: "deepseek-v4-flash" };
 let visionSettings = normalizeVisionSettings();
 let aiServiceProfiles = { gemini: { configured: false, model: "" }, xai: { configured: false, textModel: "", imageModel: "", videoModel: "" } };
-let aiTaskRoutes = normalizeAiTaskRoutes();
 let aiProviderRegistry = { version: 1, providers: {} };
 let aiTaskAssignments = {};
 let aiModelCatalogRefreshStarted = false;
 let creativeExperimentSettings = { enabled: false, autoAnalyze: false };
-let privateVisionEndpoint = "";
 let visionUndoEntryIds = new Set();
 let visibleEntries = [];
 let renderedCount = 0;
@@ -246,6 +241,8 @@ let activeVideoAnalysisUi = null;
 let selectionMode = "";
 let projectSelectionId = "";
 const selectedCaseIds = new Set();
+let shareDialogContext = null;
+let submissionDownloadIds = [];
 let analysisBatchJob = null;
 let visionBatchJob = null;
 let canUndoAnalysisBatch = false;
@@ -287,6 +284,8 @@ let activeImportJob = null;
 let latestImportJob = null;
 let importPollTimer = 0;
 let importDragDepth = 0;
+let externalLibraryRefreshTimer = 0;
+let externalLibraryRefreshPending = false;
 
 const mobileLayout = matchMedia("(max-width: 640px)");
 if (mobileLayout.matches) workspace.classList.add("filters-collapsed");
@@ -314,6 +313,17 @@ window.addEventListener("scroll", () => {
   scheduleLoadCheck();
   scheduleVisibleMediaHydration();
 }, { passive: true });
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !["entries", "organizerState", "compoundCases"].some((key) => changes[key])) return;
+  externalLibraryRefreshPending = true;
+  scheduleExternalLibraryRefresh();
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && externalLibraryRefreshPending) scheduleExternalLibraryRefresh();
+});
+window.addEventListener("focus", () => {
+  if (externalLibraryRefreshPending) scheduleExternalLibraryRefresh();
+});
 
 bindEvents();
 renderAnalysisDiagnostics();
@@ -323,6 +333,7 @@ elements.uiMotion.value = uiPreferences.motion;
 elements.showAnalysisDiagnostics.checked = uiPreferences.analysisDiagnostics;
 elements.aboutVersion.textContent = `PromptDirector ${chrome.runtime.getManifest().version}`;
 await refreshLibrary();
+await openRequestedLibraryTarget();
 await resumeImportJob();
 openRequestedSettings();
 
@@ -335,6 +346,16 @@ window.addEventListener("unload", () => {
   if (importPollTimer) clearTimeout(importPollTimer);
   for (const url of [...thumbnailUrls.values(), ...originalUrls.values(), ...documentPreviewUrls.values()]) URL.revokeObjectURL(url);
 });
+
+function scheduleExternalLibraryRefresh() {
+  if (document.hidden || externalLibraryRefreshTimer) return;
+  externalLibraryRefreshTimer = window.setTimeout(async () => {
+    externalLibraryRefreshTimer = 0;
+    if (!externalLibraryRefreshPending) return;
+    externalLibraryRefreshPending = false;
+    await refreshLibrary();
+  }, 80);
+}
 
 async function previewDeepSeekAnalysisBatch(mode = "incremental") {
   const button = mode === "rebuild" ? elements.previewAnalysisReanalyze : elements.previewAnalysisBatch;
@@ -536,6 +557,17 @@ function bindEvents() {
   elements.startCompose.addEventListener("click", openComposerPage);
   elements.shareCancel.addEventListener("click", exitSelectionMode);
   elements.shareExport.addEventListener("click", completeSelection);
+  elements.shareDialogClose.addEventListener("click", closeShareDialog);
+  elements.shareDialog.addEventListener("click", (event) => {
+    if (event.target === elements.shareDialog) closeShareDialog();
+  });
+  elements.shareDialogDisclosure.addEventListener("change", () => {
+    elements.shareDialogSubmit.disabled = !elements.shareDialogDisclosure.checked;
+  });
+  elements.shareDialogExport.addEventListener("click", exportFromShareDialog);
+  elements.shareDialogSubmit.addEventListener("click", submitFromShareDialog);
+  elements.shareDialogShowFiles.addEventListener("click", showSubmissionFiles);
+  elements.shareDialogOpenForm.addEventListener("click", () => chrome.tabs.create({ url: CURATED_SUBMISSION_URL, active: true }));
   elements.selectionCombine.addEventListener("click", saveCompoundSelection);
   elements.selectionAddProject.addEventListener("click", addSelectionToProject);
   elements.selectionNewProject.addEventListener("click", createProjectFromSelection);
@@ -628,73 +660,21 @@ function bindEvents() {
   elements.resumeLibraryMaintenance.addEventListener("click", () => updateLibraryMaintenance("RESUME_LIBRARY_MAINTENANCE"));
   elements.retryLibraryMaintenance.addEventListener("click", () => updateLibraryMaintenance("RETRY_LIBRARY_MAINTENANCE"));
   elements.cancelLibraryMaintenance.addEventListener("click", () => updateLibraryMaintenance("CANCEL_LIBRARY_MAINTENANCE"));
-  elements.aiSettingsForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const settingsValue = currentTextAiFormValue();
-    try {
-      const permission = permissionPatternForAiSettings(settingsValue);
-      if (!await chrome.permissions.request({ origins: [permission] })) throw new Error("没有获得所选 AI 服务的访问权限");
-    } catch (error) {
-      return showFeedback(error.message, true);
-    }
-    await perform(elements.aiSettingsForm.querySelector("button"), {
-      type: "UPDATE_AI_TEXT_PROVIDER",
-      settings: settingsValue
-    });
-    elements.deepseekApiKey.value = "";
-    elements.textCompatibleApiKey.value = "";
-  });
+  elements.aiSettingsForm.addEventListener("submit", saveAiRulePreferences);
   elements.openAiRouting.addEventListener("click", () => openAiProviderDialog());
-  elements.textAiProvider.addEventListener("change", renderTextAiProviderFields);
-  elements.textLocalPreset.addEventListener("click", () => {
-    elements.textAiProvider.value = "compatible";
-    elements.textCompatibleEndpoint.value = "http://localhost:1234/v1/chat/completions";
-    elements.textCompatibleModel.value = "";
-    renderTextAiProviderFields();
-  });
-  elements.testTextAiService.addEventListener("click", testTextAiService);
   elements.restoreAnalysisDefault.addEventListener("click", () => {
     const target = activeAnalysisLocale === "en" ? elements.analysisInstructionsEn : elements.analysisInstructionsZh;
     target.value = DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE[activeAnalysisLocale];
     target.focus();
-    showFeedback("已恢复编辑框默认内容，点击保存后生效");
+    showFeedback(t("已恢复编辑框默认内容，点击保存后生效"));
   });
-  elements.clearApiKey.addEventListener("click", () => perform(elements.clearApiKey, {
-    type: "UPDATE_AI_TEXT_PROVIDER",
-    settings: {
-      ...currentTextAiFormValue(),
-      clearApiKey: elements.textAiProvider.value === "compatible" ? "compatible" : "deepseek"
-    }
-  }));
-  elements.visionProvider.addEventListener("change", renderVisionProviderFields);
-  elements.visionCompatibleProtocol.addEventListener("change", renderVisionCompatibleEndpointHint);
-  elements.visionCompatibleEndpoint.addEventListener("input", renderVisionCompatibleEndpointHint);
-  elements.visionMicuPreset.addEventListener("click", () => {
-    elements.visionProvider.value = "compatible";
-    elements.visionCompatibleProtocol.value = "responses";
-    elements.visionCompatibleEndpoint.value = MICU_RESPONSES_ENDPOINT;
-    elements.visionCompatibleModel.value ||= MICU_DEFAULT_CHAT_MODEL;
-    renderVisionProviderFields();
-    renderVisionCompatibleEndpointHint();
-    elements.visionCompatibleApiKey.focus();
-  });
-  elements.visionLocalPreset.addEventListener("click", () => {
-    elements.visionProvider.value = "compatible";
-    elements.visionCompatibleProtocol.value = "chat_completions";
-    elements.visionCompatibleEndpoint.value = "http://localhost:1234/v1/chat/completions";
-    elements.visionCompatibleModel.value = "";
-    renderVisionProviderFields();
-    elements.testVisionService.focus();
-  });
-  elements.testVisionService.addEventListener("click", testCompatibleVisionService);
-  elements.visionSettingsForm.addEventListener("submit", saveVisionSettings);
+  elements.visionSettingsForm.addEventListener("submit", saveAiRulePreferences);
   elements.restoreVisionDefault.addEventListener("click", () => {
     const target = activeAnalysisLocale === "en" ? elements.visionInstructionsEn : elements.visionInstructionsZh;
     target.value = DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE[activeAnalysisLocale];
     target.focus();
-    showFeedback("已恢复编辑框默认内容，点击保存后生效");
+    showFeedback(t("已恢复编辑框默认内容，点击保存后生效"));
   });
-  elements.clearVisionApiKey.addEventListener("click", clearSelectedVisionApiKey);
   elements.previewAnalysisBatch.addEventListener("click", () => previewDeepSeekAnalysisBatch("incremental"));
   elements.previewAnalysisReanalyze.addEventListener("click", () => previewDeepSeekAnalysisBatch("rebuild"));
   elements.organizeDetailTags.addEventListener("click", organizeDetailTags);
@@ -787,7 +767,6 @@ async function refreshLibrary() {
   aiSettings = response.aiSettings ?? aiSettings;
   visionSettings = response.visionSettings ?? visionSettings;
   aiServiceProfiles = response.aiServiceProfiles ?? aiServiceProfiles;
-  aiTaskRoutes = normalizeAiTaskRoutes(response.aiTaskRoutes);
   aiProviderRegistry = response.aiProviderRegistry ?? aiProviderRegistry;
   aiTaskAssignments = response.aiTaskAssignments ?? aiTaskAssignments;
   if (!aiModelCatalogRefreshStarted) {
@@ -832,11 +811,6 @@ async function refreshLibrary() {
     gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
     updateCachedDocumentCards();
     if (elements.searchInput.value.trim()) scheduleSearchRender();
-  }).catch(() => undefined);
-  void chrome.runtime.sendMessage({ type: "GET_COMPOSER_AI_RUNTIME" }).then((response) => {
-    if (!response?.ok) return;
-    const privateSettings = normalizeVisionSettings(response.visionSettings);
-    privateVisionEndpoint = privateSettings.compatible.endpoint;
   }).catch(() => undefined);
   if (elements.managerDialog.open) renderManager();
   if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
@@ -1576,7 +1550,7 @@ function isVisionSelectableEntry(entry) {
 }
 
 function completeSelection() {
-  return exportSharedCases();
+  return openShareDialog({ entryIds: [...selectedCaseIds], title: t("分享案例") });
 }
 
 async function addSelectionToProject() {
@@ -1695,34 +1669,86 @@ async function saveProjectSelection() {
   }
 }
 
-async function exportSharedCases() {
-  elements.shareExport.disabled = true;
+async function shareProjectCollection(collection) {
+  const memberIds = new Set(collection.entryIds);
+  const count = entries.filter((entry) => memberIds.has(entry.id)).length;
+  openShareDialog({ collectionId: collection.id, title: collection.name, count });
+}
+
+function openShareDialog({ entryIds = [], collectionId = "", title = "", count = 0 } = {}) {
+  const selectedCount = count || entryIds.length;
+  if (!selectedCount) return showFeedback(t("请先选择要分享的案例"), true);
+  shareDialogContext = { entryIds, collectionId, title, count: selectedCount };
+  submissionDownloadIds = [];
+  elements.shareDialogTitle.textContent = title || t("分享案例");
+  elements.shareDialogMeta.textContent = t("{count} 个案例", { count: selectedCount });
+  elements.shareDialogDisclosure.checked = false;
+  elements.shareDialogSubmit.disabled = true;
+  elements.shareDialogExport.disabled = false;
+  elements.shareDialogResult.hidden = true;
+  elements.shareDialogOptions.hidden = false;
+  elements.shareDialog.showModal();
+  elements.shareDialogExport.focus();
+}
+
+function closeShareDialog() {
+  if (elements.shareDialog.open) elements.shareDialog.close();
+  shareDialogContext = null;
+  submissionDownloadIds = [];
+}
+
+async function exportFromShareDialog() {
+  if (!shareDialogContext) return;
+  elements.shareDialogExport.disabled = true;
   try {
-    const response = await chrome.runtime.sendMessage({ type: "EXPORT_ARCHIVE", entryIds: [...selectedCaseIds] });
-    if (!response?.ok) throw new Error(response?.message || "无法导出分享包");
+    const message = shareDialogContext.collectionId
+      ? { type: "EXPORT_PROJECT", collectionId: shareDialogContext.collectionId }
+      : { type: "EXPORT_ARCHIVE", entryIds: shareDialogContext.entryIds };
+    const response = await chrome.runtime.sendMessage(message);
+    if (!response?.ok) throw new Error(response?.message || t("无法导出分享包"));
     showFeedback(response.message);
-    exitSelectionMode();
+    const selected = Boolean(shareDialogContext.entryIds.length);
+    closeShareDialog();
+    if (selected) exitSelectionMode();
   } catch (error) {
-    showFeedback(error.message, true);
-    elements.shareExport.disabled = !selectedCaseIds.size;
+    showFeedback(error.message || t("无法导出分享包"), true);
+    elements.shareDialogExport.disabled = false;
   }
 }
 
-async function shareProjectCollection(collection) {
-  const memberIds = new Set(collection.entryIds);
-  const projectEntries = entries.filter((entry) => memberIds.has(entry.id));
-  const imageCount = projectEntries.reduce((sum, entry) => sum + entryMediaAssets(entry).filter((asset) => asset.kind === "image" && asset.usage !== "poster").length, 0);
-  const summary = currentLocale() === "en"
-    ? `Export project “${collection.name}” with ${projectEntries.length} cases and ${imageCount} images?`
-    : `导出项目“${collection.name}”？将包含 ${projectEntries.length} 个案例和 ${imageCount} 张图片。`;
-  if (!await confirmAppAction({ title: t("导出项目？"), description: summary, confirmLabel: t("导出") })) return;
+async function submitFromShareDialog() {
+  if (!shareDialogContext || !elements.shareDialogDisclosure.checked) return;
+  elements.shareDialogSubmit.disabled = true;
+  elements.shareDialogExport.disabled = true;
+  const label = elements.shareDialogSubmit.querySelector("span");
+  const original = label.textContent;
+  label.textContent = t("正在生成投稿包");
   try {
-    const response = await chrome.runtime.sendMessage({ type: "EXPORT_PROJECT", collectionId: collection.id });
-    if (!response?.ok) throw new Error(response?.message || "项目分享失败");
-    showFeedback(response.message);
+    const response = await chrome.runtime.sendMessage({
+      type: "EXPORT_CURATED_SUBMISSION",
+      entryIds: shareDialogContext.entryIds,
+      collectionId: shareDialogContext.collectionId
+    });
+    if (!response?.ok) throw new Error(response?.message || t("无法生成精选投稿包"));
+    submissionDownloadIds = response.downloadIds ?? [];
+    elements.shareDialogResultText.textContent = response.partCount > 1
+      ? t("投稿包已生成，共 {count} 个分卷", { count: response.partCount })
+      : t("投稿包已生成");
+    elements.shareDialogResult.hidden = false;
+    elements.shareDialogOptions.hidden = true;
   } catch (error) {
-    showFeedback(error.message, true);
+    showFeedback(error.message || t("无法生成精选投稿包"), true);
+    elements.shareDialogSubmit.disabled = false;
+    elements.shareDialogExport.disabled = false;
+  } finally {
+    label.textContent = original;
   }
+}
+
+async function showSubmissionFiles() {
+  const downloadId = submissionDownloadIds.at(-1);
+  if (!Number.isInteger(downloadId)) return;
+  await chrome.downloads.show(downloadId);
 }
 
 async function openComposerPage(collectionId = "") {
@@ -1794,6 +1820,30 @@ function openRequestedSettings() {
   openSettingsDialog("ai", requested);
   const tab = document.querySelector(`[data-analysis-kind="${requested}"]`);
   tab?.click();
+  history.replaceState(null, "", "library.html");
+}
+
+async function openRequestedLibraryTarget() {
+  const params = new URLSearchParams(location.search);
+  const caseId = params.get("case") || "";
+  const projectId = params.get("project") || "";
+  if (!caseId && !projectId) return;
+  try { sessionStorage.removeItem(LIBRARY_RETURN_STORAGE_KEY); } catch {}
+  selectedContentId = "";
+  selectedFacets.clear();
+  elements.pendingFilter.checked = false;
+  elements.searchInput.value = "";
+  libraryReturnScrollY = null;
+  if (caseId && logicalCases.some((entry) => entry.id === caseId)) {
+    selectedCollectionId = "";
+    renderGallery();
+    await openDetail(caseId);
+  } else if (projectId && organizerState.collections.some((collection) => collection.id === projectId)) {
+    selectedCollectionId = projectId;
+    renderGallery();
+  } else {
+    showFeedback(caseId ? "保存的案例不存在" : "保存的项目不存在", true);
+  }
   history.replaceState(null, "", "library.html");
 }
 
@@ -2784,8 +2834,10 @@ async function renderDetail() {
   const content = document.createDocumentFragment();
   const body = el("div", "detail-body");
   const hasPrimaryMedia = entryHasMedia(entry);
-  const usesStageNavigation = entryHasMedia(entry, "image") || entryHasMedia(entry, "video");
-  elements.detailContent.classList.toggle("has-primary-media", hasPrimaryMedia);
+  const capturedPost = isCapturedPost(entry);
+  const hasArticleDocument = !capturedPost && Boolean(entry.articleDocument?.blocks?.length);
+  const usesStageNavigation = !capturedPost && !hasArticleDocument && (entryHasMedia(entry, "image") || entryHasMedia(entry, "video"));
+  elements.detailContent.classList.toggle("has-primary-media", hasPrimaryMedia && !hasArticleDocument && !capturedPost);
   elements.detailContent.classList.toggle("is-compound-detail", Boolean(entry.compoundCase));
   elements.drawerToolbar.classList.toggle("has-document-navigation", Boolean(entry.compoundCase) || !usesStageNavigation);
   if (entry.compoundCase) {
@@ -2799,11 +2851,18 @@ async function renderDetail() {
   const primary = el("div", "detail-primary");
   if (usesStageNavigation) primary.append(elements.detailNavigation);
   else elements.drawerToolbar.prepend(elements.detailNavigation);
-  if (hasPrimaryMedia) primary.append(await createDetailMediaGallery(entry, { immersive: true }));
-  else if (!entry.text?.trim()) primary.append(textEl("div", "detail-placeholder", "这条案例还没有内容"));
+  if (hasPrimaryMedia && !hasArticleDocument && !capturedPost) primary.append(await createDetailMediaGallery(entry, { immersive: true }));
+  else if (!entry.text?.trim() && !capturedPost) primary.append(textEl("div", "detail-placeholder", "这条案例还没有内容"));
   body.append(createDetailHeader(entry));
+  if (capturedPost) {
+    body.append(await createCapturedPostView(entry));
+  } else if (hasArticleDocument) {
+    body.append(await createArticleDocumentReader(entry));
+    const unplacedMedia = await createUnplacedMediaShelf(entry);
+    if (unplacedMedia) body.append(unplacedMedia);
+  }
   if (isEntryPending(entry)) body.append(createPendingReviewPanel(entry));
-  const prompt = createPromptSection(entry);
+  const prompt = capturedPost ? null : createPromptSection(entry);
   if (prompt) body.append(prompt);
   const visionDescription = createVisionDescription(entry);
   if (visionDescription) body.append(visionDescription);
@@ -3016,6 +3075,197 @@ function createCompoundOrganizer(entry) {
   return details;
 }
 
+function isCapturedPost(entry) {
+  return entry?.sourceFacts?.pageType === "post";
+}
+
+function articleReferencedAssetIds(entry) {
+  return new Set((entry?.articleDocument?.blocks || []).flatMap((block) => block.assetId ? [block.assetId] : []));
+}
+
+async function createCapturedPostView(entryValue) {
+  const entry = normalizeEntryMedia(entryValue);
+  const section = el("section", "captured-post-view");
+  const heading = el("div", "captured-post-heading");
+  const facts = [
+    entry.sourceFacts?.author,
+    entry.sourceFacts?.handle ? `@${entry.sourceFacts.handle}` : "",
+    entry.sourceFacts?.publishedAt ? formatDate(entry.sourceFacts.publishedAt) : ""
+  ].filter(Boolean).join(" · ");
+  heading.append(textEl("h3", "", "帖子文字"), rawTextEl("small", "", facts));
+  section.append(heading);
+  if (promptEditState?.entryId === entry.id && !promptEditState.assetId) {
+    const textarea = document.createElement("textarea");
+    textarea.className = "captured-post-editor";
+    textarea.value = promptEditState.draftText;
+    textarea.setAttribute("aria-label", "编辑帖子文字");
+    textarea.addEventListener("input", () => {
+      promptEditState.draftText = textarea.value;
+      promptEditState.dirty = textarea.value !== promptEditState.originalText;
+    });
+    const actions = el("div", "captured-post-actions");
+    const save = textEl("button", "", "保存文字");
+    const cancel = textEl("button", "button-secondary", "取消");
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "UPDATE_ENTRY_TEXT",
+          entryId: entry.id,
+          text: textarea.value,
+          textRevision: entryTextRevision(entry)
+        });
+        if (!response?.ok) throw new Error(response?.message || "帖子文字保存失败");
+        promptEditState = null;
+        showFeedback(response.message);
+        await refreshLibrary();
+      } catch (error) {
+        showFeedback(error.message || "帖子文字保存失败", true);
+        save.disabled = false;
+      }
+    });
+    cancel.addEventListener("click", () => {
+      promptEditState = null;
+      renderDetail();
+    });
+    actions.append(save, cancel);
+    section.append(textarea, actions);
+    queueMicrotask(() => textarea.focus());
+  } else {
+    section.append(rawTextEl("p", "captured-post-text", entry.text || "这条帖子没有可显示的文字"));
+    const actions = el("div", "captured-post-actions");
+    const copy = textEl("button", "button-secondary", "复制文字");
+    const edit = textEl("button", "button-secondary", "编辑文字");
+    copy.disabled = !entry.text;
+    copy.addEventListener("click", () => copyTextWithFeedback(copy, entry.text, "帖子文字已复制", "浏览器未允许复制，请选中文字后复制"));
+    edit.addEventListener("click", () => {
+      promptEditState = { entryId: entry.id, assetId: "", originalText: entry.text || "", draftText: entry.text || "", dirty: false };
+      renderDetail();
+    });
+    actions.append(copy, edit);
+    section.append(actions);
+  }
+  const media = entry.mediaAssets.filter((asset) => asset.usage !== "poster");
+  if (media.length) {
+    const grid = el("div", "captured-post-media");
+    for (const asset of media) grid.append(await createCompactCapturedMedia(entry, asset, { post: true }));
+    section.append(grid);
+  }
+  return section;
+}
+
+async function createUnplacedMediaShelf(entryValue) {
+  const entry = normalizeEntryMedia(entryValue);
+  const referenced = articleReferencedAssetIds(entry);
+  const media = entry.mediaAssets.filter((asset) => asset.usage !== "poster" && !referenced.has(asset.id));
+  if (!media.length) return null;
+  const section = el("section", "detail-section unplaced-media-section");
+  section.append(textEl("h3", "", "未定位媒体"), textEl("p", "detail-helper", "这些媒体由你明确保存，但无法确认它们在原文中的位置。"));
+  const shelf = el("div", "unplaced-media-shelf");
+  for (const asset of media) shelf.append(await createCompactCapturedMedia(entry, asset));
+  section.append(shelf);
+  return section;
+}
+
+async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
+  const card = el("article", `compact-captured-media compact-captured-${asset.kind}`);
+  if (asset.kind === "image" && asset.storageMode === "managed") {
+    const image = document.createElement("img");
+    image.src = await originalScreenshotUrl(asset.id);
+    image.alt = asset.sourceTitle || entry.title;
+    image.loading = "lazy";
+    image.addEventListener("click", () => openImageLightbox(image, entry));
+    card.append(image);
+  } else if (asset.kind === "video") {
+    const poster = posterAssetForVideo(entry, asset);
+    const posterBlob = poster ? await getMediaBlob(poster.id) : null;
+    const link = el("a", "compact-media-link");
+    link.href = (post ? entry.url : "") || asset.reference?.url || asset.sourceUrl || entry.url || "#";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    if (posterBlob) {
+      const image = document.createElement("img");
+      image.src = rememberDetailBlobUrl(posterBlob);
+      image.alt = `${entry.title} 视频封面`;
+      link.append(image);
+    }
+    link.append(rawTextEl("strong", "", post ? "打开原帖观看视频" : "打开视频来源"));
+    card.append(link);
+  } else {
+    const link = rawTextEl("a", "compact-media-link compact-document-link", asset.sourceTitle || "打开文档来源");
+    link.href = asset.sourceUrl || entry.url || "#";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    card.append(link);
+  }
+  return card;
+}
+
+async function createArticleDocumentReader(entryValue) {
+  const entry = normalizeEntryMedia(entryValue);
+  const reader = el("article", "article-document-reader");
+  const assets = new Map(entry.mediaAssets.map((asset) => [asset.id, asset]));
+  for (const block of entry.articleDocument?.blocks || []) {
+    if (block.kind === "heading") {
+      reader.append(rawTextEl(`h${Math.min(6, Math.max(1, Number(block.level) || 2))}`, "", block.text));
+      continue;
+    }
+    if (["paragraph", "list", "quote", "code", "table"].includes(block.kind)) {
+      const tagName = block.kind === "quote" ? "blockquote" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
+      const text = block.kind === "list" ? block.text.split("\n").map((item) => `• ${item}`).join("\n") : block.text;
+      reader.append(rawTextEl(tagName, block.kind === "table" ? "article-table-text" : "", text));
+      continue;
+    }
+    const asset = block.assetId ? assets.get(block.assetId) : null;
+    if (block.kind === "image") {
+      const figure = el("figure", "article-document-media");
+      if (asset?.kind === "image" && asset.storageMode === "managed") {
+        const image = document.createElement("img");
+        image.className = "article-document-image";
+        image.alt = block.label || entry.title;
+        image.src = await originalScreenshotUrl(asset.id);
+        image.loading = "lazy";
+        image.addEventListener("click", () => openImageLightbox(image, entry));
+        figure.append(image);
+      } else figure.append(articleSourceLink(block.sourceUrl, block.label || "打开原图"));
+      if (block.label) figure.append(rawTextEl("figcaption", "", block.label));
+      reader.append(figure);
+      continue;
+    }
+    if (block.kind === "video") {
+      const figure = el("figure", "article-document-media article-document-video");
+      if (asset?.kind === "video" && asset.storageMode !== "reference") figure.append(await createMediaViewer(asset, "", entry));
+      else if (asset?.kind === "video") figure.append(await createCompactCapturedMedia(entry, asset));
+      else figure.append(articleSourceLink(block.sourceUrl, block.label || "打开视频来源"));
+      if (block.label) figure.append(rawTextEl("figcaption", "", block.label));
+      reader.append(figure);
+      continue;
+    }
+    if (["document", "link"].includes(block.kind)) {
+      const card = el("div", "article-document-resource");
+      card.append(
+        rawTextEl("span", "article-document-resource-type", block.kind === "document" ? "DOC" : "LINK"),
+        rawTextEl("strong", "", block.label || asset?.sourceTitle || "文章资源")
+      );
+      const sourceUrl = block.sourceUrl || asset?.sourceUrl || "";
+      if (sourceUrl) card.append(articleSourceLink(sourceUrl, asset ? "打开来源" : "打开链接"));
+      if (asset?.kind === "document" && asset.storageMode === "managed") card.append(rawTextEl("small", "", "本地副本已保存在案例媒体中"));
+      reader.append(card);
+    }
+  }
+  return reader;
+}
+
+function articleSourceLink(urlValue, label) {
+  const url = String(urlValue || "");
+  if (!url) return rawTextEl("span", "detail-placeholder", "来源暂时不可用");
+  const link = rawTextEl("a", "button-secondary media-open-link", label);
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  return link;
+}
+
 async function createDetailMediaGallery(entryValue, { immersive = false } = {}) {
   const normalizedEntry = normalizeEntryMedia(entryValue);
   const entry = { ...normalizedEntry, mediaAssets: normalizedEntry.mediaAssets.filter((asset) => asset.usage !== "poster") };
@@ -3032,6 +3282,8 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   let activeIndex = Math.max(0, entry.mediaAssets.findIndex((asset) => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId)));
   let renderToken = 0;
   let activeController = null;
+  let lockedImageStageHeight = 0;
+  let lockedImageStageWidth = 0;
   const resizeObserver = new ResizeObserver(() => {
     const asset = entry.mediaAssets[activeIndex];
     const image = stage.querySelector(".detail-image");
@@ -3063,7 +3315,26 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       stage.style.height = `${availableHeight}px`;
       return;
     }
-    stage.style.height = `${Math.min(galleryWidth * dimensions.height / dimensions.width, availableHeight)}px`;
+    if (lockedImageStageWidth && Math.abs(lockedImageStageWidth - galleryWidth) > 1) lockedImageStageHeight = 0;
+    lockedImageStageWidth = galleryWidth;
+    if (!lockedImageStageHeight) lockedImageStageHeight = Math.min(galleryWidth * dimensions.height / dimensions.width, availableHeight);
+    stage.style.height = `${lockedImageStageHeight}px`;
+  }
+
+  function captureDetailScrollAnchor(anchor) {
+    return anchor ? {
+      anchor,
+      top: anchor.getBoundingClientRect().top,
+      scrollTop: elements.detailContent.scrollTop
+    } : null;
+  }
+
+  function restoreDetailScrollAnchor(snapshot) {
+    if (!snapshot?.anchor?.isConnected) return;
+    const delta = snapshot.anchor.getBoundingClientRect().top - snapshot.top;
+    elements.detailContent.scrollTop = snapshot.scrollTop + delta;
+    snapshot.scrollTop = elements.detailContent.scrollTop;
+    snapshot.top = snapshot.anchor.getBoundingClientRect().top;
   }
 
   async function renderActive() {
@@ -3155,11 +3426,14 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     }
     button.addEventListener("click", async () => {
       const railScrollLeft = rail.scrollLeft;
+      const preservedAnchor = captureDetailScrollAnchor(button);
       activeIndex = index;
       activeDetailMediaIdByEntry.set(entry.id, asset.id);
       await renderActive();
       rail.scrollLeft = railScrollLeft;
       button.focus({ preventScroll: true });
+      restoreDetailScrollAnchor(preservedAnchor);
+      requestAnimationFrame(() => restoreDetailScrollAnchor(preservedAnchor));
     });
     rail.append(button);
   }
@@ -5583,42 +5857,14 @@ function renderBatchManager() {
 function renderAnalysisSettings() {
   analysisKindTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.analysisKind === activeAnalysisKind)));
   analysisKindPanels.forEach((panel) => { panel.hidden = panel.dataset.analysisKindPanel !== activeAnalysisKind; });
-  elements.deepseekAnalysisModel.value = aiSettings.analysisModel || "deepseek-v4-flash";
-  elements.textAiProvider.value = aiSettings.activeProvider || "deepseek";
-  elements.textCompatibleEndpoint.value = aiSettings.compatible?.endpoint || "";
-  elements.textCompatibleModel.value = aiSettings.compatible?.model || "";
-  elements.deepseekConsent.checked = Boolean(aiSettings.consent);
   elements.showAnalysisDiagnostics.checked = uiPreferences.analysisDiagnostics;
   elements.analysisInstructionsZh.value = aiSettings.analysisInstructionsByLocale?.["zh-CN"] || DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE["zh-CN"];
   elements.analysisInstructionsEn.value = aiSettings.analysisInstructionsByLocale?.en || DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE.en;
-  elements.aiSettingsStatus.textContent = aiSettings.configured
-    ? aiSettings.consent
-      ? t("API Key 已配置。只在你主动分析或生成时发送实际使用的案例文字。")
-      : t("API Key 已配置；勾选文字发送说明后才能开始分析或创作。")
-    : t("尚未配置 API Key；本地结构提取和色卡仍可使用。");
-  renderTextAiProviderFields();
-  elements.visionProvider.value = visionSettings.activeProvider || "openai";
-  elements.visionOpenaiModel.value = visionSettings.openai?.model || DEFAULT_VISION_MODEL;
-  elements.visionOpenaiVideoModel.value = visionSettings.openai?.videoGeneration?.model || "";
-  elements.visionOpenaiVideoSizes.value = (visionSettings.openai?.videoGeneration?.sizes ?? []).join(", ");
-  elements.visionOpenaiVideoDurations.value = (visionSettings.openai?.videoGeneration?.durations ?? []).join(", ");
-  elements.visionCompatibleEndpoint.value = privateVisionEndpoint;
-  elements.visionCompatibleProtocol.value = visionSettings.compatible?.protocol || "chat_completions";
-  elements.visionCompatibleModel.value = visionSettings.compatible?.model || "";
-  elements.visionConsent.checked = Boolean(visionSettings.consent);
-  elements.visionAutoAnalyzeImports.checked = Boolean(visionSettings.autoAnalyzeImports);
+  elements.aiSettingsStatus.textContent = t("规则保存在本机，只在对应任务运行时使用。");
   elements.visionInstructionsZh.value = visionSettings.instructionsByLocale?.["zh-CN"] || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE["zh-CN"];
   elements.visionInstructionsEn.value = visionSettings.instructionsByLocale?.en || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE.en;
-  const activeVisionProvider = visionSettings.activeProvider === "compatible" ? visionSettings.compatible : visionSettings.openai;
-  elements.visionSettingsStatus.textContent = activeVisionProvider?.configured
-    ? (visionSettings.consent
-      ? visionSettings.autoAnalyzeImports
-        ? t("服务已配置。新导入案例的全部内容图会在后台自动分析。")
-        : t("服务已配置。只在你主动点击分析画面时发送当前截图。")
-      : t("服务已配置；确认截图发送说明后才能分析画面。"))
-    : t("所选图片服务尚未完成连接配置。");
+  elements.visionSettingsStatus.textContent = t("规则保存在本机，只在对应任务运行时使用。");
   renderComposerMethodSettings();
-  renderVisionProviderFields();
   renderAnalysisLocale();
   renderAiRoutingSummary();
 }
@@ -5626,43 +5872,86 @@ function renderAnalysisSettings() {
 function renderAiRoutingSummary() {
   if (!elements.aiRoutingSummary) return;
   const profiles = Object.values(aiProviderRegistry.providers ?? {});
-  const connected = profiles.filter((profile) => profile.configured);
+  const connected = profiles.filter(providerConnectionReady);
   elements.aiRoutingSummary.textContent = connected.length
-    ? `已连接 ${connected.length} 个服务；文字、图片、视频与生成任务各自明确分配，不会静默切换。`
-    : "尚未连接 AI 服务；本地资料整理仍可使用。";
-  elements.aiProviderList?.replaceChildren(...(connected.length
-    ? connected.map((profile) => {
+    ? t("已连接 {count} 个服务；文字、图片、视频与生成任务各自明确分配，不会静默切换。", { count: connected.length })
+    : t("尚未连接 AI 服务；本地资料整理仍可使用。");
+  const categoryLabels = { official: "官方服务", aggregator: "聚合平台", custom: "自定义兼容服务" };
+  const providerGroups = Object.entries(categoryLabels).flatMap(([category, label]) => {
+    const members = profiles.filter((profile) => profile.category === category);
+    if (!members.length) return [];
+    const group = el("section", "ai-provider-group");
+    group.dataset.providerCategory = category;
+    group.append(rawTextEl("h5", "", t(label)), ...members.map((profile) => {
         const row = el("div", "ai-provider-row");
-        const discoveredAt = profile.discovery?.discoveredAt
-          ? ` · ${profile.discoveredModels?.length || 0} 个模型 · ${profile.discovery.source || "厂商目录"} · ${new Date(profile.discovery.discoveredAt).toLocaleString()}`
-          : " · 模型目录未读取";
-        const status = profile.configured ? `已连接${discoveredAt}` : "尚未连接";
-        const configure = textEl("button", "button-secondary", profile.credentialConfigured ? "编辑配置" : "填写 API Key");
+        row.dataset.providerId = profile.id;
+        const status = `${providerConnectionLabel(profile)} · ${providerCatalogLabel(profile)}`;
+        const configure = textEl("button", "button-secondary", t(profile.credentialConfigured ? "编辑配置" : "配置"));
         configure.type = "button";
         configure.addEventListener("click", () => openAiProviderDialog(profile.id));
-        const refresh = textEl("button", "button-secondary", "刷新模型");
+        const refresh = textEl("button", "button-secondary", t("刷新模型"));
         refresh.type = "button";
         refresh.disabled = !profile.credentialConfigured;
         refresh.addEventListener("click", () => refreshAiProviderModels(profile.id, refresh));
-        row.append(rawTextEl("strong", "", profile.label), textEl("span", "", status), configure, refresh);
+        row.append(rawTextEl("strong", "", providerDisplayLabel(profile)), textEl("span", "", status), configure, refresh);
         return row;
-      })
-    : [textEl("p", "ai-routing-empty", "尚未连接服务；点击下方按钮添加")]
-  ));
+      }));
+    return [group];
+  });
+  elements.aiProviderList?.replaceChildren(...providerGroups);
   elements.aiAssignmentList?.replaceChildren(...AI_ASSIGNMENT_TASKS.map((task) => {
     const assignment = aiTaskAssignments[task.id] ?? {};
     const profile = aiProviderRegistry.providers?.[assignment.providerId];
     const row = el("div", "ai-assignment-row");
-    const change = textEl("button", "button-secondary", profile?.configured ? "更换" : "配置");
+    const modelState = assignedModelState(profile, assignment.model);
+    const change = textEl("button", "button-secondary", t(assignment.providerId ? "更换" : "配置"));
     change.type = "button";
     change.addEventListener("click", () => openAiTaskAssignmentDialog(task.id));
     row.append(
-      rawTextEl("strong", "", task.label),
-      rawTextEl("span", "", profile ? `${profile.label} · ${assignment.model || "模型未填写"}` : "尚未分配"),
+      rawTextEl("strong", "", t(task.label)),
+      rawTextEl("span", "", !assignment.providerId
+        ? t("尚未分配")
+        : profile ? `${providerDisplayLabel(profile)} · ${assignment.model || t("模型未填写")}${modelState}` : t("已分配服务不存在")),
       change
     );
     return row;
   }));
+}
+
+function providerConnectionReady(profile = {}) {
+  return profile.credentialConfigured === true && profile.consent === true;
+}
+
+function providerConnectionLabel(profile = {}) {
+  if (!profile.credentialConfigured) return t("尚未连接");
+  if (!profile.consent) return t("API Key 已保存，尚未确认发送授权");
+  return t("已连接");
+}
+
+function providerCatalogLabel(profile = {}) {
+  const models = profile.discoveredModels ?? [];
+  const unavailable = models.filter((model) => model.status === "unavailable").length;
+  if (profile.discovery?.error) {
+    return t("模型目录读取失败：{error}；保留 {count} 个模型{unavailable}", {
+      error: translateUiMessage(profile.discovery.error),
+      count: models.length,
+      unavailable: unavailable ? t("，其中 {count} 个下架或当前不可用", { count: unavailable }) : ""
+    });
+  }
+  if (!profile.discovery?.discoveredAt) return t("模型目录未读取");
+  return t("模型目录已读取 · {count} 个模型 · 尚未执行模型调用验证{unavailable}", {
+    count: models.length,
+    unavailable: unavailable ? t(" · {count} 个下架或当前不可用", { count: unavailable }) : ""
+  });
+}
+
+function assignedModelState(profile, modelValue) {
+  const model = String(modelValue ?? "").trim();
+  if (!profile || !model) return "";
+  const discovered = (profile.discoveredModels ?? []).find((item) => item.id === model);
+  if (discovered?.status === "unavailable") return t("（已下架或当前不可用）");
+  if (profile.discovery?.discoveredAt && !discovered) return t("（当前目录不可用）");
+  return "";
 }
 
 async function openAiTaskAssignmentDialog(taskId) {
@@ -5670,27 +5959,27 @@ async function openAiTaskAssignmentDialog(taskId) {
   if (!task) return;
   const current = aiTaskAssignments[taskId] ?? {};
   const capable = Object.values(aiProviderRegistry.providers ?? {}).filter((profile) =>
-    profile.capabilities?.includes(taskId) && profile.credentialConfigured
+    providerConnectionReady(profile) && taskModelOptions(profile, taskId).length
   );
   if (!capable.length) {
-    showFeedback(`请先添加一个支持“${task.label}”的 AI 服务`, true);
+    showFeedback(t("尚无已连接且模型目录明确支持“{task}”的服务，请先连接服务并刷新模型", { task: t(task.label) }), true);
     return openAiProviderDialog();
   }
   const selectedProviderId = capable.some((profile) => profile.id === current.providerId)
     ? current.providerId : capable[0].id;
-  const modelOptions = (providerId, selected = "") => discoveredModelOptions(
-    aiProviderRegistry.providers?.[providerId], taskId, selected || aiProviderRegistry.providers?.[providerId]?.models?.[taskId]
-  );
-  const initialModels = modelOptions(selectedProviderId, current.model);
+  const modelOptions = (providerId) => taskModelOptions(aiProviderRegistry.providers?.[providerId], taskId);
+  const initialModels = modelOptions(selectedProviderId);
   const result = await showAppDialog({
-    title: task.label,
-    description: "这里设置全局默认；创作台中的本轮切换不会改动此处。",
+    title: t(task.label),
+    description: t("这里设置全局默认；创作台中的本轮切换不会改动此处。"),
     fields: [
-      { id: "providerId", label: "AI 服务", type: "select", value: selectedProviderId, options: capable.map((profile) => ({ value: profile.id, label: profile.label })) },
-      { id: "model", label: "模型", type: initialModels.length ? "select" : "text", value: current.model || capable[0]?.models?.[taskId] || "", options: initialModels }
+      { id: "providerId", label: t("AI 服务"), type: "select", value: selectedProviderId, options: capable.map((profile) => ({ value: profile.id, label: providerDisplayLabel(profile) })) },
+      { id: "model", label: t("模型"), type: "select", value: initialModels.some((item) => item.value === current.model) ? current.model : initialModels[0]?.value || "", options: initialModels }
     ],
-    confirmLabel: "保存任务默认",
-    onReady: ({ controls }) => {
+    confirmLabel: t("保存任务默认"),
+    cancelLabel: t("取消"),
+    onReady: ({ dialog, controls }) => {
+      localizeAiDialogClose(dialog);
       const provider = controls.get("providerId");
       const model = controls.get("model");
       provider?.addEventListener("change", () => {
@@ -5703,21 +5992,21 @@ async function openAiTaskAssignmentDialog(taskId) {
             return option;
           }));
         }
-        model.value = options[0]?.value || aiProviderRegistry.providers?.[provider.value]?.models?.[taskId] || "";
+        model.value = options[0]?.value || "";
       });
     },
     onSubmit: async (values) => {
-      if (!String(values.model ?? "").trim()) throw new Error("请选择或填写模型");
+      if (!String(values.model ?? "").trim()) throw new Error(t("请选择或填写模型"));
       const response = await chrome.runtime.sendMessage({
         type: "UPDATE_AI_PROVIDER_CONFIGURATION",
         assignments: { ...aiTaskAssignments, [taskId]: { providerId: values.providerId, model: values.model } }
       });
-      if (!response?.ok) throw new Error(response?.message || "任务默认保存失败");
+      if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("任务默认保存失败"));
       applyAiConfigurationResponse(response);
       return response;
     }
   });
-  if (result) showFeedback(`${task.label}默认模型已保存`);
+  if (result) showFeedback(t("{task}默认模型已保存", { task: t(task.label) }));
 }
 
 async function openAiProviderDialog(initialProviderId = "") {
@@ -5728,10 +6017,13 @@ async function openAiProviderDialog(initialProviderId = "") {
   const keyFor = (providerId) => providerId.replaceAll("-", "_");
   const fields = [{
     id: "providerEditor",
-    label: "编辑服务",
+    label: t("编辑服务"),
     type: "select",
     value: firstProviderId,
-    options: profiles.map((profile) => ({ value: profile.id, label: profile.label }))
+    options: profiles.map((profile) => ({
+      value: profile.id,
+      label: `${providerCategoryLabel(profile.category)} · ${providerDisplayLabel(profile)}`
+    }))
   }];
   for (const profile of profiles) {
     const key = keyFor(profile.id);
@@ -5740,76 +6032,82 @@ async function openAiProviderDialog(initialProviderId = "") {
     fields.push({
       id: `provider_${key}_apiKey`,
       label: micuImageService
-        ? "图片分析 API Key（米醋 vip_2，只用于看图）"
-        : profile.id === "custom-media" ? "图片分析 API Key" : "API Key",
+        ? t("图片分析 API Key（米醋 vip_2，只用于看图）")
+        : profile.id === "custom-media" ? t("图片分析 API Key") : "API Key",
       type: "secret",
       autocomplete: "off",
-      placeholder: profile.credentialConfigured ? "已保存；留空保持不变" : "粘贴服务商提供的 API Key",
-      help: micuImageService ? "这把 Key 只用于图片分析，不会发送给最终生图接口。" : ""
+      placeholder: profile.credentialConfigured ? t("已保存；留空保持不变") : t("粘贴服务商提供的 API Key"),
+      help: micuImageService ? t("这把 Key 只用于图片分析，不会发送给最终生图接口。") : ""
     });
     if (profile.id === "custom-media") fields.push({
       id: `provider_${key}_imageApiKey`,
       label: micuImageService
-        ? "图片生成 API Key（米醋 vip_2_image，需单独创建）"
-        : "图片生成 API Key（可与分析 Key 不同）",
+        ? t("图片生成 API Key（米醋 vip_2_image，需单独创建）")
+        : t("图片生成 API Key（可与分析 Key 不同）"),
       type: "secret",
       autocomplete: "off",
       placeholder: profile.imageGeneration?.credentialConfigured
-        ? `已保存${profile.imageGeneration.credentialHint ? `（尾号 ${profile.imageGeneration.credentialHint}）` : ""}；留空保持不变`
-        : micuImageService ? "粘贴米醋 vip_2_image 分组 Key" : "留空则复用上方 API Key",
-      help: micuImageService ? "留空会保留已保存的生图 Key。模型目录可见不等于已获得 Image2 生图分组授权，最终以米醋生成接口返回为准。" : ""
+        ? t("已保存{hint}；留空保持不变", { hint: profile.imageGeneration.credentialHint ? t("（尾号 {hint}）", { hint: profile.imageGeneration.credentialHint }) : "" })
+        : micuImageService ? t("粘贴米醋 vip_2_image 分组 Key") : t("留空则复用上方 API Key"),
+      help: micuImageService ? t("留空会保留已保存的生图 Key。模型目录可见不等于已获得 Image2 生图分组授权，最终以米醋生成接口返回为准。") : ""
     });
     if (custom) fields.push(
-      { id: `provider_${key}_endpoint`, label: profile.id === "custom-media" ? "图片分析接口（高级）" : "接口地址（高级）", type: "url", value: profile.endpoint },
-      { id: `provider_${key}_protocol`, label: "兼容协议（高级）", type: "select", value: profile.protocol, options: [
-        { value: "native", label: "服务原生协议" },
+      { id: `provider_${key}_endpoint`, label: t(profile.id === "custom-media" ? "图片分析接口（高级）" : "接口地址（高级）"), type: "url", value: profile.endpoint, advanced: true },
+      { id: `provider_${key}_protocol`, label: t("兼容协议（高级）"), type: "select", value: profile.protocol, advanced: true, options: [
+        { value: "native", label: t("服务原生协议") },
         { value: "responses", label: "OpenAI Responses" },
         { value: "chat_completions", label: "OpenAI Chat Completions" }
       ] }
     );
-    if (custom) fields.push(...profile.capabilities.map((taskId) => ({
+    fields.push(...profile.capabilities.map((taskId) => {
+      const catalogRequired = profile.catalogRequiredTasks?.includes(taskId) === true;
+      const options = discoveredModelOptions(profile, taskId, catalogRequired ? "" : profile.models?.[taskId]);
+      return {
         id: `provider_${key}_model_${taskId}`,
-        label: `${AI_ASSIGNMENT_TASKS.find((task) => task.id === taskId)?.label || taskId}模型（高级）`,
-        type: discoveredModelOptions(profile, taskId, profile.models?.[taskId]).length ? "select" : "text",
-        value: profile.models?.[taskId] || "",
-        options: discoveredModelOptions(profile, taskId, profile.models?.[taskId])
-      })));
+        label: t("{task}模型（高级）", { task: taskDisplayLabel(taskId) }),
+        type: catalogRequired || options.length ? "select" : "text",
+        value: options.some((option) => option.value === profile.models?.[taskId]) ? profile.models[taskId] : "",
+        options,
+        advanced: true
+      };
+    }));
     if (profile.id === "custom-media") fields.push(
-      { id: `provider_${key}_imageProtocol`, label: "图片生成协议（高级）", type: "select", value: profile.imageGeneration?.protocol || "none", options: [
-        { value: "none", label: "不启用图片生成" },
-        { value: "responses_tool", label: "OpenAI Responses 生图工具" },
+      { id: `provider_${key}_imageProtocol`, label: t("图片生成协议（高级）"), type: "select", value: profile.imageGeneration?.protocol || "none", advanced: true, options: [
+        { value: "none", label: t("不启用图片生成") },
+        { value: "responses_tool", label: t("OpenAI Responses 生图工具") },
         { value: "images_generations", label: "Images Generations / Edits" }
       ] },
-      { id: `provider_${key}_imageEndpoint`, label: "图片生成接口（高级）", type: "url", value: profile.imageGeneration?.endpoint || "" },
-      { id: `provider_${key}_imageEditsEndpoint`, label: "多图参考 / 编辑接口（高级）", type: "url", value: profile.imageGeneration?.editsEndpoint || "" },
-      { id: `provider_${key}_imageSizes`, label: "此服务支持的图片尺寸（能力声明，不是本轮输出值）", type: "text", value: (profile.imageGeneration?.sizes ?? []).join(", ") },
-      { id: `provider_${key}_imageQualities`, label: "此服务支持的质量选项（能力声明，不是本轮输出值）", type: "text", value: (profile.imageGeneration?.qualities ?? []).join(", ") }
+      { id: `provider_${key}_imageEndpoint`, label: t("图片生成接口（高级）"), type: "url", value: profile.imageGeneration?.endpoint || "", advanced: true },
+      { id: `provider_${key}_imageEditsEndpoint`, label: t("多图参考 / 编辑接口（高级）"), type: "url", value: profile.imageGeneration?.editsEndpoint || "", advanced: true },
+      { id: `provider_${key}_imageSizes`, label: t("此服务支持的图片尺寸（能力声明，不是本轮输出值）"), type: "text", value: (profile.imageGeneration?.sizes ?? []).join(", "), advanced: true },
+      { id: `provider_${key}_imageQualities`, label: t("此服务支持的质量选项（能力声明，不是本轮输出值）"), type: "text", value: (profile.imageGeneration?.qualities ?? []).join(", "), advanced: true }
     );
-    fields.push({ id: `provider_${key}_consent`, label: `我确认：主动使用 ${profile.label} 时发送本次任务所需内容`, type: "checkbox", value: profile.consent === true });
+    fields.push({ id: `provider_${key}_consent`, label: t("我确认：主动使用 {provider} 时发送本次任务所需内容", { provider: providerDisplayLabel(profile) }), type: "checkbox", value: profile.consent === true });
   }
-  const advancedFieldIds = new Set(fields.flatMap((field) => (
-    String(field.label ?? "").includes("（高级）")
-      || /_image(?:Sizes|Qualities)$/.test(field.id)
-      ? [field.id]
-      : []
-  )));
+  const advancedFieldIds = new Set(fields.flatMap((field) => field.advanced === true ? [field.id] : []));
   const result = await showAppDialog({
-    title: "连接 AI 服务",
-    description: "官方服务通常只需填写 API Key。接口、协议和手填模型仅用于第三方兼容服务。",
+    title: t("连接 AI 服务"),
+    description: t("官方服务通常只需填写 API Key。账号专属模型与兼容服务连接参数位于高级连接。"),
     fields,
-    confirmLabel: "保存配置",
-    pendingLabel: "正在保存…",
+    confirmLabel: t("保存配置"),
+    cancelLabel: t("取消"),
+    pendingLabel: t("正在保存…"),
     renderBody: ({ body }) => {
       const details = document.createElement("details");
       details.className = "ai-advanced-settings app-dialog-advanced-settings";
       const summary = document.createElement("summary");
       const title = document.createElement("strong");
-      title.textContent = "高级连接";
+      title.textContent = t("高级连接");
       const description = document.createElement("span");
-      description.textContent = "仅在接口地址、协议或模型发生变化时修改";
+      description.textContent = t("仅在接口地址、协议或模型发生变化时修改");
       summary.append(title, description);
       const advancedBody = document.createElement("div");
       advancedBody.className = "ai-advanced-settings-body";
+      const micuPreset = textEl("button", "button-secondary", t("填入米醋个人中转预设"));
+      micuPreset.type = "button";
+      micuPreset.dataset.providerPreset = "micu-personal";
+      micuPreset.hidden = true;
+      advancedBody.append(micuPreset);
       for (const fieldId of advancedFieldIds) {
         const wrapper = body.querySelector(`[data-field-id="${fieldId}"]`);
         if (wrapper) advancedBody.append(wrapper);
@@ -5818,8 +6116,19 @@ async function openAiProviderDialog(initialProviderId = "") {
       body.append(details);
     },
     onReady: ({ dialog, controls }) => {
+      localizeAiDialogClose(dialog);
       const editor = controls.get("providerEditor");
       const advanced = dialog.querySelector(".app-dialog-advanced-settings");
+      const micuPreset = dialog.querySelector('[data-provider-preset="micu-personal"]');
+      micuPreset?.addEventListener("click", () => {
+        const prefix = "provider_custom_media_";
+        controls.get(`${prefix}endpoint`).value = MICU_RESPONSES_ENDPOINT;
+        controls.get(`${prefix}protocol`).value = "responses";
+        controls.get(`${prefix}imageProtocol`).value = "images_generations";
+        controls.get(`${prefix}imageEndpoint`).value = MICU_IMAGE_GENERATIONS_ENDPOINT;
+        controls.get(`${prefix}imageEditsEndpoint`).value = MICU_IMAGE_EDITS_ENDPOINT;
+        controls.get(`${prefix}apiKey`).focus();
+      });
       const syncProviderFields = () => {
         for (const profile of profiles) {
           const prefix = `provider_${keyFor(profile.id)}_`;
@@ -5827,6 +6136,7 @@ async function openAiProviderDialog(initialProviderId = "") {
             if (id.startsWith(prefix)) input.parentElement.hidden = profile.id !== editor.value;
           }
         }
+        if (micuPreset) micuPreset.hidden = editor.value !== "custom-media";
         advanced.hidden = ![...advanced.querySelectorAll("[data-field-id]")].some((wrapper) => !wrapper.hidden);
       };
       editor.addEventListener("change", syncProviderFields);
@@ -5839,9 +6149,10 @@ async function openAiProviderDialog(initialProviderId = "") {
       const key = keyFor(profile.id);
       const apiKey = values[`provider_${key}_apiKey`];
       const endpoint = profile.id.startsWith("custom") ? values[`provider_${key}_endpoint`] : profile.endpoint;
-      const models = profile.id.startsWith("custom")
-        ? Object.fromEntries(profile.capabilities.map((taskId) => [taskId, values[`provider_${key}_model_${taskId}`]]))
-        : profile.models;
+      const models = Object.fromEntries(profile.capabilities.flatMap((taskId) => {
+        const model = String(values[`provider_${key}_model_${taskId}`] ?? "").trim();
+        return model ? [[taskId, model]] : [];
+      }));
       const imageGeneration = profile.id === "custom-media" ? {
         protocol: values[`provider_${key}_imageProtocol`],
         endpoint: values[`provider_${key}_imageEndpoint`],
@@ -5854,7 +6165,7 @@ async function openAiProviderDialog(initialProviderId = "") {
       let imageCredentialVerification = null;
       if (imageGeneration && providerUsesMicuImageGroup({ ...profile, imageGeneration })
         && !imageGeneration.apiKey && !profile.imageGeneration?.credentialConfigured) {
-        throw new Error("米醋 gpt-image-2 需要单独的 vip_2_image 分组 Key，不能复用上方文字 / 分析 Key");
+        throw new Error(t("米醋 gpt-image-2 需要单独的 vip_2_image 分组 Key，不能复用上方文字 / 分析 Key"));
       }
       registryUpdate.providers[profile.id] = {
         endpoint,
@@ -5871,7 +6182,7 @@ async function openAiProviderDialog(initialProviderId = "") {
       if (imageGeneration?.editsEndpoint && (imageGeneration.apiKey || profile.imageGeneration?.credentialConfigured || apiKey || profile.credentialConfigured)) {
         origins.add(permissionPatternForProvider(imageGeneration.editsEndpoint));
       }
-      if (origins.size && !await chrome.permissions.request({ origins: [...origins] })) throw new Error("没有获得新增 AI 服务的访问权限，设置未保存");
+      if (origins.size && !await chrome.permissions.request({ origins: [...origins] })) throw new Error(t("没有获得新增 AI 服务的访问权限，设置未保存"));
       if (imageGeneration && providerUsesMicuImageGroup({ ...profile, imageGeneration })
         && (imageGeneration.apiKey || profile.imageGeneration?.credentialConfigured)) {
         imageCredentialVerification = await chrome.runtime.sendMessage({
@@ -5881,18 +6192,18 @@ async function openAiProviderDialog(initialProviderId = "") {
           apiKey: imageGeneration.apiKey,
           model: imageGeneration.model
         });
-        if (!imageCredentialVerification?.ok) throw new Error(imageCredentialVerification?.message || "米醋图片生成 Key 的模型目录检查失败");
+        if (!imageCredentialVerification?.ok) throw new Error(translateUiMessage(imageCredentialVerification?.message) || t("米醋图片生成 Key 的模型目录检查失败"));
       }
       const response = await chrome.runtime.sendMessage({
         type: "UPDATE_AI_PROVIDER_CONFIGURATION",
         registry: registryUpdate,
         assignments: aiTaskAssignments
       });
-      if (!response?.ok) throw new Error(response?.message || "AI 服务配置保存失败");
+      if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("AI 服务配置保存失败"));
       applyAiConfigurationResponse(response);
       const savedMessage = imageCredentialVerification?.message
-        ? `${response.message || "配置已保存"}；${imageCredentialVerification.message}`
-        : response.message || "配置已保存";
+        ? `${t("配置已保存")}；${t("模型目录中可见 {model}；这只证明目录可见，不代表米醋已授权该 Key 进入生图分组", { model: imageGeneration.model })}`
+        : t("配置已保存");
       if (!(apiKey || profile.credentialConfigured)) return { ...response, message: savedMessage };
       try {
         const discovery = await chrome.runtime.sendMessage({
@@ -5900,14 +6211,14 @@ async function openAiProviderDialog(initialProviderId = "") {
           providerId: profile.id,
           force: true
         });
-        if (!discovery?.ok) throw new Error(discovery?.message || "模型目录读取失败");
+        if (!discovery?.ok) throw new Error(translateUiMessage(discovery?.message) || t("模型目录读取失败"));
         applyAiConfigurationResponse(discovery);
-        return { ...discovery, message: `${savedMessage}；${discovery.message || "模型已读取"}` };
+        return { ...discovery, message: `${savedMessage}；${t("{provider} 已发现 {count} 个模型", { provider: providerDisplayLabel(profile), count: discovery.aiProviderRegistry?.providers?.[profile.id]?.discoveredModels?.length || 0 })}` };
       } catch (error) {
         return {
           ...response,
-          message: `${savedMessage}；模型目录暂时读取失败，可稍后手动刷新`,
-          discoveryWarning: error.message || "模型目录读取失败"
+          message: `${savedMessage}；${t("模型目录暂时读取失败，可稍后手动刷新")}`,
+          discoveryWarning: translateUiMessage(error.message) || t("模型目录读取失败")
         };
       }
     }
@@ -5916,6 +6227,24 @@ async function openAiProviderDialog(initialProviderId = "") {
     showFeedback(result.message);
     elements.openAiRouting.focus();
   }
+}
+
+function providerCategoryLabel(category) {
+  return t({ official: "官方服务", aggregator: "聚合平台", custom: "自定义兼容服务" }[category] || "自定义兼容服务");
+}
+
+function localizeAiDialogClose(dialog) {
+  const close = dialog.querySelector(".app-dialog-close");
+  close?.setAttribute("aria-label", t("关闭"));
+  if (close) close.title = t("关闭");
+}
+
+function providerDisplayLabel(profile = {}) {
+  return t(profile.label || "自定义兼容服务");
+}
+
+function taskDisplayLabel(taskId) {
+  return t(AI_ASSIGNMENT_TASKS.find((task) => task.id === taskId)?.label || taskId);
 }
 
 function providerUsesMicuImageGroup(profile = {}) {
@@ -5938,7 +6267,6 @@ function applyAiConfigurationResponse(response) {
   aiSettings = response.aiSettings;
   visionSettings = response.visionSettings;
   aiServiceProfiles = response.aiServiceProfiles;
-  aiTaskRoutes = normalizeAiTaskRoutes(response.aiTaskRoutes);
   renderAiRoutingSummary();
 }
 
@@ -5947,13 +6275,19 @@ function discoveredModelOptions(profile, taskId, selectedValue = "") {
     .filter((model) => model.status !== "unavailable" && model.tasks?.includes(taskId))
     .map((model) => ({
       value: model.id,
-      label: `${model.name || model.id} · ${model.confidence === "declared" ? "厂商声明" : model.confidence === "protocol_inferred" ? "协议确认" : "待验证"}${modelPriceLabel(model.pricing)}`
+      label: `${model.name || model.id} · ${t(model.confidence === "declared" ? "厂商声明" : model.confidence === "protocol_inferred" ? "协议确认" : "待验证")}${modelPriceLabel(model.pricing)}`
     }));
   const selected = String(selectedValue ?? "").trim();
   if (selected && !options.some((option) => option.value === selected)) {
-    options.unshift({ value: selected, label: `${selected}（当前配置）` });
+    options.unshift({ value: selected, label: t("{model}（手动声明，未验证）", { model: selected }) });
   }
   return options;
+}
+
+function taskModelOptions(profile, taskId) {
+  if (!profile?.capabilities?.includes(taskId)) return [];
+  const manualModel = profile.catalogRequiredTasks?.includes(taskId) ? "" : profile.models?.[taskId] || "";
+  return discoveredModelOptions(profile, taskId, manualModel);
 }
 
 function modelPriceLabel(pricing) {
@@ -5964,19 +6298,22 @@ function modelPriceLabel(pricing) {
 
 async function refreshAiProviderModels(providerId, button) {
   const profile = aiProviderRegistry.providers?.[providerId];
-  if (!profile?.credentialConfigured) return showFeedback("请先保存该厂商的 API Key");
+  if (!profile?.credentialConfigured) return showFeedback(t("请先保存该厂商的 API Key"));
   button.disabled = true;
   const oldText = button.textContent;
-  button.textContent = "正在读取…";
+  button.textContent = t("正在读取…");
   try {
     const response = await chrome.runtime.sendMessage({ type: "DISCOVER_AI_PROVIDER_MODELS", providerId, force: true });
-    if (!response?.ok) throw new Error(response?.message || "模型目录读取失败");
+    if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("模型目录读取失败"));
     aiProviderRegistry = response.aiProviderRegistry;
     aiTaskAssignments = response.aiTaskAssignments;
     renderAiRoutingSummary();
-    showFeedback(response.message);
+    showFeedback(t("{provider} 已发现 {count} 个模型", {
+      provider: providerDisplayLabel(profile),
+      count: response.aiProviderRegistry?.providers?.[providerId]?.discoveredModels?.length || 0
+    }));
   } catch (error) {
-    showFeedback(error.message || "模型目录读取失败");
+    showFeedback(translateUiMessage(error.message) || t("模型目录读取失败"));
   } finally {
     if (button.isConnected) {
       button.disabled = false;
@@ -6111,185 +6448,36 @@ async function saveCreativeExperimentSettings() {
   }
 }
 
-function renderVisionProviderFields() {
-  const compatible = elements.visionProvider.value === "compatible";
-  elements.visionOpenaiFields.hidden = compatible;
-  elements.visionCompatibleFields.hidden = !compatible;
-  renderVisionCompatibleEndpointHint();
-}
-
-function renderTextAiProviderFields() {
-  const compatible = elements.textAiProvider.value === "compatible";
-  document.querySelectorAll(".text-deepseek-field").forEach((field) => { field.hidden = compatible; });
-  document.querySelectorAll(".text-compatible-field").forEach((field) => { field.hidden = !compatible; });
-}
-
-function currentTextAiFormValue() {
-  return {
-    activeProvider: elements.textAiProvider.value,
-    apiKey: elements.deepseekApiKey.value,
-    consent: elements.deepseekConsent.checked,
-    analysisModel: elements.deepseekAnalysisModel.value,
-    analysisInstructionsByLocale: {
-      "zh-CN": elements.analysisInstructionsZh.value,
-      en: elements.analysisInstructionsEn.value
-    },
-    compatible: {
-      endpoint: elements.textCompatibleEndpoint.value,
-      model: elements.textCompatibleModel.value,
-      apiKey: elements.textCompatibleApiKey.value
-    }
-  };
-}
-
-async function testTextAiService() {
-  const button = elements.testTextAiService;
-  button.disabled = true;
-  try {
-    const settings = currentTextAiFormValue();
-    const permission = permissionPatternForAiSettings(settings);
-    if (!await chrome.permissions.request({ origins: [permission] })) throw new Error("没有获得该服务地址的访问权限");
-    const response = await chrome.runtime.sendMessage({ type: "PROBE_VISION_MODELS", settings: settings.compatible });
-    if (!response?.ok) throw new Error(response?.message || "服务连接失败");
-    elements.visionCompatibleModels.replaceChildren(...response.models.map((model) => {
-      const option = document.createElement("option");
-      option.value = model;
-      return option;
-    }));
-    if (!response.models.includes(elements.textCompatibleModel.value)) elements.textCompatibleModel.value = response.models[0];
-    showFeedback(`${response.message}；已选择 ${elements.textCompatibleModel.value}`);
-  } catch (error) {
-    showFeedback(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function renderVisionCompatibleEndpointHint() {
-  elements.visionCompatibleEndpoint.placeholder = elements.visionCompatibleProtocol.value === "responses"
-    ? "https://www.micuapi.ai/v1/responses"
-    : "http://localhost:1234/v1/chat/completions";
-  const origin = compatibleEndpointOrigin(elements.visionCompatibleEndpoint.value);
-  if (!origin) {
-    elements.visionCompatibleTarget.textContent = t("填写 HTTPS 地址，或使用 localhost 本机服务。");
-    return;
-  }
-  const changed = Boolean(
-    visionSettings.compatible?.configured &&
-    visionSettings.compatible?.targetOrigin &&
-    origin !== visionSettings.compatible.targetOrigin
-  );
-  elements.visionCompatibleTarget.textContent = changed
-    ? (currentLocale() === "en"
-      ? `Target: ${origin}. The domain changed; re-enter this service's API key before saving.`
-      : `Key 接收域名：${origin}。域名已变化，保存时必须重新填写新服务的 Key。`)
-    : (currentLocale() === "en" ? `API key target: ${origin}` : `Key 接收域名：${origin}`);
-}
-
-function compatibleEndpointOrigin(value) {
-  try {
-    const url = new URL(String(value ?? "").trim());
-    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname.toLocaleLowerCase("en-US"));
-    return url.protocol === "https:" || url.protocol === "http:" && loopback ? url.origin : "";
-  } catch {
-    return "";
-  }
-}
-
-async function testCompatibleVisionService() {
-  const button = elements.testVisionService;
-  button.disabled = true;
-  try {
-    const form = currentVisionFormValue();
-    const permissions = permissionPatternsForVisionSettings(normalizeVisionSettings({ ...form, activeProvider: "compatible" }));
-    if (!await chrome.permissions.request({ origins: permissions })) throw new Error("没有获得该服务地址的访问权限");
-    const response = await chrome.runtime.sendMessage({ type: "PROBE_VISION_MODELS", settings: form.compatible });
-    if (!response?.ok) throw new Error(response?.message || "服务连接失败");
-    elements.visionCompatibleModels.replaceChildren(...response.models.map((model) => {
-      const option = document.createElement("option");
-      option.value = model;
-      return option;
-    }));
-    if (!response.models.includes(elements.visionCompatibleModel.value)) elements.visionCompatibleModel.value = response.models[0];
-    showFeedback(`${response.message}；已选择 ${elements.visionCompatibleModel.value}`);
-  } catch (error) {
-    showFeedback(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function saveVisionSettings(event) {
+async function saveAiRulePreferences(event) {
   event.preventDefault();
-  const button = event.submitter ?? elements.visionSettingsForm.querySelector("button[type='submit']");
-  button.disabled = true;
-  try {
-    const settingsValue = currentVisionFormValue();
-    if (settingsValue.activeProvider === "compatible" && !settingsValue.compatible.model.trim()) {
-      throw new Error("请填写兼容服务的图片分析模型");
-    }
-    const permissions = permissionPatternsForVisionSettings(normalizeVisionSettings(settingsValue));
-    if (!await chrome.permissions.request({ origins: permissions })) {
-      throw new Error("未获得所选图片服务的访问权限，设置没有保存");
-    }
-    const response = await chrome.runtime.sendMessage({ type: "UPDATE_AI_VISION_PROVIDER", settings: settingsValue });
-    if (!response?.ok) throw new Error(response?.message || "图片视觉设置保存失败");
-    elements.visionOpenaiApiKey.value = "";
-    elements.visionCompatibleApiKey.value = "";
-    showFeedback(response.message);
-    await refreshLibrary();
-  } catch (error) {
-    showFeedback(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function clearSelectedVisionApiKey() {
-  const button = elements.clearVisionApiKey;
+  const button = event.submitter ?? event.currentTarget.querySelector("button[type='submit']");
   button.disabled = true;
   try {
     const response = await chrome.runtime.sendMessage({
-      type: "UPDATE_AI_VISION_PROVIDER",
-      settings: { ...currentVisionFormValue(), clearApiKey: elements.visionProvider.value }
+      type: "UPDATE_AI_PROVIDER_CONFIGURATION",
+      preferences: {
+        textInstructionsByLocale: {
+          "zh-CN": elements.analysisInstructionsZh.value,
+          en: elements.analysisInstructionsEn.value
+        },
+        visionInstructionsByLocale: {
+          "zh-CN": elements.visionInstructionsZh.value,
+          en: elements.visionInstructionsEn.value
+        },
+        autoAnalyzeImports: visionSettings.autoAnalyzeImports === true
+      }
     });
-    if (!response?.ok) throw new Error(response?.message || "无法清除 API Key");
-    elements.visionOpenaiApiKey.value = "";
-    elements.visionCompatibleApiKey.value = "";
-    showFeedback(response.message);
-    await refreshLibrary();
+    if (!response?.ok) throw new Error(response?.message || t("分析规则保存失败"));
+    applyAiConfigurationResponse(response);
+    const message = t("分析规则已保存");
+    elements.aiSettingsStatus.textContent = message;
+    elements.visionSettingsStatus.textContent = message;
+    showFeedback(message);
   } catch (error) {
-    showFeedback(error.message, true);
+    showFeedback(translateUiMessage(error.message), true);
   } finally {
     button.disabled = false;
   }
-}
-
-function currentVisionFormValue() {
-  return {
-    activeProvider: elements.visionProvider.value,
-    consent: elements.visionConsent.checked,
-    autoAnalyzeImports: elements.visionAutoAnalyzeImports.checked,
-    instructionsByLocale: {
-      "zh-CN": elements.visionInstructionsZh.value,
-      en: elements.visionInstructionsEn.value
-    },
-    openai: {
-      apiKey: elements.visionOpenaiApiKey.value,
-      model: elements.visionOpenaiModel.value,
-      videoGeneration: {
-        model: elements.visionOpenaiVideoModel.value,
-        sizes: elements.visionOpenaiVideoSizes.value,
-        durations: elements.visionOpenaiVideoDurations.value
-      }
-    },
-    compatible: {
-      protocol: elements.visionCompatibleProtocol.value,
-      endpoint: elements.visionCompatibleEndpoint.value,
-      apiKey: elements.visionCompatibleApiKey.value,
-      model: elements.visionCompatibleModel.value
-    }
-  };
 }
 
 async function startDeepSeekAnalysisBatch() {

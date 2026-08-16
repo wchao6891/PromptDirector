@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { AI_MODEL_CAPABILITIES, getAiModelCapability } from "../ai-model-capabilities.js";
 import { createAiProviderModule } from "../ai-provider-module.js";
 import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
 
@@ -37,6 +38,140 @@ test("DeepSeek discovery treats identity-only models as text protocol capability
   assert.deepEqual(result.models[0].tasks, ["textTags", "skillExtraction", "creativePlanning"]);
   assert.equal(result.models[1].tasks.includes("videoGeneration"), false);
   assert.equal(result.cache.etag, '"models-v1"');
+});
+
+test("Kimi discovery uses its declared catalog fields without inventing generation capabilities", async () => {
+  const calls = [];
+  const module = createAiProviderModule({ fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return jsonResponse({ data: [
+      { id: "moonshot-text", context_length: 131072 },
+      { id: "moonshot-vision", context_length: 262144, supports_image_in: true },
+      { id: "moonshot-video", supports_image_in: true, supports_video_in: true,
+        input_modalities: ["text", "image", "video"], output_modalities: ["text", "image", "video"] }
+    ] });
+  } });
+  const result = await module.discoverModels({
+    id: "kimi",
+    endpoint: "https://api.moonshot.cn/v1/chat/completions",
+    apiKey: "secret",
+    protocol: "chat_completions"
+  });
+  assert.equal(calls[0].url, "https://api.moonshot.cn/v1/models");
+  assert.deepEqual(result.models[0].tasks, ["textTags", "skillExtraction", "creativePlanning"]);
+  assert.equal(result.models[1].contextLength, 262144);
+  assert.deepEqual(result.models[1].tasks, ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"]);
+  assert.deepEqual(result.models[2].tasks, [
+    "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
+  ]);
+  assert.equal(result.models.some((model) => model.tasks.includes("imageGeneration") || model.tasks.includes("videoGeneration")), false);
+});
+
+test("Gemini discovery grants Nano Banana image generation only to exact official models visible in the live catalog", async () => {
+  const calls = [];
+  const module = createAiProviderModule({ fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return jsonResponse({ models: [
+      { name: "models/gemini-3.1-flash-lite-image", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3.1-flash-image", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3-pro-image", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-2.5-flash-image", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3.1-flash", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/future-image-model", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3.1-flash-image-preview", supportedGenerationMethods: ["generateContent"] }
+    ] });
+  } });
+
+  const result = await module.discoverModels({
+    id: "gemini",
+    endpoint: "https://generativelanguage.googleapis.com",
+    apiKey: "gemini-secret",
+    protocol: "gemini",
+    models: { imageGeneration: "gemini-3.1-flash-image" }
+  });
+
+  assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/models");
+  assert.equal(calls[0].options.headers.Authorization, undefined);
+  assert.equal(calls[0].options.headers["x-goog-api-key"], "gemini-secret");
+  assert.deepEqual(
+    result.models.filter((model) => model.tasks.includes("imageGeneration")).map((model) => model.id),
+    ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image", "gemini-3-pro-image", "gemini-2.5-flash-image"]
+  );
+  assert.equal(result.models.find((model) => model.id === "gemini-3.1-flash").tasks.includes("imageGeneration"), false);
+  assert.equal(result.models.find((model) => model.id === "future-image-model").tasks.includes("imageGeneration"), false);
+  assert.equal(result.models.find((model) => model.id === "gemini-3.1-flash-image-preview").tasks.includes("imageGeneration"), false);
+  const configuredFlash = result.models.find((model) => model.id === "gemini-3.1-flash-image");
+  assert.deepEqual(configuredFlash.configuredTasks, ["imageGeneration"]);
+  assert.deepEqual(configuredFlash.referenceImages, {
+    supported: true, maxItems: 14, source: "declared", observedAt: ""
+  });
+  assert.deepEqual(configuredFlash.parameterDescriptors.reference_images, {
+    maxItems: 14, objectReferences: 10, characterReferences: 4
+  });
+  assert.deepEqual(configuredFlash.supportedMethods, ["generateContent"]);
+});
+
+test("Nano Banana capability metadata exposes official Interactions parameters and per-model reference limits", () => {
+  assert.deepEqual(AI_MODEL_CAPABILITIES.map((item) => item.id), [
+    "gemini-3.1-flash-lite-image",
+    "gemini-3.1-flash-image",
+    "gemini-3-pro-image",
+    "gemini-2.5-flash-image"
+  ]);
+  const flash = getAiModelCapability("gemini", "models/gemini-3.1-flash-image");
+  assert.equal(flash.protocol, "gemini_interactions");
+  assert.deepEqual(flash.supportedResolutions, ["512px", "1K", "2K", "4K"]);
+  assert.deepEqual(flash.referenceImages, {
+    supported: true, maxItems: 14, source: "declared", observedAt: ""
+  });
+  assert.deepEqual(flash.parameterDescriptors.reference_images, {
+    maxItems: 14, objectReferences: 10, characterReferences: 4
+  });
+  assert.equal(flash.source.url, "https://ai.google.dev/gemini-api/docs/image-generation");
+  assert.deepEqual(getAiModelCapability("gemini", "gemini-3.1-flash-lite-image").supportedResolutions, ["1K"]);
+  assert.deepEqual(getAiModelCapability("gemini", "gemini-3-pro-image").parameterDescriptors.reference_images, {
+    maxItems: 14, objectReferences: 6, characterReferences: 5, styleReferences: 3
+  });
+  assert.equal(getAiModelCapability("gemini", "gemini-2.5-flash-image").referenceImages.maxItems, 3);
+  assert.equal(getAiModelCapability("gemini", "gemini-3.1-flash-image-preview"), null);
+  assert.equal(getAiModelCapability("openrouter", "gemini-3.1-flash-image"), null);
+});
+
+test("a manually configured Gemini image model records the selection without acquiring official generation capability", async () => {
+  const module = createAiProviderModule({ fetchImpl: async () => jsonResponse({ models: [
+    { name: "models/account-image-model", supportedGenerationMethods: ["generateContent"] }
+  ] }) });
+  const result = await module.discoverModels({
+    id: "gemini",
+    endpoint: "https://generativelanguage.googleapis.com",
+    apiKey: "secret",
+    protocol: "gemini",
+    models: { imageGeneration: "account-image-model" }
+  });
+  const model = result.models[0];
+  assert.deepEqual(model.configuredTasks, ["imageGeneration"]);
+  assert.equal(model.tasks.includes("imageGeneration"), false);
+  assert.equal(model.referenceImages, null);
+  assert.equal(model.parameterDescriptors, null);
+});
+
+test("discovery failure stays visible and does not erase the last in-memory catalog", async () => {
+  let attempt = 0;
+  const module = createAiProviderModule({ fetchImpl: async () => {
+    attempt += 1;
+    return attempt === 1
+      ? jsonResponse({ data: [{ id: "available-model" }] })
+      : jsonResponse({ error: { message: "catalog temporarily unavailable" } }, 503);
+  } });
+  const profile = {
+    id: "deepseek",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    apiKey: "secret",
+    protocol: "chat_completions"
+  };
+  await module.discoverModels(profile);
+  await assert.rejects(() => module.discoverModels(profile), /catalog temporarily unavailable/);
+  assert.equal(module.describeCapabilities("deepseek", "available-model").id, "available-model");
 });
 
 test("xAI discovery combines language, image, and video model endpoints using declared modalities", async () => {

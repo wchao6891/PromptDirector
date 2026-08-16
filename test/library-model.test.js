@@ -132,6 +132,29 @@ test("source metadata becomes readable rows instead of tag values", () => {
   ]);
 });
 
+test("structured source facts are readable and searchable without becoming tags", () => {
+  const entry = {
+    id: "jimeng",
+    title: "案例",
+    sourceFacts: {
+      provider: "jimeng",
+      itemId: "7490123456789012345",
+      author: "AIGC大叔",
+      handle: "creator-7",
+      publishedAt: "2026-05-30T00:00:00.000Z",
+      model: "即梦 4.7",
+      dimensions: "2160×3840",
+      engagement: { favorites: 87 }
+    }
+  };
+
+  const rows = entrySourceMetadataRows(entry);
+  assert.ok(rows.some((row) => row.label === "作者" && row.value === "AIGC大叔"));
+  assert.ok(rows.some((row) => row.label === "模型" && row.value === "即梦 4.7"));
+  assert.deepEqual(filterEntries([entry], { query: "creator-7" }, createDefaultFacetCatalog()).map((item) => item.id), ["jimeng"]);
+  assert.deepEqual(entryAttributeSummary(entry, createDefaultFacetCatalog()), []);
+});
+
 test("import metadata remains searchable without becoming a content tag", () => {
   const entries = [{ id: "imported", title: "案例", metadataLabels: ["Higgsfield Community", "作者：creator"] }];
   assert.deepEqual(filterEntries(entries, { query: "creator" }, createDefaultFacetCatalog()).map((item) => item.id), ["imported"]);

@@ -66,9 +66,12 @@ test("composer AI profile keeps DeepSeek choices strict and accepts configured v
   assert.deepEqual(normalizeComposerAiProfile({ model: "custom", thinking: "yes" }), DEFAULT_COMPOSER_AI_PROFILE);
   assert.deepEqual(normalizeComposerAiProfile({ serviceId: "openai", model: "gpt-5-mini", thinking: true }), { serviceId: "openai", model: "gpt-5-mini", thinking: true });
   assert.deepEqual(normalizeComposerAiProfile({ serviceId: "compatible", model: "vision-pro", thinking: true }), { serviceId: "compatible", model: "vision-pro", thinking: true });
-  assert.deepEqual(createComposerSession({ generationParameters: { size: "1536x1024", quality: "high", secret: "drop" } }).generationParameters, {
+  assert.deepEqual(normalizeComposerAiProfile({ serviceId: "kimi", model: "account-planning-model" }), { serviceId: "kimi", model: "account-planning-model", thinking: false });
+  assert.deepEqual(createComposerSession({ generationParameters: { size: "1536x1024", quality: "high", aspectRatio: "16:9", imageSize: "2K", secret: "drop" } }).generationParameters, {
     size: "1536x1024",
-    quality: "high"
+    quality: "high",
+    aspectRatio: "16:9",
+    imageSize: "2K"
   });
   assert.deepEqual(createComposerSession({
     targetType: "video",
@@ -236,7 +239,7 @@ test("multiple selected images from one case become independent reference snapsh
   assert.deepEqual(references.map((item) => item.alias), ["@参考1", "@参考2"]);
 });
 
-test("image reference modes default to conditioned and unlock text-only modes only for independently analyzed assets", () => {
+test("image reference modes default to conditioned and unlock text-only modes for prompt-backed or independently analyzed assets", () => {
   const analyzedReference = {
     entryId: "case-a",
     alias: "@参考1",
@@ -262,16 +265,47 @@ test("image reference modes default to conditioned and unlock text-only modes on
     imageReferenceMode: "text_only"
   }).imageReferenceMode, "text_only");
 
+  const promptBackedReference = {
+    entryId: "case-with-prompt",
+    alias: "@参考1",
+    originalText: "雨夜石桥上的巨龙",
+    referenceText: "雨夜石桥上的巨龙",
+    imageRefs: [{ visualId: "prompt-image", mimeType: "image/webp" }],
+    assets: [{ assetId: "prompt-image" }]
+  };
+  assert.deepEqual(imageReferenceModeAvailability([promptBackedReference]), {
+    canDisableImages: true,
+    missingAssetIds: []
+  });
+  assert.equal(createComposerSession({
+    referenceSnapshots: [promptBackedReference],
+    imageReferenceMode: "text_only"
+  }).imageReferenceMode, "text_only");
+
   const unavailable = imageReferenceModeAvailability([{
-    ...analyzedReference,
+    entryId: "pure-image",
+    alias: "@参考1",
+    imageRefs: [{ visualId: "image-a", mimeType: "image/webp" }],
     assets: [{ assetId: "image-a", analysisVersion: 1, reconstructionPrompt: "旧描述" }]
   }]);
   assert.equal(unavailable.canDisableImages, false);
   assert.deepEqual(unavailable.missingAssetIds, ["image-a"]);
   assert.equal(createComposerSession({
-    referenceSnapshots: [{ ...analyzedReference, assets: [] }],
+    referenceSnapshots: [{ entryId: "pure-image", alias: "@参考1", imageRefs: [{ visualId: "image-a" }], assets: [] }],
     imageReferenceMode: "text_only"
   }).imageReferenceMode, "conditioned");
+
+  const mixed = imageReferenceModeAvailability([
+    promptBackedReference,
+    {
+      entryId: "another-pure-image",
+      alias: "@参考2",
+      imageRefs: [{ visualId: "image-b", mimeType: "image/webp" }],
+      assets: [{ assetId: "image-b" }]
+    }
+  ]);
+  assert.equal(mixed.canDisableImages, false);
+  assert.deepEqual(mixed.missingAssetIds, ["image-b"]);
 });
 
 test("a saved V2 analysis remains eligible for text-only mode when an older asset omitted its duplicate content hash", () => {

@@ -7,6 +7,7 @@ import {
   normalizeLocalRelativePath,
   prepareLocalMedia
 } from "../local-media.js";
+import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
 
 test("local media detection keeps only supported formats and safe relative paths", () => {
   assert.deepEqual(detectLocalMediaFile(new File(["image"], "frame.gif", { type: "image/gif" })), {
@@ -49,6 +50,27 @@ test("GIF preparation retains the original and creates one first-frame poster", 
   assert.equal(prepared.asset.relativePath, "references/motion.gif");
   assert.equal(prepared.poster.asset.usage, "poster");
   assert.equal(prepared.poster.blob, posterBlob);
+});
+
+test("local image preparation rejects files above the portable image limit before decoding", async () => {
+  const oversized = new File(
+    [new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxImageBytes + 1)],
+    "oversized.png",
+    { type: "image/png" }
+  );
+  let dimensionReads = 0;
+
+  await assert.rejects(
+    () => prepareLocalMedia(oversized, "asset:oversized", {
+      estimateStorage: async () => ({ quota: oversized.size * 2, usage: 0 }),
+      readImageDimensions: async () => {
+        dimensionReads += 1;
+        return { width: 1, height: 1 };
+      }
+    }),
+    /16 MiB/
+  );
+  assert.equal(dimensionReads, 0);
 });
 
 test("exact duplicate detection hashes only size type and name candidates", async () => {

@@ -1,5 +1,5 @@
 import { readImageDimensions as readStoredImageDimensions } from "./image-metadata.js";
-import { assertImageDimensions } from "./resource-limits.js";
+import { PORTABLE_LIBRARY_LIMITS, assertImageDimensions, formatBytes } from "./resource-limits.js";
 import { assertStorageCapacity, validateMediaBlob } from "./media-store.js";
 import { ingestLocalDocument } from "./document-ingestion.js";
 
@@ -53,6 +53,9 @@ export function normalizeLocalRelativePath(value, fallbackName = "") {
 
 export async function prepareLocalMedia(file, assetId, options = {}) {
   const format = detectLocalMediaFile(file, { allowVideo: options.allowVideo !== false });
+  if (format.kind === "image" && file.size > PORTABLE_LIBRARY_LIMITS.maxImageBytes) {
+    throw new Error(`图片超过 ${formatBytes(PORTABLE_LIBRARY_LIMITS.maxImageBytes)} 上限`);
+  }
   const id = clean(assetId);
   if (!id) throw new Error("媒体缺少有效编号");
   const blob = file.type === format.mimeType ? file : file.slice(0, file.size, format.mimeType);

@@ -172,12 +172,20 @@ test("imports remap visual ids that would overwrite a different local case", () 
     hasScreenshot: undefined,
     screenshotPath: undefined,
     visuals: [{ id: "shared-visual", screenshotPath: "images/remote/shared.webp" }],
-    primaryVisualId: "shared-visual"
+    primaryVisualId: "shared-visual",
+    articleDocument: {
+      version: 1,
+      blocks: [
+        { id: "article-copy", kind: "paragraph", text: "正文" },
+        { id: "article-image", kind: "image", assetId: "shared-visual", sourceUrl: "https://example.com/original.webp" }
+      ]
+    }
   }];
   const result = mergeLibraryPackage(current, imported);
   const remote = result.state.entries.find((item) => item.id === "remote");
   assert.notEqual(remote.primaryMediaId, "shared-visual");
   assert.equal(result.visualIdMap["shared-visual"], remote.primaryMediaId);
+  assert.equal(remote.articleDocument.blocks[1].assetId, remote.primaryMediaId);
 });
 
 test("imports remap both sides of a video poster relationship", () => {

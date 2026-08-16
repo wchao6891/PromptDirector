@@ -5,7 +5,7 @@ import json
 
 from playwright.sync_api import expect
 
-from e2e_support import extension_session
+from e2e_support import ai_configuration_fixture, extension_session
 
 
 PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -34,17 +34,24 @@ def main() -> None:
         run.seed_storage(setup, {
             "schemaVersion": 24,
             "composerSessions": [],
-            "aiSettings": {
-                "activeProvider": "deepseek",
-                "apiKey": "deepseek-e2e-key",
-                "consent": True,
-                "analysisModel": "deepseek-v4-flash",
-            },
-            "visionSettings": {
-                "activeProvider": "openai",
-                "consent": True,
-                "openai": {"apiKey": "openai-e2e-key", "model": "gpt-5-mini"},
-            },
+            **ai_configuration_fixture(
+                providers={
+                    "deepseek": {
+                        "apiKey": "deepseek-e2e-key",
+                        "consent": True,
+                        "models": {"creativePlanning": "deepseek-v4-flash"},
+                    },
+                    "openai": {
+                        "apiKey": "openai-e2e-key",
+                        "consent": True,
+                        "models": {"imageAnalysis": "gpt-5-mini"},
+                    },
+                },
+                assignments={
+                    "creativePlanning": {"providerId": "deepseek", "model": "deepseek-v4-flash"},
+                    "imageAnalysis": {"providerId": "openai", "model": "gpt-5-mini"},
+                },
+            ),
         })
         vision_requests: list[dict] = []
         composer_requests: list[dict] = []

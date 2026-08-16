@@ -83,6 +83,37 @@ function visualSettings(overrides = {}) {
   };
 }
 
+function geminiImageSettings(modelOverrides = {}) {
+  return visualSettings({
+    providerProfiles: {
+      gemini: {
+        id: "gemini",
+        label: "Google Gemini",
+        endpoint: "https://generativelanguage.googleapis.com",
+        protocol: "gemini",
+        apiKey: "gemini-secret-key",
+        consent: true,
+        capabilities: ["creativePlanning", "imageAnalysis", "imageGeneration"],
+        models: {
+          creativePlanning: "gemini-planning-model",
+          imageGeneration: "account-nano-banana-model"
+        },
+        discoveredModels: [{
+          id: "account-nano-banana-model",
+          tasks: ["imageGeneration"],
+          inputModalities: ["text", "image"],
+          outputModalities: ["image"],
+          supportedParameters: ["response_format", "aspect_ratio", "image_size"],
+          supportedAspectRatios: ["1:1", "16:9"],
+          supportedResolutions: ["1K", "2K"],
+          referenceImages: { supported: true, maxItems: 3, source: "declared" },
+          ...modelOverrides
+        }]
+      }
+    }
+  });
+}
+
 test("Micu planning uses lightweight JSON mode and sends high reasoning only when enabled", async () => {
   const requests = [];
   const fetchImpl = async (_url, options) => {
@@ -132,6 +163,75 @@ test("OpenAI Responses uses the same reasoning switch while unknown compatible s
   });
   assert.deepEqual(requests[0].reasoning, { effort: "high" });
   assert.equal(Object.hasOwn(requests[1], "reasoning"), false);
+});
+
+test("Kimi creative planning uses the assigned model without falling back to another provider", async () => {
+  const requests = [];
+  const kimiSettings = visualSettings({
+    providerProfiles: {
+      kimi: {
+        id: "kimi",
+        label: "Kimi",
+        endpoint: "https://api.moonshot.cn/v1/chat/completions",
+        protocol: "chat_completions",
+        apiKey: "kimi-secret",
+        consent: true,
+        capabilities: ["creativePlanning", "imageAnalysis", "videoAnalysis"],
+        models: { creativePlanning: "account-planning-model" },
+        discoveredModels: [{
+          id: "account-planning-model",
+          tasks: ["creativePlanning", "imageAnalysis", "videoAnalysis"]
+        }]
+      }
+    }
+  });
+  const session = createComposerSession({
+    aiProfile: { serviceId: "kimi", model: "account-planning-model" },
+    messages: [{ role: "user", type: "request", content: "整理创意方向" }]
+  });
+
+  const planned = await planComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings
+  }, kimiSettings, {
+    fetchImpl: async (url, options) => {
+      requests.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+      return response({
+        model: "account-planning-model",
+        choices: [{ message: { content: JSON.stringify({ route: "compose", status: "ready", instruction: "保留核心冲突" }) } }]
+      });
+    }
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://api.moonshot.cn/v1/chat/completions");
+  assert.equal(requests[0].headers.Authorization, "Bearer kimi-secret");
+  assert.equal(requests[0].body.model, "account-planning-model");
+  assert.equal(planned.instruction, "保留核心冲突");
+});
+
+test("an assigned provider without creative-planning capability fails instead of using DeepSeek", async () => {
+  const providerSettings = visualSettings({
+    providerProfiles: {
+      kimi: {
+        id: "kimi",
+        label: "Kimi",
+        endpoint: "https://api.moonshot.cn/v1/chat/completions",
+        protocol: "chat_completions",
+        apiKey: "kimi-secret",
+        consent: true,
+        capabilities: ["videoAnalysis"],
+        models: {},
+        discoveredModels: [{ id: "video-only-model", tasks: ["videoAnalysis"] }]
+      }
+    }
+  });
+  const session = createComposerSession({ aiProfile: { serviceId: "kimi", model: "video-only-model" } });
+
+  await assert.rejects(() => planComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings
+  }, providerSettings, {
+    fetchImpl: async () => { throw new Error("不应发起请求"); }
+  }), /未声明创作规划能力/);
 });
 
 test("xAI is a real per-turn composer service and image generation uses its configured endpoints", async () => {
@@ -387,6 +487,191 @@ test("OpenAI create-image mode sends original images through the Responses image
   assert.equal(result.finalPrompt, "参考1负责构图，参考2只负责风格");
 });
 
+test("Gemini image capability comes only from the assigned model metadata", () => {
+  const values = geminiImageSettings().vision;
+  const profile = { serviceId: "gemini", model: "account-nano-banana-model" };
+  const capability = composerServiceCapabilities(profile, values).image;
+
+  assert.equal(capability.generate, true);
+  assert.deepEqual(capability.references, { supported: true, maxItems: 3, source: "declared" });
+  assert.deepEqual(capability.edit, { whole: true, local: false });
+  assert.deepEqual(capability.parameters.map((parameter) => [parameter.key, parameter.options.map((item) => item.value)]), [
+    ["aspectRatio", ["1:1", "16:9"]],
+    ["imageSize", ["1K", "2K"]]
+  ]);
+  assert.deepEqual(composerImageEditCapabilities(profile, values), { whole: true, local: false });
+});
+
+test("Gemini text-to-image uses one official Interactions request and keeps every final image block", async () => {
+  const calls = [];
+  const session = createComposerSession({
+    aiProfile: { serviceId: "gemini", model: "gemini-planning-model" },
+    generationAiProfile: { serviceId: "gemini", model: "account-nano-banana-model" },
+    outputMode: "create_image",
+    messages: [{ role: "user", type: "request", content: "创作一张电影感品牌海报" }]
+  });
+  session.generationParameters = { aspectRatio: "16:9", imageSize: "2K", quality: "high" };
+
+  const result = await executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "电影感品牌海报，蓝灰色调"
+  }, geminiImageSettings(), [], {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+      return response({
+        id: "interaction-one",
+        model: "account-nano-banana-model",
+        status: "completed",
+        output_image: { type: "image", mime_type: "image/jpeg", data: "d29ybGQ=" },
+        steps: [
+          { type: "thought", summary: [{ type: "image", mime_type: "image/png", data: "dGhvdWdodA==" }] },
+          { type: "model_output", content: [
+            { type: "text", text: "成品说明" },
+            { type: "image", mime_type: "image/png", data: "aGVsbG8=" },
+            { type: "image", mime_type: "image/jpeg", data: "d29ybGQ=" },
+            { type: "image", mime_type: "image/png", data: "%%%invalid%%%" }
+          ] }
+        ],
+        usage: { total_input_tokens: 12, total_output_tokens: 34, total_tokens: 51, total_thought_tokens: 5, total_cached_tokens: 2 }
+      });
+    }
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/interactions");
+  assert.equal(calls[0].headers["x-goog-api-key"], "gemini-secret-key");
+  assert.equal(Object.hasOwn(calls[0].headers, "Authorization"), false);
+  assert.equal(calls[0].body.model, "account-nano-banana-model");
+  assert.deepEqual(calls[0].body.input, "电影感品牌海报，蓝灰色调");
+  assert.deepEqual(calls[0].body.response_format, { type: "image", aspect_ratio: "16:9", image_size: "2K" });
+  assert.equal(JSON.stringify(calls[0].body).includes("quality"), false);
+  assert.equal(result.images.length, 2);
+  assert.deepEqual(result.images.map((item) => item.blob.type), ["image/png", "image/jpeg"]);
+  assert.equal(result.requestModel, "account-nano-banana-model");
+  assert.equal(result.model, "account-nano-banana-model");
+  assert.equal(result.finalPrompt, "成品说明");
+  assert.deepEqual(result.usage, {
+    promptTokens: 12, completionTokens: 34, totalTokens: 51, cacheHitTokens: 2, cacheMissTokens: 10
+  });
+});
+
+test("Gemini image_size is not inferred from resolutions when the model does not declare that request parameter", async () => {
+  const values = geminiImageSettings({
+    supportedParameters: ["response_format", "aspect_ratio"],
+    supportedAspectRatios: ["1:1"],
+    supportedResolutions: ["1K"]
+  });
+  const session = createComposerSession({
+    aiProfile: { serviceId: "gemini", model: "gemini-planning-model" },
+    generationAiProfile: { serviceId: "gemini", model: "account-nano-banana-model" },
+    outputMode: "create_image",
+    generationParameters: { aspectRatio: "1:1", imageSize: "1K" },
+    messages: [{ role: "user", type: "request", content: "生成图片" }]
+  });
+  const capability = composerServiceCapabilities(session.generationAiProfile, values.vision).image;
+  assert.deepEqual(capability.parameters.map((parameter) => parameter.key), ["aspectRatio"]);
+  let body;
+  await executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "生成图片"
+  }, values, [], {
+    fetchImpl: async (_url, options) => {
+      body = JSON.parse(options.body);
+      return response({ steps: [{ type: "model_output", content: [{ type: "image", mime_type: "image/png", data: "aGVsbG8=" }] }] });
+    }
+  });
+  assert.deepEqual(body.response_format, { type: "image", aspect_ratio: "1:1" });
+  assert.equal(Object.hasOwn(body.response_format, "image_size"), false);
+});
+
+test("Gemini conditioned generation sends raw multi-image blocks and enforces the declared limit before charging", async () => {
+  const session = referenceSession("gemini", "create_image");
+  session.aiProfile = { serviceId: "gemini", model: "gemini-planning-model", thinking: false };
+  session.generationAiProfile = { serviceId: "gemini", model: "account-nano-banana-model", thinking: false };
+  const calls = [];
+  const result = await executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "严格保持三张参考图各自职责"
+  }, geminiImageSettings(), preparedImages, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return response({ steps: [{ type: "model_output", content: [{ type: "image", mime_type: "image/png", data: "aGVsbG8=" }] }] });
+    }
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.input.filter((item) => item.type === "image").length, 3);
+  assert.deepEqual(calls[0].body.input.filter((item) => item.type === "image").map((item) => [item.mime_type, item.data]), [
+    ["image/png", "AAAA"], ["image/png", "BBBB"], ["image/jpeg", "CCCC"]
+  ]);
+  assert.equal(calls[0].body.input.some((item) => item.type === "text" && item.text === "@参考1/图片1"), true);
+  assert.equal(result.images.length, 1);
+
+  const limited = geminiImageSettings({ referenceImages: { supported: true, maxItems: 2, source: "declared" } });
+  let paidCalls = 0;
+  await assert.rejects(() => executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "保持三张参考"
+  }, limited, preparedImages, {
+    fetchImpl: async () => { paidCalls += 1; throw new Error("不应调用"); }
+  }), (error) => error.kind === "reference_limit" && error.referenceLimit?.maximum === 2);
+  assert.equal(paidCalls, 0);
+});
+
+test("Gemini local mask edits and failed image responses never trigger a paid retry", async () => {
+  const session = createComposerSession({
+    aiProfile: { serviceId: "gemini", model: "gemini-planning-model" },
+    generationAiProfile: { serviceId: "gemini", model: "account-nano-banana-model" },
+    outputMode: "create_image",
+    messages: [{ role: "user", type: "request", content: "修改图片" }]
+  });
+  const localEdit = {
+    mode: "local",
+    modification: "只修改衣服",
+    baseImage: { visualId: "base", dataUrl: "data:image/png;base64,AAAA" },
+    mask: { dataUrl: "data:image/png;base64,BBBB" }
+  };
+  let calls = 0;
+  await assert.rejects(() => executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "只修改衣服", imageEdit: localEdit
+  }, geminiImageSettings(), [], {
+    fetchImpl: async () => { calls += 1; throw new Error("不应调用"); }
+  }), /Gemini.*局部遮罩编辑/);
+  assert.equal(calls, 0);
+
+  const unassigned = createComposerSession({
+    aiProfile: { serviceId: "gemini", model: "gemini-planning-model" },
+    generationAiProfile: { serviceId: "gemini", model: "" },
+    outputMode: "create_image",
+    messages: [{ role: "user", type: "request", content: "生成图片" }]
+  });
+  await assert.rejects(() => executeComposerTurnWithService({
+    session: unassigned, userMessage: "", composerSettings: settings, route: "compose", instruction: "生成图片"
+  }, geminiImageSettings(), [], {
+    fetchImpl: async () => { calls += 1; throw new Error("不应调用"); }
+  }), /API Key 和所选模型配置/);
+  assert.equal(calls, 0);
+
+  const httpError = await executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "生成图片"
+  }, geminiImageSettings(), [], {
+    fetchImpl: async () => {
+      calls += 1;
+      return { ok: false, status: 403, json: async () => ({ error: { message: "key gemini-secret-key has no billing" } }) };
+    }
+  }).then(() => null, (error) => error);
+  assert.equal(calls, 1);
+  assert.equal(httpError.status, 403);
+  assert.match(httpError.message, /请求失败/);
+  assert.equal(httpError.message.includes("gemini-secret-key"), false);
+
+  calls = 0;
+  const noImage = await executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "生成图片"
+  }, geminiImageSettings(), [], {
+    fetchImpl: async () => { calls += 1; return response({ status: "completed", steps: [{ type: "model_output", content: [{ type: "text", text: "无法生成" }] }] }); }
+  }).then(() => null, (error) => error);
+  assert.equal(calls, 1);
+  assert.equal(noImage.retryable, false);
+  assert.match(noImage.message, /没有返回有效图片/);
+});
+
 test("prompt-only mode lets prompt assembly see originals but sends zero originals to the final OpenAI image request", async () => {
   const requests = [];
   const session = referenceSessionWithMode("openai", "prompt_only");
@@ -439,6 +724,43 @@ test("text-only mode sends zero originals to prompt assembly and uses generation
   assert.equal(JSON.stringify(calls[0].body).includes("完整文字重建说明"), true);
   assert.equal(calls[1].url, "https://www.micuapi.ai/v1/images/generations");
   assert.equal(calls[1].authorization, "Bearer image-secret");
+});
+
+test("text-only mode uses an existing case prompt without requiring analysis or sending image payloads", async () => {
+  const calls = [];
+  const base = referenceSession("compatible", "create_image");
+  const session = createComposerSession({
+    ...base,
+    imageReferenceMode: "text_only",
+    referenceSnapshots: base.referenceSnapshots.map((reference) => ({
+      ...reference,
+      assets: reference.imageRefs.map((imageRef) => ({ assetId: imageRef.visualId }))
+    }))
+  });
+  assert.equal(session.imageReferenceMode, "text_only");
+
+  await executeComposerTurnWithService({
+    session,
+    userMessage: "",
+    composerSettings: settings,
+    route: "compose",
+    instruction: "直接使用案例提示词创建图片"
+  }, visualSettings(), [], {
+    stream: false,
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      return calls.length === 1
+        ? response({ output_text: "使用案例原提示词整理出的最终生图提示词。" })
+        : response({ data: [{ b64_json: "aGVsbG8=" }] });
+    }
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, "https://www.micuapi.ai/v1/responses");
+  assert.equal(JSON.stringify(calls[0].body).includes("input_image"), false);
+  assert.equal(JSON.stringify(calls[0].body).includes("三人构图"), true);
+  assert.equal(calls[1].url, "https://www.micuapi.ai/v1/images/generations");
 });
 
 test("Micu assembles a prompt, then sends every selected original image to edits with the separate key", async () => {

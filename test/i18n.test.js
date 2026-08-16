@@ -29,6 +29,15 @@ test("missing sync folders have localized recovery guidance", () => {
   assert.equal(translateForLocale("重新选择同步文件夹", "en"), "Select sync folder again");
 });
 
+test("composer reference-image modes explain the real image and token behavior in English", () => {
+  assert.equal(translateForLocale("参考图参与方式", "en"), "How reference images are used");
+  assert.equal(translateForLocale("带原图生成（默认）", "en"), "Generate with original images (default)");
+  assert.equal(
+    translateForLocale("全程只用案例/分析文字（不读图，最省 token）", "en"),
+    "Use case prompts or analysis text only (no image reading, lowest token use)"
+  );
+});
+
 async function readJson(path) {
   return JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
 }

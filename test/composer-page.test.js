@@ -33,6 +33,9 @@ test("composer combines cases and Skills in one reference workspace while keepin
   assert.match(composerHtml, /id="composer-generation-settings"/);
   assert.match(composerHtml, /id="composer-image-size"/);
   assert.match(composerHtml, /id="composer-image-quality"/);
+  assert.match(composerHtml, />带原图生成（默认）</);
+  assert.match(composerHtml, />先读图整理提示词，生图不垫图</);
+  assert.match(composerHtml, />全程只用案例\/分析文字（不读图，最省 token）</);
   assert.match(composerHtml, /id="composer-model-openai"/);
   assert.match(composerHtml, /id="composer-model-compatible"/);
   assert.doesNotMatch(libraryHtml, /id="vision-image-protocol"|id="vision-image-endpoint"|id="vision-image-api-key"/);
@@ -104,11 +107,29 @@ test("composer reference selection is visual while Skill management stays on its
   assert.match(composerJs, /composerSession\.outputMode === "create_image"/);
   assert.match(composerJs, /composerServiceCapabilities\(/);
   assert.match(composerJs, /normalizeImageGenerationRequest\(/);
+  const generationSettings = composerJs.slice(
+    composerJs.indexOf("function renderImageGenerationSettings"),
+    composerJs.indexOf("async function updateComposerAiProfile")
+  );
+  assert.match(generationSettings, /generationParameterKey\(capability, \["size", "aspectRatio"\]\)/);
+  assert.match(generationSettings, /generationParameterKey\(capability, \["quality", "imageSize"\]\)/);
+  assert.match(generationSettings, /field\.dataset\.parameterKey = key/);
+  assert.match(generationSettings, /label\.textContent = t\(parameter\?\.label \|\| fallbackLabel\)/);
+  const updateGenerationParameters = composerJs.slice(
+    composerJs.indexOf("async function updateImageGenerationParameters"),
+    composerJs.indexOf("async function updateComposerPreferences")
+  );
+  assert.match(updateGenerationParameters, /\[elements\.composerImageSizeField\.dataset\.parameterKey \|\| "size"\]: elements\.composerImageSize\.value/);
+  assert.match(updateGenerationParameters, /\[elements\.composerImageQualityField\.dataset\.parameterKey \|\| "quality"\]: elements\.composerImageQuality\.value/);
+  assert.match(updateGenerationParameters, /videoTask[\s\S]*size: elements\.composerImageSize\.value,[\s\S]*duration: elements\.composerVideoDuration\.value/);
   assert.match(composerJs, /previousReviewEnabled === elements\.composerProductionReview\.checked/);
   assert.match(composerCss, /\.composer-review-toggle input\s*\{[^}]*position:\s*absolute[^}]*opacity:\s*0/s);
   assert.match(composerCss, /\.composer-review-toggle input:focus-visible \+ span/);
   assert.match(composerCss, /\.composer-review-toggle input:checked \+ span/);
   assert.match(composerCss, /\.composer-reference-workspace\s*\{/);
+  assert.match(composerCss, /\.composer-reference-workspace\[data-mode="skills"\] \.composer-reference-body\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.doesNotMatch(composerCss, /data-mode="methods"/);
+  assert.match(composerCss, /\.composer-project-card p\s*\{[^}]*-webkit-line-clamp:\s*3/s);
   assert.doesNotMatch(i18nJs, /querySelectorAll\("\[data-i18n-title\]"\).*\.title\s*=/);
 });
 

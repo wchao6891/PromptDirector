@@ -63,6 +63,22 @@ test("one case can contain local video, image, document and ordered time notes",
   assert.deepEqual(entry.timeNotes, []);
 });
 
+test("removing media also removes its position from the saved article", () => {
+  const entry = removeEntryMedia(normalizeEntryMedia({
+    id: "case:article",
+    mediaAssets: [{ id: "image:article", kind: "image", storageMode: "managed", mimeType: "image/webp" }],
+    articleDocument: {
+      version: 1,
+      blocks: [
+        { id: "text", kind: "paragraph", text: "正文", sourceOrder: 0 },
+        { id: "image", kind: "image", assetId: "image:article", sourceUrl: "https://example.com/image.webp", sourceOrder: 1 }
+      ]
+    }
+  }), "image:article");
+
+  assert.deepEqual(entry.articleDocument.blocks.map((block) => block.kind), ["paragraph"]);
+});
+
 test("video analysis keeps actual provider cost and routing metadata", () => {
   const entry = normalizeEntryMedia({
     id: "case:video-analysis",
@@ -150,5 +166,7 @@ test("file media kinds are derived from actual file metadata and supported exten
   assert.equal(mediaKindFromFile({ name: "clip.mp4", type: "video/mp4" }), "video");
   assert.equal(mediaKindFromFile({ name: "notes.pdf", type: "" }), "document");
   assert.equal(mediaKindFromFile({ name: "frame.webp", type: "image/webp" }), "image");
+  assert.equal(mediaKindFromFile({ name: "motion.gif", type: "image/gif" }), "image");
+  assert.equal(normalizeMediaAsset({ id: "gif", kind: "image", mimeType: "image/gif" }).mimeType, "image/gif");
   assert.equal(mediaKindFromFile({ name: "archive.bin", type: "application/octet-stream" }), "");
 });

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  analyzeVideoWithChatCompletions,
   analyzeVideoWithGemini,
   analyzeVideoWithOpenRouter,
   publicYouTubeUrl,
@@ -75,4 +76,55 @@ test("OpenRouter sends local video as video_url without changing the selected mo
   assert.equal(result.usage.totalTokens, 15);
   assert.equal(result.cost, 0.012);
   assert.deepEqual(result.routing, { provider: "declared-provider" });
+});
+
+test("Kimi uses its configured Chat Completions endpoint and exposes provider-specific results", async () => {
+  const calls = [];
+  const result = await analyzeVideoWithChatCompletions({
+    apiKey: "kimi-key",
+    endpoint: "https://api.moonshot.cn/v1/chat/completions",
+    providerLabel: "Kimi",
+    model: "moonshot-account-video",
+    mode: "ad-review",
+    videoBlob: new Blob([new Uint8Array([4, 5, 6])], { type: "video/mp4" })
+  }, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+      return new Response(JSON.stringify({
+        model: "moonshot-account-video-202608",
+        choices: [{ message: { content: [{ type: "text", text: "00:03 钩子" }] } }],
+        usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14 }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+
+  assert.equal(calls[0].url, "https://api.moonshot.cn/v1/chat/completions");
+  assert.equal(calls[0].body.model, "moonshot-account-video");
+  assert.equal(calls[0].body.messages[0].content[1].type, "video_url");
+  assert.match(calls[0].body.messages[0].content[1].video_url.url, /^data:video\/mp4;base64,/);
+  assert.equal(result.provider, "Kimi");
+  assert.equal(result.model, "moonshot-account-video-202608");
+  assert.equal(result.usage.totalTokens, 14);
+});
+
+test("generic Chat Completions video errors name the selected provider without exposing its key", async () => {
+  await assert.rejects(analyzeVideoWithChatCompletions({
+    apiKey: "never-print-this-key",
+    endpoint: "https://compatible.example/v1",
+    providerLabel: "兼容视频服务",
+    model: "account-video",
+    mode: "content-summary",
+    youtubeUrl: "https://video.example/watch/1"
+  }, {
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: { message: "quota unavailable for never-print-this-key" }
+    }), {
+      status: 429,
+      headers: { "content-type": "application/json" }
+    })
+  }), (error) => {
+    assert.match(error.message, /兼容视频服务.*quota unavailable/);
+    assert.doesNotMatch(error.message, /never-print-this-key/);
+    return true;
+  });
 });

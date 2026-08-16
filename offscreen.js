@@ -8,6 +8,13 @@ import {
   renderMarkdown
 } from "./lib.js";
 import { createZipBlob } from "./zip.js";
+import { sha256Hex } from "./sync-crypto.js";
+import {
+  CURATED_SUBMISSION_MAX_FILE_BYTES,
+  CURATED_SUBMISSION_PART_PAYLOAD_BYTES,
+  submissionManifest,
+  submissionPartManifest
+} from "./curated-submission.js";
 import { PALETTE_VERSION, extractPalette } from "./palette.js";
 import {
   SHARE_PREVIEW_FOUNDATION_FILENAME,
@@ -42,8 +49,12 @@ async function handleMessage(message) {
       return cropScreenshot(message);
     case "CROP_AND_STORE_SCREENSHOTS":
       return cropScreenshots(message);
+    case "CROP_PAGE_CAPTURE_PREVIEWS":
+      return cropPageCapturePreviews(message);
     case "CREATE_ARCHIVE_URL":
       return createArchiveUrl(message);
+    case "CREATE_CURATED_SUBMISSION_URLS":
+      return createCuratedSubmissionUrls(message);
     case "CREATE_CREATIVE_EXPERIMENT_ARCHIVE_URL":
       return createCreativeExperimentArchiveUrl(message);
     case "ANALYZE_STORED_SCREENSHOT":
@@ -232,6 +243,44 @@ async function cropScreenshots({ entryIds, dataUrl, selections }) {
   }
 }
 
+async function cropPageCapturePreviews({ dataUrl, selections, maxDataUrlCharacters }) {
+  const values = Array.isArray(selections) ? selections : [];
+  if (!values.length) return { ok: true, dataUrls: [] };
+  const image = await loadImage(dataUrl);
+  const limit = Number.isSafeInteger(Number(maxDataUrlCharacters)) && Number(maxDataUrlCharacters) > 0
+    ? Number(maxDataUrlCharacters)
+    : 1;
+  return {
+    ok: true,
+    dataUrls: values.map((selection) => cropLoadedScreenshotDataUrl(image, selection, limit))
+  };
+}
+
+function cropLoadedScreenshotDataUrl(image, selection, maxCharacters) {
+  const geometry = calculateCropGeometry({
+    imageWidth: image.naturalWidth,
+    imageHeight: image.naturalHeight,
+    viewportWidth: selection.viewportWidth,
+    viewportHeight: selection.viewportHeight,
+    rect: selection.rect
+  });
+  let width = geometry.outputWidth;
+  let height = geometry.outputHeight;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return "";
+    context.drawImage(image, geometry.sourceX, geometry.sourceY, geometry.sourceWidth, geometry.sourceHeight, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL(SCREENSHOT_SETTINGS.mimeType, SCREENSHOT_SETTINGS.quality);
+    if (dataUrl.length <= maxCharacters) return dataUrl;
+    width = Math.max(1, Math.floor(width * 0.7));
+    height = Math.max(1, Math.floor(height * 0.7));
+  }
+  return "";
+}
+
 async function cropLoadedScreenshot(image, entryId, selection) {
   const geometry = calculateCropGeometry({
     imageWidth: image.naturalWidth,
@@ -388,6 +437,106 @@ async function createArchiveUrl({
   const url = URL.createObjectURL(archive);
   blobUrls.add(url);
   return { ok: true, url, imageCount, fileCount: files.length, byteSize: archive.size };
+}
+
+async function createCuratedSubmissionUrls({
+  entries, settings, taxonomy, facetCatalog, classificationRules, organizerState, compoundCases
+}) {
+  const files = [];
+  const resolvedEntries = [];
+  let mediaCount = 0;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const normalized = normalizeEntryMedia(entry);
+    const mediaAssets = [];
+    for (const asset of normalized.mediaAssets) {
+      if (asset.storageMode !== "managed") throw new Error(`“${entry.title || "未命名案例"}”包含未保存到本地的媒体`);
+      const blob = await getMediaBlob(asset.id);
+      if (!blob) throw new Error(`“${entry.title || "未命名案例"}”的媒体文件缺失`);
+      const assetPath = `${mediaDirectory(asset.kind)}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${mediaExtension(blob.type, asset.kind)}`;
+      files.push({ name: assetPath, data: blob });
+      mediaAssets.push({ ...asset, assetPath, byteSize: blob.size, mimeType: blob.type || asset.mimeType });
+      mediaCount += 1;
+    }
+    resolvedEntries.push({ ...normalized, mediaAssets });
+  }
+  files.unshift({
+    name: "library.json",
+    data: renderLibraryJson(
+      resolvedEntries,
+      settings,
+      taxonomy,
+      facetCatalog,
+      classificationRules,
+      organizerState,
+      null,
+      compoundCases
+    )
+  });
+  const payload = await createZipBlob(files);
+  const submissionId = await sha256Hex(payload);
+  const manifest = submissionManifest({
+    submissionId,
+    payloadBytes: payload.size,
+    caseCount: resolvedEntries.length,
+    mediaCount
+  });
+  const submissionArchive = await createZipBlob([
+    { name: "submission.json", data: `${JSON.stringify(manifest, null, 2)}\n` },
+    { name: "payload.zip", data: payload }
+  ]);
+  const archiveSha256 = await sha256Hex(submissionArchive);
+  const outputBlobs = submissionArchive.size <= CURATED_SUBMISSION_MAX_FILE_BYTES
+    ? [submissionArchive]
+    : await splitCuratedSubmissionArchive(submissionArchive, { submissionId, archiveSha256 });
+  const shortId = submissionId.slice(0, 12);
+  const outputs = outputBlobs.map((blob, index) => {
+    const url = URL.createObjectURL(blob);
+    blobUrls.add(url);
+    const split = outputBlobs.length > 1;
+    return {
+      url,
+      byteSize: blob.size,
+      filename: split
+        ? `PromptDirector-投稿-${shortId}-${String(index + 1).padStart(2, "0")}-of-${String(outputBlobs.length).padStart(2, "0")}.zip`
+        : `PromptDirector-投稿-${shortId}.zip`
+    };
+  });
+  return {
+    ok: true,
+    submissionId,
+    caseCount: resolvedEntries.length,
+    mediaCount,
+    payloadBytes: payload.size,
+    archiveBytes: submissionArchive.size,
+    partCount: outputs.length,
+    outputs
+  };
+}
+
+async function splitCuratedSubmissionArchive(archive, { submissionId, archiveSha256 }) {
+  const bytes = new Uint8Array(await archive.arrayBuffer());
+  const partCount = Math.ceil(bytes.byteLength / CURATED_SUBMISSION_PART_PAYLOAD_BYTES);
+  const parts = [];
+  for (let index = 0; index < partCount; index += 1) {
+    const start = index * CURATED_SUBMISSION_PART_PAYLOAD_BYTES;
+    const payload = bytes.slice(start, Math.min(bytes.byteLength, start + CURATED_SUBMISSION_PART_PAYLOAD_BYTES));
+    const manifest = submissionPartManifest({
+      submissionId,
+      archiveSha256,
+      archiveBytes: bytes.byteLength,
+      partIndex: index + 1,
+      partCount,
+      payloadSha256: await sha256Hex(payload),
+      payloadBytes: payload.byteLength
+    });
+    const part = await createZipBlob([
+      { name: "part.json", data: `${JSON.stringify(manifest, null, 2)}\n` },
+      { name: "payload.bin", data: payload }
+    ]);
+    if (part.size > CURATED_SUBMISSION_MAX_FILE_BYTES) throw new Error("投稿分卷超过 GitHub 上传上限");
+    parts.push(part);
+  }
+  return parts;
 }
 
 async function packagedRuntimeAsset(path) {

@@ -7,7 +7,7 @@ from threading import Event, Thread
 
 from playwright.sync_api import expect
 
-from e2e_support import base_entry, extension_session
+from e2e_support import ai_configuration_fixture, base_entry, extension_session
 
 
 GENERATED_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -102,31 +102,47 @@ def main() -> None:
             {
                 "schemaVersion": 24,
                 "entries": [entry, jimeng_character, retrieved_case, retrieved_guide],
-                "aiSettings": {
-                    "activeProvider": "deepseek",
-                    "apiKey": "e2e-local-key",
-                    "consent": True,
-                    "analysisModel": "deepseek-v4-flash",
-                },
-                "visionSettings": {
-                    "activeProvider": "openai",
-                    "consent": True,
-                    "openai": {"apiKey": "openai-e2e-key", "model": "gpt-5-mini"},
-                    "compatible": {
-                        "protocol": "responses",
-                        "endpoint": f"{local_origin}/v1/responses",
-                        "apiKey": "micu-chat-e2e-key",
-                        "model": "gpt-5.4-mini",
-                        "imageGeneration": {
-                            "protocol": "images_generations",
-                            "endpoint": f"{local_origin}/v1/images/generations",
-                            "editsEndpoint": f"{local_origin}/v1/images/edits",
-                            "apiKey": "micu-image-e2e-key",
-                            "model": "gpt-image-2",
-                            "size": "1536x1024",
+                **ai_configuration_fixture(
+                    providers={
+                        "deepseek": {
+                            "apiKey": "e2e-local-key",
+                            "consent": True,
+                            "models": {"creativePlanning": "deepseek-v4-flash"},
+                        },
+                        "openai": {
+                            "apiKey": "openai-e2e-key",
+                            "consent": True,
+                            "models": {
+                                "creativePlanning": "gpt-5-mini",
+                                "imageAnalysis": "gpt-5-mini",
+                                "imageGeneration": "gpt-5-mini",
+                            },
+                        },
+                        "custom-media": {
+                            "protocol": "responses",
+                            "endpoint": f"{local_origin}/v1/responses",
+                            "apiKey": "micu-chat-e2e-key",
+                            "consent": True,
+                            "models": {
+                                "imageAnalysis": "gpt-5.4-mini",
+                                "imageGeneration": "gpt-image-2",
+                            },
+                            "imageGeneration": {
+                                "protocol": "images_generations",
+                                "endpoint": f"{local_origin}/v1/images/generations",
+                                "editsEndpoint": f"{local_origin}/v1/images/edits",
+                                "apiKey": "micu-image-e2e-key",
+                                "model": "gpt-image-2",
+                                "size": "1536x1024",
+                            },
                         },
                     },
-                },
+                    assignments={
+                        "creativePlanning": {"providerId": "deepseek", "model": "deepseek-v4-flash"},
+                        "imageAnalysis": {"providerId": "openai", "model": "gpt-5-mini"},
+                        "imageGeneration": {"providerId": "openai", "model": "gpt-5-mini"},
+                    },
+                ),
             },
         )
         setup.evaluate(
@@ -468,6 +484,7 @@ def main() -> None:
 
         composer.evaluate(
             """async (origin) => {
+              const {aiTaskAssignments} = await chrome.storage.local.get('aiTaskAssignments');
               await chrome.runtime.sendMessage({
                 type: 'UPDATE_AI_PROVIDER_CONFIGURATION',
                 registry: {
@@ -491,6 +508,11 @@ def main() -> None:
                       }
                     }
                   }
+                },
+                assignments: {
+                  ...aiTaskAssignments,
+                  imageAnalysis: {providerId: 'custom-media', model: 'local-vision-test'},
+                  imageGeneration: {providerId: 'custom-media', model: 'local-image-test'}
                 }
               });
             }""",
@@ -603,6 +625,46 @@ def main() -> None:
         creative_runs = composer.evaluate("() => chrome.storage.local.get('creativeRuns').then(value => value.creativeRuns)")
         assert len(creative_runs) == 1
         assert len(creative_runs[0]["outputs"]) == 1
+
+        CreativeServiceHandler.release_image.clear()
+        composer.evaluate(
+            """() => {
+              const nativeSendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
+              let releaseStaleRefresh;
+              let delayed = false;
+              window.__promptDirectorStaleRefreshCaptured = false;
+              window.__promptDirectorReleaseStaleRefresh = () => releaseStaleRefresh?.();
+              chrome.runtime.sendMessage = async (...args) => {
+                const response = await nativeSendMessage(...args);
+                const message = args[0];
+                const hasActiveJob = response?.creativeJobs?.items?.some(item => ['queued', 'running'].includes(item.status));
+                if (message?.type === 'GET_STATE' && hasActiveJob && !delayed) {
+                  delayed = true;
+                  window.__promptDirectorStaleRefreshCaptured = true;
+                  await new Promise(resolve => { releaseStaleRefresh = resolve; });
+                }
+                return response;
+              };
+            }"""
+        )
+        composer.locator("#composer-instruction").fill("完成后立即恢复发送按钮")
+        composer.locator("#composer-action").click()
+        composer.wait_for_function("() => window.__promptDirectorStaleRefreshCaptured === true")
+        CreativeServiceHandler.release_image.set()
+        deadline = time.monotonic() + 10
+        completion_jobs = None
+        while time.monotonic() < deadline:
+            completion_jobs = composer.evaluate("() => chrome.storage.local.get('creativeJobs').then(value => value.creativeJobs)")
+            if completion_jobs and completion_jobs["items"][-1]["status"] == "completed":
+                break
+            composer.wait_for_timeout(100)
+        assert completion_jobs and completion_jobs["items"][-1]["status"] == "completed", completion_jobs
+        expect(composer.locator(".composer-result-card")).to_have_count(2)
+        expect(composer.locator("#composer-action")).to_have_attribute("data-state", "send")
+        composer.evaluate("() => window.__promptDirectorReleaseStaleRefresh()")
+        composer.wait_for_timeout(200)
+        expect(composer.locator("#composer-action")).to_have_attribute("data-state", "send")
+        expect(composer.locator("#composer-action")).to_have_attribute("aria-label", "发送")
 
         CreativeServiceHandler.release_image.clear()
         composer.locator("#composer-instruction").fill("启动图片任务后立即停止")

@@ -39,7 +39,7 @@
         <div id="normal-start" class="normal-start">
           <div class="capture-actions" aria-label="从当前网页采集">
             <button id="start-smart-visuals" class="primary smart-visuals" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-image"></use></svg><strong data-i18n="智能选图">智能选图</strong></button>
-            <button id="start-selection" class="direct-selection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-file-text"></use></svg><strong data-i18n="提取文字">提取文字</strong></button>
+            <button id="start-selection" class="direct-selection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-file-text"></use></svg><strong data-i18n="提取文字/图片">提取文字/图片</strong></button>
             <button id="start-page-capture" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-library"></use></svg><strong>网页采集</strong></button>
             <div id="other-capture-methods" class="other-capture-methods">
               <button id="start-screenshot" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-maximize-2"></use></svg><strong data-i18n="框选截图">框选截图</strong></button>
@@ -50,22 +50,55 @@
 
       <section id="page-capture" class="page-capture" hidden aria-live="polite">
         <header>
-          <div><small>网页批量预检</small><h2 id="page-capture-title">已识别 0 项</h2></div>
+          <div><small>网页采集预检</small><h2 id="page-capture-title">已识别 0 个主体方案</h2></div>
           <button id="page-capture-scan" class="button-secondary compact" type="button">扫描整页</button>
         </header>
-        <p id="page-capture-help">扫描不会自动保存。请确认正文、图片或视频。</p>
-        <div class="page-capture-bulk-actions" aria-label="批量选择网页内容">
-          <button id="page-capture-select-recommended" class="button-secondary compact" type="button">选择推荐内容</button>
-          <button id="page-capture-select-text" class="button-secondary compact" type="button">只选正文</button>
-          <button id="page-capture-select-images" class="button-secondary compact" type="button">选择全部图片</button>
-          <button id="page-capture-clear" class="button-secondary compact" type="button">清空选择</button>
+        <p id="page-capture-help">先查看并修正网页区域，再确认一个创作主体。确认后会按原始顺序保存完整文章和相关资源。</p>
+        <p class="page-capture-session-note" data-i18n="公开原图失败时，只会使用当前网页已有登录状态读取已确认主体内的相关媒体；不会读取或保存登录信息。">公开原图失败时，只会使用当前网页已有登录状态读取已确认主体内的相关媒体；不会读取或保存登录信息。</p>
+        <div class="page-capture-bulk-actions" aria-label="主体区域确认">
+          <button id="page-capture-clear" class="button-secondary compact" type="button">取消主体确认</button>
+          <button id="page-capture-add-region" class="button-secondary compact" type="button">添加遗漏区域</button>
+          <button id="page-capture-exclude-region" class="button-secondary compact" type="button">排除错误区域</button>
+          <button id="page-capture-undo-region" class="button-secondary compact" type="button">撤销修正</button>
+          <button id="page-capture-reset-region" class="button-secondary compact" type="button">恢复自动识别</button>
         </div>
+        <details id="page-capture-list-setup" class="page-capture-list-setup">
+          <summary>同一列表批量采集</summary>
+          <p>先确认上方一个代表案例，再输入目标数量。只滚动、加载当前列表或沿列表翻页，不进入详情页。</p>
+          <label><span>目标案例数</span><input id="page-capture-target-count" type="number" min="1" inputmode="numeric" placeholder="请输入数量" /></label>
+          <button id="page-capture-list-run" class="primary" type="button">按这个样本继续采集</button>
+        </details>
+        <section id="page-capture-list-result" class="page-capture-list-result" hidden>
+          <strong>批量保存方式</strong>
+          <p id="page-capture-list-summary"></p>
+          <label><span>保存形态</span><select id="page-capture-save-mode"><option value="">请选择</option><option value="multiple">分别保存多个案例</option><option value="combined">合并为一个案例</option></select></label>
+          <label id="page-capture-combined-title-row" hidden><span>合并案例标题</span><input id="page-capture-combined-title" autocomplete="off" placeholder="默认使用列表页标题" /></label>
+        </section>
         <div id="page-capture-list" class="page-capture-list"></div>
+        <section id="page-capture-media-review" class="page-capture-media-review" hidden>
+          <header><strong>检查本次保存的媒体</strong><small id="page-capture-media-review-status">当前方案 0 项</small></header>
+          <p>正文内已定位媒体默认纳入；保存按钮就是最终授权。位置不确定的素材默认不选。</p>
+          <div id="page-capture-media-review-list" class="page-capture-media-review-list"></div>
+        </section>
         <div class="page-capture-actions">
           <button id="page-capture-cancel" class="button-secondary" type="button">取消</button>
-          <button id="page-capture-save" class="primary" type="button">批量保存</button>
+          <button id="page-capture-save-text-only" class="button-secondary" type="button" hidden>只保存正文</button>
+          <button id="page-capture-save" class="primary" type="button">保存为一个案例</button>
         </div>
       </section>
+
+      <dialog id="page-capture-media-viewer" class="page-capture-media-viewer">
+        <header>
+          <div><small id="page-capture-media-position">媒体 0 / 0</small><strong id="page-capture-media-title">媒体预览</strong></div>
+          <button id="page-capture-media-close" class="quiet compact" type="button" aria-label="关闭媒体预览">关闭</button>
+        </header>
+        <div id="page-capture-media-stage" class="page-capture-media-stage"></div>
+        <p id="page-capture-media-meta"></p>
+        <footer>
+          <button id="page-capture-media-prev" class="button-secondary" type="button">上一项</button>
+          <button id="page-capture-media-next" class="button-secondary" type="button">下一项</button>
+        </footer>
+      </dialog>
 
       <section id="region-capture-status" class="smart-selection region-capture-status" hidden aria-live="polite">
         <div><small>框选截图</small><h2 id="region-capture-title">正在启动框选…</h2><p id="region-capture-help">请在网页中拖动选择画面；操作状态会持续显示在这里。</p></div>
@@ -107,7 +140,7 @@
         </section>
         <div class="add-more-actions">
           <button id="add-smart-visuals" class="quiet" type="button">＋ 智能选图</button>
-          <button id="add-selection" class="quiet" type="button">＋ 提取文字</button>
+          <button id="add-selection" class="quiet" type="button" data-i18n="＋ 提取文字/图片">＋ 提取文字/图片</button>
           <button id="add-page-capture" class="quiet" type="button">＋ 网页采集</button>
           <details id="add-other-capture-methods" class="other-capture-methods compact-capture-methods">
             <summary>智能选图无法识别？</summary>
@@ -140,7 +173,7 @@
         </section>
       </section>
 
-      <p id="feedback" role="status" aria-live="polite"></p>
+      <p id="feedback" class="ui-feedback-toast" role="status" aria-live="polite"></p>
 
       <footer id="collector-footer" class="collector-footer" hidden>
         <button id="discard-draft" class="quiet" type="button">清空</button>

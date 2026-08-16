@@ -97,7 +97,7 @@
             <button id="project-selection-save" type="button" data-i18n="保存项目案例">保存项目案例</button>
           </div>
         </div>
-        <p id="feedback" role="status"></p>
+        <p id="feedback" class="ui-feedback-toast" role="status" aria-live="polite"></p>
         <section id="case-list" class="masonry" aria-live="polite"></section>
         <div id="load-sentinel" class="load-sentinel" aria-hidden="true"></div>
         <button id="load-more" class="button-secondary load-more" type="button" hidden></button>
@@ -120,6 +120,25 @@
     <div id="library-drop-target" class="library-drop-target" hidden aria-hidden="true">
       <div><strong>松开以检查本机资料</strong><span>导入前可确认项目、重复项和画面分析</span></div>
     </div>
+
+    <dialog id="share-dialog" class="data-safety-dialog share-dialog" aria-labelledby="share-dialog-title">
+      <header class="data-safety-header">
+        <div><p class="eyebrow">SHARE CASES</p><h2 id="share-dialog-title" data-i18n="分享案例">分享案例</h2></div>
+        <button id="share-dialog-close" class="icon-button" type="button" aria-label="关闭分享" title="关闭分享"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      </header>
+      <div class="data-safety-body share-dialog-body">
+        <p id="share-dialog-meta" class="share-dialog-meta"></p>
+        <div id="share-dialog-options" class="share-dialog-options">
+          <button id="share-dialog-export" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-download"></use></svg><span data-i18n="导出分享包">导出分享包</span></button>
+          <button id="share-dialog-submit" type="button" disabled><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-upload"></use></svg><span data-i18n="投稿到精选">投稿到精选</span></button>
+        </div>
+        <label class="share-dialog-disclosure"><input id="share-dialog-disclosure" type="checkbox" /><span data-i18n="我确认素材将公开上传到 GitHub 审核队列">我确认素材将公开上传到 GitHub 审核队列</span></label>
+        <section id="share-dialog-result" class="share-dialog-result" hidden>
+          <strong id="share-dialog-result-text"></strong>
+          <div><button id="share-dialog-show-files" class="button-secondary" type="button" data-i18n="显示投稿文件">显示投稿文件</button><button id="share-dialog-open-form" type="button" data-i18n="打开投稿表单">打开投稿表单</button></div>
+        </section>
+      </div>
+    </dialog>
 
     <dialog id="import-dialog" class="data-safety-dialog import-dialog" aria-labelledby="import-dialog-title">
       <header class="data-safety-header">
@@ -275,15 +294,15 @@
         </section>
         <section id="settings-ai-panel" class="settings-panel settings-ai-panel" data-settings-panel="ai" hidden>
           <section class="ai-routing-card">
-            <div class="ai-routing-heading"><h3>AI 任务配置</h3><p id="ai-routing-summary">先按任务选择默认服务；API Key 只需在连接服务时填写一次。</p></div>
+            <div class="ai-routing-heading"><h3 data-i18n="AI 任务配置">AI 任务配置</h3><p id="ai-routing-summary">先按任务选择默认服务；API Key 只需在连接服务时填写一次。</p></div>
             <div class="ai-routing-regions">
-              <section class="ai-task-region"><h4>各任务默认模型</h4><div id="ai-assignment-list" class="ai-assignment-list"></div></section>
-              <section><h4>已连接服务</h4><div id="ai-provider-list" class="ai-provider-list"></div></section>
+              <section class="ai-task-region"><h4 data-i18n="各任务默认模型">各任务默认模型</h4><div id="ai-assignment-list" class="ai-assignment-list"></div></section>
+              <section><h4 data-i18n="AI 服务">AI 服务</h4><div id="ai-provider-list" class="ai-provider-list"></div></section>
             </div>
-            <button id="open-ai-routing" type="button">添加 AI 服务</button>
+            <button id="open-ai-routing" type="button" data-i18n="连接 AI 服务">连接 AI 服务</button>
           </section>
           <details class="ai-advanced-settings">
-            <summary><strong>分析规则与高级连接</strong><span>用于调整分析规则、本机模型或第三方兼容接口</span></summary>
+            <summary><strong data-i18n="分析规则与创作方法（高级）">分析规则与创作方法（高级）</strong><span data-i18n="只管理分析规则和创作方法；服务连接与模型分配均在上方完成。">只管理分析规则和创作方法；服务连接与模型分配均在上方完成。</span></summary>
             <div class="ai-advanced-settings-body">
           <div class="analysis-kind-tabs" role="tablist" aria-label="分析类型" data-i18n-aria-label="分析类型">
             <button type="button" data-analysis-kind="text" aria-selected="true" data-i18n="文字标签">文字标签</button>
@@ -300,18 +319,8 @@
             </section>
             <div class="analysis-rule-actions"><button id="restore-analysis-default" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button></div>
             <div class="analysis-protocol"><strong data-i18n="固定输入与输出协议">固定输入与输出协议</strong><p id="analysis-protocol"></p></div>
-            <label><span>AI 服务</span><select id="text-ai-provider"><option value="deepseek">DeepSeek API</option><option value="compatible">OpenAI-compatible / 本机</option></select></label>
-            <div class="analysis-model-fields">
-              <label class="text-deepseek-field">API Key<input id="deepseek-api-key" type="password" autocomplete="off" placeholder="已配置时可留空" data-i18n-placeholder="已配置时可留空" /></label>
-              <label class="text-deepseek-field"><span data-i18n="批量分析模型">批量分析模型</span><input id="deepseek-analysis-model" value="deepseek-v4-flash" /></label>
-              <label class="text-compatible-field" hidden><span>兼容接口</span><input id="text-compatible-endpoint" type="url" placeholder="http://localhost:1234/v1/chat/completions" /></label>
-              <label class="text-compatible-field" hidden><span>模型</span><input id="text-compatible-model" list="vision-compatible-models" /></label>
-              <label class="text-compatible-field" hidden><span>API Key（本机可留空）</span><input id="text-compatible-api-key" type="password" autocomplete="off" /></label>
-            </div>
-            <div class="analysis-rule-actions text-compatible-field" hidden><button id="text-local-preset" class="button-secondary" type="button">LM Studio 本机模式</button><button id="test-text-ai-service" class="button-secondary" type="button">测试并读取模型</button></div>
-            <label class="ai-consent"><input id="deepseek-consent" type="checkbox" /><span>我了解：只有主动分析或创作时，所选案例文字才会发送到当前选择的 AI 服务。</span></label>
             <label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label>
-            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存分析设置">保存分析设置</button><button id="clear-api-key" class="button-secondary" type="button" data-i18n="清除本地 API Key">清除本地 API Key</button></div>
+            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存分析规则">保存分析规则</button></div>
             <p id="ai-settings-status"></p>
           </form>
           <form id="composer-settings-form" class="analysis-settings-form" data-analysis-kind-panel="composer" hidden>
@@ -342,7 +351,7 @@
             </details>
           </form>
           <form id="vision-settings-form" class="analysis-settings-form" data-analysis-kind-panel="vision" hidden>
-            <div class="section-heading"><div><h3 data-i18n="图片视觉分析">图片视觉分析</h3><p data-i18n="可以主动分析单张图片，也可以在导入后自动分析全部内容图。">可以主动分析单张图片，也可以在导入后自动分析全部内容图。</p></div></div>
+            <div class="section-heading"><div><h3 data-i18n="图片视觉分析规则">图片视觉分析规则</h3><p data-i18n="这里只管理图片分析规则；服务连接与默认模型在上方配置。">这里只管理图片分析规则；服务连接与默认模型在上方配置。</p></div></div>
             <section data-analysis-locale-panel="zh-CN">
               <label><span data-i18n="中文图片分析规则">中文图片分析规则</span><textarea id="vision-instructions-zh" rows="10"></textarea></label>
             </section>
@@ -351,31 +360,7 @@
             </section>
             <div class="analysis-rule-actions"><button id="restore-vision-default" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button></div>
             <div class="analysis-protocol"><strong data-i18n="固定输入与输出协议">固定输入与输出协议</strong><p id="vision-protocol"></p></div>
-            <label><span data-i18n="图片分析服务">图片分析服务</span><select id="vision-provider"><option value="openai">OpenAI</option><option value="compatible" data-i18n="兼容接口">兼容接口</option></select></label>
-            <div id="vision-openai-fields" class="analysis-model-fields">
-              <label>OpenAI API Key<input id="vision-openai-api-key" type="password" autocomplete="off" placeholder="已配置时可留空" data-i18n-placeholder="已配置时可留空" /></label>
-              <label><span data-i18n="图片分析模型">图片分析模型</span><input id="vision-openai-model" value="gpt-5-mini" /></label>
-              <label><span data-i18n="视频生成模型">视频生成模型</span><input id="vision-openai-video-model" placeholder="按账号已开通模型填写" data-i18n-placeholder="按账号已开通模型填写" /></label>
-              <label><span data-i18n="视频尺寸选项">视频尺寸选项</span><input id="vision-openai-video-sizes" placeholder="用逗号分隔服务支持值" data-i18n-placeholder="用逗号分隔服务支持值" /></label>
-              <label><span data-i18n="视频时长选项">视频时长选项</span><input id="vision-openai-video-durations" placeholder="用逗号分隔服务支持值" data-i18n-placeholder="用逗号分隔服务支持值" /></label>
-            </div>
-            <div id="vision-compatible-fields" class="analysis-settings-group" hidden>
-              <div class="analysis-settings-subgroup">
-                <div class="section-heading section-heading-tight"><div><h3 data-i18n="分析能力">分析能力</h3><p data-i18n="只配置看图分析与多模态输入所需连接。">只配置看图分析与多模态输入所需连接。</p></div></div>
-                <div class="compatibility-settings-grid">
-                  <label><span data-i18n="兼容协议">兼容协议</span><select id="vision-compatible-protocol"><option value="responses">OpenAI Responses</option><option value="chat_completions">Chat Completions</option></select></label>
-                  <label><span>兼容接口地址（本机可用 HTTP）</span><input id="vision-compatible-endpoint" type="url" placeholder="https://www.micuapi.ai/v1/responses" /></label>
-                  <label>API Key<input id="vision-compatible-api-key" type="password" autocomplete="off" placeholder="已配置时可留空" data-i18n-placeholder="已配置时可留空" /></label>
-                  <label><span data-i18n="图片分析模型">图片分析模型</span><input id="vision-compatible-model" list="vision-compatible-models" /><datalist id="vision-compatible-models"></datalist></label>
-                </div>
-                <p id="vision-compatible-target" class="field-note"></p>
-                <div class="vision-compatible-help"><button id="vision-local-preset" class="button-secondary" type="button">LM Studio 本机模式</button><button id="test-vision-service" class="button-secondary" type="button">测试连接并读取模型</button><button id="vision-micu-preset" class="button-secondary" type="button" data-i18n="填入米醋设置">填入米醋设置</button><span>本机服务不要求 Key；远程和局域网服务应配置认证。</span></div>
-              </div>
-            </div>
-            <label class="ai-consent"><input id="vision-consent" type="checkbox" /><span>我了解：主动分析时发送当前内容图；多模态创作时发送本轮手选内容图、对应原提示词和创作要求。</span></label>
-            <label class="ai-consent"><input id="vision-auto-analyze-imports" type="checkbox" /><span data-i18n="导入案例或加入新图片后，自动分析全部尚未分析的内容图（会产生服务费用）。">导入案例或加入新图片后，自动分析全部尚未分析的内容图（会产生服务费用）。</span></label>
-            <p class="privacy-note" data-i18n="OpenAI API 数据默认不用于训练，除非用户主动选择共享；滥用监控日志可能保留最多 30 天，图片会执行安全扫描。兼容服务的数据处理规则由对应服务商决定。">OpenAI API 数据默认不用于训练，除非用户主动选择共享；滥用监控日志可能保留最多 30 天，图片会执行安全扫描。兼容服务的数据处理规则由对应服务商决定。</p>
-            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存图片分析设置">保存图片分析设置</button><button id="clear-vision-api-key" class="button-secondary" type="button" data-i18n="清除所选 API Key">清除所选 API Key</button></div>
+            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存分析规则">保存分析规则</button></div>
             <p id="vision-settings-status"></p>
           </form>
             </div>

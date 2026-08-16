@@ -40,6 +40,95 @@ test("one captured item stays in quick preview until the user asks to edit it", 
   assert.equal(editing.showOrganizer, true);
 });
 
+test("quick preview exposes one-step removal for every captured text and image", async () => {
+  const collectorSource = await readFile(new URL("../collector.js", import.meta.url), "utf8");
+  const quickPreview = collectorSource.slice(
+    collectorSource.indexOf("function createQuickPreview"),
+    collectorSource.indexOf("function createFragmentCard")
+  );
+
+  assert.match(collectorSource, /import \{ createUiIcon \} from "\.\/ui-icons\.js"/);
+  assert.match(quickPreview, /draft\.fragments\.forEach/);
+  assert.match(quickPreview, /REMOVE_CAPTURE_FRAGMENT/);
+  assert.match(quickPreview, /删除第 \$\{index \+ 1\} 段文字/);
+  assert.match(quickPreview, /draft\.visuals\.forEach/);
+  assert.match(quickPreview, /REMOVE_CAPTURE_VISUAL/);
+  assert.match(quickPreview, /删除第 \$\{index \+ 1\} 张图片/);
+  assert.match(quickPreview, /createUiIcon\("x"\)/);
+  assert.match(collectorSource, /URL\.revokeObjectURL\(removedVisualUrl\)/);
+  assert.match(collectorSource, /visualUrls\.delete\(payload\.visualId\)/);
+});
+
+test("page capture replaces failed remote thumbnails with an explicit unavailable preview", async () => {
+  const collectorSource = await readFile(new URL("../collector.js", import.meta.url), "utf8");
+  const pageCaptureRenderer = collectorSource.slice(
+    collectorSource.indexOf("function renderPageCapture"),
+    collectorSource.indexOf("function updatePageCaptureSelection")
+  );
+  assert.match(pageCaptureRenderer, /media\.previewDataUrl \|\| media\.dataUrl \|\| media\.url/);
+  assert.match(pageCaptureRenderer, /image\.addEventListener\("error"/);
+  assert.match(pageCaptureRenderer, /preview\.replaceChildren\(textNode\("span", t\("预览不可用"\)\)\)/);
+  assert.match(pageCaptureRenderer, /pageCaptureMediaSourceLabel\(media\.sourceKind, media\.captureMethod\)/);
+  const collectorHtml = await readFile(new URL("../collector.html", import.meta.url), "utf8");
+  assert.match(collectorHtml, /公开原图失败时，只会使用当前网页已有登录状态读取已确认主体内的相关媒体；不会读取或保存登录信息。/);
+});
+
+test("page capture uses the final save as media authorization and keeps uncertain media separate", async () => {
+  const [collectorSource, collectorHtml, backgroundSource] = await Promise.all([
+    readFile(new URL("../collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../background.js", import.meta.url), "utf8")
+  ]);
+  const pageCaptureRenderer = collectorSource.slice(
+    collectorSource.indexOf("function renderPageCapture"),
+    collectorSource.indexOf("function pageCaptureExtractionLabel")
+  );
+  assert.match(pageCaptureRenderer, /confirmPageCaptureCandidate/);
+  assert.match(pageCaptureRenderer, /selectedTextBlockIds: candidate\.textBlocks\.map/);
+  assert.match(pageCaptureRenderer, /pageCaptureDefaultMediaIds\(candidate\)/);
+  assert.match(pageCaptureRenderer, /mediaDecision: "pending"/);
+  assert.match(pageCaptureRenderer, /finalizePageCaptureSelectionsForSave/);
+  assert.match(pageCaptureRenderer, /t\("保存案例 · 含 \{count\} 项媒体"/);
+  assert.match(pageCaptureRenderer, /可能遗漏媒体/);
+  assert.match(pageCaptureRenderer, /batchStructureStatus === "review"/);
+  assert.match(pageCaptureRenderer, /updatePageCaptureMediaSelection/);
+  assert.match(pageCaptureRenderer, /openPageCaptureMediaViewer/);
+  assert.match(pageCaptureRenderer, /possibleOmissions/);
+  assert.match(collectorHtml, /id="page-capture-media-review"/);
+  assert.doesNotMatch(collectorHtml, /id="page-capture-confirm-media"/);
+  assert.match(collectorHtml, /id="page-capture-save-text-only"/);
+  assert.match(collectorHtml, /id="page-capture-media-viewer"/);
+  assert.match(collectorHtml, /id="page-capture-media-stage"/);
+  assert.doesNotMatch(collectorHtml, /page-capture-select-text|page-capture-select-images/);
+  assert.match(backgroundSource, /case "PREVIEW_PAGE_CAPTURE_REGION"/);
+  assert.match(backgroundSource, /previewPageCaptureRegion/);
+});
+
+test("page capture can correct the confirmed DOM region and previews one ordered article", async () => {
+  const [collectorSource, collectorHtml, backgroundSource, librarySource] = await Promise.all([
+    readFile(new URL("../collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../background.js", import.meta.url), "utf8"),
+    readFile(new URL("../library.js", import.meta.url), "utf8")
+  ]);
+  assert.match(collectorHtml, /id="page-capture-add-region"/);
+  assert.match(collectorHtml, /id="page-capture-exclude-region"/);
+  assert.match(collectorHtml, /id="page-capture-undo-region"/);
+  assert.match(collectorHtml, /id="page-capture-reset-region"/);
+  assert.match(collectorSource, /createPageCaptureArticlePreview/);
+  assert.match(collectorSource, /EDIT_PAGE_CAPTURE_REGION/);
+  assert.match(backgroundSource, /runPageCaptureRegionEditor/);
+  assert.match(backgroundSource, /contentTargetsValue/);
+  assert.match(backgroundSource, /整组选择/);
+  assert.match(backgroundSource, /data-promptdirector-page-edit-include/);
+  assert.match(backgroundSource, /data-promptdirector-page-edit-exclude/);
+  assert.match(backgroundSource, /data-promptdirector-page-edit-hover/);
+  assert.match(backgroundSource, /case "CLEAR_PAGE_CAPTURE_MARKERS"/);
+  assert.match(backgroundSource, /clearPageCapturePageState/);
+  assert.match(collectorSource, /await clearPageCaptureMarkers\(\)/);
+  assert.match(librarySource, /createArticleDocumentReader/);
+});
+
 test("multi-page material reveals only the controls that have something to organize", () => {
   const view = collectorViewState({
     fragments: [
@@ -77,22 +166,24 @@ test("the collector auto-reads only highlights and reserves clipboard access for
   ]);
 
   assert.match(collectorSource, /TRY_ACTIVE_SELECTION_TO_DRAFT/);
-  assert.match(collectorSource, /ADD_CLIPBOARD_TEXT_TO_DRAFT/);
+  assert.match(collectorSource, /readClipboardContentAfterFocus/);
   assert.match(collectorSource, /window\.addEventListener\("focus", \(\) => void tryAutoSelection\(\)\)/);
-  const autoFlow = collectorSource.slice(collectorSource.indexOf("async function tryAutoSelection"), collectorSource.indexOf("async function extractText"));
-  assert.doesNotMatch(autoFlow, /clipboard|readClipboardTextAfterFocus|ensureClipboardReadPermission/);
-  const explicitFlow = collectorSource.slice(collectorSource.indexOf("async function extractText"), collectorSource.indexOf("function render"));
+  const autoFlow = collectorSource.slice(collectorSource.indexOf("async function tryAutoSelection"), collectorSource.indexOf("async function extractClipboardOrSelection"));
+  assert.doesNotMatch(autoFlow, /clipboard|readClipboardContentAfterFocus|ensureClipboardReadPermission/);
+  const explicitFlow = collectorSource.slice(collectorSource.indexOf("async function extractClipboardOrSelection"), collectorSource.indexOf("function render"));
   assert.match(explicitFlow, /ADD_ACTIVE_SELECTION_TO_DRAFT/);
   assert.match(explicitFlow, /ensureClipboardReadPermission/);
-  assert.match(explicitFlow, /readClipboardTextAfterFocus/);
+  assert.match(explicitFlow, /readClipboardContentAfterFocus/);
+  assert.match(explicitFlow, /prepareLocalMedia/);
+  assert.match(explicitFlow, /saveScreenshotBlob/);
   assert.match(collectorSource, /CAPTURE_VISIBLE_VISUALS_TO_DRAFT/);
   assert.match(collectorSource, /contentTypeExplicit: true/);
   assert.match(collectorSource, /customLabelsExplicit: true/);
   assert.match(backgroundSource, /case "TRY_ACTIVE_SELECTION_TO_DRAFT"/);
   assert.match(backgroundSource, /case "ADD_CLIPBOARD_TEXT_TO_DRAFT"/);
   assert.doesNotMatch(backgroundSource, /lastCommittedClipboardFingerprint/);
-  assert.match(collectorHtml, /id="start-selection"[^>]*>[\s\S]*?<strong[^>]*>提取文字<\/strong>/);
-  assert.match(collectorHtml, /id="add-selection"[^>]*>＋ 提取文字<\/button>/);
+  assert.match(collectorHtml, /id="start-selection"[^>]*>[\s\S]*?<strong[^>]*>提取文字\/图片<\/strong>/);
+  assert.match(collectorHtml, /id="add-selection"[^>]*>[\s\S]*?提取文字\/图片<\/button>/);
   assert.doesNotMatch(collectorHtml, /自动识别已复制文字|id="clipboard-access"|id="enable-clipboard"/);
   assert.doesNotMatch(collectorSource, /querySelectorAll\("button"\)/);
   assert.ok(collectorHtml.indexOf('id="start-smart-visuals"') < collectorHtml.indexOf('id="start-selection"'));

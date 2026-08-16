@@ -76,7 +76,7 @@ def main() -> None:
         expect(library.locator(".attribute-section")).to_contain_text("渲染6")
         library.locator(".detail-analysis-menu > summary").click()
         library.get_by_role("button", name="分析检索标签").click()
-        expect(library.locator("#feedback")).to_contain_text("DeepSeek 尚未完成文字标签配置")
+        expect(library.locator("#feedback")).to_contain_text("文字标签尚未分配 AI 服务")
         library.wait_for_timeout(8_200)
         expect(library.locator("#feedback")).to_be_hidden()
         library.locator("#detail-close").click()

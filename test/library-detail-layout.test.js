@@ -118,7 +118,8 @@ test("document navigation moves into the top toolbar and long documents use a re
   const documentStage = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-stage");
   const documentItem = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-item");
 
-  assert.match(script, /const usesStageNavigation = entryHasMedia\(entry, "image"\) \|\| entryHasMedia\(entry, "video"\)/);
+  assert.match(script, /const hasArticleDocument = !capturedPost && Boolean\(entry\.articleDocument\?\.blocks\?\.length\)/);
+  assert.match(script, /const usesStageNavigation = !capturedPost && !hasArticleDocument && \(entryHasMedia\(entry, "image"\) \|\| entryHasMedia\(entry, "video"\)\)/);
   assert.match(script, /else elements\.drawerToolbar\.prepend\(elements\.detailNavigation\)/);
   assert.match(script, /gallery\.classList\.toggle\("is-document-detail", asset\.kind === "document"\)/);
   assert.match(script, /stage\.scrollTop = 0/);
@@ -128,6 +129,31 @@ test("document navigation moves into the top toolbar and long documents use a re
   assert.match(documentStage, /overflow:\s*auto/);
   assert.match(documentItem, /height:\s*auto/);
   assert.match(documentItem, /overflow:\s*visible/);
+});
+
+test("captured posts use a compact post view while articles show only genuinely unplaced media separately", async () => {
+  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const styles = await readFile(cssUrl, "utf8");
+  const detail = script.slice(script.indexOf("async function renderDetail"), script.indexOf("function createLocalDiscovery"));
+  assert.match(detail, /const capturedPost = isCapturedPost\(entry\)/);
+  assert.match(detail, /createCapturedPostView\(entry\)/);
+  assert.match(detail, /createUnplacedMediaShelf\(entry\)/);
+  assert.match(script, /function articleReferencedAssetIds/);
+  assert.match(script, /function createCapturedPostView/);
+  assert.match(script, /帖子文字/);
+  assert.match(script, /打开原帖/);
+  assert.doesNotMatch(detail, /单独查看文章媒体/);
+  assert.match(rule(styles, ".captured-post-view"), /background:\s*var\(--card\)/);
+  assert.match(rule(styles, ".unplaced-media-shelf"), /grid-template-columns:/);
+});
+
+test("media switching preserves the detail scroll anchor and locks image stage height", async () => {
+  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const gallery = script.slice(script.indexOf("async function createDetailMediaGallery"), script.indexOf("function refreshActiveDetailAssetSections"));
+  assert.match(gallery, /lockedImageStageHeight/);
+  assert.match(gallery, /captureDetailScrollAnchor/);
+  assert.match(gallery, /restoreDetailScrollAnchor/);
+  assert.match(gallery, /button\.focus\(\{ preventScroll: true \}\)/);
 });
 
 test("compound details retain their existing split layout", async () => {

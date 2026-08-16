@@ -6,8 +6,10 @@ const library = await readFile(new URL("../library.js", import.meta.url), "utf8"
 const libraryHtml = await readFile(new URL("../library.html", import.meta.url), "utf8");
 const composerHtml = await readFile(new URL("../composer.html", import.meta.url), "utf8");
 const collectorHtml = await readFile(new URL("../collector.html", import.meta.url), "utf8");
+const collector = await readFile(new URL("../collector.js", import.meta.url), "utf8");
 const i18n = await readFile(new URL("../i18n.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../library.css", import.meta.url), "utf8");
+const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
 const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
 const markdown = await readFile(new URL("../lib.js", import.meta.url), "utf8");
 const preview = await readFile(new URL("../share-preview.js", import.meta.url), "utf8");
@@ -21,13 +23,21 @@ test("library clipboard actions show feedback on the clicked button", () => {
 });
 
 test("library feedback remains visible above the detail drawer", () => {
-  assert.match(styles, /#feedback\s*\{[^}]*position:\s*fixed/s);
-  assert.match(styles, /#feedback:empty\s*\{[^}]*display:\s*none/s);
+  assert.match(libraryHtml, /id="feedback"[^>]*class="ui-feedback-toast"/);
+  assert.match(foundation, /\.ui-feedback-toast\s*\{[^}]*position:\s*fixed/s);
+  assert.match(foundation, /\.ui-feedback-toast:empty\s*\{[^}]*display:\s*none/s);
 });
 
 test("library error feedback clears after a readable delay instead of staying forever", () => {
   assert.match(library, /const ERROR_FEEDBACK_DURATION_MS = 8000/);
   assert.match(library, /isError \? ERROR_FEEDBACK_DURATION_MS : FEEDBACK_DURATION_MS/);
+});
+
+test("collector capture notifications clear without leaving a permanent floating panel", () => {
+  assert.match(collector, /const FEEDBACK_DURATION_MS = 4000/);
+  assert.match(collector, /const ERROR_FEEDBACK_DURATION_MS = 8000/);
+  assert.match(collector, /error \? ERROR_FEEDBACK_DURATION_MS : FEEDBACK_DURATION_MS/);
+  assert.match(collector, /elements\.feedback\.textContent = ""/);
 });
 
 test("routine save feedback does not explain that AI was unnecessary", () => {

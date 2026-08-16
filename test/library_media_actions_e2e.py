@@ -43,7 +43,7 @@ def main() -> None:
         1,
     )
     entry["mediaAssets"] = [
-        image_asset(f"multi-image-{index}", f"2026-08-03T00:00:{index:02d}.000Z")
+        image_asset(f"multi-image-{index}", f"2026-08-03T00:00:{index:02d}.000Z", index)
         for index in range(1, 16)
     ]
     entry["primaryMediaId"] = "multi-image-1"
@@ -74,10 +74,17 @@ def main() -> None:
             """() => {
               const gallery = document.querySelector('.detail-visual-gallery');
               const rail = gallery.querySelector('.detail-visual-rail');
+              const detail = document.querySelector('#detail-content');
               gallery.dataset.stabilityProbe = 'same-gallery';
               rail.scrollLeft = rail.scrollWidth;
               const rect = gallery.getBoundingClientRect();
-              return {railScrollLeft: rail.scrollLeft, galleryTop: rect.top};
+              return {
+                railScrollLeft: rail.scrollLeft,
+                galleryTop: rect.top,
+                railTop: rail.getBoundingClientRect().top,
+                stageHeight: gallery.querySelector('.detail-visual-stage').getBoundingClientRect().height,
+                detailScrollTop: detail.scrollTop
+              };
             }"""
         )
         for index in (14, 6, 11):
@@ -88,12 +95,22 @@ def main() -> None:
               const gallery = document.querySelector('.detail-visual-gallery[data-stability-probe="same-gallery"]');
               const rail = gallery?.querySelector('.detail-visual-rail');
               const rect = gallery?.getBoundingClientRect();
-              return {sameNode: Boolean(gallery), railScrollLeft: rail?.scrollLeft, galleryTop: rect?.top};
+              return {
+                sameNode: Boolean(gallery),
+                railScrollLeft: rail?.scrollLeft,
+                galleryTop: rect?.top,
+                railTop: rail?.getBoundingClientRect().top,
+                stageHeight: gallery?.querySelector('.detail-visual-stage').getBoundingClientRect().height,
+                detailScrollTop: document.querySelector('#detail-content').scrollTop
+              };
             }"""
         )
         assert stable_after["sameNode"], stable_after
         assert abs(stable_after["railScrollLeft"] - stable_before["railScrollLeft"]) <= 1, (stable_before, stable_after)
         assert abs(stable_after["galleryTop"] - stable_before["galleryTop"]) <= 1, (stable_before, stable_after)
+        assert abs(stable_after["railTop"] - stable_before["railTop"]) <= 1, (stable_before, stable_after)
+        assert abs(stable_after["stageHeight"] - stable_before["stageHeight"]) <= 1, (stable_before, stable_after)
+        assert abs(stable_after["detailScrollTop"] - stable_before["detailScrollTop"]) <= 1, (stable_before, stable_after)
 
         library.locator(".detail-visual-thumb").nth(14).click()
 
@@ -132,15 +149,16 @@ def main() -> None:
         })
 
 
-def image_asset(asset_id: str, captured_at: str) -> dict:
+def image_asset(asset_id: str, captured_at: str, index: int) -> dict:
+    width, height = (1600, 900) if index % 2 else (900, 1600)
     return {
         "id": asset_id,
         "kind": "image",
         "usage": "content",
         "storageMode": "managed",
         "mimeType": "image/png",
-        "width": 1,
-        "height": 1,
+        "width": width,
+        "height": height,
         "capturedAt": captured_at,
         "reviewStatus": "verified",
     }

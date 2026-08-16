@@ -240,8 +240,10 @@ function normalizeCuratedOrigin(value) {
   const normalized = Object.fromEntries(required.map((key) => [key, String(value[key] ?? "").trim()]));
   if (required.some((key) => !normalized[key])) return undefined;
   const installedAt = String(value.installedAt ?? "").trim();
+  const sourceEntryId = String(value.sourceEntryId ?? "").trim();
   return {
     ...normalized,
+    ...(sourceEntryId ? { sourceEntryId } : {}),
     ...(installedAt && !Number.isNaN(Date.parse(installedAt))
       ? { installedAt: new Date(installedAt).toISOString() }
       : {})

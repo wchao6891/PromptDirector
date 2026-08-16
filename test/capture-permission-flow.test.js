@@ -7,7 +7,7 @@ import {
   CONTINUOUS_CAPTURE_ORIGINS,
   ensureClipboardReadPermission,
   hasClipboardReadPermission,
-  readClipboardTextAfterFocus,
+  readClipboardContentAfterFocus,
   ensureContinuousCapturePermission,
   ensurePagePermission,
   pagePermissionPattern
@@ -42,16 +42,22 @@ test("explicit clipboard extraction uses one optional permission with a recovera
   ]);
 });
 
-test("clipboard reading waits for focus stability and retries one transient post-permission failure", async () => {
+test("clipboard reading returns copied text and the first supported image after focus recovery", async () => {
   const calls = [];
   let reads = 0;
-  const text = await readClipboardTextAfterFocus({
+  const copiedImage = new Blob(["image-bytes"], { type: "image/png" });
+  const content = await readClipboardContentAfterFocus({
     clipboardApi: {
-      readText: async () => {
+      read: async () => {
         reads += 1;
         calls.push(`read-${reads}`);
         if (reads === 1) throw new DOMException("Document is not focused", "NotAllowedError");
-        return "已复制的提示词";
+        return [{
+          types: ["text/plain", "image/png"],
+          getType: async (type) => type === "image/png"
+            ? copiedImage
+            : new Blob(["已复制的提示词"], { type: "text/plain" })
+        }];
       }
     },
     documentObject: { hasFocus: () => true },
@@ -63,7 +69,8 @@ test("clipboard reading waits for focus stability and retries one transient post
     }
   });
 
-  assert.equal(text, "已复制的提示词");
+  assert.equal(content.text, "已复制的提示词");
+  assert.equal(content.image, copiedImage);
   assert.deepEqual(calls, ["frame", "frame", "read-1", "frame", "frame", "read-2"]);
 });
 
@@ -210,6 +217,14 @@ test("text capture resolves the active page before requesting only that page per
     ["request", { origins: ["https://example.com/*"] }],
     ["message", { type: "ADD_ACTIVE_SELECTION_TO_DRAFT", tabId: 23 }]
   ]);
+});
+
+test("page capture requests the active site permission before starting background extraction", async () => {
+  const source = await readFile(new URL("collector.js", projectRoot), "utf8");
+  const start = source.indexOf("async function startPageCapture");
+  const end = source.indexOf("async function savePageCapture", start);
+  const flow = source.slice(start, end);
+  assert.ok(flow.indexOf("ensurePagePermission(tab.url") < flow.indexOf('type: "START_PAGE_CAPTURE"'));
 });
 
 test("creative result capture and commit use one background transaction", async () => {

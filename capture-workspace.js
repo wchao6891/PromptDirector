@@ -7,6 +7,7 @@ import {
 } from "./capture-region.js";
 import {
   addDraftFragment,
+  addDraftSourceContext,
   addDraftVisual,
   createCaptureDraft,
   removeDraftFragment,
@@ -99,6 +100,7 @@ export function createCaptureWorkspace({
   uiPreferencesStorageKey = "uiPreferences",
   ensureOffscreenDocument,
   deleteVisual,
+  resolveSourceContext = async () => null,
   createId = () => globalThis.crypto.randomUUID(),
   now = () => new Date().toISOString()
 }) {
@@ -109,6 +111,7 @@ export function createCaptureWorkspace({
   if (typeof ensureOffscreenDocument !== "function" || typeof deleteVisual !== "function") {
     throw new Error("采集工作区缺少截图存储能力");
   }
+  if (typeof resolveSourceContext !== "function") throw new Error("采集工作区来源解析器无效");
 
   let activeVisualSelection = null;
   let activeRegionCapture = null;
@@ -134,7 +137,7 @@ export function createCaptureWorkspace({
   async function dispatch(action, payload = {}) {
     switch (action) {
       case "add-selection":
-        return addSelection(payload.fragment);
+        return addSelection(payload.fragment, payload.sourceContext);
       case "add-active-selection":
         return addActiveSelection(payload.tabId);
       case "try-active-selection":
@@ -194,11 +197,15 @@ export function createCaptureWorkspace({
         target: { tabId: tab.id },
         func: () => window.getSelection()?.toString() ?? ""
       });
-      const candidate = await createTextCandidate({ selection: result?.result, page: tab });
+      const sourceContext = await resolvedSourceContext(tab);
+      const candidate = await createTextCandidate({
+        selection: result?.result,
+        page: { ...tab, title: sourceContext?.displayTitle || tab.title }
+      });
       if (!candidate) {
         return { ok: true, added: false, reason: "empty-selection", message: "", draft: await readDraft() };
       }
-      const response = await addSelection(candidate);
+      const response = await addSelection(candidate, sourceContext);
       return { ...response, candidateKind: candidate.kind };
     } catch {
       return {
@@ -220,11 +227,15 @@ export function createCaptureWorkspace({
         target: { tabId: tab.id },
         func: () => window.getSelection()?.toString() ?? ""
       });
-      const candidate = await createTextCandidate({ selection: result?.result, page: tab });
+      const sourceContext = await resolvedSourceContext(tab);
+      const candidate = await createTextCandidate({
+        selection: result?.result,
+        page: { ...tab, title: sourceContext?.displayTitle || tab.title }
+      });
       if (!candidate) {
         return { ok: true, added: false, reason: "empty-selection", message: "", draft: before };
       }
-      const response = await addSelection(candidate);
+      const response = await addSelection(candidate, sourceContext);
       return { ...response, candidateKind: candidate.kind };
     } catch {
       return { ok: true, added: false, reason: "selection-unavailable", message: "", draft: before };
@@ -240,8 +251,9 @@ export function createCaptureWorkspace({
     return { ...response, candidateKind: candidate.kind };
   }
 
-  async function addSelection(fragment) {
-    const before = await readDraft();
+  async function addSelection(fragment, sourceContext = null) {
+    const storedDraft = await readDraft();
+    const before = sourceContext ? addDraftSourceContext(storedDraft, sourceContext) : storedDraft;
     const wasEmpty = !before.fragments.length && !before.visuals.length;
     const result = addDraftFragment(before, fragment);
     if (!result.added) {
@@ -292,6 +304,7 @@ export function createCaptureWorkspace({
 
   async function storeSelectedVisuals(tab, selection, before = null) {
     const draftBefore = before ?? await readDraft();
+    const sourceContext = await resolvedSourceContext(tab);
     const visualIds = selection.selections.map(() => createId());
     try {
       const visibleTab = await captureSelectedTab(tab, selection);
@@ -309,10 +322,12 @@ export function createCaptureWorkspace({
 
       const capturedAt = now();
       let draft = await readDraft();
+      if (sourceContext) draft = addDraftSourceContext(draft, sourceContext);
       result.results.forEach((screenshot, index) => {
         draft = addDraftVisual(draft, visualRecord({
           id: visualIds[index],
           tab,
+          sourceContext,
           capturedAt,
           screenshot
         }));
@@ -460,15 +475,18 @@ export function createCaptureWorkspace({
     }
 
     const before = await readDraft();
+    const sourceContext = await resolvedSourceContext(tab);
     const visualId = createId();
     try {
       const screenshot = await captureRegion(tab, visualId);
       if (!screenshot) {
         return { ok: true, message: "已取消截图，草稿没有改变", draft: await readDraft() };
       }
-      const draft = addDraftVisual(await readDraft(), visualRecord({
+      const current = sourceContext ? addDraftSourceContext(await readDraft(), sourceContext) : await readDraft();
+      const draft = addDraftVisual(current, visualRecord({
         id: visualId,
         tab,
+        sourceContext,
         capturedAt: now(),
         screenshot
       }));
@@ -700,6 +718,15 @@ export function createCaptureWorkspace({
     );
   }
 
+  async function resolvedSourceContext(tab) {
+    try {
+      const context = await resolveSourceContext(tab);
+      return context && typeof context === "object" ? context : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function restorePage(tab, captureToken) {
     if (!captureToken) return;
     await chromeApi.scripting.executeScript({
@@ -710,11 +737,11 @@ export function createCaptureWorkspace({
   }
 }
 
-function visualRecord({ id, tab, capturedAt, screenshot }) {
+function visualRecord({ id, tab, sourceContext, capturedAt, screenshot }) {
   return {
     id,
     sourceUrl: tab.url,
-    sourceTitle: tab.title,
+    sourceTitle: sourceContext?.displayTitle || tab.title,
     capturedAt,
     width: screenshot.width,
     height: screenshot.height,

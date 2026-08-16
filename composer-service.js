@@ -142,7 +142,7 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
       videoGeneration: Boolean(xai.mediaConsent && xai.apiKey && xai.textModel && xai.videoModel)
     }
   ];
-  for (const providerId of ["gemini", "openrouter", "minimax", "volcengine"]) {
+  for (const providerId of ["kimi", "gemini", "openrouter", "minimax", "volcengine"]) {
     const profile = visionSettingsValue?.providerProfiles?.[providerId];
     if (!profile) continue;
     const models = [...new Set([profile.models?.creativePlanning, profile.models?.imageGeneration, profile.models?.videoGeneration]
@@ -197,28 +197,29 @@ export function composerServiceCapabilities(profileValue, visionSettingsValue = 
       video: xaiVideoCapability(configured, xai)
     };
   }
-  if (["gemini", "openrouter", "minimax", "volcengine"].includes(profile.serviceId)) {
+  if (["kimi", "gemini", "openrouter", "minimax", "volcengine"].includes(profile.serviceId)) {
     const provider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
-    const model = profile.model || provider?.models?.videoGeneration;
+    const model = profile.model;
     const descriptor = providerModelDescriptor(provider, model);
     const configured = Boolean(provider?.consent && provider?.apiKey && model && descriptor?.tasks?.includes("videoGeneration"));
+    const image = ["gemini", "openrouter"].includes(profile.serviceId) ? (() => {
+      const imageModel = profile.model;
+      const imageDescriptor = providerModelDescriptor(provider, imageModel);
+      const references = modelReferenceCapability(provider, imageModel, {
+        supported: imageDescriptor?.inputModalities?.includes("image") === true,
+        maxItems: null
+      });
+      return {
+        generate: Boolean(provider?.consent && provider?.apiKey && imageModel && imageDescriptor?.tasks?.includes("imageGeneration")),
+        references,
+        edit: { whole: imageDescriptor?.inputModalities?.includes("image") === true, local: false },
+        parameters: profile.serviceId === "gemini" ? providerImageParameters(imageDescriptor) : []
+      };
+    })() : null;
     return {
       serviceId: profile.serviceId,
       model,
-      image: profile.serviceId === "openrouter" ? (() => {
-        const imageModel = provider?.models?.imageGeneration;
-        const imageDescriptor = providerModelDescriptor(provider, imageModel);
-        const references = modelReferenceCapability(provider, imageModel, {
-          supported: imageDescriptor?.inputModalities?.includes("image") === true,
-          maxItems: null
-        });
-        return {
-          generate: Boolean(provider?.consent && provider?.apiKey && imageModel && imageDescriptor?.tasks?.includes("imageGeneration")),
-          references,
-          edit: { whole: imageDescriptor?.inputModalities?.includes("image") === true, local: false },
-          parameters: []
-        };
-      })() : null,
+      image,
       video: {
         generate: configured,
         protocol: provider?.protocol,
@@ -343,7 +344,10 @@ export function normalizeImageGenerationRequest(profileValue, visionSettingsValu
 export function composerImageAvailability(profileValue, visionSettingsValue = {}, session = {}) {
   if (session?.targetType === "video") return { available: false, message: "视频创作只输出提示词" };
   const settings = normalizeVisionSettings(visionSettingsValue);
-  const service = composerServiceCatalog({}, visionSettingsValue).find((item) => item.serviceId === normalizeComposerAiProfile(profileValue).serviceId);
+  const profile = normalizeComposerAiProfile(profileValue);
+  const catalog = composerServiceCatalog({}, visionSettingsValue);
+  const service = catalog.find((item) => item.serviceId === profile.serviceId && item.model === profile.model)
+    ?? catalog.find((item) => item.serviceId === profile.serviceId);
   if (!service || service.serviceId === "deepseek") return { available: false, message: "当前服务只输出文字提示词" };
   if (service.serviceId === "xai") {
     if (!service.imageGeneration) return { available: false, message: "xAI 创建图片还缺少 API Key、文字模型或图片模型" };
@@ -358,6 +362,18 @@ export function composerImageAvailability(profileValue, visionSettingsValue = {}
       return { available: false, message: "所选 OpenRouter 模型未声明参考图输入能力" };
     }
     return { available: true, message: "由 OpenRouter 独立图片接口生成；不会静默改用其他模型" };
+  }
+  if (service.serviceId === "gemini") {
+    const capability = composerServiceCapabilities(profileValue, visionSettingsValue).image;
+    if (!capability?.generate) return { available: false, message: "Gemini 生图还缺少已分配的 Nano Banana 模型、API Key 或发送授权" };
+    const count = referenceImageCount(session);
+    if (count && session.imageReferenceMode === "conditioned" && capability.references.supported === false) {
+      return { available: false, message: "所选 Gemini 图片模型未声明参考图输入能力" };
+    }
+    if (session.imageReferenceMode === "conditioned" && Number.isInteger(capability.references.maxItems) && count > capability.references.maxItems) {
+      return { available: false, message: `当前有 ${count} 张参考图，所选 Gemini 模型最多读取 ${capability.references.maxItems} 张，请先减少参考` };
+    }
+    return imageParameterAvailability(profileValue, visionSettingsValue, session, "由 Google Gemini 官方 Interactions 接口直接生成；不会静默改用其他模型");
   }
   if (service.serviceId === "openai") {
     const capability = composerServiceCapabilities(profileValue, visionSettingsValue).image;
@@ -405,6 +421,10 @@ export function composerImageEditCapabilities(profileValue, visionSettingsValue 
     const available = Boolean(settings.consent && settings.openai.apiKey && (profile.model || settings.openai.model));
     return { whole: available, local: available };
   }
+  if (profile.serviceId === "gemini") {
+    const capability = composerServiceCapabilities(profile, visionSettingsValue).image;
+    return { whole: capability?.generate === true && capability.edit?.whole === true, local: false };
+  }
   if (profile.serviceId !== "compatible") return { whole: false, local: false };
   const provider = settings.compatible;
   const verifiedMicu = serviceLabelForEndpoint(provider.endpoint) === "米醋"
@@ -425,7 +445,9 @@ export async function planComposerTurnWithService(input, settingsValue, options 
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
   if (profile.serviceId === "deepseek") return planDeepSeekTurn(input, settingsValue.ai, options);
   const service = requireVisualService(profile, settingsValue.vision, "规划");
-  if (service.planning === false) return planDeepSeekTurn(input, settingsValue.ai, options);
+  if (service.planning === false) {
+    throw new ComposerServiceError(`${service.label} 的所选模型未声明创作规划能力，请重新分配模型`, 422, { retryable: false });
+  }
   assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const systemInstruction = compileAgentPlanningPrompt({
@@ -843,11 +865,17 @@ async function generateImageTurn(input, service, preparedImages, options) {
   if (service.serviceId === "openrouter") {
     return generateOpenRouterImageTurn(input, service, preparedImages, referenceMode, options);
   }
+  if (service.serviceId === "gemini" && imageEdit?.mode === "local") {
+    throw new ComposerServiceError("Gemini Interactions 当前不支持上传局部遮罩编辑；请改用整图语义修改", 422, { retryable: false });
+  }
   const requestState = normalizeImageGenerationRequest(input.session?.generationAiProfile, options.visionSettings ?? {}, input.session?.generationParameters);
   if (requestState.issues.length) throw new ComposerServiceError(requestState.issues.join("；"), 422, { retryable: false });
   const requestParameters = requestState.parameters;
   const baseContent = multimodalContent(input.session, request, preparedImages, service.protocol);
   const content = imageEdit ? imageEditContent(baseContent, imageEdit, service.protocol) : baseContent;
+  if (service.imageGeneration.protocol === "gemini_interactions") {
+    return generateGeminiImageTurn(input, service, request, content, referenceMode, imageEdit, requestParameters, preparedImages, options);
+  }
   if (service.imageGeneration.protocol === "responses_tool") {
     const instructions = [
       systemInstruction,
@@ -910,6 +938,102 @@ async function generateImageTurn(input, service, preparedImages, options) {
     requestParameters,
     finishReason: imageResult.finishReason
   };
+}
+
+async function generateGeminiImageTurn(input, service, request, conditionedContent, referenceMode, imageEdit, requestParameters, preparedImages, options) {
+  let finalPrompt = String(request.instruction ?? "").trim();
+  let content = conditionedContent;
+  if (!imageEdit && referenceMode !== "conditioned") {
+    const promptResult = await assembleImagePrompt(input, preparedImages, options);
+    finalPrompt = promptResult.finalPrompt;
+    content = [{ type: "text", text: finalPrompt }];
+  }
+  const imageBlocks = content.filter((item) => item.type === "image");
+  const maximum = service.provider
+    ? modelReferenceCapability(service.provider, service.imageGeneration.model, { supported: null, maxItems: null }).maxItems
+    : null;
+  if (Number.isInteger(maximum) && imageBlocks.length > maximum) {
+    throw new ComposerServiceError(`所选 Gemini 模型最多读取 ${maximum} 张参考图，请先减少参考`, 422, {
+      kind: "reference_limit",
+      retryable: false,
+      referenceLimit: { actual: imageBlocks.length, maximum }
+    });
+  }
+  const interactionInput = imageBlocks.length
+    ? content.map((item) => item.type === "image" ? geminiImageInput(item.dataUrl) : { type: "text", text: item.text })
+    : finalPrompt;
+  const responseFormat = { type: "image" };
+  if (requestParameters.aspectRatio) responseFormat.aspect_ratio = requestParameters.aspectRatio;
+  if (requestParameters.imageSize) responseFormat.image_size = requestParameters.imageSize;
+  const body = {
+    model: service.imageGeneration.model,
+    input: interactionInput,
+    response_format: responseFormat
+  };
+  const response = await requestRaw(
+    service.imageGeneration.endpoint,
+    "",
+    body,
+    options,
+    IMAGE_REQUEST_TIMEOUT_MS,
+    "Google Gemini 图片服务",
+    { "x-goog-api-key": service.imageGeneration.apiKey }
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw responseError("Google Gemini 图片服务", response.status, payload, {
+    secrets: [service.imageGeneration.apiKey]
+  });
+  const parsed = geminiInteractionImages(payload);
+  if (!parsed.images.length) {
+    throw new ComposerServiceError("Google Gemini 图片服务完成请求但没有返回有效图片", 422, { retryable: false });
+  }
+  return {
+    route: "compose",
+    kind: "image",
+    finalPrompt: parsed.text || finalPrompt || "创建图片",
+    images: parsed.images,
+    outputLanguage: request.outputLanguage,
+    usage: normalizeGeminiInteractionsUsage(payload.usage),
+    serviceId: "gemini",
+    model: String(payload.model ?? service.imageGeneration.model),
+    requestModel: service.imageGeneration.model,
+    requestParameters,
+    finishReason: String(payload.status ?? "completed")
+  };
+}
+
+function geminiImageInput(dataUrl) {
+  const match = String(dataUrl ?? "").match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) throw new ComposerServiceError("Gemini 参考图数据无效，本次没有发送不完整参考", 422, { retryable: false });
+  return { type: "image", mime_type: match[1].toLocaleLowerCase("en-US"), data: match[2] };
+}
+
+function geminiInteractionImages(payload) {
+  const blocks = (Array.isArray(payload?.steps) ? payload.steps : [])
+    .filter((step) => step?.type === "model_output")
+    .flatMap((step) => Array.isArray(step.content) ? step.content : []);
+  if (payload?.output_image && (!payload.output_image.type || payload.output_image.type === "image")) {
+    const outputImage = { type: "image", ...payload.output_image };
+    const alreadyIncluded = blocks.some((block) => block?.type === "image"
+      && block.data === outputImage.data && block.mime_type === outputImage.mime_type);
+    if (!alreadyIncluded) blocks.push(outputImage);
+  }
+  const images = [];
+  const texts = [];
+  for (const block of blocks) {
+    if (block?.type === "text" && String(block.text ?? "").trim()) {
+      texts.push(String(block.text).trim());
+      continue;
+    }
+    if (block?.type !== "image") continue;
+    const encoded = String(block.data ?? "").trim();
+    const mimeType = String(block.mime_type ?? "").trim().toLocaleLowerCase("en-US");
+    if (!encoded || !/^image\/(?:png|jpeg|webp|heic|heif|gif|bmp|tiff)$/.test(mimeType)) continue;
+    try {
+      images.push({ blob: base64Image(encoded, mimeType), mimeType, source: "base64" });
+    } catch {}
+  }
+  return { images, text: texts.join("\n").trim() };
 }
 
 async function generateOpenRouterImageTurn(input, service, preparedImages, referenceMode, options) {
@@ -1211,7 +1335,7 @@ async function requestJson(service, body, options = {}, timeoutMs = REQUEST_TIME
   return payload;
 }
 
-async function requestRaw(url, apiKey, body, options, timeoutMs, label) {
+async function requestRaw(url, apiKey, body, options, timeoutMs, label, extraHeaders = {}) {
   const multipart = typeof FormData !== "undefined" && body instanceof FormData;
   if (!multipart) assertComposerRequestBudget(textMessagesForBudget(body));
   const controller = new AbortController();
@@ -1219,11 +1343,14 @@ async function requestRaw(url, apiKey, body, options, timeoutMs, label) {
   const onAbort = () => controller.abort();
   if (options.signal?.aborted) controller.abort();
   options.signal?.addEventListener("abort", onAbort, { once: true });
-  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const requestedTimeout = Object.hasOwn(options ?? {}, "timeoutMs") ? options.timeoutMs : timeoutMs;
+  const timeoutId = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+    ? setTimeout(() => { timedOut = true; controller.abort(); }, requestedTimeout)
+    : null;
   try {
     return await (options.fetchImpl ?? fetch)(url, {
       method: "POST",
-      headers: { ...(multipart ? {} : { "Content-Type": "application/json" }), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+      headers: { ...(multipart ? {} : { "Content-Type": "application/json" }), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), ...extraHeaders },
       body: multipart ? body : JSON.stringify(body),
       redirect: "error",
       signal: controller.signal
@@ -1233,7 +1360,7 @@ async function requestRaw(url, apiKey, body, options, timeoutMs, label) {
     if (error?.name === "AbortError") throw error;
     throw new ComposerServiceError(`无法连接 ${label}，请检查网络、地址和权限`, 0, { cause: error });
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId !== null) clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", onAbort);
   }
 }
@@ -1271,17 +1398,23 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       }
     };
   }
-  if (["gemini", "openrouter", "minimax", "volcengine"].includes(profile.serviceId)) {
+  if (["kimi", "gemini", "openrouter", "minimax", "volcengine"].includes(profile.serviceId)) {
     const provider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
-    const model = profile.model || provider?.models?.videoGeneration;
-    if (!provider?.apiKey || !model) throw new ComposerServiceError(`请先完成 ${provider?.label || profile.serviceId} 的 API Key 和视频模型配置`, 422, { retryable: false });
+    const model = profile.model;
+    if (!provider?.apiKey || !model) throw new ComposerServiceError(`请先完成 ${provider?.label || profile.serviceId} 的 API Key 和所选模型配置`, 422, { retryable: false });
     if (!provider.consent) throw new ComposerServiceError(`请先确认：主动${action}时会把本轮文字与所选图片发送到 ${provider.label || profile.serviceId}`, 422, { retryable: false });
-    const planning = providerModelSupports(provider, provider.models?.creativePlanning, "creativePlanning");
+    const planning = providerModelSupports(provider, model, "creativePlanning");
+    const chatCompatible = ["openrouter", "gemini"].includes(profile.serviceId);
+    const endpoint = profile.serviceId === "openrouter"
+      ? `${String(provider.endpoint).replace(/\/$/, "")}/chat/completions`
+      : profile.serviceId === "gemini"
+        ? `${String(provider.endpoint).replace(/\/$/, "")}/v1beta/openai/chat/completions`
+        : provider.endpoint;
     return {
       serviceId: profile.serviceId,
       label: provider.label || profile.serviceId,
-      protocol: profile.serviceId === "openrouter" ? "chat_completions" : provider.protocol,
-      endpoint: profile.serviceId === "openrouter" ? `${String(provider.endpoint).replace(/\/$/, "")}/chat/completions` : provider.endpoint,
+      protocol: chatCompatible ? "chat_completions" : provider.protocol,
+      endpoint,
       apiKey: provider.apiKey,
       model,
       planning,
@@ -1290,7 +1423,12 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       imageGeneration: profile.serviceId === "openrouter" ? {
         protocol: "openrouter_images",
         endpoint: `${String(provider.endpoint).replace(/\/$/, "")}/images`,
-        model: provider.models?.imageGeneration
+        model
+      } : profile.serviceId === "gemini" ? {
+        protocol: "gemini_interactions",
+        endpoint: geminiInteractionsEndpoint(provider.endpoint),
+        apiKey: provider.apiKey,
+        model
       } : null
     };
   }
@@ -1420,7 +1558,11 @@ function providerModelDescriptor(profile, modelId) {
 }
 
 function providerModelSupports(profile, modelId, taskId) {
-  return providerModelDescriptor(profile, modelId)?.tasks?.includes(taskId) === true;
+  const id = String(modelId ?? "").trim();
+  const descriptor = providerModelDescriptor(profile, id);
+  if (descriptor) return descriptor.tasks?.includes(taskId) === true;
+  return profile?.capabilities?.includes(taskId) === true
+    && String(profile?.models?.[taskId] ?? "").trim() === id;
 }
 
 function compatibleImageReferenceCapability(visionSettingsValue, modelId) {
@@ -1451,6 +1593,23 @@ function providerVideoParameters(descriptor) {
     parameters.push(imageParameter("aspectRatio", "画幅比例", descriptor.supportedAspectRatios.map((value) => ({ value, label: value })), descriptor.supportedAspectRatios[0]));
   }
   return parameters;
+}
+
+function providerImageParameters(descriptor) {
+  const parameters = [];
+  const supported = new Set(descriptor?.supportedParameters ?? []);
+  if (supported.has("aspect_ratio") && descriptor?.supportedAspectRatios?.length) {
+    parameters.push(imageParameter("aspectRatio", "画幅比例", descriptor.supportedAspectRatios.map((value) => ({ value, label: value })), descriptor.supportedAspectRatios[0]));
+  }
+  if (supported.has("image_size") && descriptor?.supportedResolutions?.length) {
+    parameters.push(imageParameter("imageSize", "图片尺寸", descriptor.supportedResolutions.map((value) => ({ value, label: value })), descriptor.supportedResolutions[0]));
+  }
+  return parameters;
+}
+
+function geminiInteractionsEndpoint(value) {
+  try { return new URL("/v1beta/interactions", value).href; }
+  catch { throw new ComposerServiceError("Gemini 官方接口地址无效", 422, { retryable: false }); }
 }
 
 function imageParameter(key, label, options, defaultValue) {
@@ -1751,6 +1910,16 @@ function normalizeResponsesUsage(value = {}) {
   };
 }
 
+function normalizeGeminiInteractionsUsage(value = {}) {
+  return {
+    promptTokens: finite(value.total_input_tokens),
+    completionTokens: finite(value.total_output_tokens),
+    totalTokens: finite(value.total_tokens),
+    cacheHitTokens: finite(value.total_cached_tokens),
+    cacheMissTokens: Math.max(0, finite(value.total_input_tokens) - finite(value.total_cached_tokens))
+  };
+}
+
 function normalizeChatUsage(value = {}) {
   return {
     promptTokens: finite(value.prompt_tokens),
@@ -1787,6 +1956,10 @@ function parseObject(content, message) {
 
 function textMessagesForBudget(body) {
   if (Array.isArray(body.messages)) return body.messages.map((item) => ({ content: typeof item.content === "string" ? item.content : JSON.stringify(item.content.filter?.((part) => part.type === "text") ?? []) }));
+  if (typeof body.input === "string") return [{ content: body.input }];
+  if (Array.isArray(body.input) && body.input.some((item) => item?.type === "text" || item?.type === "image")) {
+    return body.input.filter((item) => item?.type === "text").map((item) => ({ content: item.text ?? "" }));
+  }
   return [
     { content: body.instructions || "" },
     { content: JSON.stringify((body.input ?? []).map((item) => ({ ...item, content: item.content?.filter?.((part) => part.type === "input_text") }))) }
@@ -1794,7 +1967,7 @@ function textMessagesForBudget(body) {
 }
 
 function responseError(label, status, payload, options = {}) {
-  const detail = String(payload?.error?.message ?? payload?.message ?? "").trim();
+  const detail = redactSecrets(String(payload?.error?.message ?? payload?.message ?? "").trim(), options.secrets);
   const referenceLimit = referenceLimitFromMessage(detail);
   const micuRouting = micuImageRoutingError(label, detail, options.credentialHint);
   if (micuRouting) {
@@ -1808,6 +1981,13 @@ function responseError(label, status, payload, options = {}) {
     retryable: false,
     referenceLimit
   } : {});
+}
+
+function redactSecrets(value, secrets = []) {
+  return (Array.isArray(secrets) ? secrets : []).reduce((text, secretValue) => {
+    const secret = String(secretValue ?? "").trim();
+    return secret ? text.split(secret).join("[已隐藏凭据]") : text;
+  }, String(value ?? ""));
 }
 
 function micuImageRoutingError(label, detail, keyHint = "") {

@@ -1,4 +1,6 @@
-const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+import { normalizeArticleDocument, removeArticleDocumentAsset } from "./article-document.js";
+
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"]);
 const VIDEO_MIME_TYPES = new Set([
   "video/mp4", "video/webm", "video/quicktime", "video/x-matroska", "video/x-msvideo"
 ]);
@@ -42,6 +44,8 @@ export function normalizeMediaAsset(value = {}) {
     storageMode,
     sourceUrl,
     sourceTitle: clean(value.sourceTitle),
+    sourceAuthor: clean(value.sourceAuthor),
+    originalWorkUrl: safeHttpUrl(value.originalWorkUrl),
     capturedAt,
     ...(mimeTypeForKind(kind, mimeType) ? { mimeType } : {}),
     ...(width ? { width } : {}),
@@ -95,6 +99,9 @@ export function normalizeEntryMedia(entryValue = {}) {
   const requestedPrimary = clean(entry.primaryMediaId || entry.primaryVisualId);
   entry.mediaAssets = mediaAssets;
   entry.primaryMediaId = contentAssets.some((item) => item.id === requestedPrimary) ? requestedPrimary : contentAssets[0]?.id || "";
+  const articleDocument = normalizeArticleDocument(entry.articleDocument);
+  if (articleDocument) entry.articleDocument = articleDocument;
+  else delete entry.articleDocument;
   entry.timeNotes = normalizeTimeNotes(entry.timeNotes, ids);
   entry.mediaPrompts = normalizeMediaPrompts(entry.mediaPrompts, ids);
   entry.visualSetAnalyses = normalizeVersionedAnalyses(entry.visualSetAnalyses, "visual-set");
@@ -176,6 +183,8 @@ export function removeEntryMedia(entryValue, assetId) {
   entry.timeNotes = entry.timeNotes.filter((item) => item.assetId !== id);
   entry.mediaPrompts = entry.mediaPrompts.filter((item) => !removedIds.has(item.assetId));
   entry.videoAnalyses = entry.videoAnalyses.filter((item) => !removedIds.has(item.assetId));
+  for (const removedId of removedIds) entry.articleDocument = removeArticleDocumentAsset(entry.articleDocument, removedId);
+  if (!entry.articleDocument) delete entry.articleDocument;
   if (entry.primaryMediaId === id) entry.primaryMediaId = entry.mediaAssets.find((item) => item.usage !== "poster")?.id || "";
   return entry;
 }
@@ -261,7 +270,7 @@ export function mediaDescriptions(entryValue = {}) {
 export function mediaKindFromFile(file) {
   const mimeType = clean(file?.type).toLocaleLowerCase("en-US");
   const name = clean(file?.name).toLocaleLowerCase("en-US");
-  if (mimeType.startsWith("image/") || /\.(?:png|jpe?g|webp)$/.test(name)) return "image";
+  if (mimeType.startsWith("image/") || /\.(?:avif|gif|png|jpe?g|webp)$/.test(name)) return "image";
   if (mimeType.startsWith("video/") || /\.(?:mp4|webm|mov|mkv|avi)$/.test(name)) return "video";
   if (DOCUMENT_MIME_TYPES.has(mimeType) || /\.(?:pdf|md|markdown|txt|html?|rtf)$/.test(name)) return "document";
   return "";

@@ -39,7 +39,8 @@ test("composer and Skill selections avoid oversized green outer rings", async ()
   assert.match(rule(composer, '.composer-case-option[data-selected="true"]'), /background:\s*var\(--selection\)/);
   assert.match(rule(composer, ".composer-project-card .composer-project-active"), /box-shadow:\s*inset 2px 0 var\(--selection-indicator\)/);
   assert.doesNotMatch(composer, /0 0 0 (?:2px|3px) color-mix\(in srgb, var\(--accent\)/);
-  assert.match(rule(skills, '.skill-case[data-selected="true"]::after'), /border-color:\s*var\(--accent/);
+  assert.match(rule(skills, '.skill-case[data-selected="true"]'), /border-color:\s*var\(--selection-indicator\)/);
+  assert.match(rule(skills, '.skill-case[data-selected="true"] .skill-case-state'), /background:\s*var\(--accent\)/);
   assert.doesNotMatch(skills, /box-shadow:\s*0 0 0 (?:2px|3px) color-mix\(in srgb, var\(--accent\)/);
 });
 
@@ -52,6 +53,27 @@ test("collector highlights use the shared restrained interaction language", asyn
   assert.match(rule(source, ".other-capture-methods.fallback-highlight"), /box-shadow:\s*inset 2px 0 var\(--selection-indicator\)/);
   assert.match(rule(source, ".visual-card.primary"), /box-shadow:\s*inset 0 0 0 1px var\(--selection-edge\)/);
   assert.doesNotMatch(source, /box-shadow:\s*0 0 0 3px var\(--accent-soft\)/);
+});
+
+test("capture notifications use the shared neutral toast instead of legacy green text", async () => {
+  const [foundation, collector, collectorHtml, libraryHtml] = await Promise.all([
+    readFile(new URL("../ui-foundation.css", import.meta.url), "utf8"),
+    readFile(new URL("../collector.css", import.meta.url), "utf8"),
+    readFile(new URL("../collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../library.html", import.meta.url), "utf8")
+  ]);
+  const toast = rule(foundation, ".ui-feedback-toast");
+
+  assert.match(collectorHtml, /id="feedback"[^>]*class="ui-feedback-toast"/);
+  assert.match(libraryHtml, /id="feedback"[^>]*class="ui-feedback-toast"/);
+  assert.match(toast, /position:\s*fixed/);
+  assert.match(toast, /color:\s*var\(--ui-text\)/);
+  assert.match(toast, /background:\s*var\(--ui-surface\)/);
+  assert.match(toast, /border:\s*1px solid var\(--ui-border-strong\)/);
+  assert.match(rule(foundation, ".ui-feedback-toast.error"), /color:\s*var\(--ui-danger\)/);
+  assert.doesNotMatch(rule(collector, "#feedback"), /color:\s*var\(--accent\)/);
+  assert.match(rule(collector, ".smart-selection"), /box-shadow:\s*inset 2px 0 var\(--selection-indicator\)/);
+  assert.match(rule(collector, ".smart-selection small"), /color:\s*var\(--muted\)/);
 });
 
 test("smart visual picker uses a fine neutral edge with a small branded check", async () => {

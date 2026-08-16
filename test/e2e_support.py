@@ -12,6 +12,15 @@ from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwrigh
 
 
 EXTENSION_DIR = Path(__file__).resolve().parents[1]
+AI_TASK_IDS = (
+    "textTags",
+    "skillExtraction",
+    "creativePlanning",
+    "imageAnalysis",
+    "videoAnalysis",
+    "imageGeneration",
+    "videoGeneration",
+)
 
 
 @dataclass
@@ -43,6 +52,7 @@ def extension_session(
     *,
     viewport: dict | None = None,
     accept_downloads: bool = True,
+    extension_dir: Path = EXTENSION_DIR,
 ) -> Iterator[ExtensionTestSession]:
     with tempfile.TemporaryDirectory(prefix=profile_prefix) as profile:
         with sync_playwright() as playwright:
@@ -51,6 +61,7 @@ def extension_session(
                 profile,
                 viewport=viewport or {"width": 1280, "height": 900},
                 accept_downloads=accept_downloads,
+                extension_dir=extension_dir,
             )
             page_errors: list[str] = []
             context.on("page", lambda page: record_page_errors(page, page_errors))
@@ -68,6 +79,7 @@ def launch_context(
     *,
     viewport: dict,
     accept_downloads: bool,
+    extension_dir: Path = EXTENSION_DIR,
 ) -> BrowserContext:
     return playwright.chromium.launch_persistent_context(
         profile_dir,
@@ -77,8 +89,8 @@ def launch_context(
         viewport=viewport,
         permissions=["clipboard-read", "clipboard-write"],
         args=[
-            f"--disable-extensions-except={EXTENSION_DIR}",
-            f"--load-extension={EXTENSION_DIR}",
+            f"--disable-extensions-except={extension_dir}",
+            f"--load-extension={extension_dir}",
         ],
     )
 
@@ -95,6 +107,23 @@ def record_page_errors(page: Page, errors: list[str]) -> None:
             errors.append(f"{page.url}: {message}")
 
     page.on("pageerror", record)
+
+
+def ai_configuration_fixture(
+    *,
+    providers: dict,
+    assignments: dict,
+    auto_analyze_imports: bool = False,
+) -> dict:
+    """Build the one persisted Registry v4 shape used by extension E2E fixtures."""
+    return {
+        "aiProviderRegistry": {"version": 4, "providers": providers},
+        "aiTaskAssignments": {
+            task_id: assignments.get(task_id, {"providerId": "", "model": ""})
+            for task_id in AI_TASK_IDS
+        },
+        "aiPreferences": {"autoAnalyzeImports": auto_analyze_imports},
+    }
 
 
 def wait_for_download(page: Page, after_id: int = 0, timeout_seconds: float = 12) -> tuple[Path, int]:

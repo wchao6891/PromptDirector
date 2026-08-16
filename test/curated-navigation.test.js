@@ -2,108 +2,108 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("curated cases use same-tab navigation and return without creating duplicate tabs", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
-  const curated = await readFile(new URL("../curated-page.js", import.meta.url), "utf8");
-  const html = await readFile(new URL("../curated.html", import.meta.url), "utf8");
+async function sources() {
+  const [library, page, html, css] = await Promise.all([
+    readFile(new URL("../library.js", import.meta.url), "utf8"),
+    readFile(new URL("../curated-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../curated.html", import.meta.url), "utf8"),
+    readFile(new URL("../curated.css", import.meta.url), "utf8")
+  ]);
+  return { library, page, html, css };
+}
 
+test("curated discovery stays in one extension tab and returns to the private library", async () => {
+  const { library, page, html } = await sources();
   assert.match(library, /navigateWithinPromptDirector\("curated\.html"\)/);
-  const promptDirectorNavigation = library.slice(
-    library.indexOf("elements.openCurated"),
-    library.indexOf("chrome.runtime.onMessage.addListener")
-  );
-  assert.doesNotMatch(promptDirectorNavigation, /chrome\.tabs\.create|openerTabId/);
   assert.match(html, /<button id="return-library"/);
-  assert.doesNotMatch(html, /id="back-to-themes"/);
-  assert.doesNotMatch(html, /href="library\.html"/);
-  assert.match(curated, /activeThemeId \? backToThemes\(\) : returnToLibrary\(\)/);
-  assert.match(curated, /activeThemeId \? "返回主题" : "返回我的案例库"/);
-
-  const returnFlow = curated.slice(
-    curated.indexOf("function returnToLibrary"),
-    curated.indexOf("async function refreshCatalog")
-  );
-  assert.match(returnFlow, /location\.assign\(chrome\.runtime\.getURL\("library\.html"\)\)/);
-  assert.doesNotMatch(returnFlow, /chrome\.tabs\.(?:create|update|remove)|openerTabId/);
+  assert.match(html, /data-i18n="返回案例库"/);
+  assert.match(page, /location\.assign\(chrome\.runtime\.getURL\("library\.html"\)\)/);
+  assert.doesNotMatch(page, /chrome\.tabs\.(?:create|update|remove)|openerTabId/);
 });
 
-test("curated discovery loads theme cards before any package and supports theme or single saves", async () => {
-  const curated = await readFile(new URL("../curated-page.js", import.meta.url), "utf8");
-  const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
-  const html = await readFile(new URL("../curated.html", import.meta.url), "utf8");
-  const css = await readFile(new URL("../curated.css", import.meta.url), "utf8");
-  const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
-  const detail = curated.slice(curated.indexOf("function renderDetail"), curated.indexOf("async function saveCuratedCase"));
-
-  const refreshFlow = curated.slice(curated.indexOf("async function refreshCatalog"), curated.indexOf("async function loadCachedCatalog"));
-  assert.doesNotMatch(refreshFlow, /fetchCuratedPackage|loadThemePackage/);
-  assert.doesNotMatch(curated, /loadCatalogPackages/);
-  assert.match(curated, /catalog\.themes/);
-  assert.match(curated, /async function openTheme/);
-  assert.match(curated, /async function loadThemePackage/);
-  assert.match(curated, /async function saveTheme/);
-  assert.match(curated, /prepareCuratedEntriesPackage/);
-  assert.match(curated, /createStableMasonry\(elements\.curatedGrid/);
-  assert.match(curated, /prepareCuratedEntryPackage\(record\.library, record\.entry\.id\)/);
-  assert.match(curated, /preserveLibraryConfiguration:\s*true/);
-  assert.match(background, /previewLibraryImport\(await readState\(\), message\.library, \{[\s\S]*preserveLibraryConfiguration/);
-  assert.match(background, /preserveLibraryConfiguration:\s*message\.preserveLibraryConfiguration === true/);
-  assert.match(curated, /function openDetail/);
-  assert.match(curated, /document\.documentElement\.classList\.add\("detail-open"\)/);
-  assert.match(curated, /event\.key === "ArrowLeft"/);
-  assert.match(curated, /event\.key === "ArrowRight"/);
-  assert.match(curated, /className = "case-image-wrap case-image-wrap-fixed"/);
-  assert.match(curated, /className = "case-shot"/);
-  assert.match(curated, /caseImageObserver\.observe\(image\)/);
-  assert.match(curated, /renderedCount \+ PAGE_SIZE/);
-  assert.match(detail, /metadata\.append\(textElement\("span", "", sourceRightsLabel\(record\.entry\)\)\)/);
-  assert.doesNotMatch(detail, /查看原始来源|detail-source|record\.item\.title/);
-  assert.doesNotMatch(html, /id="curated-search"|id="refresh-catalog"/);
-  assert.match(html, /id="retry-catalog"[^>]*hidden/);
-  assert.match(html, /id="active-theme-count"/);
-  assert.match(html, /id="theme-grid"/);
-  assert.match(html, /id="themes-view"/);
-  assert.match(html, /id="cases-view"/);
-  assert.match(html, /id="save-theme"/);
-  assert.match(html, /class="theme-save-summary"/);
-  assert.match(html, /id="detail-drawer"/);
-  assert.match(html, /id="detail-drawer"[^>]*role="dialog"[^>]*aria-modal="true"/);
-  assert.match(html, /选择一期主题，再浏览或保存其中的案例/);
-  assert.doesNotMatch(curated, /installCuratedItem|安装到我的案例库/);
-  assert.doesNotMatch(html, /id="curated-filter"/);
-  assert.match(css, /\.curated-grid\s*\{[^}]*position:\s*relative/);
-  assert.match(css, /\.theme-grid\s*\{[^}]*grid-template-columns/);
-  assert.match(css, /\.case-image-wrap-fixed \.case-shot\s*\{[^}]*object-fit:\s*cover/);
-  assert.match(css, /\.detail-drawer\s*\{[^}]*width:\s*100vw;[^}]*height:\s*100dvh/);
-  assert.match(css, /\.detail-content\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) var\(--detail-panel-width\)/);
-  assert.match(css, /\.detail-figure\s*\{[^}]*height:\s*100dvh/);
-  assert.match(css, /\.detail-figure\s*\{[^}]*background:\s*var\(--viewer-bg\)/);
-  assert.match(css, /\.detail-body\s*\{[^}]*background:\s*var\(--card\)/);
-  assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-bg:\s*var\(--ui-browser\)/);
-  assert.match(foundation, /:root\[data-theme="system"\][\s\S]*--viewer-bg:\s*var\(--ui-browser\)/);
-  assert.match(css, /@media \(max-width: 700px\)[\s\S]*--masonry-card-min-width:\s*145px/);
-  assert.match(css, /@media \(max-width: 700px\)[\s\S]*\.detail-figure\s*\{[^}]*height:\s*58dvh/);
+test("curated discovery keeps the pack wall concise and opens a separate read-only case detail", async () => {
+  const { page, html, css } = await sources();
+  assert.match(html, /id="curated-search"/);
+  assert.match(html, /id="filter-button"/);
+  assert.match(html, /data-sort="recommended"/);
+  assert.match(html, /data-sort="latest"/);
+  assert.match(html, /data-sort="downloads"/);
+  assert.match(html, /<dialog id="detail-dialog"/);
+  assert.match(html, /id="case-detail-drawer"/);
+  assert.match(html, /id="case-detail-prev"/);
+  assert.match(html, /id="case-detail-next"/);
+  assert.doesNotMatch(html, /save-theme|theme-grid|themes-view|cases-view|更多|版本|更新日期|摘要/);
+  assert.match(page, /element\("article", "pack-card"\)/);
+  assert.match(page, /element\("h2", "", item\.title\)/);
+  assert.match(page, /meta\.append\(element\("span", "", item\.author\), element\("span", "", `\$\{item\.caseCount\}/);
+  assert.match(page, /actions\.append\(download, follow, copyLink\)/);
+  assert.doesNotMatch(page, /Composer|composer|以此创作|openComposer|promptVersions/);
+  const detail = page.slice(page.indexOf("function renderDetail"), page.indexOf("function createCaseCard"));
+  assert.doesNotMatch(detail, /item\.summary|packageVersion|updatedAt/);
+  assert.match(css, /grid-template-columns:\s*minmax\(0, 1fr\) clamp\(360px, 31vw, 450px\)/);
+  assert.match(css, /\.case-detail-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) clamp\(380px, 34vw, 480px\)/);
 });
 
-test("curated catalog refreshes on entry and exposes retry only for permission or failure", async () => {
-  const curated = await readFile(new URL("../curated-page.js", import.meta.url), "utf8");
-  const startup = curated.slice(curated.indexOf("await loadLocalState()"), curated.indexOf("function returnToLibrary"));
-  const refresh = curated.slice(curated.indexOf("async function refreshCatalog"), curated.indexOf("async function loadCachedCatalog"));
-  assert.match(startup, /hasCatalogPermission\(\).*refreshCatalog\(false\)/s);
-  assert.match(startup, /showStatus\([^\n]+true, true\)/);
-  assert.match(refresh, /elements\.retryCatalog\.hidden = true/);
-  assert.match(refresh, /showStatus\([^\n]+true, true\)/);
-  assert.doesNotMatch(curated, /addEventListener\("input", renderCases\)/);
+test("package cases reuse the stable masonry and the whole image card opens detail", async () => {
+  const { page, css } = await sources();
+  assert.match(page, /import \{ createStableMasonry \} from "\.\/stable-masonry\.js"/);
+  assert.match(page, /const CURATED_CASE_PAGE_SIZE = 24/);
+  assert.match(page, /createStableMasonry\(list, \{\s*scrollContainer: elements\.detailDialog/);
+  const card = page.slice(page.indexOf("function createCaseCard"), page.indexOf("function openCaseDetail"));
+  assert.match(card, /card\.addEventListener\("click", open\)/);
+  assert.match(card, /openCaseDetail\(item, entry, card\)/);
+  assert.doesNotMatch(card, /case-footer|case-actions|iconButton/);
+  assert.match(css, /\.case-list\s*\{[^}]*position:\s*relative/);
+  assert.match(css, /\.case-card\s*\{[^}]*position:\s*absolute/);
+  assert.doesNotMatch(css, /\.case-list\s*\{[^}]*display:\s*grid/);
 });
 
-test("curated and local single-case details reuse the existing composer reference route", async () => {
-  const curated = await readFile(new URL("../curated-page.js", import.meta.url), "utf8");
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+test("case detail preserves real media ratio and isolates focus from the package", async () => {
+  const { page, html, css } = await sources();
+  assert.match(html, /id="case-detail-drawer"[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(css, /\.case-detail-figure img\s*\{[^}]*width:\s*auto;[^}]*height:\s*auto;[^}]*max-width:\s*100%;[^}]*max-height:\s*100dvh;[^}]*object-fit:\s*contain/);
+  assert.match(css, /\.case-detail-video\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*object-fit:\s*contain/);
+  assert.match(page, /image\.width = entry\.width/);
+  assert.match(page, /image\.height = entry\.height/);
+  assert.match(page, /setPackageDetailInert\(true\)/);
+  assert.match(page, /setPackageDetailInert\(false\)/);
+  assert.match(page, /elements\.detailContent\.inert = inert/);
+  assert.match(page, /t\("图片加载失败"\)/);
+});
 
-  assert.match(curated, /url\.searchParams\.set\("references", savedEntry\.id\)/);
-  assert.match(curated, /location\.assign\(url\.href\)/);
-  assert.doesNotMatch(curated.slice(curated.indexOf("async function openComposerForRecord"), curated.indexOf("function updateThemeSaveUi")), /chrome\.tabs\.create/);
-  assert.match(curated, /await saveCuratedCase\(record/);
-  assert.match(library, /url\.searchParams\.set\("references", entry\.id\)/);
-  assert.match(library, /isComposerEligibleEntry/);
+test("search, filters, ordering, following and public deep links use public metadata only", async () => {
+  const { page } = await sources();
+  assert.match(page, /loadAllPreviews\(\)/);
+  assert.match(page, /entry\.title, entry\.author, entry\.text/);
+  assert.match(page, /typeFilters\.includes\(item\.type\)/);
+  assert.match(page, /state\.following\.has\(item\.authorId\)/);
+  assert.match(page, /curatedFollowingAuthors/);
+  assert.match(page, /right\.updatedAt/);
+  assert.match(page, /state\.metrics\.downloads\[right\.id\]/);
+  assert.match(page, /elements\.sortDownloads\.disabled = !state\.metrics/);
+  assert.match(page, /url\.searchParams\.set\("pack", id\)/);
+  assert.match(page, /new URL\(CURATED_PUBLIC_SITE_URL\)/);
+  assert.match(page, /curatedSourceKey\(\{\s*curatedOrigin: \{ packageId: item\.packageId, sourceEntryId: previewEntry\.id \}/);
+  assert.doesNotMatch(page, /粉丝|like|comment|浏览量/);
+});
+
+test("preview prompts stay inert and package bytes are verified before curated imports", async () => {
+  const { page } = await sources();
+  assert.match(page, /element\("pre", "case-detail-prompt", entry\.text/);
+  assert.match(page, /copyCasePrompt\(entry, copy\)/);
+  assert.doesNotMatch(page, /innerHTML|insertAdjacentHTML|eval\(|new Function/);
+  const verifiedArchive = page.slice(page.indexOf("async function loadVerifiedArchive"), page.indexOf("async function loadPackageIndex"));
+  assert.match(verifiedArchive, /verifyCuratedPackageBlob\(archive, item\.sha256\)/);
+  const save = page.slice(page.indexOf("async function savePreviewCase"), page.indexOf("function openSavedCase"));
+  assert.match(save, /saveCuratedSelection\(item, \[previewEntry\.id\]/);
+  assert.match(save, /prepareCuratedEntriesPackage/);
+  assert.match(save, /prepareCuratedEntryPackage/);
+  assert.match(save, /reader\.read\(mediaPaths/);
+  assert.match(page, /PREVIEW_CURATED_IMPORT/);
+  assert.match(page, /APPLY_CURATED_IMPORT/);
+  assert.match(page, /entriesBySourceEntryId/);
+  assert.match(page, /readResponseBlobWithProgress/);
+  assert.match(page, /stage: "downloading"/);
+  assert.match(page, /stage: "verifying"/);
+  assert.match(page, /stage: "saving"/);
 });

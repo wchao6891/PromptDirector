@@ -22,7 +22,7 @@ import { assertImageDimensions } from "./resource-limits.js";
 import { buildSearchIndex } from "./search-index.js";
 import { materializeLogicalCases } from "./compound-cases.js";
 import { blobToDataUrl, normalizeVisionSettings } from "./vision.js";
-import { normalizeAiServiceProfiles } from "./ai-task-routing.js";
+import { normalizeAiServiceProfiles } from "./ai-service-profiles.js";
 
 export async function runCreativeJob(job, context = {}) {
   const signal = context.signal;
