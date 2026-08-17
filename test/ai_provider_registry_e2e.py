@@ -106,6 +106,7 @@ def assert_english_ai_settings() -> None:
         expect(library.locator("#feedback")).to_contain_text("No connected service has a catalog model explicitly supporting Text tags")
         dialog.locator(".app-dialog-close").click()
 
+        library.locator('[data-ai-routing-tab="providers"]').click()
         library.locator("#open-ai-routing").click()
         dialog = library.locator("#promptdirector-app-dialog")
         expect(dialog).not_to_contain_text(chinese, use_inner_text=True)
@@ -227,6 +228,10 @@ def main() -> None:
 
         expect(library.locator("#ai-provider-list .ai-provider-row")).to_have_count(10)
         expect(library.locator("#ai-assignment-list .ai-assignment-row")).to_have_count(7)
+        expect(library.locator('[data-ai-routing-panel="tasks"]')).to_be_visible()
+        expect(library.locator('[data-ai-routing-panel="providers"]')).to_be_hidden()
+        library.locator('[data-ai-routing-tab="providers"]').click()
+        expect(library.locator('[data-ai-routing-panel="providers"]')).to_be_visible()
         expect(library.locator("#ai-provider-list")).to_contain_text("DeepSeek")
         expect(library.locator("#ai-provider-list")).to_contain_text("OpenAI")
         expect(library.locator("#ai-provider-list")).to_contain_text("Google Gemini")
@@ -278,6 +283,15 @@ def main() -> None:
         assert all(value == "" for value in password_values), password_values
         expect(dialog.locator('input[type="password"]:visible')).to_have_count(0)
         assert "secret" not in dialog.text_content()
+        dialog.evaluate("node => node.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
+        expect(dialog).to_be_visible()
+        dialog.locator(".app-dialog-close").click()
+        expect(dialog).to_be_visible()
+        expect(dialog.locator(".app-dialog-status")).to_contain_text("有未保存的更改")
+        dialog.get_by_role("button", name="确认放弃").click()
+        expect(dialog).to_be_hidden()
+        library.locator("#open-ai-routing").click()
+        dialog = library.locator("#promptdirector-app-dialog")
         dialog.locator("#promptdirector-app-dialog-providerEditor").select_option("custom-media")
         analysis_key = dialog.locator("#promptdirector-app-dialog-provider_custom_media_apiKey")
         image_key = dialog.locator("#promptdirector-app-dialog-provider_custom_media_imageApiKey")
@@ -343,6 +357,7 @@ def main() -> None:
         assert openai_saved["aiProviderRegistry"]["providers"]["openai"]["models"]["imageGeneration"] == "openai-account-image-model"
         assert openai_saved["aiTaskAssignments"] == openai_assignments_before_save
 
+        library.locator('[data-ai-routing-tab="tasks"]').click()
         generation_task = library.locator("#ai-assignment-list .ai-assignment-row", has_text="图片生成")
         generation_task.get_by_role("button", name="更换").click()
         generation_dialog = library.locator("#promptdirector-app-dialog")
@@ -350,6 +365,10 @@ def main() -> None:
         expect(generation_dialog.locator('[data-field-id="model"] select')).to_have_value("openai-account-image-model")
         expect(generation_dialog.locator('[data-field-id="model"]')).to_contain_text("手动声明，未验证")
         generation_dialog.locator(".app-dialog-close").click()
+        expect(generation_dialog).to_be_visible()
+        expect(generation_dialog.locator(".app-dialog-status")).to_contain_text("未保存的更改")
+        generation_dialog.locator(".app-dialog-close").click()
+        expect(generation_dialog).to_be_hidden()
 
         image_task = library.locator("#ai-assignment-list .ai-assignment-row", has_text="图片分析")
         expect(image_task).to_contain_text("自定义兼容服务（图片与生成） · gpt-5.6-terra")
@@ -366,6 +385,7 @@ def main() -> None:
         assert stored["aiTaskAssignments"] == assignments_before_save
 
         assignments_before_nano = stored["aiTaskAssignments"]
+        library.locator('[data-ai-routing-tab="providers"]').click()
         library.locator('[data-provider-id="gemini"]').get_by_role("button", name="刷新模型").click()
         expect(library.locator("#feedback")).to_contain_text("Google Gemini 已发现")
         assert gemini_model_requests, gemini_model_requests
@@ -387,6 +407,7 @@ def main() -> None:
         assert "imageGeneration" not in ordinary["tasks"]
         assert "imageGeneration" not in preview["tasks"]
 
+        library.locator('[data-ai-routing-tab="tasks"]').click()
         generation_task = library.locator("#ai-assignment-list .ai-assignment-row", has_text="图片生成")
         generation_task.get_by_role("button", name="更换").click()
         nano_dialog = library.locator("#promptdirector-app-dialog")

@@ -10,6 +10,8 @@ import {
   readClipboardContentAfterFocus,
   ensureContinuousCapturePermission,
   ensurePagePermission,
+  inspectPagePermission,
+  pageCapturePermissionFailureMessage,
   pagePermissionPattern
 } from "../capture-permissions.js";
 import { runCaptureTransaction } from "../capture-workspace.js";
@@ -179,6 +181,45 @@ test("text collection keeps its narrower per-site permission", async () => {
   });
 });
 
+test("page capture permission preflight distinguishes granted, missing, and restricted pages without prompting", async () => {
+  const calls = [];
+  const permissions = {
+    contains: async (request) => {
+      calls.push(request);
+      return request.origins[0].startsWith("https://allowed.example");
+    }
+  };
+
+  assert.deepEqual(await inspectPagePermission("https://allowed.example/work", permissions), {
+    status: "granted",
+    origin: "https://allowed.example",
+    pattern: "https://allowed.example/*"
+  });
+  assert.deepEqual(await inspectPagePermission("https://jimeng.jianying.com/ai-tool/work-detail/1", permissions), {
+    status: "missing",
+    origin: "https://jimeng.jianying.com",
+    pattern: "https://jimeng.jianying.com/*"
+  });
+  assert.deepEqual(await inspectPagePermission("chrome://extensions", permissions), {
+    status: "restricted",
+    origin: "",
+    pattern: ""
+  });
+  assert.equal(calls.length, 2);
+});
+
+test("page capture permission failures distinguish Chrome site access from script startup failures", () => {
+  assert.match(
+    pageCapturePermissionFailureMessage(new Error("Cannot access contents of url https://example.com/")),
+    /网站访问权限/
+  );
+  assert.match(
+    pageCapturePermissionFailureMessage(new Error("Could not establish connection. Receiving end does not exist.")),
+    /采集脚本没有成功启动/
+  );
+  assert.equal(pageCapturePermissionFailureMessage(new Error("页面结构无法识别")), "页面结构无法识别");
+});
+
 test("text capture resolves the active page before requesting only that page permission", async () => {
   const calls = [];
   const chromeApi = {
@@ -219,12 +260,15 @@ test("text capture resolves the active page before requesting only that page per
   ]);
 });
 
-test("page capture requests the active site permission before starting background extraction", async () => {
+test("page capture requests only the current site and continues in the same click", async () => {
   const source = await readFile(new URL("collector.js", projectRoot), "utf8");
   const start = source.indexOf("async function startPageCapture");
   const end = source.indexOf("async function savePageCapture", start);
   const flow = source.slice(start, end);
+  assert.ok(flow.indexOf("inspectPagePermission(tab.url") < flow.indexOf('type: "START_PAGE_CAPTURE"'));
   assert.ok(flow.indexOf("ensurePagePermission(tab.url") < flow.indexOf('type: "START_PAGE_CAPTURE"'));
+  assert.match(flow, /status:\s*"granted"/);
+  assert.match(flow, /你没有授予当前网站访问权限/);
 });
 
 test("creative result capture and commit use one background transaction", async () => {

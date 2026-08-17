@@ -212,8 +212,8 @@ export function createStableMasonry(container, options = {}) {
   function placeCard(card) {
     if (!(card instanceof HTMLElement) || cardMetadata.has(card)) return;
     ensureColumns();
-    card.style.width = `${geometry.cardWidth}px`;
     const column = shortestColumn();
+    card.style.width = `${columnWidth(column)}px`;
     const height = card.getBoundingClientRect().height;
     const top = columnHeight(column);
     const metadata = { column, height, top };
@@ -319,7 +319,8 @@ export function createStableMasonry(container, options = {}) {
   }
 
   function positionCard(card, metadata) {
-    card.style.left = `${metadata.column * (geometry.cardWidth + geometry.gap)}px`;
+    card.style.left = `${columnLeft(metadata.column)}px`;
+    card.style.width = `${columnWidth(metadata.column)}px`;
     card.style.top = `${metadata.top}px`;
     card.dataset.masonryColumn = String(metadata.column);
   }
@@ -330,6 +331,15 @@ export function createStableMasonry(container, options = {}) {
       if (columnHeight(index) < columnHeight(shortest)) shortest = index;
     }
     return shortest;
+  }
+
+  function columnLeft(column) {
+    return column * (geometry.cardWidth + geometry.gap);
+  }
+
+  function columnWidth(column) {
+    if (column !== geometry.columnCount - 1) return geometry.cardWidth;
+    return Math.max(1, geometry.containerWidth - columnLeft(column));
   }
 
   function columnHeight(column) {

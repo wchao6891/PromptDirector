@@ -165,6 +165,8 @@ const elements = Object.fromEntries([
 const managerTabs = [...document.querySelectorAll("[data-manager-tab]")];
 const settingsTabs = [...document.querySelectorAll("[data-settings-tab]")];
 const settingsPanels = [...document.querySelectorAll("[data-settings-panel]")];
+const aiRoutingTabs = [...document.querySelectorAll("[data-ai-routing-tab]")];
+const aiRoutingPanels = [...document.querySelectorAll("[data-ai-routing-panel]")];
 const analysisLocalePanels = [...document.querySelectorAll("[data-analysis-locale-panel]")];
 const analysisKindTabs = [...document.querySelectorAll("[data-analysis-kind]")];
 const analysisKindPanels = [...document.querySelectorAll("[data-analysis-kind-panel]")];
@@ -237,6 +239,7 @@ let canUndoFacetUpdate = false;
 let activeAnalysisLocale = currentLocale() === "en" ? "en" : "zh-CN";
 let activeAnalysisKind = "text";
 let activeSettingsTab = "general";
+let activeAiRoutingTab = "tasks";
 let activeVideoAnalysisUi = null;
 let selectionMode = "";
 let projectSelectionId = "";
@@ -486,6 +489,10 @@ function bindEvents() {
   settingsTabs.forEach((button) => button.addEventListener("click", () => {
     activeSettingsTab = button.dataset.settingsTab || "general";
     renderSettingsPanels({ resetActiveScroll: true });
+  }));
+  aiRoutingTabs.forEach((button) => button.addEventListener("click", () => {
+    activeAiRoutingTab = button.dataset.aiRoutingTab || "tasks";
+    renderAiRoutingView();
   }));
   aiAdvancedSettingsSummary?.addEventListener("click", () => preserveSettingsAnchor(aiAdvancedSettingsSummary));
   elements.clearFilters.addEventListener("click", clearFilters);
@@ -5917,6 +5924,12 @@ function renderAiRoutingSummary() {
     );
     return row;
   }));
+  renderAiRoutingView();
+}
+
+function renderAiRoutingView() {
+  aiRoutingTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.aiRoutingTab === activeAiRoutingTab)));
+  aiRoutingPanels.forEach((panel) => { panel.hidden = panel.dataset.aiRoutingPanel !== activeAiRoutingTab; });
 }
 
 function providerConnectionReady(profile = {}) {
@@ -5979,6 +5992,10 @@ async function openAiTaskAssignmentDialog(taskId) {
     ],
     confirmLabel: t("保存任务默认"),
     cancelLabel: t("取消"),
+    dismissOnBackdrop: false,
+    confirmDismissWhenDirty: true,
+    dirtyDismissMessage: t("有未保存的更改，再次关闭或取消将放弃这些更改"),
+    discardLabel: t("确认放弃"),
     onReady: ({ dialog, controls }) => {
       localizeAiDialogClose(dialog);
       const provider = controls.get("providerId");
@@ -6093,6 +6110,11 @@ async function openAiProviderDialog(initialProviderId = "") {
     confirmLabel: t("保存配置"),
     cancelLabel: t("取消"),
     pendingLabel: t("正在保存…"),
+    dialogClass: "ai-provider-dialog",
+    dismissOnBackdrop: false,
+    confirmDismissWhenDirty: true,
+    dirtyDismissMessage: t("有未保存的更改，再次关闭或取消将放弃这些更改"),
+    discardLabel: t("确认放弃"),
     renderBody: ({ body }) => {
       const details = document.createElement("details");
       details.className = "ai-advanced-settings app-dialog-advanced-settings";
@@ -6263,12 +6285,12 @@ function commaSeparatedValues(value) {
 }
 
 function applyAiConfigurationResponse(response) {
-  aiProviderRegistry = response.aiProviderRegistry;
-  aiTaskAssignments = response.aiTaskAssignments;
-  aiSettings = response.aiSettings;
-  visionSettings = response.visionSettings;
-  aiServiceProfiles = response.aiServiceProfiles;
-  renderAiRoutingSummary();
+  aiProviderRegistry = response.aiProviderRegistry ?? aiProviderRegistry;
+  aiTaskAssignments = response.aiTaskAssignments ?? aiTaskAssignments;
+  aiSettings = response.aiSettings ?? aiSettings;
+  visionSettings = response.visionSettings ?? visionSettings;
+  aiServiceProfiles = response.aiServiceProfiles ?? aiServiceProfiles;
+  renderAnalysisSettings();
 }
 
 function discoveredModelOptions(profile, taskId, selectedValue = "") {
@@ -6306,9 +6328,7 @@ async function refreshAiProviderModels(providerId, button) {
   try {
     const response = await chrome.runtime.sendMessage({ type: "DISCOVER_AI_PROVIDER_MODELS", providerId, force: true });
     if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("模型目录读取失败"));
-    aiProviderRegistry = response.aiProviderRegistry;
-    aiTaskAssignments = response.aiTaskAssignments;
-    renderAiRoutingSummary();
+    applyAiConfigurationResponse(response);
     showFeedback(t("{provider} 已发现 {count} 个模型", {
       provider: providerDisplayLabel(profile),
       count: response.aiProviderRegistry?.providers?.[providerId]?.discoveredModels?.length || 0
@@ -6329,11 +6349,9 @@ async function refreshAiModelCatalogsForSession() {
     try {
       const response = await chrome.runtime.sendMessage({ type: "DISCOVER_AI_PROVIDER_MODELS", providerId: profile.id, force: false });
       if (!response?.ok) continue;
-      aiProviderRegistry = response.aiProviderRegistry;
-      aiTaskAssignments = response.aiTaskAssignments;
+      applyAiConfigurationResponse(response);
     } catch {}
   }
-  renderAiRoutingSummary();
 }
 
 function permissionPatternForProvider(value) {

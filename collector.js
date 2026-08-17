@@ -10,6 +10,8 @@ import { runCaptureTransaction } from "./capture-workspace.js";
 import {
   ensureClipboardReadPermission,
   ensurePagePermission,
+  inspectPagePermission,
+  pageCapturePermissionFailureMessage,
   readClipboardContentAfterFocus
 } from "./capture-permissions.js";
 import { initializeUi, t } from "./i18n.js";
@@ -65,6 +67,7 @@ let pageCaptureSession = null;
 let pageCaptureMediaView = null;
 let pageCaptureEditHistory = [];
 let pageCaptureOriginalCandidates = new Map();
+let pageCapturePermissionState = { status: "unknown", origin: "", pattern: "" };
 const visualUrls = new Map();
 const FEEDBACK_DURATION_MS = 4000;
 const ERROR_FEEDBACK_DURATION_MS = 8000;
@@ -82,10 +85,18 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 await refresh();
 await tryAutoSelection();
+void refreshPageCapturePermissionState();
 elements.pageCaptureTargetCount.max = String(PAGE_CAPTURE_LIMITS.maxCandidates);
 
 elements.openLibrary.addEventListener("click", () => void openLibraryTab());
-window.addEventListener("focus", () => void tryAutoSelection());
+window.addEventListener("focus", () => {
+  void tryAutoSelection();
+  void refreshPageCapturePermissionState();
+});
+chrome.tabs.onActivated.addListener(() => void refreshPageCapturePermissionState());
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (tab.active && changeInfo.url) void refreshPageCapturePermissionState();
+});
 window.addEventListener("pagehide", () => void clearPageCaptureMarkers());
 elements.startSelection.addEventListener("click", () => extractClipboardOrSelection(elements.startSelection));
 elements.startScreenshot.addEventListener("click", () => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.startScreenshot));
@@ -403,10 +414,37 @@ function render() {
   elements.addOtherCaptureMethods.open = smartVisualFallback;
   elements.otherCaptureMethods.classList.toggle("fallback-highlight", smartVisualFallback);
   elements.addOtherCaptureMethods.classList.toggle("fallback-highlight", smartVisualFallback);
+  renderPageCapturePermissionAction();
   elements.fragmentList.replaceChildren(...draft.fragments.map((fragment, index) =>
     createFragmentCard(fragment, index, view.canReorderFragments)));
   elements.visualList.replaceChildren(...draft.visuals.map((visual, index) =>
     createVisualCard(visual, index, view)));
+}
+
+async function refreshPageCapturePermissionState() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url && Number.isInteger(tab?.id)) {
+      pageCapturePermissionState = { status: "active-tab-required", origin: "", pattern: "" };
+    } else {
+      pageCapturePermissionState = await inspectPagePermission(tab?.url || "", chrome.permissions);
+    }
+  } catch {
+    pageCapturePermissionState = { status: "restricted", origin: "", pattern: "" };
+  }
+  renderPageCapturePermissionAction();
+  return pageCapturePermissionState;
+}
+
+function renderPageCapturePermissionAction() {
+  const needsGrant = pageCapturePermissionState.status === "missing";
+  const needsInvocation = pageCapturePermissionState.status === "active-tab-required";
+  const startLabel = needsInvocation ? t("点击插件图标授权当前页") : needsGrant ? t("授权当前网站并扫描") : t("网页采集");
+  const startText = elements.startPageCapture.querySelector("strong");
+  if (startText) startText.textContent = startLabel;
+  elements.addPageCapture.textContent = needsInvocation
+    ? t("＋ 点击插件图标授权当前页")
+    : needsGrant ? t("＋ 授权当前网站并扫描") : t("＋ 网页采集");
 }
 
 function renderPageCapture() {
@@ -1051,9 +1089,21 @@ async function startPageCapture(mode, button) {
         ? pageCaptureBatch?.candidates.find((candidate) => candidate.id === pageCaptureBatch.selections[0]?.candidateId) || null
         : null;
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.url && Number.isInteger(tab?.id)) {
+        throw new Error(t("当前页的临时访问权已失效。请在当前网页再次点击浏览器工具栏里的 PromptDirector 图标，然后重新采集；待保存内容没有改变。"));
+      }
       if (!tab?.url) throw new Error(t("请先切换到需要采集的普通网页"));
-      if (!await ensurePagePermission(tab.url, chrome.permissions)) {
-        throw new Error(t("没有获得当前网站权限，待保存内容没有改变"));
+      let permission = await inspectPagePermission(tab.url, chrome.permissions);
+      if (permission.status === "missing") {
+        if (!await ensurePagePermission(tab.url, chrome.permissions)) {
+          throw new Error(t("你没有授予当前网站访问权限。请再次点击“授权当前网站并扫描”，或在 Chrome 扩展详情的“网站访问权限”中允许此网站；待保存内容没有改变。"));
+        }
+        permission = { ...permission, status: "granted" };
+      }
+      pageCapturePermissionState = permission;
+      renderPageCapturePermissionAction();
+      if (permission.status === "restricted") {
+        throw new Error(t("Chrome 内部页、扩展页或本机设置页不能采集，请切换到普通网页"));
       }
       if (mode === "whole" && pageCaptureBatch) {
         pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, status: "scanning" });
@@ -1061,7 +1111,7 @@ async function startPageCapture(mode, button) {
       }
       const targetCount = mode === "list" ? Number(elements.pageCaptureTargetCount.value) : 0;
       const response = await chrome.runtime.sendMessage({ type: "START_PAGE_CAPTURE", mode, targetCount });
-      if (!response?.ok) throw new Error(response?.message || t("网页采集失败"));
+      if (!response?.ok) throw new Error(pageCapturePermissionFailureMessage(response?.message || t("网页采集失败")));
       const candidates = response.batch.candidates.map((candidate) => {
         let contentText = candidate.contentText;
         try {

@@ -20,6 +20,8 @@ test("the current project uses the product accent while other library selections
   assert.match(rule(source, '.filter-option[aria-pressed="true"]'), /background:\s*var\(--selection\)/);
   assert.match(rule(source, '.facet-option-row[aria-pressed="true"] .facet-option-check'), /background:\s*var\(--accent\)/);
   assert.match(rule(source, ".case-card.selected-for-share"), /box-shadow:\s*inset 0 0 0 1px var\(--selection-indicator\)/);
+  assert.match(rule(source, ".case-card:focus-visible"), /box-shadow:\s*inset 0 0 0 2px var\(--focus-ring\)/);
+  assert.doesNotMatch(rule(source, ".case-card:focus-visible"), /outline-offset/);
   assert.match(rule(source, ".detail-visual-thumb"), /border:\s*1px solid transparent/);
   assert.match(rule(source, '.manager-tabs button[aria-selected="true"]::after'), /height:\s*1px/);
   assert.match(rule(source, '.analysis-kind-tabs button[aria-selected="true"]'), /background:\s*var\(--selection\)/);

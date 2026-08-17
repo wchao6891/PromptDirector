@@ -66,6 +66,12 @@ export async function showAppDialog(options = {}) {
 
   return new Promise((resolve) => {
     let settled = false;
+    let initialControlState = "";
+    let dismissConfirmationArmed = false;
+    const controlState = () => JSON.stringify([...controls].map(([id, input]) => [
+      id,
+      input.type === "checkbox" ? input.checked : input.value
+    ]));
     const finish = (value) => {
       if (settled) return;
       settled = true;
@@ -73,13 +79,29 @@ export async function showAppDialog(options = {}) {
       dialog.remove();
       resolve(value);
     };
-    const dismiss = () => finish(null);
+    const resetDismissConfirmation = () => {
+      if (!dismissConfirmationArmed) return;
+      dismissConfirmationArmed = false;
+      cancel.textContent = clean(options.cancelLabel) || "取消";
+      if (status && !status.classList.contains("error")) status.textContent = "";
+    };
+    const dismiss = () => {
+      const dirty = options.confirmDismissWhenDirty === true && controlState() !== initialControlState;
+      if (!dirty || dismissConfirmationArmed) return finish(null);
+      dismissConfirmationArmed = true;
+      const statusLine = ensureStatus();
+      statusLine.classList.remove("error");
+      statusLine.textContent = clean(options.dirtyDismissMessage) || "有未保存的更改，再次关闭或取消将放弃这些更改";
+      cancel.textContent = clean(options.discardLabel) || "确认放弃";
+    };
     close.addEventListener("click", dismiss);
     cancel.addEventListener("click", dismiss);
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog && options.dismissOnBackdrop !== false) dismiss();
     });
+    form.addEventListener("input", resetDismissConfirmation);
+    form.addEventListener("change", resetDismissConfirmation);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (!form.reportValidity()) return;
@@ -89,6 +111,7 @@ export async function showAppDialog(options = {}) {
       ]));
       confirm.disabled = true;
       cancel.disabled = true;
+      close.disabled = true;
       if (clean(options.pendingLabel)) {
         const statusLine = ensureStatus();
         statusLine.classList.remove("error");
@@ -105,13 +128,14 @@ export async function showAppDialog(options = {}) {
         statusLine.textContent = clean(error?.message) || "操作失败，请重试";
         statusLine.classList.add("error");
       } finally {
-        if (!settled) { confirm.disabled = false; cancel.disabled = false; }
+        if (!settled) { confirm.disabled = false; cancel.disabled = false; close.disabled = false; }
       }
     });
     dialog.showModal();
     if (typeof options.onReady === "function") {
       options.onReady({ dialog, form, body, controls, status: ensureStatus });
     }
+    initialControlState = controlState();
     requestAnimationFrame(() => {
       const first = [...controls.values()].find((input) => !input.disabled);
       first?.focus();

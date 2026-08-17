@@ -146,6 +146,52 @@ def main() -> None:
 
                 page.evaluate(
                     """() => {
+                      const artworkUrl = chrome.runtime.getURL('assets/icons/icon-source.svg');
+                      const layout = document.createElement('section');
+                      layout.id = 'jimeng-detail-layout';
+                      Object.assign(layout.style, {
+                        position: 'fixed',
+                        zIndex: '100',
+                        left: '105px',
+                        top: '160px',
+                        width: '620px',
+                        height: '470px',
+                        display: 'flex',
+                        backgroundImage: `url("${artworkUrl}")`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundSize: '260px 470px'
+                      });
+                      const artwork = document.createElement('img');
+                      artwork.id = 'jimeng-artwork';
+                      artwork.src = artworkUrl;
+                      Object.assign(artwork.style, {
+                        display: 'block',
+                        flex: '0 0 260px',
+                        width: '260px',
+                        height: '470px',
+                        objectFit: 'cover'
+                      });
+                      const details = document.createElement('div');
+                      details.innerHTML = '<h2>图片提示词</h2><p>古早 DV 摄影，美人，超纤细身材。</p><button>做同款</button><button>用作参考图</button>';
+                      Object.assign(details.style, {flex: '1', padding: '30px'});
+                      layout.append(artwork, details);
+                      document.documentElement.append(layout);
+                    }"""
+                )
+                page.locator("#jimeng-artwork").wait_for(state="visible")
+                page.wait_for_function("() => document.querySelector('#jimeng-artwork').complete")
+                open_picker(page)
+                jimeng_rects = page.locator(".prompt-case-visual-candidate").evaluate_all(
+                    """elements => elements.map((element) => {
+                      const rect = element.getBoundingClientRect();
+                      return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+                    })"""
+                )
+                cancel_picker(page)
+                page.locator("#jimeng-detail-layout").evaluate("element => element.remove()")
+
+                page.evaluate(
+                    """() => {
                       document.querySelectorAll('img, video, canvas').forEach((element) => {
                         element.style.display = 'none';
                       });
@@ -384,6 +430,10 @@ def main() -> None:
                     "viewportWidth": 1200,
                     "viewportHeight": 800,
                 }], video_picker_result
+                assert jimeng_rects == [{"x": 105, "y": 160, "width": 260, "height": 470}], {
+                    "problem": "即梦详情页的外层图文布局被当成作品图片框选",
+                    "candidateRects": jimeng_rects,
+                }
                 assert modal_rects == [{"x": 280, "y": 80, "width": 640, "height": 640}], modal_rects
                 assert reddit_count == 1, {
                     "problem": "Reddit 放大页的背景图与前景图被同时识别",

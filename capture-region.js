@@ -285,6 +285,9 @@ export function selectPageVisuals(options = {}) {
       top += objectPositionOffset(positionY, height - renderedHeight, "y");
       width = renderedWidth;
       height = renderedHeight;
+    } else if (isBackgroundVisual(element)) {
+      const painted = explicitBackgroundBounds(style, { left, top, width, height });
+      if (painted) ({ left, top, width, height } = painted);
     }
 
     const radius = Math.max(
@@ -311,6 +314,30 @@ export function selectPageVisuals(options = {}) {
     const pixels = Number.parseFloat(text);
     if (Number.isFinite(pixels)) return Math.max(0, Math.min(freeSpace, pixels));
     return axis === "x" || axis === "y" ? freeSpace / 2 : 0;
+  }
+
+  function explicitBackgroundBounds(style, content) {
+    const size = String(style.backgroundSize || "").split(",")[0].trim().split(/\s+/);
+    if (size.length !== 2 || size.some((value) => ["", "auto", "cover", "contain"].includes(value))) return null;
+    const renderedWidth = backgroundLength(size[0], content.width);
+    const renderedHeight = backgroundLength(size[1], content.height);
+    if (!(renderedWidth > 0) || !(renderedHeight > 0)) return null;
+    const position = String(style.backgroundPosition || "0% 0%").split(",")[0].trim().split(/\s+/);
+    const paintedLeft = content.left + objectPositionOffset(position[0] || "0%", content.width - renderedWidth, "x");
+    const paintedTop = content.top + objectPositionOffset(position[1] || "0%", content.height - renderedHeight, "y");
+    const left = Math.max(content.left, paintedLeft);
+    const top = Math.max(content.top, paintedTop);
+    const right = Math.min(content.left + content.width, paintedLeft + renderedWidth);
+    const bottom = Math.min(content.top + content.height, paintedTop + renderedHeight);
+    return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+  }
+
+  function backgroundLength(value, available) {
+    const text = String(value || "").trim();
+    const amount = Number.parseFloat(text);
+    if (!Number.isFinite(amount)) return 0;
+    if (text.endsWith("%")) return available * amount / 100;
+    return amount;
   }
 
   function cornerRadius(value, width, height) {
@@ -345,6 +372,7 @@ export function selectPageVisuals(options = {}) {
         rect,
         domIndex,
         visibleRatio,
+        sourceKind: isBackgroundVisual(element) ? "background" : "media",
         modalPriority: modal && isActiveVisualScope(modal) ? 1 : 0
       });
     }
@@ -352,7 +380,13 @@ export function selectPageVisuals(options = {}) {
     const activeScope = measured.some((candidate) => candidate.modalPriority)
       ? measured.filter((candidate) => candidate.modalPriority)
       : measured;
-    const prioritized = activeScope.toSorted((left, right) =>
+    const withoutLayoutBackgrounds = activeScope.filter((candidate) => candidate.sourceKind !== "background" || !activeScope.some((nested) =>
+      nested.sourceKind === "media"
+      && nested.element !== candidate.element
+      && candidate.element.contains(nested.element)
+      && overlapRatio(candidate.rect, nested.rect) > 0.5
+    ));
+    const prioritized = withoutLayoutBackgrounds.toSorted((left, right) =>
       right.modalPriority - left.modalPriority
       || right.visibleRatio - left.visibleRatio
       || right.rect.width * right.rect.height - left.rect.width * left.rect.height
@@ -381,6 +415,11 @@ export function selectPageVisuals(options = {}) {
       if (extractBackgroundUrls(getComputedStyle(element).backgroundImage).size) elements.push(element);
     }
     return elements;
+  }
+
+  function isBackgroundVisual(element) {
+    return !element.matches("img, video, canvas, iframe")
+      && extractBackgroundUrls(getComputedStyle(element).backgroundImage).size > 0;
   }
 
   function isMediaControl(element) {

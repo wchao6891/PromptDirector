@@ -167,7 +167,12 @@ test("the collector auto-reads only highlights and reserves clipboard access for
 
   assert.match(collectorSource, /TRY_ACTIVE_SELECTION_TO_DRAFT/);
   assert.match(collectorSource, /readClipboardContentAfterFocus/);
-  assert.match(collectorSource, /window\.addEventListener\("focus", \(\) => void tryAutoSelection\(\)\)/);
+  const focusFlow = collectorSource.slice(
+    collectorSource.indexOf('window.addEventListener("focus"'),
+    collectorSource.indexOf('chrome.tabs.onActivated.addListener')
+  );
+  assert.match(focusFlow, /void tryAutoSelection\(\)/);
+  assert.match(focusFlow, /void refreshPageCapturePermissionState\(\)/);
   const autoFlow = collectorSource.slice(collectorSource.indexOf("async function tryAutoSelection"), collectorSource.indexOf("async function extractClipboardOrSelection"));
   assert.doesNotMatch(autoFlow, /clipboard|readClipboardContentAfterFocus|ensureClipboardReadPermission/);
   const explicitFlow = collectorSource.slice(collectorSource.indexOf("async function extractClipboardOrSelection"), collectorSource.indexOf("function render"));
