@@ -321,7 +321,8 @@ async function cropLoadedScreenshot(image, entryId, selection) {
 async function createArchiveUrl({
   entries, settings, taxonomy, facetCatalog, classificationRules, organizerState,
   composerSettings, composerSessions, creativeExperimentSettings, creativeRuns,
-  creativeSkills, compoundCases, uiPreferences, locale: localeValue, sharing = false, installUrl = ""
+  creativeSkills, compoundCases, uiPreferences, locale: localeValue, sharing = false,
+  installUrl = "", sourceUrl = ""
 }) {
   const files = [];
   const resolvedEntries = [];
@@ -419,6 +420,7 @@ async function createArchiveUrl({
       name: SHARE_PREVIEW_HTML_FILENAME,
       data: renderSharePreviewHtml(resolvedEntries, settings, taxonomy, facetCatalog, {
         installUrl,
+        sourceUrl,
         locale,
         theme: preferences.theme,
         iconSprite

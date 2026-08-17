@@ -15,7 +15,11 @@ import { createDefaultFacetCatalog } from "../facets.js";
 import { CONTENT_IDS, createDefaultTaxonomy } from "../taxonomy.js";
 
 const iconSprite = readFileSync(new URL("../assets/ui-icons.svg", import.meta.url), "utf8");
-const previewOptions = Object.freeze({ iconSprite });
+const previewOptions = Object.freeze({
+  iconSprite,
+  installUrl: "https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm",
+  sourceUrl: "https://github.com/wchao6891/PromptDirector"
+});
 
 test("share preview uses the current visual foundation and exposes the read-only library path safely", () => {
   const html = renderSharePreviewHtml([
@@ -44,6 +48,10 @@ test("share preview uses the current visual foundation and exposes the read-only
   assert.match(html, /<use href="#icon-x">/);
   assert.match(html, /--visual-wall-gap:2px;--visual-card-radius:2px/);
   assert.match(html, /设置 → 界面与资料库 → 导入分享包/);
+  assert.match(html, /安装到 Chrome/);
+  assert.match(html, /chromewebstore\.google\.com\/detail\/iahakaahijddcjjldidbclicedibgpjm/);
+  assert.match(html, /查看源码/);
+  assert.match(html, /github\.com\/wchao6891\/PromptDirector/);
   assert.match(html, /class="case-grid"/);
   assert.match(html, /id="detail-view"/);
   assert.match(html, /class="detail-image-frame"/);

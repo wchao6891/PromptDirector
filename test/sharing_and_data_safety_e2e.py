@@ -84,6 +84,8 @@ def main() -> None:
             assert "share-preview-foundation.css" in archive.namelist()
             assert "share-preview-masonry.js" in archive.namelist()
             assert '<symbol id="icon-x"' in preview
+            assert 'href="https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm"' in preview
+            assert 'href="https://github.com/wchao6891/PromptDirector"' in preview
             assert archive.testzip() is None
             offline_root = session.profile_dir / "offline-share"
             archive.extractall(offline_root)
@@ -96,6 +98,12 @@ def main() -> None:
         expect(offline.locator("#case-grid > .case-card")).to_have_count(2)
         assert offline.locator("#case-grid > .case-card").nth(0).evaluate("element => element.offsetLeft") != offline.locator("#case-grid > .case-card").nth(1).evaluate("element => element.offsetLeft")
         expect(offline.locator("html")).to_have_attribute("data-theme", "dark")
+        expect(offline.locator(".install-action")).to_have_attribute(
+            "href", "https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm"
+        )
+        expect(offline.locator(".source-action")).to_have_attribute(
+            "href", "https://github.com/wchao6891/PromptDirector"
+        )
         offline.locator("#search").fill("庭院")
         expect(offline.locator("#visible-count")).to_have_text("1")
         expect(offline.locator("#case-grid > .case-card:visible")).to_have_count(1)

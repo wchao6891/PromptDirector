@@ -22,7 +22,9 @@ PromptDirector 是一个免费、开源、本地优先的 Chrome 扩展。它把
 
 ## 安装
 
-优先从 [GitHub Releases](https://github.com/wchao6891/PromptDirector/releases) 下载名称带 `FIXED-ID-DEV` 的最新 ZIP 并解压。在 Chrome 或 Edge 的扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”，然后选择解压后的目录。这个包保留 Chrome Web Store 分配的固定扩展身份，适合本地安装和升级。
+普通用户请直接从 [Chrome Web Store 安装 PromptDirector](https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm)，由商店完成安装与后续自动更新。
+
+需要检查源码或参与开发时，可从 [GitHub Releases](https://github.com/wchao6891/PromptDirector/releases) 下载名称带 `FIXED-ID-DEV` 的最新 ZIP 并解压。在 Chrome 或 Edge 的扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”，然后选择解压后的目录。这个包保留 Chrome Web Store 分配的固定扩展身份，适合本地开发验证。
 
 不带 `FIXED-ID-DEV` 的同版本 ZIP 仅供维护者上传 Chrome Web Store，清单中按商店要求移除了 `key`，不要把它作为本地解压安装包。升级前请先在“更多 → 备份与同步”创建并验证完整资料夹备份；如曾使用其他扩展 ID，请按[扩展身份迁移说明](docs/EXTENSION_ID_MIGRATION.md)恢复资料。
 

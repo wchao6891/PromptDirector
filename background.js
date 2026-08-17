@@ -182,6 +182,7 @@ import {
   setCollectionVisibility
 } from "./organizer.js";
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
+import { CHROME_WEB_STORE_URL } from "./product-links.js";
 import { PALETTE_VERSION } from "./palette.js";
 import {
   COMPOSER_METHOD_VERSION,
@@ -6046,7 +6047,8 @@ async function createArchiveUrl(state, sharing = false) {
     uiPreferences: state.uiPreferences,
     locale,
     sharing,
-    installUrl: manifest.homepage_url || ""
+    installUrl: CHROME_WEB_STORE_URL,
+    sourceUrl: manifest.homepage_url || ""
   });
   if (!result?.ok || !result.url) {
     throw new Error(result?.message || "无法准备案例库 ZIP");
