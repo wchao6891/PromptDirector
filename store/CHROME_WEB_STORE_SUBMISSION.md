@@ -17,7 +17,7 @@ This file is the source-of-truth worksheet for the current PromptDirector manife
 - English copy: `store/LISTING_EN.md`
 - Public privacy policy URL: `https://wchao6891.github.io/PromptDirector-Curated/privacy.html`
 - Homepage URL: `https://wchao6891.github.io/PromptDirector-Curated/`
-- Support URL: `https://github.com/wchao6891/PromptDirector-Curated/issues`
+- Support URL: `https://wchao6891.github.io/PromptDirector-Curated/support.html`
 - 128x128 icon: `assets/icons/icon-128.png`
 - 440x280 small promo tile: `store/small-promo-440x280.png`
 - Screenshots, in order:

@@ -65,7 +65,7 @@
 
 ## 联系方式
 
-请通过 [PromptDirector 精选案例 GitHub Issues](https://github.com/wchao6891/PromptDirector-Curated/issues) 联系项目维护者。
+请通过 [PromptDirector 支持页面](https://wchao6891.github.io/PromptDirector-Curated/support.html) 联系项目维护者。
 
 ---
 
@@ -114,4 +114,4 @@ PromptDirector complies with the Limited Use requirements of the Chrome Web Stor
 
 ## Contact
 
-Contact the maintainer through [PromptDirector Curated GitHub Issues](https://github.com/wchao6891/PromptDirector-Curated/issues).
+Contact the maintainer through the [PromptDirector support page](https://wchao6891.github.io/PromptDirector-Curated/support.html).
