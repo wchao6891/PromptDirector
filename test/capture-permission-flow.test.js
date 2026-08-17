@@ -13,6 +13,7 @@ import {
   inspectPagePermission,
   pageCapturePermissionFailureMessage,
   pagePermissionPattern,
+  RESTRICTED_PAGE_MESSAGE,
   resolveActivePage
 } from "../capture-permissions.js";
 import { runCaptureTransaction } from "../capture-workspace.js";
@@ -178,7 +179,7 @@ test("text collection keeps its narrower per-site permission", async () => {
     ["request", { origins: ["https://example.com/*"] }]
   ]);
   await assert.rejects(() => ensurePagePermission("chrome://extensions", permissions), {
-    message: "请先切换到需要采集的普通网页"
+    message: RESTRICTED_PAGE_MESSAGE
   });
 });
 
@@ -297,6 +298,15 @@ test("page capture requests only the current site and continues in the same clic
   assert.ok(flow.indexOf("ensurePagePermission(tab.url") < flow.indexOf('type: "START_PAGE_CAPTURE"'));
   assert.match(flow, /status:\s*"granted"/);
   assert.match(flow, /你没有授予当前网站访问权限/);
+});
+
+test("toolbar authorization keeps the side panel open instead of toggling it closed", async () => {
+  const source = await readFile(new URL("background.js", projectRoot), "utf8");
+  assert.doesNotMatch(source, /openPanelOnActionClick:\s*true/);
+  assert.match(source, /chrome\.action\.onClicked\.addListener/);
+  const listenerStart = source.indexOf("chrome.action.onClicked.addListener");
+  const listenerEnd = source.indexOf("chrome.runtime.onConnect.addListener", listenerStart);
+  assert.match(source.slice(listenerStart, listenerEnd), /chrome\.sidePanel\.open\(\{\s*windowId:\s*tab\.windowId\s*\}\)/);
 });
 
 test("creative result capture and commit use one background transaction", async () => {

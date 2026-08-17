@@ -217,6 +217,7 @@ import {
   sourceContextForUrl
 } from "./capture-draft.js";
 import { createCaptureWorkspace } from "./capture-workspace.js";
+import { RESTRICTED_PAGE_MESSAGE } from "./capture-permissions.js";
 import {
   applyPageCaptureSelections,
   combinePageCaptureCandidates,
@@ -418,7 +419,7 @@ const captureRuntime = createCaptureWorkspace({
 chrome.runtime.onInstalled.addListener(async () => {
   await restrictLocalStorageAccess();
   await syncContextMenus();
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
 
   const state = await readState();
   await commitLocalChanges({ [STORAGE_KEYS.settings]: state.settings });
@@ -427,7 +428,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 restrictLocalStorageAccess().catch((error) => console.error("PromptDirector storage access restriction failed", error));
 syncContextMenus().catch((error) => console.error("PromptDirector context menu sync failed", error));
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error("PromptDirector side panel setup failed", error));
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => console.error("PromptDirector side panel setup failed", error));
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === LIBRARY_MAINTENANCE_ALARM) scheduleLibraryMaintenanceRunner();
   if (alarm.name === AUTOMATIC_VISION_ALARM) scheduleAutomaticVisionRunner();
@@ -455,6 +456,12 @@ chrome.commands.onCommand.addListener(async (command) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.windowId) await chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => undefined);
   await showResultToast(tab?.id, response.message, !response.ok);
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  if (!Number.isInteger(tab?.windowId)) return;
+  chrome.sidePanel.open({ windowId: tab.windowId })
+    .catch((error) => console.error("PromptDirector toolbar side panel open failed", error));
 });
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -909,7 +916,7 @@ async function captureWorkspace() {
 async function startPageCapture(mode = "loaded", targetCountValue = 0) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) {
-    return { ok: false, message: "请先切换到需要采集的普通网页" };
+    return { ok: false, message: RESTRICTED_PAGE_MESSAGE };
   }
   await clearPageCaptureMarkers(tab.id, true).catch(() => undefined);
   const sessionId = crypto.randomUUID();

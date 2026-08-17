@@ -13,6 +13,7 @@ import {
   inspectPagePermission,
   pageCapturePermissionFailureMessage,
   readClipboardContentAfterFocus,
+  RESTRICTED_PAGE_MESSAGE,
   resolveActivePage
 } from "./capture-permissions.js";
 import { initializeUi, t } from "./i18n.js";
@@ -1093,7 +1094,7 @@ async function startPageCapture(mode, button) {
       if (!tab?.url && Number.isInteger(tab?.id)) {
         throw new Error(t("Chrome 不会在点击插件图标时弹出授权窗口。请先在当前网页点击工具栏里的 PromptDirector 图标，再回到侧栏点击“授权当前网站并扫描”；待保存内容没有改变。"));
       }
-      if (!tab?.url) throw new Error(t("请先切换到需要采集的普通网页"));
+      if (!tab?.url) throw new Error(t(RESTRICTED_PAGE_MESSAGE));
       let permission = await inspectPagePermission(tab.url, chrome.permissions);
       if (permission.status === "missing") {
         if (!await ensurePagePermission(tab.url, chrome.permissions)) {

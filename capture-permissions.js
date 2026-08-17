@@ -1,11 +1,12 @@
 export const CONTINUOUS_CAPTURE_ORIGINS = Object.freeze(["<all_urls>"]);
 export const CLIPBOARD_READ_PERMISSIONS = Object.freeze(["clipboardRead"]);
+export const RESTRICTED_PAGE_MESSAGE = "当前页不可采集：Chrome 新标签页、设置页和扩展页不允许读取；普通网站请先点工具栏图标。";
 const CLIPBOARD_IMAGE_MIME_TYPES = Object.freeze(["image/png", "image/jpeg", "image/webp"]);
 
 export function pagePermissionPattern(pageUrl) {
   const url = new URL(String(pageUrl ?? ""));
   if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("请先切换到需要采集的普通网页");
+    throw new Error(RESTRICTED_PAGE_MESSAGE);
   }
   return `${url.origin}/*`;
 }

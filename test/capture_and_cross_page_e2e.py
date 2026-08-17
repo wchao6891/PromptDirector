@@ -8,6 +8,8 @@ from e2e_support import extension_session
 def main() -> None:
     with extension_session("prompt-director-capture-") as session:
         collector = session.open_page("collector.html")
+        panel_behavior = collector.evaluate("async () => chrome.sidePanel.getPanelBehavior()")
+        assert panel_behavior.get("openPanelOnActionClick") is False
         collector.evaluate(
             """async () => chrome.runtime.sendMessage({
               type: 'UPDATE_CAPTURE_DRAFT',
@@ -70,7 +72,7 @@ def main() -> None:
         library.locator("#start-compose").click()
         expect(library).to_have_url(f"chrome-extension://{session.extension_id}/composer.html")
         assert len(session.context.pages) == internal_page_count
-        print({"capture": "passed", "source_pages": len(saved["sourcePages"]), "library_full_tab": True, "internal_navigation": "same-tab"})
+        print({"capture": "passed", "toolbar_keeps_panel_open": True, "source_pages": len(saved["sourcePages"]), "library_full_tab": True, "internal_navigation": "same-tab"})
 
 
 if __name__ == "__main__":

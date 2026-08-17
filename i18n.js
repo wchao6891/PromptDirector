@@ -258,6 +258,7 @@ const EN = Object.freeze({
   "＋ 点插件图标后再采集": "+ Click the extension icon, then capture",
   "Chrome 不会在点击插件图标时弹出授权窗口。请先在当前网页点击工具栏里的 PromptDirector 图标，再回到侧栏点击“授权当前网站并扫描”；待保存内容没有改变。": "Chrome does not show a permission prompt when you click the extension icon. Click the PromptDirector toolbar icon on the current page, then return to the side panel and click Allow this site and scan. Unsaved content was not changed.",
   "Chrome 内部页、扩展页或本机设置页不能采集，请切换到普通网页": "Chrome internal pages, extension pages, and browser settings cannot be captured. Switch to a regular web page.",
+  "当前页不可采集：Chrome 新标签页、设置页和扩展页不允许读取；普通网站请先点工具栏图标。": "This page cannot be captured. Chrome new tabs, settings, and extension pages cannot be read. On a regular website, click the toolbar icon first.",
   "你没有授予当前网站访问权限。请再次点击“授权当前网站并扫描”，或在 Chrome 扩展详情的“网站访问权限”中允许此网站；待保存内容没有改变。": "Access to this site was not granted. Click Allow this site and scan again, or allow this site under the extension's Site access settings. Unsaved content was not changed.",
   "媒体域名权限未获授权；仍会保存正文和可用引用，并逐项显示下载失败原因。": "Media-domain access was not granted. Text and usable references will still be saved, with download failures shown per item.",
   "网页内容保存失败": "Web content could not be saved",

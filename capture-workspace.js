@@ -20,7 +20,8 @@ import {
 import { createTextCandidate } from "./capture-text-candidate.js";
 import {
   ensureContinuousCapturePermission,
-  ensurePagePermission
+  ensurePagePermission,
+  RESTRICTED_PAGE_MESSAGE
 } from "./capture-permissions.js";
 import { translateForLocale } from "./i18n.js";
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
@@ -66,7 +67,7 @@ export async function runCaptureTransaction({
 
   const tab = (await chromeApi.tabs.query({ active: true, currentWindow: true }))[0];
   if (!tab?.id || !isHttpPage(tab.url)) {
-    throw new Error("请先切换到需要采集的普通网页");
+    throw new Error(RESTRICTED_PAGE_MESSAGE);
   }
 
   if (!capturesVisual) {
@@ -648,7 +649,7 @@ export function createCaptureWorkspace({
     if (!active?.id || (tabId && active.id !== Number(tabId))) {
       throw new Error("当前网页已经切换，请重新发起采集");
     }
-    if (!isHttpPage(active.url)) throw new Error("请在普通网页点击扩展图标后再采集");
+    if (!isHttpPage(active.url)) throw new Error(RESTRICTED_PAGE_MESSAGE);
     return active;
   }
 
