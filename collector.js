@@ -440,11 +440,11 @@ async function refreshPageCapturePermissionState() {
 function renderPageCapturePermissionAction() {
   const needsGrant = pageCapturePermissionState.status === "missing";
   const needsInvocation = pageCapturePermissionState.status === "active-tab-required";
-  const startLabel = needsInvocation ? t("先点插件图标，再回来采集") : needsGrant ? t("授权当前网站并扫描") : t("网页采集");
+  const startLabel = needsInvocation ? t("点插件图标后再采集") : needsGrant ? t("授权当前网站并扫描") : t("网页采集");
   const startText = elements.startPageCapture.querySelector("strong");
   if (startText) startText.textContent = startLabel;
   elements.addPageCapture.textContent = needsInvocation
-    ? t("＋ 先点插件图标，再回来采集")
+    ? t("＋ 点插件图标后再采集")
     : needsGrant ? t("＋ 授权当前网站并扫描") : t("＋ 网页采集");
 }
 
