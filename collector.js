@@ -12,7 +12,8 @@ import {
   ensurePagePermission,
   inspectPagePermission,
   pageCapturePermissionFailureMessage,
-  readClipboardContentAfterFocus
+  readClipboardContentAfterFocus,
+  resolveActivePage
 } from "./capture-permissions.js";
 import { initializeUi, t } from "./i18n.js";
 import { confirmAppAction } from "./ui-dialogs.js";
@@ -423,7 +424,7 @@ function render() {
 
 async function refreshPageCapturePermissionState() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await resolveActivePage(chrome.tabs, chrome.scripting);
     if (!tab?.url && Number.isInteger(tab?.id)) {
       pageCapturePermissionState = { status: "active-tab-required", origin: "", pattern: "" };
     } else {
@@ -439,11 +440,11 @@ async function refreshPageCapturePermissionState() {
 function renderPageCapturePermissionAction() {
   const needsGrant = pageCapturePermissionState.status === "missing";
   const needsInvocation = pageCapturePermissionState.status === "active-tab-required";
-  const startLabel = needsInvocation ? t("点击插件图标授权当前页") : needsGrant ? t("授权当前网站并扫描") : t("网页采集");
+  const startLabel = needsInvocation ? t("先点插件图标，再回来采集") : needsGrant ? t("授权当前网站并扫描") : t("网页采集");
   const startText = elements.startPageCapture.querySelector("strong");
   if (startText) startText.textContent = startLabel;
   elements.addPageCapture.textContent = needsInvocation
-    ? t("＋ 点击插件图标授权当前页")
+    ? t("＋ 先点插件图标，再回来采集")
     : needsGrant ? t("＋ 授权当前网站并扫描") : t("＋ 网页采集");
 }
 
@@ -1088,9 +1089,9 @@ async function startPageCapture(mode, button) {
       const representative = mode === "list"
         ? pageCaptureBatch?.candidates.find((candidate) => candidate.id === pageCaptureBatch.selections[0]?.candidateId) || null
         : null;
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = await resolveActivePage(chrome.tabs, chrome.scripting);
       if (!tab?.url && Number.isInteger(tab?.id)) {
-        throw new Error(t("当前页的临时访问权已失效。请在当前网页再次点击浏览器工具栏里的 PromptDirector 图标，然后重新采集；待保存内容没有改变。"));
+        throw new Error(t("Chrome 不会在点击插件图标时弹出授权窗口。请先在当前网页点击工具栏里的 PromptDirector 图标，再回到侧栏点击“授权当前网站并扫描”；待保存内容没有改变。"));
       }
       if (!tab?.url) throw new Error(t("请先切换到需要采集的普通网页"));
       let permission = await inspectPagePermission(tab.url, chrome.permissions);

@@ -23,6 +23,21 @@ export async function ensurePagePermission(pageUrl, permissionsApi) {
   return Boolean(await permissionsApi.request(request));
 }
 
+export async function resolveActivePage(tabsApi, scriptingApi) {
+  const [tab] = await tabsApi.query({ active: true, currentWindow: true });
+  if (!tab || tab.url || !Number.isInteger(tab.id) || typeof scriptingApi?.executeScript !== "function") return tab || null;
+  try {
+    const results = await scriptingApi.executeScript({
+      target: { tabId: tab.id },
+      func: () => globalThis.location.href
+    });
+    const pageUrl = results.find((result) => result?.frameId === 0)?.result ?? results[0]?.result;
+    return typeof pageUrl === "string" && pageUrl ? { ...tab, url: pageUrl } : tab;
+  } catch {
+    return tab;
+  }
+}
+
 export async function inspectPagePermission(pageUrl, permissionsApi) {
   let pattern;
   try {

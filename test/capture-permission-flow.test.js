@@ -12,7 +12,8 @@ import {
   ensurePagePermission,
   inspectPagePermission,
   pageCapturePermissionFailureMessage,
-  pagePermissionPattern
+  pagePermissionPattern,
+  resolveActivePage
 } from "../capture-permissions.js";
 import { runCaptureTransaction } from "../capture-workspace.js";
 
@@ -208,6 +209,32 @@ test("page capture permission preflight distinguishes granted, missing, and rest
   assert.equal(calls.length, 2);
 });
 
+test("page capture recovers the active URL after the toolbar action grants activeTab", async () => {
+  const calls = [];
+  const page = await resolveActivePage({
+    query: async () => [{ id: 42, url: "", title: "作品详情页" }]
+  }, {
+    executeScript: async (request) => {
+      calls.push(request);
+      return [{ frameId: 0, result: "https://visual.example/work/42" }];
+    }
+  });
+
+  assert.equal(page.url, "https://visual.example/work/42");
+  assert.deepEqual(calls.map((request) => request.target), [{ tabId: 42 }]);
+});
+
+test("page capture keeps the actionable retry state when activeTab was not granted", async () => {
+  const page = await resolveActivePage({
+    query: async () => [{ id: 42, url: "", title: "作品详情页" }]
+  }, {
+    executeScript: async () => { throw new Error("Cannot access contents of url"); }
+  });
+
+  assert.equal(page.url, "");
+  assert.equal(page.id, 42);
+});
+
 test("page capture permission failures distinguish Chrome site access from script startup failures", () => {
   assert.match(
     pageCapturePermissionFailureMessage(new Error("Cannot access contents of url https://example.com/")),
@@ -265,6 +292,7 @@ test("page capture requests only the current site and continues in the same clic
   const start = source.indexOf("async function startPageCapture");
   const end = source.indexOf("async function savePageCapture", start);
   const flow = source.slice(start, end);
+  assert.ok(flow.indexOf("resolveActivePage(chrome.tabs, chrome.scripting)") < flow.indexOf("inspectPagePermission(tab.url"));
   assert.ok(flow.indexOf("inspectPagePermission(tab.url") < flow.indexOf('type: "START_PAGE_CAPTURE"'));
   assert.ok(flow.indexOf("ensurePagePermission(tab.url") < flow.indexOf('type: "START_PAGE_CAPTURE"'));
   assert.match(flow, /status:\s*"granted"/);
