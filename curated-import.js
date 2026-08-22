@@ -6,6 +6,10 @@ export function mergeCuratedLibraryPackage(currentValue = {}, libraryValue = {},
   const packageId = clean(options.packageId);
   const projectName = clean(options.projectName);
   const mode = options.mode === "package" ? "package" : "case";
+  const requestedCreatedAt = clean(options.now);
+  const projectCreatedAt = requestedCreatedAt && Number.isFinite(Date.parse(requestedCreatedAt))
+    ? new Date(requestedCreatedAt).toISOString()
+    : new Date().toISOString();
   if (!packageId) throw new Error("精选案例包缺少稳定编号");
   if (mode === "package" && !projectName) throw new Error("精选案例包缺少项目名称");
 
@@ -45,7 +49,8 @@ export function mergeCuratedLibraryPackage(currentValue = {}, libraryValue = {},
     visualIdMap: options.visualIdMap,
     sessionIdMap: options.sessionIdMap,
     runIdMap: options.runIdMap,
-    preserveLibraryConfiguration: true
+    preserveLibraryConfiguration: true,
+    now: projectCreatedAt
   });
 
   const entriesBySourceEntryId = {};
@@ -72,7 +77,8 @@ export function mergeCuratedLibraryPackage(currentValue = {}, libraryValue = {},
         name: projectName,
         order: organizer.collections.length,
         entryIds,
-        visibility: COLLECTION_VISIBILITY.library
+        visibility: COLLECTION_VISIBILITY.library,
+        createdAt: projectCreatedAt
       });
     }
     result.state.organizerState = normalizeOrganizerState(organizer, result.state.entries.map((entry) => entry.id));

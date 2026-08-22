@@ -24,6 +24,22 @@ test("createZipBlob produces a UTF-8 ZIP containing markdown and image paths", a
   assert.deepEqual(Array.from(bytes.slice(-22, -18)), [80, 75, 5, 6]);
 });
 
+test("createZipBlob streams source CRC instead of buffering a large source file", async () => {
+  const source = new Blob([new Uint8Array(96 * 1024).fill(3)], { type: "application/octet-stream" });
+  Object.defineProperty(source, "arrayBuffer", {
+    value: async () => { throw new Error("source file must not be buffered as one ArrayBuffer"); }
+  });
+
+  const archive = await createZipBlob([{ name: "attachments/source.psd", data: source }]);
+  const files = await readZipBlob(archive, {
+    maxArchiveBytes: archive.size,
+    maxFileBytes: archive.size,
+    maxFileCount: 10
+  });
+
+  assert.equal(files.get("attachments/source.psd").size, source.size);
+});
+
 test("readZipBlob restores every file written by the local ZIP exporter", async () => {
   const archive = await createZipBlob([
     { name: "library.json", data: '{"format":"prompt-case-library"}\n' },
@@ -81,6 +97,36 @@ test("openZipBlob validates the whole directory but materializes only requested 
   assert.deepEqual(reader.names, ["library.json", "videos/selected.mp4", "videos/unselected.mp4"]);
   assert.deepEqual([...files.keys()], ["library.json", "videos/selected.mp4"]);
   await assert.rejects(() => reader.read(["videos/missing.mp4"]), /ZIP 内缺少文件/);
+});
+
+test("openZipBlob range-reads the directory and selected STORE entry without buffering the whole archive", async () => {
+  const archive = await createZipBlob([
+    { name: "library.json", data: "{}" },
+    { name: "attachments/selected.psd", data: new Uint8Array(96 * 1024).fill(7) },
+    { name: "attachments/unselected.psd", data: new Uint8Array(96 * 1024).fill(9) }
+  ]);
+  const ranges = [];
+  const originalSlice = archive.slice.bind(archive);
+  Object.defineProperty(archive, "arrayBuffer", {
+    value: async () => { throw new Error("whole archive must not be buffered"); }
+  });
+  Object.defineProperty(archive, "slice", {
+    value: (start, end, type) => {
+      ranges.push([start, end]);
+      return originalSlice(start, end, type);
+    }
+  });
+
+  const reader = await openZipBlob(archive, {
+    maxArchiveBytes: archive.size,
+    maxFileBytes: archive.size,
+    maxFileCount: 10
+  });
+  const files = await reader.read(["attachments/selected.psd"]);
+
+  assert.equal(files.get("attachments/selected.psd").size, 96 * 1024);
+  assert.equal(ranges.some(([start, end]) => start === 0 && end === archive.size), false);
+  assert.equal(ranges.some(([start, end]) => end - start === 96 * 1024), true);
 });
 
 test("readZipBlob rejects unsupported or damaged archives", async () => {

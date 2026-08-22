@@ -27,9 +27,10 @@ test("compound details expose direct primary-case and cover-image actions", () =
   assert.doesNotMatch(organizer, /labeledSelect\("封面"/);
 });
 
-test("long compound-part titles stay on one line beside fixed actions", () => {
+test("long compound-part titles wrap fully beside fixed actions", () => {
   assert.match(styles, /\.compound-part-heading\s*>\s*div:first-child\s*\{[^}]*min-width:\s*0/);
-  assert.match(styles, /\.compound-part-heading h3\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/);
+  assert.match(styles, /\.compound-part-heading h3\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(styles, /\.compound-part-heading h3\s*\{[^}]*text-overflow:\s*ellipsis/);
   assert.match(styles, /\.compound-part-heading-actions\s*\{[^}]*flex:\s*0 0 auto/);
 });
 

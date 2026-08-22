@@ -25,9 +25,11 @@ test("curated discovery keeps the pack wall concise and opens a separate read-on
   const { page, html, css } = await sources();
   assert.match(html, /id="curated-search"/);
   assert.match(html, /id="filter-button"/);
-  assert.match(html, /data-sort="recommended"/);
-  assert.match(html, /data-sort="latest"/);
-  assert.match(html, /data-sort="downloads"/);
+  assert.match(html, /<select id="sort-menu"/);
+  assert.match(html, /value="recommended"/);
+  assert.match(html, /value="latest"/);
+  assert.match(html, /value="downloads"/);
+  assert.doesNotMatch(html, /<details[^>]*class="sort-menu"/);
   assert.match(html, /<dialog id="detail-dialog"/);
   assert.match(html, /id="case-detail-drawer"/);
   assert.match(html, /id="case-detail-prev"/);

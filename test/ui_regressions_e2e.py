@@ -75,7 +75,7 @@ def main() -> None:
 
         project_row = library.locator(".project-row", has_text="项目隐藏验收")
         project_row.locator("summary").click()
-        project_row.get_by_role("button", name="仅在项目内显示", exact=True).click()
+        project_row.get_by_role("button", name="仅项目可见", exact=True).click()
         expect(library.locator("#feedback")).to_contain_text("项目显示范围已更新")
         expect(library.locator("#case-list > .case-card")).to_have_count(1)
         visibility = library.evaluate(

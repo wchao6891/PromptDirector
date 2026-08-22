@@ -102,10 +102,11 @@ test("one top search surface keeps only a concise placeholder hint", () => {
   assert.doesNotMatch(html, /id="search-help"|source:x\.com.*tag:电影感.*has:video/);
 });
 
-test("screenshot counts use canonical media assets after extension messaging", () => {
-  const gallery = source.slice(source.indexOf("function renderGallery"), source.indexOf("function scheduleLoadCheck"));
-  assert.match(gallery, /entryMediaAssets\(entry\)\s*\.filter\(\(asset\) => asset\.kind === "image" && asset\.usage !== "poster"\)/);
-  assert.doesNotMatch(gallery, /entry\.visuals\?\.length/);
+test("the gallery keeps one current-result count instead of a duplicate global media summary", () => {
+  const gallery = source.slice(source.indexOf("function renderGalleryResults"), source.indexOf("function projectManualOrderAvailable"));
+  assert.match(gallery, /elements\.resultCount\.textContent/);
+  assert.match(gallery, /visibleEntries\.length/);
+  assert.doesNotMatch(html, /id="library-summary"/);
 });
 
 test("fixed-ratio gallery covers crop mismatched source images inside the card", () => {
@@ -137,7 +138,22 @@ test("the library includes a local quick-note entry that does not invoke AI", ()
   assert.match(html, /id="add-quick-note"/);
   const quickNote = source.slice(source.indexOf("async function createQuickNote"), source.indexOf("async function prepareLocalMedia"));
   assert.match(quickNote, /CREATE_QUICK_NOTE/);
+  assert.match(quickNote, /caseCreationOrganizationFields\(\)/);
+  assert.match(quickNote, /caseCreationOrganization\(projectName, customLabels\)/);
   assert.doesNotMatch(quickNote, /ANALY|DeepSeek|OpenAI/);
+});
+
+test("new video references and quick notes accept an existing or new project plus user tags", () => {
+  const video = source.slice(source.indexOf("async function addVideoReference"), source.indexOf("async function fetchVideoReferencePoster"));
+  const note = source.slice(source.indexOf("async function createQuickNote"), source.indexOf("async function prepareLocalMedia"));
+  assert.match(video, /caseCreationOrganizationFields\(\)/);
+  assert.match(video, /caseCreationOrganization\(\s*projectName,\s*customLabels\s*\)/);
+  assert.match(video, /CREATE_MEDIA_REFERENCE[\s\S]*?\.\.\.organization/);
+  assert.match(note, /CREATE_QUICK_NOTE[\s\S]*?\.\.\.caseCreationOrganization\(projectName, customLabels\)/);
+  assert.match(note, /label:\s*"添加标签"/);
+  assert.match(note, /newCollectionName:\s*projectName/);
+  assert.match(note, /collectionId:\s*existing\.id/);
+  assert.match(note, /attachProjectSuggestions/);
 });
 
 test("similar material stays local, image-led, and free of project-age resurfacing", () => {
@@ -156,7 +172,7 @@ test("similar material stays local, image-led, and free of project-age resurfaci
 });
 
 test("the home wall shows every library-visible content type and hides only explicit category-only types", () => {
-  const gallery = source.slice(source.indexOf("function renderGalleryResults"), source.indexOf("function updateLibrarySummary"));
+  const gallery = source.slice(source.indexOf("function renderGalleryResults"), source.indexOf("function projectManualOrderAvailable"));
   assert.match(gallery, /CONTENT_TYPE_VISIBILITY\.categoryOnly/);
   assert.match(gallery, /const browseEntries = selectedContentId/);
   assert.match(gallery, /isEntryPending\(entry\)/);

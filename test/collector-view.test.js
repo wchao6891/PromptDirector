@@ -207,3 +207,32 @@ test("the collector auto-reads only highlights and reserves clipboard access for
   assert.match(collectorSource, /addOtherCaptureMethods\.open = smartVisualFallback/);
   assert.match(collectorSource, /if \(draft\) render\(\)/);
 });
+
+test("every captured draft exposes project and the shared multi-tag editor before save", async () => {
+  const [collectorSource, collectorHtml, draftSource] = await Promise.all([
+    readFile(new URL("../collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../capture-draft.js", import.meta.url), "utf8")
+  ]);
+  const metadata = collectorHtml.slice(
+    collectorHtml.indexOf('<section id="capture-metadata"'),
+    collectorHtml.indexOf('<div id="capture-add-more-actions"')
+  );
+  assert.match(metadata, /id="capture-collection"/);
+  assert.match(metadata, /id="capture-new-collection-name"/);
+  assert.match(metadata, /添加标签/);
+  assert.doesNotMatch(metadata, /自由标签|可选|不用预先创建|输入任意新标签/);
+  assert.match(metadata, /id="custom-labels"/);
+  assert.doesNotMatch(metadata, /<details/);
+  assert.match(collectorSource, /collections = response\.collections \?\? \[\]/);
+  assert.match(collectorSource, /const selectedCollection = elements\.captureCollection\.value/);
+  assert.match(collectorSource, /newCollectionName: selectedCollection === NEW_COLLECTION_OPTION_VALUE/);
+  assert.match(collectorSource, /const customLabelEditor = createTagEditor/);
+  assert.match(collectorSource, /customLabels: customLabelEditor\.values/);
+  assert.match(collectorSource, /type: "COMMIT_CAPTURE_DRAFT",[\s\S]*\.\.\.metadata/);
+  assert.match(collectorSource, /type: "COMMIT_PAGE_CAPTURE",[\s\S]*\.\.\.captureMetadataForCommit\(\)/);
+  assert.match(collectorSource, /pageCaptureActions\.before\(elements\.captureMetadata\)/);
+  assert.match(collectorSource, /captureAddMoreActions\.before\(elements\.captureMetadata\)/);
+  assert.match(draftSource, /collectionId: clean\(value\.collectionId\)/);
+  assert.match(draftSource, /newCollectionName: clean\(value\.newCollectionName\)/);
+});

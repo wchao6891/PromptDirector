@@ -27,14 +27,7 @@
             <button id="clear-filters" type="button" data-i18n="清除筛选">清除筛选</button>
           </div>
         </div>
-        <details id="sort-menu" class="sort-menu">
-          <summary class="button-secondary"><span id="sort-label" data-i18n="推荐">推荐</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-chevron-down"></use></svg></summary>
-          <div class="menu-panel sort-panel">
-            <button type="button" data-sort="recommended" aria-current="true"><span data-i18n="推荐">推荐</span><svg class="ui-icon sort-check" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-check"></use></svg></button>
-            <button type="button" data-sort="latest" aria-current="false"><span data-i18n="最新">最新</span><svg class="ui-icon sort-check" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-check"></use></svg></button>
-            <button id="sort-downloads" type="button" data-sort="downloads" aria-current="false" disabled><span data-i18n="下载">下载</span><svg class="ui-icon sort-check" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-check"></use></svg></button>
-          </div>
-        </details>
+        <label class="curated-sort"><span class="visually-hidden">精选案例排序</span><select id="sort-menu" aria-label="精选案例排序"><option value="recommended" data-i18n="推荐">推荐</option><option value="latest" data-i18n="最新">最新</option><option id="sort-downloads" value="downloads" data-i18n="下载" disabled>下载</option></select></label>
         <button id="return-library" class="button-secondary page-back-action" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span data-i18n="返回案例库">返回案例库</span></button>
       </div>
     </header>

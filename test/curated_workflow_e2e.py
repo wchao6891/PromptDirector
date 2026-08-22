@@ -167,6 +167,18 @@ def main() -> None:
         curated.locator("#retry-catalog").click()
         expect(curated.locator(".pack-grid .pack-card")).to_have_count(1)
         expect(curated.locator("#sort-downloads")).to_be_enabled()
+        sort_style = curated.locator("#sort-menu").evaluate(
+            """node => ({
+              appearance: getComputedStyle(node).appearance,
+              supported: CSS.supports('appearance: base-select'),
+              background: getComputedStyle(node).backgroundColor
+            })"""
+        )
+        assert sort_style["supported"] is True, sort_style
+        assert sort_style["appearance"] == "base-select", sort_style
+        assert sort_style["background"] not in {"rgb(255, 255, 255)", "rgba(0, 0, 0, 0)"}, sort_style
+        curated.locator("#sort-menu").select_option("latest")
+        expect(curated.locator("#sort-menu")).to_have_value("latest")
         expect(curated.locator("#filter-popover")).to_be_hidden()
         expect(curated.locator(".pack-card h2")).to_have_text("工作流精选")
         expect(curated.locator(".pack-card .pack-meta")).to_contain_text("PromptDirector 编辑精选")

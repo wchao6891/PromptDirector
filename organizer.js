@@ -20,7 +20,8 @@ export function normalizeOrganizerState(value = {}, validEntryIds) {
       order: Number.isFinite(item.order) ? item.order : order,
       entryIds: item.entryIds.filter((id) => !allowed || allowed.has(id))
     }))
-    .sort(byOrder);
+    .sort(byOrder)
+    .map((item, order) => ({ ...item, order }));
   return { version: ORGANIZER_VERSION, collections };
 }
 
@@ -36,7 +37,8 @@ export function createCollection(stateValue, name) {
     name: cleaned,
     order: state.collections.length,
     entryIds: [],
-    visibility: COLLECTION_VISIBILITY.library
+    visibility: COLLECTION_VISIBILITY.library,
+    createdAt: new Date().toISOString()
   };
   state.collections.push(item);
   return { state, item };
@@ -59,7 +61,19 @@ export function deleteCollection(stateValue, collectionId) {
   const id = cleanId(collectionId);
   if (!state.collections.some((item) => item.id === id)) throw new Error("项目不存在");
   state.collections = state.collections.filter((item) => item.id !== id);
-  return state;
+  return normalizeOrganizerState(state);
+}
+
+export function reorderCollections(stateValue, collectionIds) {
+  const state = structuredClone(normalizeOrganizerState(stateValue));
+  const requested = uniqueIds(collectionIds);
+  const existingIds = new Set(state.collections.map((item) => item.id));
+  if (requested.length !== state.collections.length || requested.some((id) => !existingIds.has(id))) {
+    throw new Error("项目排序列表已经变化，请刷新后重试");
+  }
+  const byId = new Map(state.collections.map((item) => [item.id, item]));
+  state.collections = requested.map((id, order) => ({ ...byId.get(id), order }));
+  return normalizeOrganizerState(state);
 }
 
 export function planCollectionAndEntriesDeletion(stateValue, entriesValue, collectionId, confirmationName) {
@@ -124,10 +138,11 @@ export function removeEntriesFromOrganizer(stateValue, entryIds) {
   return state;
 }
 
-export function mergeOrganizerState(currentValue, importedValue, entryIdMap = {}) {
+export function mergeOrganizerState(currentValue, importedValue, entryIdMap = {}, options = {}) {
   const current = structuredClone(normalizeOrganizerState(currentValue));
   const imported = normalizeOrganizerState(importedValue);
   const remap = (ids) => uniqueIds(ids).map((id) => cleanId(entryIdMap[id])).filter(Boolean);
+  const receiverCreatedAt = normalizeTimestamp(options.createdAt);
 
   for (const source of imported.collections) {
     const existing = current.collections.find((item) => canonical(item.name) === canonical(source.name));
@@ -138,7 +153,13 @@ export function mergeOrganizerState(currentValue, importedValue, entryIdMap = {}
     const id = current.collections.some((item) => item.id === source.id)
       ? `collection:${globalThis.crypto.randomUUID()}`
       : source.id;
-    current.collections.push({ ...source, id, order: current.collections.length, entryIds: remap(source.entryIds) });
+    current.collections.push({
+      ...source,
+      id,
+      order: current.collections.length,
+      entryIds: remap(source.entryIds),
+      ...(receiverCreatedAt ? { createdAt: receiverCreatedAt } : {})
+    });
   }
   return normalizeOrganizerState(current);
 }
@@ -147,13 +168,20 @@ function normalizeCollection(value = {}) {
   const id = cleanId(value.id);
   const name = cleanName(value.name);
   if (!id || !name) return null;
+  const createdAt = normalizeTimestamp(value.createdAt);
   return {
     id,
     name,
     order: Number(value.order),
     entryIds: uniqueIds(value.entryIds),
-    visibility: normalizeVisibility(value.visibility)
+    visibility: normalizeVisibility(value.visibility),
+    ...(createdAt ? { createdAt } : {})
   };
+}
+
+function normalizeTimestamp(value) {
+  const timestamp = String(value ?? "").trim();
+  return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : "";
 }
 
 function normalizeVisibility(value) {

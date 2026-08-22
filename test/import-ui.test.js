@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
 const css = await readFile(new URL("../library.css", import.meta.url), "utf8");
 const js = await readFile(new URL("../library.js", import.meta.url), "utf8");
+const tagEditor = await readFile(new URL("../tag-editor.js", import.meta.url), "utf8");
 
 function rule(source, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -18,11 +19,15 @@ test("add menu has one local import entry and the import dialog chooses files or
   assert.doesNotMatch(actions, /id="add-folder"|id="open-import-job"|最近导入/);
   assert.match(actions, /id="media-file"[^>]*type="file"[^>]*multiple/);
   assert.match(actions, /id="media-folder"[^>]*type="file"[^>]*multiple[^>]*webkitdirectory/);
+  assert.doesNotMatch(actions, /id="media-file"[^>]*accept=/);
+  assert.match(js, /LOCAL_ASSET_FILE_ACCEPT/);
+  assert.match(js, /mediaFile\.accept\s*=\s*LOCAL_ASSET_FILE_ACCEPT/);
+  assert.match(js, /mediaFolder\.accept\s*=\s*LOCAL_ASSET_FILE_ACCEPT/);
   const source = html.slice(html.indexOf('id="import-source"'), html.indexOf('id="import-preparing"'));
   assert.match(source, /class="import-drop-zone"/);
   assert.match(source, /拖入文件或文件夹/);
   assert.match(source, /id="import-choose-files"/);
-  assert.match(source, /自动识别图片、视频、PDF、Markdown、HTML、RTF 和纯文本/);
+  assert.match(source, /自动识别图片、视频、音频、字幕、文档和常用创作源文件/);
   assert.match(source, /id="add-folder"/);
   assert.match(source, /选择整个文件夹/);
   assert.match(source, /class="import-folder-link"/);
@@ -30,6 +35,7 @@ test("add menu has one local import entry and the import dialog chooses files or
 });
 
 test("local import dialog includes drag target, confirmation summary, project assignment, auto-analyze, and job controls", () => {
+  const confirmation = html.slice(html.indexOf('id="import-confirmation"'), html.indexOf('id="import-job-panel"'));
   assert.match(html, /id="library-drop-target"/);
   assert.match(html, /松开以检查本机资料/);
   assert.match(html, /id="import-dialog"/);
@@ -41,6 +47,12 @@ test("local import dialog includes drag target, confirmation summary, project as
   assert.match(html, /id="import-duplicate-count"/);
   assert.match(html, /id="import-byte-size"/);
   assert.match(html, /id="import-project"/);
+  assert.match(html, /选择已有项目或输入新项目名/);
+  assert.doesNotMatch(html, /<datalist/);
+  assert.match(js, /attachProjectCombobox\(elements\.importProject/);
+  assert.match(html, /id="import-label-editor"/);
+  assert.match(html, /添加标签/);
+  assert.doesNotMatch(confirmation, /自由标签|可选|可以直接输入资料库里没有的新标签/);
   assert.match(html, /id="import-auto-analyze"/);
   assert.match(html, /导入后自动画面分析/);
   assert.match(html, /id="import-file-list"/);
@@ -58,6 +70,7 @@ test("local import layout keeps summary, options, progress, and mobile stacking 
   const summary = rule(css, ".import-summary");
   const options = rule(css, ".import-options");
   const progress = rule(css, ".import-job-panel progress");
+  const labelEditor = rule(css, ".import-label-editor");
   const dropZone = rule(css, ".import-drop-zone");
   const folderLink = rule(css, ".import-drop-zone .import-folder-link");
   const mobile = css.slice(css.indexOf("@media (max-width: 640px)"));
@@ -71,6 +84,8 @@ test("local import layout keeps summary, options, progress, and mobile stacking 
   assert.match(summary, /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(options, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/);
   assert.match(progress, /width:\s*100%/);
+  assert.match(labelEditor, /min-width:\s*0/);
+  assert.match(tagEditor, /tag-editor-chips/);
 
   assert.match(mobile, /\.import-summary\s*\{[^}]*grid-template-columns:\s*1fr 1fr/);
   assert.match(mobile, /\.import-options\s*\{[^}]*grid-template-columns:\s*1fr/);
@@ -93,10 +108,36 @@ test("duplicate choice and import start preserve the complete background job con
   assert.match(js, /item\.keepDuplicate\s*=\s*keep\.checked/);
   assert.match(js, /type:\s*"START_IMPORT_JOB"/);
   assert.match(js, /collectionId,/);
+  assert.match(js, /customLabels:\s*\[\.\.\.\(pendingLocalImport\.customLabels\s*\?\?\s*\[\]\)\]/);
   assert.match(js, /stagedAssets:\s*pendingLocalImport\.stagedAssets/);
+  assert.match(js, /storageMode:\s*prepared\.asset\.storageMode/);
+  assert.match(js, /sourceFormat:\s*prepared\.asset\.sourceFormat\s*\|\|\s*prepared\.sourceFormat/);
+  assert.match(js, /formatCategory:\s*prepared\.asset\.formatCategory/);
   assert.match(js, /stagedAssetId:\s*item\.id/);
   assert.match(js, /keepDuplicate:\s*item\.keepDuplicate\s*===\s*true/);
   assert.match(js, /options:\s*\{\s*autoAnalyze:\s*elements\.importAutoAnalyze\.checked\s*===\s*true\s*\}/);
+});
+
+test("project suggestions stay editable and import uses the shared multi-tag editor", () => {
+  assert.match(js, /importProject\.value\s*=\s*matching\?\.name\s*\|\|\s*rootName\s*\|\|\s*selected\?\.name\s*\|\|\s*""/);
+  assert.match(js, /已按根文件夹建议项目；可以修改或清空/);
+  assert.match(js, /const importTagEditor = createTagEditor/);
+  assert.match(js, /pendingLocalImport\.customLabels\s*=\s*values/);
+  assert.match(tagEditor, /\["Enter", ",", "，"\]\.includes\(event\.key\)/);
+  assert.match(tagEditor, /删除标签/);
+  assert.match(js, /type:\s*"CREATE_COLLECTION",\s*name:\s*projectName/);
+});
+
+test("per-file failures always show their reason and only offer force import for a real capability", () => {
+  assert.match(js, /importFailureDetails\(error\)/);
+  assert.match(js, /const\s+\{\s*code,\s*message,\s*forceAllowed,\s*\.\.\.details\s*\}\s*=\s*failure/);
+  assert.match(js, /code\s*===\s*ASSET_IMPORT_FAILURE_CODES\.TOO_LARGE\s*&&\s*\(forceAllowed\s*\|\|\s*error\?\.canForceImport\s*===\s*true\)/);
+  assert.match(js, /item\.code\s*===\s*ASSET_IMPORT_FAILURE_CODES\.TOO_LARGE[\s\S]*?item\.forceAllowed\s*===\s*true[\s\S]*?item\.file\s*instanceof\s*Blob/);
+  assert.match(js, /"import-file-reason",\s*item\.reason/);
+  assert.match(js, /"强制导入"/);
+  assert.match(js, /forceImport:\s*true/);
+  const wrapper = js.slice(js.indexOf("async function prepareLocalMedia"), js.indexOf("async function readDocumentText"));
+  assert.match(wrapper, /forceImport:\s*options\.forceImport\s*===\s*true/);
 });
 
 test("active import restoration and every terminal job action stay wired", () => {

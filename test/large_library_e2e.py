@@ -164,6 +164,50 @@ def main() -> None:
                 assert tag_filter_ms < 250, f"6500-case tag category switch took {tag_filter_ms}ms"
                 style_category.click()
 
+                library.locator("#select-cases").click()
+                assert library.locator("#result-count").is_hidden()
+                assert library.locator("#gallery-view-controls").is_hidden()
+                assert library.locator("#share-count").inner_text() == "已选 0"
+                assert library.locator("#selection-select-filtered").inner_text() == "全选当前（6500）"
+                library.locator("#selection-select-filtered").click()
+                assert library.locator("#share-count").inner_text() == "已选 6500"
+                assert library.locator("#selection-clear").is_enabled()
+                library.set_viewport_size({"width": 390, "height": 844})
+                library.wait_for_function(
+                    "() => document.documentElement.scrollWidth <= document.documentElement.clientWidth",
+                    timeout=2_000,
+                )
+                selection_mobile = library.evaluate(
+                    """() => {
+                      const bar = document.querySelector('#share-bar').getBoundingClientRect();
+                      const count = document.querySelector('#share-count').getBoundingClientRect();
+                      return {
+                        barLeft: bar.left,
+                        barRight: bar.right,
+                        countTop: count.top,
+                        countBottom: count.bottom,
+                        viewport: innerWidth,
+                        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+                        overflowWidth: document.documentElement.scrollWidth,
+                        offenders: [...document.querySelectorAll('body *')].filter((element) => {
+                          const rect = element.getBoundingClientRect();
+                          return rect.right > innerWidth + 0.5 || rect.left < -0.5;
+                        }).slice(0, 8).map((element) => ({
+                          id: element.id,
+                          className: String(element.className || ''),
+                          left: element.getBoundingClientRect().left,
+                          right: element.getBoundingClientRect().right
+                        }))
+                      };
+                    }"""
+                )
+                assert selection_mobile["barLeft"] >= 0 and selection_mobile["barRight"] <= selection_mobile["viewport"], selection_mobile
+                assert selection_mobile["overflow"] is False, selection_mobile
+                library.set_viewport_size({"width": 1666, "height": 900})
+                library.locator("#selection-clear").click()
+                assert library.locator("#share-count").inner_text() == "已选 0"
+                library.locator("#share-cancel").click()
+
                 assert_columns_fill_width(library)
                 before_toggle = library.evaluate("document.querySelectorAll('.case-card').length")
                 library.locator("#toggle-filters").click()

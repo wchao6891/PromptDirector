@@ -1,8 +1,16 @@
 <!-- Generated from lucide-static. ISC license: THIRD_PARTY_NOTICES.md -->
 <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+  <symbol id="icon-arrow-down" viewBox="0 0 24 24">
+    <path d="M12 5v14" />
+    <path d="m19 12-7 7-7-7" />
+  </symbol>
   <symbol id="icon-arrow-left" viewBox="0 0 24 24">
     <path d="m12 19-7-7 7-7" />
     <path d="M19 12H5" />
+  </symbol>
+  <symbol id="icon-arrow-up" viewBox="0 0 24 24">
+    <path d="m5 12 7-7 7 7" />
+    <path d="M12 19V5" />
   </symbol>
   <symbol id="icon-check" viewBox="0 0 24 24">
     <path d="M20 6 9 17l-5-5" />
@@ -15,6 +23,10 @@
   </symbol>
   <symbol id="icon-chevron-right" viewBox="0 0 24 24">
     <path d="m9 18 6-6-6-6" />
+  </symbol>
+  <symbol id="icon-circle-check-big" viewBox="0 0 24 24">
+    <path d="M21.801 10A10 10 0 1 1 17 3.335" />
+    <path d="m9 11 3 3L22 4" />
   </symbol>
   <symbol id="icon-copy" viewBox="0 0 24 24">
     <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
@@ -55,6 +67,13 @@
     <path d="M12 6v14" />
     <path d="M8 8v12" />
     <path d="M4 4v16" />
+  </symbol>
+  <symbol id="icon-list-checks" viewBox="0 0 24 24">
+    <path d="M13 5h8" />
+    <path d="M13 12h8" />
+    <path d="M13 19h8" />
+    <path d="m3 17 2 2 4-4" />
+    <path d="m3 7 2 2 4-4" />
   </symbol>
   <symbol id="icon-maximize-2" viewBox="0 0 24 24">
     <path d="M15 3h6v6" />
@@ -127,6 +146,10 @@
     <path d="M20 2v4" />
     <path d="M22 4h-4" />
     <circle cx="4" cy="20" r="2" />
+  </symbol>
+  <symbol id="icon-square-check-big" viewBox="0 0 24 24">
+    <path d="M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344" />
+    <path d="m9 11 3 3L22 4" />
   </symbol>
   <symbol id="icon-square" viewBox="0 0 24 24">
     <rect width="18" height="18" x="3" y="3" rx="2" />

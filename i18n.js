@@ -281,7 +281,7 @@ const EN = Object.freeze({
   "浏览器会把文件保存到“下载”目录下；可填写子文件夹。": "Chrome saves the file in Downloads. Subfolders are supported.",
   "保存设置": "Save settings",
   "展开或收起筛选": "Show or hide filters",
-  "搜索提示词、来源或创作属性": "Search prompts, sources, or creative attributes",
+  "搜索提示词、来源或 AI 标签": "Search prompts, sources, or AI tags",
   "搜索画面、提示词、风格、镜头…": "Search visuals, prompts, styles, shots...",
   "正在读取本地案例…": "Loading local cases...",
   "开始创作": "Create",

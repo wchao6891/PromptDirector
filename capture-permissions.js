@@ -1,5 +1,7 @@
 export const CONTINUOUS_CAPTURE_ORIGINS = Object.freeze(["<all_urls>"]);
 export const CLIPBOARD_READ_PERMISSIONS = Object.freeze(["clipboardRead"]);
+export const CAPTURE_PERMISSION_ONBOARDING_VERSION = 1;
+export const CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY = "capturePermissionOnboarding";
 export const RESTRICTED_PAGE_MESSAGE = "当前页不可采集：Chrome 新标签页、设置页和扩展页不允许读取；普通网站请先点工具栏图标。";
 const CLIPBOARD_IMAGE_MIME_TYPES = Object.freeze(["image/png", "image/jpeg", "image/webp"]);
 
@@ -12,9 +14,43 @@ export function pagePermissionPattern(pageUrl) {
 }
 
 export async function ensureContinuousCapturePermission(permissionsApi) {
-  return Boolean(await permissionsApi.request({
-    origins: [...CONTINUOUS_CAPTURE_ORIGINS]
-  }));
+  const request = { origins: [...CONTINUOUS_CAPTURE_ORIGINS] };
+  if (typeof permissionsApi.contains === "function" && await permissionsApi.contains(request)) return true;
+  return Boolean(await permissionsApi.request(request));
+}
+
+export function normalizeCapturePermissionOnboarding(value) {
+  if (!value || value.version !== CAPTURE_PERMISSION_ONBOARDING_VERSION || !value.acknowledgedAt) {
+    return { version: CAPTURE_PERMISSION_ONBOARDING_VERSION, acknowledgedAt: "", clipboardIncluded: true };
+  }
+  return {
+    version: CAPTURE_PERMISSION_ONBOARDING_VERSION,
+    acknowledgedAt: String(value.acknowledgedAt),
+    clipboardIncluded: value.clipboardIncluded !== false
+  };
+}
+
+export async function inspectCapturePermissionBundle(permissionsApi) {
+  const [webCaptureGranted, clipboardGranted] = await Promise.all([
+    permissionsApi.contains({ origins: [...CONTINUOUS_CAPTURE_ORIGINS] }),
+    hasClipboardReadPermission(permissionsApi)
+  ]);
+  return { webCaptureGranted: Boolean(webCaptureGranted), clipboardGranted: Boolean(clipboardGranted) };
+}
+
+export async function requestCapturePermissionBundle(permissionsApi, {
+  includeClipboard = true,
+  current = null
+} = {}) {
+  const status = current ?? await inspectCapturePermissionBundle(permissionsApi);
+  const request = {};
+  if (!status.webCaptureGranted) request.origins = [...CONTINUOUS_CAPTURE_ORIGINS];
+  if (includeClipboard && !status.clipboardGranted) request.permissions = [...CLIPBOARD_READ_PERMISSIONS];
+  if (!request.origins && !request.permissions) return { granted: true, requested: null };
+  return {
+    granted: Boolean(await permissionsApi.request(request)),
+    requested: request
+  };
 }
 
 export async function ensurePagePermission(pageUrl, permissionsApi) {

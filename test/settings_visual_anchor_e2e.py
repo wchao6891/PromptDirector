@@ -73,6 +73,16 @@ def exercise_settings(page, viewport: dict) -> None:
         settle(page)
         assert_anchor_stable(baseline, settings_metrics(page), f"settings:{tab}", viewport)
 
+    page.locator('[data-settings-tab="tasks"]').click()
+    local_index = page.locator(".local-index-card")
+    expect(local_index).to_contain_text("补全资料索引")
+    expect(local_index).to_contain_text("全程在本机运行，不调用 AI")
+    expect(local_index.locator("progress")).to_have_count(0)
+    expect(local_index.locator("#apply-reanalyze")).to_be_hidden()
+    page.locator("#preview-reanalyze").click()
+    expect(page.locator("#reanalyze-preview")).to_contain_text("资料索引已完整")
+    expect(local_index.locator("#apply-reanalyze")).to_be_hidden()
+
     page.locator('[data-settings-tab="ai"]').click()
     advanced_summary = page.locator(".ai-advanced-settings > summary")
     advanced_summary.scroll_into_view_if_needed()

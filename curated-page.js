@@ -30,7 +30,7 @@ const elements = Object.fromEntries([
   "case-detail-backdrop", "case-detail-close", "case-detail-content", "case-detail-drawer", "case-detail-next", "case-detail-prev",
   "clear-filters", "curated-app", "curated-search", "curated-status", "curated-status-bar", "curated-toast",
   "detail-close", "detail-content", "detail-dialog", "filter-button", "filter-count", "filter-popover",
-  "retry-catalog", "return-library", "sort-downloads", "sort-label", "sort-menu"
+  "retry-catalog", "return-library", "sort-downloads", "sort-menu"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
 await initializeUi();
@@ -91,15 +91,8 @@ elements.clearFilters.addEventListener("click", () => {
   updateFilterCount();
   renderGallery();
 });
-elements.sortMenu.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-sort]");
-  if (!button || button.disabled) return;
-  state.sort = button.dataset.sort;
-  elements.sortLabel.textContent = button.querySelector("span").textContent;
-  elements.sortMenu.querySelectorAll("[data-sort]").forEach((candidate) => {
-    candidate.setAttribute("aria-current", String(candidate === button));
-  });
-  elements.sortMenu.open = false;
+elements.sortMenu.addEventListener("change", () => {
+  state.sort = elements.sortMenu.value;
   renderGallery();
 });
 document.addEventListener("click", (event) => {
@@ -107,7 +100,6 @@ document.addEventListener("click", (event) => {
     elements.filterPopover.hidden = true;
     elements.filterButton.setAttribute("aria-expanded", "false");
   }
-  if (!event.target.closest(".sort-menu")) elements.sortMenu.open = false;
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.selectedEntryId) {
@@ -205,7 +197,7 @@ function updateMetricsUi() {
   elements.sortDownloads.disabled = !state.metrics;
   if (!state.metrics && state.sort === "downloads") {
     state.sort = "recommended";
-    elements.sortLabel.textContent = t("推荐");
+    elements.sortMenu.value = "recommended";
   }
 }
 

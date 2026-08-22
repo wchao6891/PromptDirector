@@ -102,15 +102,25 @@ test("share preview renders every portable media kind and its time notes", () =>
       { id: "image", kind: "image", storageMode: "managed", mimeType: "image/webp", assetPath: "images/mixed/image.webp", width: 800, height: 1200 },
       { id: "video", kind: "video", storageMode: "managed", mimeType: "video/mp4", assetPath: "videos/mixed/video.mp4", posterAssetId: "poster" },
       { id: "poster", kind: "image", usage: "poster", storageMode: "managed", mimeType: "image/webp", assetPath: "images/mixed/poster.webp", derivedFromAssetId: "video" },
-      { id: "document", kind: "document", storageMode: "managed", mimeType: "application/pdf", assetPath: "documents/mixed/brief.pdf", sourceTitle: "Brief" }
+      { id: "audio", kind: "audio", storageMode: "managed", mimeType: "audio/mpeg", sourceFormat: "mp3", byteSize: 5242880, assetPath: "audio/mixed/theme.mp3", sourceTitle: "Theme.mp3" },
+      { id: "document", kind: "document", storageMode: "managed", mimeType: "application/x-subrip", sourceFormat: "srt", byteSize: 2048, assetPath: "documents/mixed/subtitle.srt", sourceTitle: "Subtitle.srt" },
+      { id: "source", kind: "attachment", storageMode: "managed", mimeType: "image/vnd.adobe.photoshop", sourceFormat: "psd", byteSize: 10485760, assetPath: "attachments/mixed/artwork.psd", sourceTitle: "Artwork.psd" },
+      { id: "font", kind: "attachment", storageMode: "managed", mimeType: "font/otf", sourceFormat: "otf", byteSize: 4096, assetPath: "attachments/mixed/typeface.otf", sourceTitle: "Typeface.otf" }
     ],
     primaryMediaId: "video",
     timeNotes: [{ id: "note", assetId: "video", startMs: 1250, endMs: 3400, text: "镜头加速" }]
   }], { libraryTitle: "Archive" }, createDefaultTaxonomy(), createDefaultFacetCatalog(), previewOptions);
 
   assert.match(html, /<video controls preload="metadata" poster="images\/mixed\/poster\.webp">/);
-  assert.match(html, /documents\/mixed\/brief\.pdf/);
-  assert.match(html, /打开文档/);
+  assert.match(html, /<audio controls preload="metadata">/);
+  assert.match(html, /audio\/mixed\/theme\.mp3/);
+  assert.match(html, /documents\/mixed\/subtitle\.srt/);
+  assert.match(html, /attachments\/mixed\/artwork\.psd/);
+  assert.match(html, /attachments\/mixed\/typeface\.otf/);
+  assert.match(html, /SRT · 2 KiB/);
+  assert.match(html, /PSD · 10\.0 MiB/);
+  assert.match(html, /下载源文件/);
+  assert.match(html, /href="attachments\/mixed\/artwork\.psd" download/);
   assert.match(html, /时间笔记/);
   assert.match(html, /0:01–0:03/);
   assert.match(html, /镜头加速/);

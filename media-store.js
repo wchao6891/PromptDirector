@@ -1,3 +1,10 @@
+import { assetFormatsForMimeType } from "./asset-formats.js";
+import {
+  ASSET_IMPORT_FAILURE_CODES,
+  assetImportError,
+  isAssetImportError
+} from "./resource-limits.js";
+
 const DATABASE_NAME = "prompt-case-collector";
 const DATABASE_VERSION = 4;
 const MEDIA_STORE = "media";
@@ -14,12 +21,16 @@ export async function saveMediaBlob(assetId, blob, options = {}) {
     const estimate = await storageEstimate(options.estimateStorage);
     assertStorageCapacity(estimate, blob.size);
   }
-  const transaction = (await openDatabase()).transaction(MEDIA_STORE, "readwrite");
-  const completed = transactionAsPromise(transaction);
-  await Promise.all([
-    requestAsPromise(transaction.objectStore(MEDIA_STORE).put(blob, assetId)),
-    completed
-  ]);
+  try {
+    const transaction = (await openDatabase()).transaction(MEDIA_STORE, "readwrite");
+    const completed = transactionAsPromise(transaction);
+    await Promise.all([
+      requestAsPromise(transaction.objectStore(MEDIA_STORE).put(blob, assetId)),
+      completed
+    ]);
+  } catch (error) {
+    throw mediaStorageWriteError(error);
+  }
 }
 
 export async function saveSkillPackageBlob(assetId, blob, options = {}) {
@@ -30,12 +41,16 @@ export async function saveSkillPackageBlob(assetId, blob, options = {}) {
     const estimate = await storageEstimate(options.estimateStorage);
     assertStorageCapacity(estimate, blob.size);
   }
-  const transaction = (await openDatabase()).transaction(MEDIA_STORE, "readwrite");
-  const completed = transactionAsPromise(transaction);
-  await Promise.all([
-    requestAsPromise(transaction.objectStore(MEDIA_STORE).put(blob, assetId)),
-    completed
-  ]);
+  try {
+    const transaction = (await openDatabase()).transaction(MEDIA_STORE, "readwrite");
+    const completed = transactionAsPromise(transaction);
+    await Promise.all([
+      requestAsPromise(transaction.objectStore(MEDIA_STORE).put(blob, assetId)),
+      completed
+    ]);
+  } catch (error) {
+    throw mediaStorageWriteError(error);
+  }
 }
 
 export async function getMediaBlob(assetId) {
@@ -202,19 +217,26 @@ export function assertStorageCapacity(estimate = {}, incomingBytes = 0) {
   const quota = Number(estimate?.quota);
   const usage = Number(estimate?.usage);
   const required = Number(incomingBytes);
-  if (!Number.isFinite(required) || required < 0) throw new Error("媒体文件大小无效");
+  if (!Number.isFinite(required) || required < 0) {
+    throw assetImportError(ASSET_IMPORT_FAILURE_CODES.INVALID_FILE, "媒体文件大小无效");
+  }
   if (!Number.isFinite(quota) || !Number.isFinite(usage) || quota < usage) return;
   if (quota - usage < required) {
-    throw new Error(`本机可用空间不足：还需要 ${formatBytes(required)}，请先释放磁盘空间`);
+    throw assetImportError(
+      ASSET_IMPORT_FAILURE_CODES.STORAGE_INSUFFICIENT,
+      `本机可用空间不足：导入需要 ${formatBytes(required)}，当前仅剩 ${formatBytes(quota - usage)}`,
+      { requiredBytes: required, availableBytes: quota - usage }
+    );
   }
 }
 
 export function validateMediaBlob(blob) {
-  if (!(blob instanceof Blob) || !blob.size) throw new Error("媒体文件无效");
+  if (!(blob instanceof Blob) || !blob.size) {
+    throw assetImportError(ASSET_IMPORT_FAILURE_CODES.INVALID_FILE, "媒体文件无效");
+  }
   const type = String(blob.type || "").toLocaleLowerCase("en-US");
-  if (!(type.startsWith("image/") || type.startsWith("video/") ||
-    ["application/pdf", "text/plain", "text/markdown", "text/html", "application/rtf", "text/rtf", "application/x-rtf"].includes(type))) {
-    throw new Error("暂不支持这种媒体格式");
+  if (!(type.startsWith("image/") || type.startsWith("video/") || assetFormatsForMimeType(type).length)) {
+    throw assetImportError(ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT, "暂不支持这种媒体格式");
   }
 }
 
@@ -293,4 +315,15 @@ function formatBytes(value) {
   const bytes = Math.max(0, Number(value) || 0);
   const mebibyte = 1024 * 1024;
   return bytes >= mebibyte ? `${Math.ceil(bytes / mebibyte)} MiB` : `${Math.ceil(bytes / 1024)} KiB`;
+}
+
+export function mediaStorageWriteError(error) {
+  if (isAssetImportError(error)) return error;
+  const explanation = String(error?.message ?? "").trim();
+  return assetImportError(
+    ASSET_IMPORT_FAILURE_CODES.STORAGE_WRITE_FAILED,
+    explanation ? `文件写入本机资料库失败：${explanation}` : "文件写入本机资料库失败，请检查可用空间后重试",
+    {},
+    { cause: error }
+  );
 }

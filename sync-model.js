@@ -1,5 +1,6 @@
 import { sha256Hex } from "./sync-crypto.js";
 import { SCHEMA_VERSION, createDefaultTaxonomy, normalizeTaxonomy } from "./taxonomy.js";
+import { createDefaultTrashState } from "./trash.js";
 
 export const SYNC_SNAPSHOT_FORMAT = "prompt-director-sync-state";
 export const SYNC_SNAPSHOT_VERSION = 1;
@@ -18,7 +19,8 @@ const ARRAY_ENTITIES = Object.freeze({
   collection: ["organizerState.collections", "id"],
   composer_session: ["composerSessions", "id"],
   creative_run: ["creativeRuns", "id"],
-  creative_skill: ["creativeSkills.items", "id"]
+  creative_skill: ["creativeSkills.items", "id"],
+  trash_item: ["trashState.items", "id"]
 });
 
 const SINGLETON_ENTITIES = Object.freeze({
@@ -184,6 +186,27 @@ export function mergeRevisionSnapshots(values = []) {
       records[key] = mergeCollectionRecords(key, heads, allRecords);
       continue;
     }
+    if (type === "trash_item") {
+      const active = heads.filter((item) => !item.deletedAt);
+      const deleted = heads.filter((item) => item.deletedAt);
+      if (deleted.length) {
+        records[key] = structuredClone(preferredRecord(deleted));
+        if (active.length) {
+          conflicts.push({ entityType: type, entityId, reason: "delete_edit", deviceId: preferredRecord(active).deviceId });
+        }
+        continue;
+      }
+      const winner = preferredRecord(active);
+      records[key] = structuredClone(winner);
+      for (const item of active.filter((candidate) => candidate.revisionId !== winner.revisionId)) {
+        conflictPayloads.push({
+          entityType: type,
+          payload: conflictEntity(type, item.payload, item, "concurrent_edit")
+        });
+        conflicts.push({ entityType: type, entityId, reason: "concurrent_edit", deviceId: item.deviceId });
+      }
+      continue;
+    }
     if (["compound_case", "composer_session", "creative_run", "creative_skill"].includes(type)) {
       const active = heads.filter((item) => !item.deletedAt);
       const deleted = heads.filter((item) => item.deletedAt);
@@ -230,6 +253,7 @@ export function syncStateHasContent(state = {}) {
     (state.composerSessions ?? []).length ||
     (state.creativeRuns ?? []).length ||
     (state.creativeSkills?.items ?? []).length ||
+    (state.trashState?.items ?? []).length ||
     taxonomyHasUserChanges(state.taxonomy)
   );
 }
@@ -281,6 +305,7 @@ function restoreState(records) {
     else if (type === "composer_session") state.composerSessions.push(payload);
     else if (type === "creative_run") state.creativeRuns.push(payload);
     else if (type === "creative_skill") state.creativeSkills.items.push(payload);
+    else if (type === "trash_item") state.trashState.items.push(payload);
     else {
       const target = SINGLETON_ENTITIES[type];
       if (target === "libraryProfile") {
@@ -297,6 +322,10 @@ function restoreState(records) {
   delete state.legacyTaxonomy;
   state.organizerState.collections.sort((left, right) =>
     (Number(left.order) || 0) - (Number(right.order) || 0) || String(left.name).localeCompare(String(right.name))
+  );
+  state.trashState.items.sort((left, right) =>
+    String(left.deletedAt ?? "").localeCompare(String(right.deletedAt ?? "")) ||
+    String(left.id).localeCompare(String(right.id))
   );
   return { state, imageRefs };
 }
@@ -345,6 +374,16 @@ function stripSyncImageRefs(payload, imageRefs) {
       delete asset.syncContentType;
     }
   }
+  for (const asset of trashItemStoredAssets(payload)) {
+    const assetId = storedAssetId(asset);
+    if (!assetId || !asset?.syncObjectId) continue;
+    imageRefs[assetId] = {
+      objectId: asset.syncObjectId,
+      contentType: asset.syncContentType || asset.mimeType || "application/octet-stream"
+    };
+    delete asset.syncObjectId;
+    delete asset.syncContentType;
+  }
   return payload;
 }
 
@@ -359,8 +398,18 @@ function stateStoredAssets(stateValue) {
     ...(Array.isArray(stateValue?.composerSessions) ? stateValue.composerSessions : [])
       .flatMap((session) => (Array.isArray(session?.referenceSnapshots) ? session.referenceSnapshots : [])
         .filter((reference) => reference?.sourceType === "temporary")
-        .flatMap((reference) => Array.isArray(reference?.assetRefs) ? reference.assetRefs : []))
+        .flatMap((reference) => Array.isArray(reference?.assetRefs) ? reference.assetRefs : [])),
+    ...(Array.isArray(stateValue?.trashState?.items) ? stateValue.trashState.items : [])
+      .flatMap(trashItemStoredAssets)
   ].filter(Boolean);
+}
+
+function trashItemStoredAssets(item) {
+  if (!item || !["entry", "media"].includes(item.kind)) return [];
+  const snapshot = item.snapshot;
+  if (!snapshot || typeof snapshot !== "object") return [];
+  if (Array.isArray(snapshot.mediaAssets)) return snapshot.mediaAssets;
+  return Array.isArray(snapshot.visuals) ? snapshot.visuals : [];
 }
 
 function storedAssetId(asset) {
@@ -586,6 +635,15 @@ function conflictEntity(entityType, payload, record, reason) {
   const source = structuredClone(payload);
   const suffix = record.revisionId.replace(/[^a-z0-9]/gi, "").slice(-10);
   source.id = `${source.id}-conflict-${suffix}`;
+  if (entityType === "trash_item") {
+    source.syncConflict = {
+      reason,
+      originalEntityId: record.entityId,
+      sourceDeviceId: record.deviceId,
+      revisionId: record.revisionId
+    };
+    return source;
+  }
   source.title = `${cleanText(source.title) || "未命名记录"}（同步冲突副本）`;
   source.syncConflict = {
     reason,
@@ -637,7 +695,8 @@ function emptyState() {
     organizerState: { version: 4, collections: [] },
     composerSessions: [],
     creativeRuns: [],
-    creativeSkills: { version: 1, items: [] }
+    creativeSkills: { version: 1, items: [] },
+    trashState: createDefaultTrashState()
   };
 }
 

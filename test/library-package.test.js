@@ -5,12 +5,14 @@ import {
   mergeLibraryPackage,
   parseCompleteFolderBackup,
   parseLibraryPackage,
+  projectPackageEntryIds,
   selectLibraryPackage,
   selectProjectPackage
 } from "../library-package.js";
 import { createDefaultFacetCatalog, createFacet, createFacetNode } from "../facets.js";
 import { CONTENT_IDS, CONTENT_ROLES, SCHEMA_VERSION, createContentType, createDefaultTaxonomy } from "../taxonomy.js";
 import { COMPOSER_METHOD_VERSION, createComposerSession, normalizeComposerSettings } from "../composer.js";
+import { createZipBlob, readZipBlob } from "../zip.js";
 
 function packageData(entries, facetCatalog) {
   return {
@@ -143,6 +145,106 @@ test("v3 packages restore video documents and time notes with their media relati
     ["videos/mixed/video-a.mp4", new Blob(["truncated"], { type: "video/mp4" })],
     ["documents/mixed/doc-a.pdf", new Blob(["pdf"], { type: "application/pdf" })]
   ])), /大小校验失败/);
+});
+
+test("v4 mixed creative-asset ZIP restores image video audio subtitle PSD and font bytes", async () => {
+  const assets = [
+    { id: "image", kind: "image", mimeType: "image/png", sourceFormat: "png", path: "images/mixed/image.png", bytes: "image" },
+    { id: "video", kind: "video", mimeType: "video/mp4", sourceFormat: "mp4", path: "videos/mixed/video.mp4", bytes: "video" },
+    { id: "audio", kind: "audio", mimeType: "audio/mpeg", sourceFormat: "mp3", path: "audio/mixed/theme.mp3", bytes: "audio" },
+    { id: "subtitle", kind: "document", mimeType: "application/x-subrip", sourceFormat: "srt", path: "documents/mixed/subtitle.srt", bytes: "subtitle" },
+    { id: "psd", kind: "attachment", mimeType: "image/vnd.adobe.photoshop", sourceFormat: "psd", path: "attachments/mixed/artwork.psd", bytes: "psd-source" },
+    { id: "font", kind: "attachment", mimeType: "font/otf", sourceFormat: "otf", path: "attachments/mixed/typeface.otf", bytes: "font-source" }
+  ];
+  const data = packageData([], catalog());
+  data.version = 4;
+  data.entries = [{
+    ...entry("mixed"),
+    hasScreenshot: undefined,
+    screenshotPath: undefined,
+    mediaAssets: assets.map((asset) => ({
+      id: asset.id,
+      kind: asset.kind,
+      storageMode: "managed",
+      mimeType: asset.mimeType,
+      sourceFormat: asset.sourceFormat,
+      sourceTitle: asset.path.split("/").at(-1),
+      byteSize: new Blob([asset.bytes]).size,
+      assetPath: asset.path
+    })),
+    primaryMediaId: "image"
+  }];
+  const archive = await createZipBlob([
+    { name: "library.json", data: JSON.stringify(data) },
+    ...assets.map((asset) => ({ name: asset.path, data: new Blob([asset.bytes], { type: asset.mimeType }) }))
+  ]);
+  const files = await readZipBlob(archive, {
+    maxArchiveBytes: archive.size,
+    maxFileBytes: archive.size,
+    maxImageBytes: archive.size
+  });
+  const parsed = parseLibraryPackage(JSON.parse(await files.get("library.json").text()), files, {
+    maxArchiveBytes: archive.size,
+    maxFileBytes: archive.size,
+    maxImageBytes: archive.size
+  });
+
+  assert.deepEqual(parsed.entries[0].mediaAssets.map((asset) => asset.kind), [
+    "image", "video", "audio", "document", "attachment", "attachment"
+  ]);
+  for (const asset of assets) {
+    assert.equal(parsed.assets.get(asset.id)?.size, new Blob([asset.bytes]).size);
+    const restored = parsed.entries[0].mediaAssets.find((item) => item.id === asset.id);
+    assert.equal(restored.sourceFormat, asset.sourceFormat);
+    assert.equal(restored.mimeType, asset.mimeType);
+  }
+  const preview = mergeLibraryPackage({
+    entries: [], taxonomy: createDefaultTaxonomy(), facetCatalog: createDefaultFacetCatalog(),
+    classificationRules: [], settings: {}
+  }, data, { now: "2026-08-22T10:00:00.000Z", importBatchId: "mixed-zip" });
+  assert.deepEqual(preview.state.entries[0].mediaAssets.map((asset) => asset.sourceFormat), [
+    "png", "mp4", "mp3", "srt", "psd", "otf"
+  ]);
+});
+
+test("v4 package rejects asset paths whose registered extension kind or MIME disagrees", () => {
+  const data = packageData([], catalog());
+  data.version = 4;
+  data.entries = [{
+    ...entry("mismatch"), hasScreenshot: undefined, screenshotPath: undefined,
+    mediaAssets: [{
+      id: "fake-psd", kind: "attachment", storageMode: "managed", sourceTitle: "fake.psd",
+      sourceFormat: "psd", mimeType: "font/otf", byteSize: 4, assetPath: "attachments/mismatch/fake.psd"
+    }]
+  }];
+  assert.throws(() => parseLibraryPackage(data, new Map([[
+    "attachments/mismatch/fake.psd", new Blob(["fake"], { type: "application/octet-stream" })
+  ]])), /扩展名、媒体类型和 MIME 不一致/);
+});
+
+test("v4 package restores an unknown local source only as an inert managed attachment", () => {
+  const data = packageData([], catalog());
+  data.version = 4;
+  data.entries = [{
+    ...entry("generic-source"), hasScreenshot: undefined, screenshotPath: undefined,
+    mediaAssets: [{
+      id: "generic", kind: "attachment", storageMode: "managed", sourceTitle: "scene.customsource",
+      sourceFormat: "customsource", formatCategory: "other-source", mimeType: "application/octet-stream",
+      byteSize: 6, assetPath: "attachments/generic-source/scene.customsource"
+    }],
+    primaryMediaId: "generic"
+  }];
+  const parsed = parseLibraryPackage(data, new Map([[
+    "attachments/generic-source/scene.customsource", new Blob(["source"], { type: "application/octet-stream" })
+  ]]));
+  const restored = parsed.entries[0].mediaAssets[0];
+  assert.equal(restored.kind, "attachment");
+  assert.equal(restored.storageMode, "managed");
+  assert.equal(restored.formatCategory, "other-source");
+  assert.equal(restored.sourceFormat, "customsource");
+  for (const field of ["recordType", "linkStatus", "importFailure"]) {
+    assert.equal(Object.hasOwn(restored, field), false);
+  }
 });
 
 test("complete folder backups restore genuine legacy RTF documents without trusting a .bin MIME type", async () => {
@@ -336,6 +438,24 @@ test("existing-library import merges new cases, reuses same-name vocabulary and 
   assert.equal(repeated.skippedCount, 1);
 });
 
+test("package import keeps source time but assigns one receiver-local added time and batch", () => {
+  const source = entry("received");
+  source.libraryAddedAt = "2026-07-01T00:00:00.000Z";
+  source.importBatchId = "sender-batch";
+  const result = mergeLibraryPackage({
+    entries: [], taxonomy: createDefaultTaxonomy(), facetCatalog: catalog(),
+    classificationRules: [], settings: {}
+  }, packageData([source], catalog()), {
+    now: "2026-08-22T08:30:00+08:00",
+    importBatchId: "receiver-batch"
+  });
+
+  const received = result.state.entries[0];
+  assert.equal(received.savedAt, "2026-07-18T10:00:00.000Z");
+  assert.equal(received.libraryAddedAt, "2026-08-22T00:30:00.000Z");
+  assert.equal(received.importBatchId, "receiver-batch");
+});
+
 test("existing-library import carries user content types and keeps imported cases connected", () => {
   const source = entry("document");
   source.classification.pathIds = ["content:work-doc"];
@@ -364,6 +484,19 @@ test("selected share packages contain only chosen cases and the vocabulary they 
   assert.deepEqual(selected.entries.map((item) => item.id), ["one"]);
   assert.deepEqual(selected.facetCatalog.nodes.map((item) => item.id), ["tag:dramatic", "tag:epic"]);
   assert.deepEqual(selected.organizerState.collections, []);
+});
+
+test("selected share does not leak sender-local library time or import batch", () => {
+  const source = entry("one");
+  source.libraryAddedAt = "2026-08-21T00:00:00.000Z";
+  source.importBatchId = "local-import:one";
+  const selected = selectLibraryPackage({
+    entries: [source], taxonomy: createDefaultTaxonomy(), facetCatalog: catalog(), classificationRules: []
+  }, ["one"]);
+
+  assert.equal(selected.entries[0].savedAt, source.savedAt);
+  assert.equal("libraryAddedAt" in selected.entries[0], false);
+  assert.equal("importBatchId" in selected.entries[0], false);
 });
 
 test("sharing and importing a compound case preserves all members and remaps its relationship", () => {
@@ -401,6 +534,33 @@ test("project packages include every project member and only that project relati
   assert.deepEqual(selected.organizerState.collections.map((item) => item.name), ["Campaign"]);
   assert.deepEqual(selected.organizerState.collections[0].entryIds, ["one", "two"]);
   assert.deepEqual(selected.composerSessions, []);
+
+  const received = mergeLibraryPackage({
+    entries: [entry("local")], taxonomy: createDefaultTaxonomy(), facetCatalog: catalog(),
+    classificationRules: [], settings: {}, organizerState: { collections: [] }
+  }, selected, {
+    preserveLibraryConfiguration: true,
+    now: "2026-08-22T09:00:00.000Z"
+  });
+  assert.equal(received.state.organizerState.collections[0].createdAt, "2026-08-22T09:00:00.000Z");
+});
+
+test("project packages keep a visible compound complete in the exported project", () => {
+  const source = packageData([entry("one"), entry("two"), entry("outside")], catalog());
+  source.compoundCases = [{
+    id: "compound:story", title: "完整流程", memberEntryIds: ["one", "two"], coverVisualId: "",
+    customLabels: [], createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z"
+  }];
+  source.organizerState = {
+    version: 2,
+    collections: [{ id: "collection:project", name: "Campaign", order: 0, entryIds: ["one"] }]
+  };
+
+  assert.deepEqual(projectPackageEntryIds(source, "collection:project"), ["one", "two"]);
+  const selected = selectProjectPackage(source, "collection:project");
+  assert.deepEqual(selected.entries.map((item) => item.id), ["one", "two"]);
+  assert.deepEqual(selected.organizerState.collections[0].entryIds, ["one", "two"]);
+  assert.deepEqual(selected.compoundCases[0].memberEntryIds, ["one", "two"]);
 });
 
 test("share package keeps vision description but strips provider metadata", () => {

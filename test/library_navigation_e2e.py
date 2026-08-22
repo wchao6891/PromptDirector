@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+import re
 
 from playwright.sync_api import expect
 
@@ -67,6 +68,23 @@ def main() -> None:
         expect(library.locator("#collection-filters .project-filter")).to_have_count(1)
         expect(library.locator("#collection-filters .project-filter-name")).to_have_text("导航验收项目")
         expect(library.locator("#collection-filters .project-filter-count")).to_have_text("1")
+        expect(library.locator("#project-sort")).to_have_count(0)
+        expect(library.locator(".project-row.project-ordering")).to_have_count(0)
+        library.locator("#manage-project-order").click()
+        expect(library.locator(".project-row.project-ordering")).to_have_count(1)
+        expect(library.locator(".project-row > .project-menu")).to_be_hidden()
+        expect(library.locator("#manage-project-order use")).to_have_attribute("href", re.compile(r"assets/ui-icons\.svg#icon-circle-check-big$"))
+        library.locator("#manage-project-order").click()
+        expect(library.locator(".project-row.project-ordering")).to_have_count(0)
+        expect(library.locator(".project-row > .project-menu")).to_be_visible()
+
+        resizer = library.locator("#sidebar-resizer")
+        expect(resizer).to_be_visible()
+        resizer.focus()
+        resizer.press("ArrowRight")
+        expect(resizer).to_have_attribute("aria-valuenow", "260")
+        saved_width = library.evaluate("async () => (await chrome.storage.local.get('uiPreferences')).uiPreferences.sidebarWidth")
+        assert saved_width == 260, saved_width
         expect(library.locator("#content-filters .content-filter-option")).to_have_count(6)
         expect(library.locator("#content-filters")).not_to_contain_text("全部")
         expect(library.locator("#facet-filters .facet-filter-body .filter-option", has_text="全部")).to_have_count(0)
@@ -90,10 +108,27 @@ def main() -> None:
             })"""
         )
         assert wall == {"gap": "2px", "cardRadius": "2px"}, wall
+        library.locator("#select-cases").click()
+        expect(library.locator("#result-count")).to_be_hidden()
+        expect(library.locator("#gallery-view-controls")).to_be_hidden()
+        expect(library.locator("#manage-project-order")).to_be_visible()
+        expect(library.locator("#manage-project-order")).to_be_disabled()
+        expect(library.locator("#share-count")).to_have_text("已选 0")
+        library.locator("#selection-select-filtered").click()
+        expect(library.locator("#selection-clear")).to_be_enabled()
+        expect(library.locator("#share-count")).to_have_text("已选 2")
+        expect(library.locator("#selection-select-filtered")).to_have_text("全选当前（2）")
+        library.locator("#selection-clear").click()
+        expect(library.locator("#selection-clear")).to_be_disabled()
+        expect(library.locator("#share-count")).to_have_text("已选 0")
+        expect(library.locator(".case-card.selected-for-share")).to_have_count(0)
+        library.locator("#share-cancel").click()
+        expect(library.locator("#manage-project-order")).to_be_enabled()
         library.locator("#filter-sidebar").evaluate("node => { node.scrollTop = 0; }")
         library.screenshot(path=str(screenshots / "promptdirector-step2-library-desktop.png"), full_page=True)
 
         library.set_viewport_size({"width": 390, "height": 844})
+        expect(library.locator("#sidebar-resizer")).to_be_hidden()
         expect(library.locator(".workspace")).to_have_class("workspace filters-collapsed")
         library.wait_for_function(
             """() => new Promise((resolve) => requestAnimationFrame(
@@ -120,7 +155,13 @@ def main() -> None:
         library.locator('[data-content-filter-id="content:prompt:image"]').click()
         expect(library.locator("#case-list > .case-card")).to_have_count(1)
         overflow = library.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
-        assert overflow is False
+        overflow_nodes = library.evaluate(
+            """() => [...document.querySelectorAll('body *')].flatMap(node => {
+              const rect = node.getBoundingClientRect();
+              return rect.right > innerWidth + 1 ? [{tag: node.tagName, id: node.id, className: String(node.className), right: rect.right}] : [];
+            }).slice(0, 12)"""
+        )
+        assert overflow is False, overflow_nodes
         library.screenshot(path=str(screenshots / "promptdirector-step2-library-mobile.png"), full_page=True)
 
         print({

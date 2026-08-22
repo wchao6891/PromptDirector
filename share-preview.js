@@ -6,6 +6,7 @@ import { entryPalette, normalizeEntryVisuals, primaryVisionDescription } from ".
 import { posterAssetForVideo, primaryMediaAsset } from "./media.js";
 import { createSimilarityIndex, rankSimilarEntries } from "./local-similarity.js";
 import { promptForEntryImage } from "./image-prompt.js";
+import { assetFormatForExtension, fileExtension } from "./asset-formats.js";
 
 const CONTENT_LABELS = Object.freeze({
   "content:tutorial": ["攻略教程", "Tutorial"],
@@ -281,16 +282,18 @@ function renderCaseTile(entry, index, taxonomy, facetCatalog, className = "case-
 
 function renderTileMedia(entry, primary, title) {
   if (primary?.kind === "image") {
-    const path = safeArchiveMediaPath(primary.assetPath, "image");
+    const path = safeArchiveMediaPath(primary.assetPath, primary);
     if (path) return `<span class="tile-media"${aspectRatioStyle(primary)}><img src="${escapeAttribute(path)}" alt="${escapeAttribute(title)}" loading="lazy" decoding="async" /></span>`;
   }
   if (primary?.kind === "video") {
     const poster = posterAssetForVideo(entry, primary);
-    const path = safeArchiveMediaPath(poster?.assetPath, "image");
+    const path = safeArchiveMediaPath(poster?.assetPath, poster);
     if (path) return `<span class="tile-media"${aspectRatioStyle(poster)}><img src="${escapeAttribute(path)}" alt="${escapeAttribute(`${title} 视频封面`)}" loading="lazy" decoding="async" /><span class="video-cue">▶</span>${primary.durationMs ? `<span class="video-duration">${formatDuration(primary.durationMs)}</span>` : ""}</span>`;
     return renderFallbackCover("VIDEO", title, "video");
   }
+  if (primary?.kind === "audio") return renderFallbackCover("AUDIO", title, "audio");
   if (primary?.kind === "document") return renderFallbackCover(documentKind(primary), title, "document");
+  if (primary?.kind === "attachment") return renderFallbackCover(assetFormatLabel(primary), title, "attachment");
   return renderFallbackCover("NOTE", title, "text");
 }
 
@@ -303,7 +306,10 @@ function renderDetail(entry, index, taxonomy, facetCatalog, relatedEntries) {
   const media = entry.mediaAssets.filter((asset) => asset.usage !== "poster");
   const [contentZh, contentEn] = contentLabelPair(entry, taxonomy);
   const [dateZh, dateEn] = formatDatePair(entry.savedAt);
-  const attributes = entryAttributeSummary(entry, facetCatalog, 20);
+  const attributes = entryAttributeSummary(entry, facetCatalog, 20).map((item) => ({
+    ...item,
+    leafLabel: String(item.label || "").split("/").at(-1)?.trim() || item.label
+  }));
   const palette = (entryPalette(entry)?.colors ?? []).filter(validColor);
   const sourceUrl = safeWebUrl(entry.url);
   const primary = primaryMediaAsset(entry);
@@ -319,7 +325,7 @@ function renderDetail(entry, index, taxonomy, facetCatalog, relatedEntries) {
       <section class="detail-gallery">${renderDetailMedia(entry, media, title)}</section>
       <aside class="detail-body">
         <section class="detail-section detail-heading"><p class="eyebrow">PROMPTDIRECTOR</p><h2>${escapeHtml(title)}</h2><div class="detail-meta"><span data-zh="${escapeAttribute(contentZh)}" data-en="${escapeAttribute(contentEn)}">${escapeHtml(contentZh)}</span>${dateZh ? `<span data-zh="${escapeAttribute(dateZh)}" data-en="${escapeAttribute(dateEn)}">${escapeHtml(dateZh)}</span>` : ""}<span>${media.length} <span data-zh="项媒体" data-en="media items">项媒体</span></span></div>${palette.length ? `<div class="palette">${palette.map((color) => `<i style="background:${color}" title="${color}"></i>`).join("")}</div>` : ""}</section>
-        ${attributes.length ? `<section class="detail-section"><h3 data-zh="创作属性" data-en="Creative attributes">创作属性</h3><div class="detail-tags">${attributes.map((item) => `<span>${escapeHtml(item.label)}</span>`).join("")}</div></section>` : ""}
+        ${attributes.length ? `<section class="detail-section"><h3 data-zh="AI 标签" data-en="AI tags">AI 标签</h3><div class="detail-tags">${attributes.map((item) => `<span title="${escapeAttribute(item.label)}">${escapeHtml(item.leafLabel)}</span>`).join("")}</div></section>` : ""}
         ${prompt ? `<section class="detail-section prompt-section"><div class="section-heading"><h3 data-zh="提示词" data-en="Prompt">提示词</h3><button class="button-secondary compact" type="button" data-copy-prompt="${escapeAttribute(prompt)}"><span data-zh="复制提示词" data-en="Copy prompt">复制提示词</span></button></div><pre class="prompt-text">${escapeHtml(prompt)}</pre><p class="compose-guide" data-zh="导入 PromptDirector 后可将当前图片作为具体参考继续创作。" data-en="Import this package into PromptDirector to continue creating with the current image as a specific reference.">导入 PromptDirector 后可将当前图片作为具体参考继续创作。</p></section>` : ""}
         ${visionDescription ? `<section class="detail-section"><h3 data-zh="画面描述" data-en="Visual description">画面描述</h3><p class="visual-description">${escapeHtml(visionDescription)}</p></section>` : ""}
         ${metadataRows || sourceUrl ? `<section class="detail-section"><div class="section-heading"><h3 data-zh="来源" data-en="Source">来源</h3>${sourceUrl ? `<a class="source-open-action" href="${escapeAttribute(sourceUrl)}" target="_blank" rel="noreferrer"><span data-zh="打开来源" data-en="Open source">打开来源</span></a>` : ""}</div>${metadataRows}</section>` : ""}
@@ -342,20 +348,26 @@ function renderMediaAsset(entry, asset, title) {
   const description = clean(asset.visionAnalysis?.description);
   let content;
   if (asset.kind === "image") {
-    const path = safeArchiveMediaPath(asset.assetPath, "image");
+    const path = safeArchiveMediaPath(asset.assetPath, asset);
     content = path ? `<div class="detail-image-frame"><img src="${escapeAttribute(path)}" alt="${escapeAttribute(title)}" /></div>` : renderExternalMedia(asset, "图片");
   } else if (asset.kind === "video") {
-    const path = safeArchiveMediaPath(asset.assetPath, "video");
+    const path = safeArchiveMediaPath(asset.assetPath, asset);
     const poster = posterAssetForVideo(entry, asset);
-    const posterPath = safeArchiveMediaPath(poster?.assetPath, "image");
+    const posterPath = safeArchiveMediaPath(poster?.assetPath, poster);
     content = path
       ? `<video controls preload="metadata"${posterPath ? ` poster="${escapeAttribute(posterPath)}"` : ""}><source src="${escapeAttribute(path)}" type="${escapeAttribute(asset.mimeType || "video/mp4")}" /></video>`
       : renderExternalMedia(asset, "视频");
-  } else {
-    const path = safeArchiveMediaPath(asset.assetPath, "document");
+  } else if (asset.kind === "audio") {
+    const path = safeArchiveMediaPath(asset.assetPath, asset);
     content = path
-      ? `<div class="document-panel"><strong>${escapeHtml(documentKind(asset))}</strong><span>${escapeHtml(asset.sourceTitle || title)}</span><a class="button-primary" href="${escapeAttribute(path)}" target="_blank"><span data-zh="打开文档" data-en="Open document">打开文档</span></a></div>`
-      : renderExternalMedia(asset, "文档");
+      ? `<div class="audio-panel"><strong>${escapeHtml(asset.sourceTitle || title)}</strong><audio controls preload="metadata"><source src="${escapeAttribute(path)}" type="${escapeAttribute(asset.mimeType || "audio/mpeg")}" /></audio><span>${escapeHtml(assetFileSummary(asset))}</span><a class="button-secondary" href="${escapeAttribute(path)}" download><span data-zh="下载源文件" data-en="Download source file">下载源文件</span></a></div>`
+      : renderExternalMedia(asset, "音频");
+  } else {
+    const path = safeArchiveMediaPath(asset.assetPath, asset);
+    const label = asset.kind === "attachment" ? "创作源文件" : "文档";
+    content = path
+      ? `<div class="document-panel"><strong>${escapeHtml(assetFormatLabel(asset))}</strong><span>${escapeHtml(asset.sourceTitle || title)}</span><small>${escapeHtml(assetFileSummary(asset))}</small><a class="button-primary" href="${escapeAttribute(path)}" download><span data-zh="下载源文件" data-en="Download source file">下载源文件</span></a></div>`
+      : renderExternalMedia(asset, label);
   }
   const caption = prompt || description ? `<div class="media-caption">${prompt ? `<p><strong data-zh="本图提示词" data-en="Media prompt">本图提示词</strong>${escapeHtml(prompt)}</p>` : ""}${description ? `<p><strong data-zh="画面描述" data-en="Visual description">画面描述</strong>${escapeHtml(description)}</p>` : ""}</div>` : "";
   return `${content}${caption}`;
@@ -368,9 +380,9 @@ function renderExternalMedia(asset, label) {
 
 function renderMediaThumb(entry, asset, index) {
   const image = asset.kind === "image" ? asset : asset.kind === "video" ? posterAssetForVideo(entry, asset) : null;
-  const path = safeArchiveMediaPath(image?.assetPath, "image");
+  const path = safeArchiveMediaPath(image?.assetPath, image);
   if (path) return `<img src="${escapeAttribute(path)}" alt="${index + 1}" loading="lazy" />`;
-  return `<span>${escapeHtml(asset.kind === "video" ? "VIDEO" : documentKind(asset))}</span>`;
+  return `<span>${escapeHtml(asset.kind === "video" ? "VIDEO" : asset.kind === "audio" ? "AUDIO" : assetFormatLabel(asset))}</span>`;
 }
 
 function renderMetadataRows(labels = []) {
@@ -467,12 +479,16 @@ function safeWebUrl(value) {
   }
 }
 
-function safeArchiveMediaPath(value, kind) {
+function safeArchiveMediaPath(value, asset) {
   const path = String(value ?? "");
   if (!path || path.includes("..")) return "";
-  if (kind === "image") return /^images\/[A-Za-z0-9._/-]+\.(?:png|jpe?g|webp)$/i.test(path) ? path : "";
-  if (kind === "video") return /^videos\/[A-Za-z0-9._/-]+\.(?:mp4|webm|mov|mkv|avi|video)$/i.test(path) ? path : "";
-  return /^documents\/[A-Za-z0-9._/-]+\.(?:pdf|md|txt|html?|bin)$/i.test(path) ? path : "";
+  const directories = { image: "images", video: "videos", audio: "audio", document: "documents", attachment: "attachments" };
+  const directory = directories[asset?.kind];
+  if (!directory || !(new RegExp(`^${directory}\\/[A-Za-z0-9._/-]+\\.[A-Za-z0-9]+$`, "i")).test(path)) return "";
+  const extension = fileExtension(path);
+  const format = assetFormatForExtension(extension);
+  if (format) return format.kind === asset.kind ? path : "";
+  return asset.kind === "attachment" && /^[a-z0-9]+$/u.test(extension) ? path : "";
 }
 
 function formatDatePair(value) {
@@ -497,6 +513,26 @@ function documentKind(asset) {
   if (asset?.mimeType === "text/html") return "HTML";
   if (asset?.mimeType === "text/plain") return "TXT";
   return "DOC";
+}
+
+function assetFormatLabel(asset) {
+  const extension = clean(asset?.sourceFormat) || fileExtension(asset?.sourceTitle) || fileExtension(asset?.assetPath);
+  return extension ? extension.toLocaleUpperCase("en-US") : asset?.kind === "attachment" ? "FILE" : documentKind(asset);
+}
+
+function assetFileSummary(asset) {
+  const format = assetFormatLabel(asset);
+  const size = formatFileSize(asset?.byteSize);
+  return [format, size].filter(Boolean).join(" · ");
+}
+
+function formatFileSize(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KiB`;
+  return `${Math.round(bytes)} B`;
 }
 
 function aspectRatioStyle(asset) {
@@ -526,7 +562,7 @@ function escapeAttribute(value) {
 
 function sharePreviewStyles() {
   return `
-    :root{--visual-wall-gap:2px;--visual-card-radius:2px}.share-icon-sprite{position:absolute;width:0;height:0;overflow:hidden}body{min-width:0;background:var(--ui-page)}body.detail-open{overflow:hidden}.app-header{position:sticky;z-index:20;top:0;display:flex;min-height:64px;align-items:center;gap:24px;border-bottom:1px solid var(--ui-border);padding:8px 12px;background:var(--bar);backdrop-filter:blur(16px)}.brand-block{display:grid;min-width:190px;gap:1px}.eyebrow{margin:0;color:var(--ui-accent);font-size:11px;font-weight:800;letter-spacing:.12em}.brand-block h1{max-width:340px;overflow:hidden;margin:0;color:var(--ui-text);font-size:18px;line-height:1.2;text-overflow:ellipsis;white-space:nowrap}.package-count{margin:0;color:var(--ui-muted);font-size:11px}.header-tools{display:flex;min-width:0;flex:1;align-items:center;justify-content:flex-end;gap:8px}.search-field{width:min(360px,32vw)}.type-field{width:min(180px,18vw)}.compact-setting{display:flex;align-items:center;gap:6px;color:var(--ui-muted);font-size:11px}.compact-setting select{width:auto;min-width:92px}.import-guide{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--ui-border);padding:10px 14px;background:var(--ui-surface)}.import-guide p{margin:0;color:var(--ui-muted);font-size:11px;line-height:1.55}.import-guide strong{color:var(--ui-text)}.product-actions{display:flex;align-items:center;gap:7px}.install-action,.source-action{display:inline-flex;min-height:30px;align-items:center;padding:5px 9px;text-decoration:none;white-space:nowrap}.gallery-shell{padding:8px 6px 60px}.case-grid,.related-grid{position:relative;width:100%;overflow-anchor:none;--masonry-card-min-width:270px;--masonry-gap:var(--visual-wall-gap)}.case-card,.related-card{position:absolute;display:block;width:100%;min-height:0;overflow:hidden;border:0;border-radius:var(--visual-card-radius);padding:0;color:var(--ui-text);background:var(--ui-surface);cursor:pointer;vertical-align:top;white-space:normal}.case-card:hover,.related-card:hover{background:var(--ui-hover);box-shadow:0 8px 20px color-mix(in srgb,var(--ui-text) 10%,transparent)}.tile-media{position:relative;display:block;min-height:110px;overflow:hidden;background:var(--viewer-bg)}.tile-media img{display:block;width:100%;height:auto}.tile-media[style] img{height:100%;object-fit:cover}.video-cue{position:absolute;top:50%;left:50%;display:grid;width:38px;height:38px;place-items:center;border-radius:50%;color:white;background:rgba(7,9,11,.68);transform:translate(-50%,-50%)}.video-duration,.media-count{position:absolute;right:7px;bottom:7px;border-radius:3px;padding:2px 5px;color:white;background:rgba(7,9,11,.72);font-size:11px}.media-count{top:7px;bottom:auto}.fallback-cover{display:grid;min-height:190px;align-content:space-between;gap:18px;padding:16px;color:var(--ui-text);background:var(--ui-raised);text-align:left}.fallback-cover.document{background:linear-gradient(160deg,var(--ui-raised),var(--ui-surface))}.fallback-cover small{color:var(--ui-accent);font-size:11px;font-weight:800;letter-spacing:.12em}.fallback-cover strong{font-size:16px;line-height:1.35}.empty-state{padding:80px 20px;color:var(--ui-muted);text-align:center}.empty-state strong{color:var(--ui-text);font-size:18px}.detail-view{position:fixed;z-index:50;inset:0;overflow:auto;background:var(--viewer-bg)}.detail-toolbar{position:fixed;z-index:55;inset:0 0 auto;height:0;pointer-events:none}.detail-toolbar .icon-button{color:white;border-color:rgba(255,255,255,.22);background:rgba(15,17,19,.82);box-shadow:0 4px 18px rgba(0,0,0,.24);pointer-events:auto}.detail-toolbar>.icon-button{position:absolute;top:14px;right:14px}.detail-navigation{position:absolute;top:50dvh;right:clamp(380px,34vw,480px);left:0;display:flex;justify-content:space-between;padding:0 16px;transform:translateY(-50%)}.detail-stack{min-height:100%}.case-detail{min-height:100%;background:var(--ui-surface)}.detail-primary{display:grid;min-height:100dvh;grid-template-columns:minmax(0,1fr) clamp(380px,34vw,480px)}.detail-primary:not(.has-media){display:block}.detail-gallery{display:grid;min-width:0;min-height:100dvh;align-content:center;background:var(--viewer-bg)}.detail-media-stage{display:grid;min-height:0}.detail-media-panel{min-width:0}.detail-media-panel>video{display:block;width:100%;max-height:calc(100dvh - 88px);margin:auto;background:#06080c}.detail-image-frame{display:block;width:100%;min-height:0;margin:0;background:#06080c}.detail-image-frame img{display:block;width:100%;height:calc(100dvh - 88px);object-fit:contain}.detail-media-rail{display:flex;gap:7px;overflow-x:auto;padding:8px 10px 10px;background:var(--viewer-bg)}.detail-media-thumb{display:grid;width:76px;min-width:76px;min-height:58px;place-items:center;overflow:hidden;border:1px solid transparent;border-radius:6px;padding:0;color:white;background:#06080c;opacity:.72}.detail-media-thumb[aria-pressed="true"]{border-color:rgba(255,255,255,.62);opacity:1}.detail-media-thumb img{display:block;width:100%;height:56px;object-fit:cover}.media-caption{display:grid;gap:6px;padding:10px 12px;color:rgba(255,255,255,.82);background:color-mix(in srgb,var(--viewer-bg) 92%,white);font-size:11px}.media-caption p{margin:0}.media-caption strong{display:block;margin-bottom:2px;color:white}.document-panel,.detail-placeholder{display:grid;min-height:360px;place-items:center;align-content:center;gap:14px;padding:24px;color:var(--ui-muted);background:var(--ui-surface);text-align:center}.document-panel strong{color:var(--ui-accent);font-size:46px}.document-panel .button-primary{display:inline-flex;align-items:center;text-decoration:none}.detail-body{min-width:0;border-left:1px solid var(--ui-border);background:var(--ui-surface)}.detail-section{border-bottom:1px solid var(--ui-border);padding:16px 22px}.detail-section h2{margin:4px 0 8px;font-size:17px;line-height:1.35}.detail-section h3{margin:0 0 10px;font-size:11px}.detail-meta{display:flex;flex-wrap:wrap;gap:8px 14px;color:var(--ui-muted);font-size:11px}.palette{display:flex;height:16px;overflow:hidden;margin-top:12px;border-radius:4px}.palette i{flex:1}.detail-tags{display:flex;flex-wrap:wrap;gap:5px}.detail-tags span{padding:4px 7px;border-radius:999px;color:var(--ui-text);background:var(--ui-raised);font-size:11px;font-weight:700}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.section-heading h3{margin:0}.prompt-text{max-height:360px;overflow:auto;margin:0;border-radius:6px;padding:14px;color:var(--prompt-ink);background:var(--prompt-bg);font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.compose-guide,.visual-description{margin:10px 0 0;color:var(--ui-muted);font-size:11px;line-height:1.55}.source-open-action{display:inline-flex;min-height:30px;align-items:center;border:1px solid var(--ui-border);border-radius:4px;padding:5px 9px;color:var(--ui-text);font-size:11px;font-weight:700;text-decoration:none}.metadata-list{display:grid;margin:0}.metadata-row{display:grid;grid-template-columns:minmax(72px,104px) minmax(0,1fr);gap:12px;border-top:1px solid var(--ui-border);padding:7px 0}.metadata-row:first-child{border-top:0}.metadata-row dt{color:var(--ui-muted);font-size:11px;font-weight:700}.metadata-row dd{margin:0;overflow-wrap:anywhere;font-size:12px}.time-notes{display:grid;gap:8px;margin:0;padding:0;list-style:none}.time-notes li{display:grid;grid-template-columns:72px 1fr;gap:10px}.time-notes time{color:var(--ui-accent);font:11px ui-monospace,monospace}.time-notes span{font-size:12px}.related-section{border-top:1px solid var(--ui-border);padding:20px 6px 60px;background:var(--ui-page)}.related-section>header{display:flex;align-items:center;justify-content:space-between;margin:0 2px 10px}.related-section h3{margin:0;font-size:16px}.related-section header span{color:var(--ui-muted);font-size:11px}#feedback{position:fixed;z-index:90;right:18px;bottom:18px;max-width:min(360px,calc(100vw - 36px));margin:0;border:1px solid var(--ui-border-strong);border-radius:6px;padding:9px 12px;color:var(--ui-text);background:var(--ui-surface);box-shadow:var(--ui-shadow);font-size:12px;pointer-events:none}#feedback:empty{display:none}
+    :root{--visual-wall-gap:2px;--visual-card-radius:2px}.share-icon-sprite{position:absolute;width:0;height:0;overflow:hidden}body{min-width:0;background:var(--ui-page)}body.detail-open{overflow:hidden}.app-header{position:sticky;z-index:20;top:0;display:flex;min-height:64px;align-items:center;gap:24px;border-bottom:1px solid var(--ui-border);padding:8px 12px;background:var(--bar);backdrop-filter:blur(16px)}.brand-block{display:grid;min-width:190px;gap:1px}.eyebrow{margin:0;color:var(--ui-accent);font-size:11px;font-weight:800;letter-spacing:.12em}.brand-block h1{max-width:340px;overflow:hidden;margin:0;color:var(--ui-text);font-size:18px;line-height:1.2;text-overflow:ellipsis;white-space:nowrap}.package-count{margin:0;color:var(--ui-muted);font-size:11px}.header-tools{display:flex;min-width:0;flex:1;align-items:center;justify-content:flex-end;gap:8px}.search-field{width:min(360px,32vw)}.type-field{width:min(180px,18vw)}.compact-setting{display:flex;align-items:center;gap:6px;color:var(--ui-muted);font-size:11px}.compact-setting select{width:auto;min-width:92px}.import-guide{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--ui-border);padding:10px 14px;background:var(--ui-surface)}.import-guide p{margin:0;color:var(--ui-muted);font-size:11px;line-height:1.55}.import-guide strong{color:var(--ui-text)}.product-actions{display:flex;align-items:center;gap:7px}.install-action,.source-action{display:inline-flex;min-height:30px;align-items:center;padding:5px 9px;text-decoration:none;white-space:nowrap}.gallery-shell{padding:8px 6px 60px}.case-grid,.related-grid{position:relative;width:100%;overflow-anchor:none;--masonry-card-min-width:270px;--masonry-gap:var(--visual-wall-gap)}.case-card,.related-card{position:absolute;display:block;width:100%;min-height:0;overflow:hidden;border:0;border-radius:var(--visual-card-radius);padding:0;color:var(--ui-text);background:var(--ui-surface);cursor:pointer;vertical-align:top;white-space:normal}.case-card:hover,.related-card:hover{background:var(--ui-hover);box-shadow:0 8px 20px color-mix(in srgb,var(--ui-text) 10%,transparent)}.tile-media{position:relative;display:block;min-height:110px;overflow:hidden;background:var(--viewer-bg)}.tile-media img{display:block;width:100%;height:auto}.tile-media[style] img{height:100%;object-fit:cover}.video-cue{position:absolute;top:50%;left:50%;display:grid;width:38px;height:38px;place-items:center;border-radius:50%;color:white;background:rgba(7,9,11,.68);transform:translate(-50%,-50%)}.video-duration,.media-count{position:absolute;right:7px;bottom:7px;border-radius:3px;padding:2px 5px;color:white;background:rgba(7,9,11,.72);font-size:11px}.media-count{top:7px;bottom:auto}.fallback-cover{display:grid;min-height:190px;align-content:space-between;gap:18px;padding:16px;color:var(--ui-text);background:var(--ui-raised);text-align:left}.fallback-cover.document,.fallback-cover.attachment{background:linear-gradient(160deg,var(--ui-raised),var(--ui-surface))}.fallback-cover.audio{background:linear-gradient(160deg,var(--viewer-bg),var(--ui-raised))}.fallback-cover small{color:var(--ui-accent);font-size:11px;font-weight:800;letter-spacing:.12em}.fallback-cover strong{font-size:16px;line-height:1.35}.empty-state{padding:80px 20px;color:var(--ui-muted);text-align:center}.empty-state strong{color:var(--ui-text);font-size:18px}.detail-view{position:fixed;z-index:50;inset:0;overflow:auto;background:var(--viewer-bg)}.detail-toolbar{position:fixed;z-index:55;inset:0 0 auto;height:0;pointer-events:none}.detail-toolbar .icon-button{color:white;border-color:rgba(255,255,255,.22);background:rgba(15,17,19,.82);box-shadow:0 4px 18px rgba(0,0,0,.24);pointer-events:auto}.detail-toolbar>.icon-button{position:absolute;top:14px;right:14px}.detail-navigation{position:absolute;top:50dvh;right:clamp(380px,34vw,480px);left:0;display:flex;justify-content:space-between;padding:0 16px;transform:translateY(-50%)}.detail-stack{min-height:100%}.case-detail{min-height:100%;background:var(--ui-surface)}.detail-primary{display:grid;min-height:100dvh;grid-template-columns:minmax(0,1fr) clamp(380px,34vw,480px)}.detail-primary:not(.has-media){display:block}.detail-gallery{display:grid;min-width:0;min-height:100dvh;align-content:center;background:var(--viewer-bg)}.detail-media-stage{display:grid;min-height:0}.detail-media-panel{min-width:0}.detail-media-panel>video{display:block;width:100%;max-height:calc(100dvh - 88px);margin:auto;background:#06080c}.detail-image-frame{display:block;width:100%;min-height:0;margin:0;background:#06080c}.detail-image-frame img{display:block;width:100%;height:calc(100dvh - 88px);object-fit:contain}.detail-media-rail{display:flex;gap:7px;overflow-x:auto;padding:8px 10px 10px;background:var(--viewer-bg)}.detail-media-thumb{display:grid;width:76px;min-width:76px;min-height:58px;place-items:center;overflow:hidden;border:1px solid transparent;border-radius:6px;padding:0;color:white;background:#06080c;opacity:.72}.detail-media-thumb[aria-pressed="true"]{border-color:rgba(255,255,255,.62);opacity:1}.detail-media-thumb img{display:block;width:100%;height:56px;object-fit:cover}.media-caption{display:grid;gap:6px;padding:10px 12px;color:rgba(255,255,255,.82);background:color-mix(in srgb,var(--viewer-bg) 92%,white);font-size:11px}.media-caption p{margin:0}.media-caption strong{display:block;margin-bottom:2px;color:white}.document-panel,.audio-panel,.detail-placeholder{display:grid;min-height:360px;place-items:center;align-content:center;gap:14px;padding:24px;color:var(--ui-muted);background:var(--ui-surface);text-align:center}.document-panel strong,.audio-panel>strong{color:var(--ui-accent);font-size:46px}.audio-panel>strong{font-size:18px}.audio-panel audio{width:min(520px,90%)}.document-panel .button-primary,.audio-panel .button-secondary{display:inline-flex;align-items:center;text-decoration:none}.detail-body{min-width:0;border-left:1px solid var(--ui-border);background:var(--ui-surface)}.detail-section{border-bottom:1px solid var(--ui-border);padding:16px 22px}.detail-section h2{margin:4px 0 8px;font-size:17px;line-height:1.35}.detail-section h3{margin:0 0 10px;font-size:11px}.detail-meta{display:flex;flex-wrap:wrap;gap:8px 14px;color:var(--ui-muted);font-size:11px}.palette{display:flex;height:16px;overflow:hidden;margin-top:12px;border-radius:4px}.palette i{flex:1}.detail-tags{display:flex;flex-wrap:wrap;gap:5px}.detail-tags span{padding:4px 7px;border-radius:999px;color:var(--ui-text);background:var(--ui-raised);font-size:11px;font-weight:700}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.section-heading h3{margin:0}.prompt-text{max-height:360px;overflow:auto;margin:0;border-radius:6px;padding:14px;color:var(--prompt-ink);background:var(--prompt-bg);font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.compose-guide,.visual-description{margin:10px 0 0;color:var(--ui-muted);font-size:11px;line-height:1.55}.source-open-action{display:inline-flex;min-height:30px;align-items:center;border:1px solid var(--ui-border);border-radius:4px;padding:5px 9px;color:var(--ui-text);font-size:11px;font-weight:700;text-decoration:none}.metadata-list{display:grid;margin:0}.metadata-row{display:grid;grid-template-columns:minmax(72px,104px) minmax(0,1fr);gap:12px;border-top:1px solid var(--ui-border);padding:7px 0}.metadata-row:first-child{border-top:0}.metadata-row dt{color:var(--ui-muted);font-size:11px;font-weight:700}.metadata-row dd{margin:0;overflow-wrap:anywhere;font-size:12px}.time-notes{display:grid;gap:8px;margin:0;padding:0;list-style:none}.time-notes li{display:grid;grid-template-columns:72px 1fr;gap:10px}.time-notes time{color:var(--ui-accent);font:11px ui-monospace,monospace}.time-notes span{font-size:12px}.related-section{border-top:1px solid var(--ui-border);padding:20px 6px 60px;background:var(--ui-page)}.related-section>header{display:flex;align-items:center;justify-content:space-between;margin:0 2px 10px}.related-section h3{margin:0;font-size:16px}.related-section header span{color:var(--ui-muted);font-size:11px}#feedback{position:fixed;z-index:90;right:18px;bottom:18px;max-width:min(360px,calc(100vw - 36px));margin:0;border:1px solid var(--ui-border-strong);border-radius:6px;padding:9px 12px;color:var(--ui-text);background:var(--ui-surface);box-shadow:var(--ui-shadow);font-size:12px;pointer-events:none}#feedback:empty{display:none}select,select::picker(select){appearance:base-select}select::picker(select){max-height:min(360px,calc(100dvh - 32px));overflow:auto;border:1px solid var(--ui-border-strong);border-radius:var(--ui-container-radius);padding:6px;color:var(--ui-text);background:var(--ui-surface);box-shadow:var(--ui-shadow)}select option{min-height:36px;border-radius:var(--ui-control-radius);padding:7px 10px;color:var(--ui-text);background:var(--ui-surface)}select option:hover,select option:focus-visible{background:var(--ui-hover)}select option:checked{color:var(--ui-accent-contrast);background:var(--ui-accent);font-weight:750}
     @media(max-width:860px){.app-header{align-items:flex-start;flex-direction:column;gap:8px}.header-tools{width:100%;flex-wrap:wrap;justify-content:flex-start}.search-field{flex:1 1 220px;width:auto}.type-field{flex:1 1 150px;width:auto}.compact-setting{flex:1 1 130px}.compact-setting select{flex:1}.import-guide{align-items:flex-start}.detail-primary{display:block}.detail-gallery{min-height:auto}.detail-image-frame img{height:min(62dvh,640px)}.detail-body{border-top:1px solid var(--ui-border);border-left:0}.detail-navigation{top:32dvh;right:0}.related-section{padding-bottom:28px}}
     @media(max-width:520px){.app-header{position:static;padding:10px}.brand-block{min-width:0}.header-tools{display:grid;grid-template-columns:1fr 1fr}.search-field{grid-column:1/-1}.type-field{width:auto}.compact-setting{display:grid}.import-guide{flex-direction:column;padding:10px}.case-grid,.related-grid{--masonry-card-min-width:155px;--masonry-gap:var(--visual-wall-gap)}.detail-toolbar>.icon-button{top:10px;right:10px}.detail-navigation{top:31dvh;padding:0 10px}.detail-section{padding:14px 16px}.related-section{padding-inline:2px}.related-section>header{padding-inline:8px}.related-section header span{display:none}}
     @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}

@@ -45,7 +45,7 @@ test("X capture uses a compact account title while preserving the original sourc
   assert.equal(captureTitleForSource("https://example.com/post", original), original);
 });
 
-test("capture draft v3 groups repeated selections and retains normalized source context", () => {
+test("capture draft v4 groups repeated selections and retains normalized source context", () => {
   let draft = createCaptureDraft({ targetCaseId: "compound:target" });
   ({ draft } = addDraftFragment(draft, { text: "第一段", sourceUrl: "https://a.example/post", sourceTitle: "A" }));
   ({ draft } = addDraftFragment(draft, { text: "第二段", sourceUrl: "https://a.example/post", sourceTitle: "A" }));
@@ -59,7 +59,7 @@ test("capture draft v3 groups repeated selections and retains normalized source 
       sourceFacts: { provider: "example", itemId: "work-1", author: "作者甲" }
     }]
   });
-  assert.equal(draft.version, 3);
+  assert.equal(draft.version, 4);
   assert.equal(draft.targetCaseId, "compound:target");
   assert.equal(draft.sourceContexts[0].sourceFacts.author, "作者甲");
   assert.deepEqual(draftParts(draft).map((part) => ({ url: part.sourceUrl, text: part.text })), [
@@ -82,13 +82,17 @@ test("capture metadata keeps an optional manual type and free-form labels withou
     contentTypeId: "content:prompt:video",
     contentTypeExplicit: true,
     customLabels: ["待复刻", " 喜欢 ", "待复刻"],
-    customLabelsExplicit: true
+    customLabelsExplicit: true,
+    collectionId: "collection:campaign",
+    newCollectionName: ""
   });
 
   assert.equal(draft.contentTypeId, "content:prompt:video");
   assert.equal(draft.contentTypeExplicit, true);
   assert.deepEqual(draft.customLabels, ["待复刻", "喜欢"]);
   assert.equal(draft.customLabelsExplicit, true);
+  assert.equal(draft.collectionId, "collection:campaign");
+  assert.equal(draft.newCollectionName, "");
 });
 
 test("schema 12 visual normalization migrates one legacy screenshot without keeping singular screenshot fields", () => {

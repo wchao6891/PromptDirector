@@ -6,6 +6,7 @@ import { sortAnalysisBreakdown } from "./analysis-candidates.js";
 import { normalizeEntryVisuals } from "./visuals.js";
 import { normalizeCompoundCases } from "./compound-cases.js";
 import { isFixedTagTree, migrateLegacyFacetState } from "./tag-taxonomy.js";
+import { normalizeTrashState } from "./trash.js";
 
 const LEGACY_CONTENT_IDS = new Set([
   "content:tutorial:image", "content:tutorial:video", "content:tutorial:general"
@@ -44,6 +45,7 @@ export function migrateLibraryState(stored = {}) {
       facetCatalog,
       classificationRules,
       entries,
+      trashState: normalizeTrashState(stored.trashState),
       compoundCases: normalizeCompoundCases(stored.compoundCases, entries),
       organizerState: normalizeOrganizerState(stored.organizerState, entries.map((entry) => entry.id))
     },
@@ -56,7 +58,7 @@ export function migrateLibraryState(stored = {}) {
 
 export function needsMigration(stored = {}) {
   return stored.schemaVersion !== SCHEMA_VERSION || !stored.taxonomy || !stored.facetCatalog ||
-    !stored.organizerState || !Array.isArray(stored.compoundCases) ||
+    !stored.organizerState || !stored.trashState || !Array.isArray(stored.compoundCases) ||
     !isFixedTagTree(stored.facetCatalog) ||
     (stored.entries ?? []).some((entry) => entry.schemaVersion !== SCHEMA_VERSION);
 }

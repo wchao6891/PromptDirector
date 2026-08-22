@@ -26,5 +26,5 @@ test("visible thumbnails use a bounded queue and a rebuildable persistent cache"
 
 test("narrow-screen add menu starts below the complete two-row header", () => {
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.package-menu-panel,[\s\S]*top: 126px/);
-  assert.match(styles, /@media \(max-width: 640px\)[\s\S]*\.add-menu \.package-menu-panel \{ top: 118px/);
+  assert.match(styles, /@media \(max-width: 640px\)[\s\S]*\.add-menu \.package-menu-panel \{[^}]*position:\s*fixed[^}]*top:\s*118px/);
 });

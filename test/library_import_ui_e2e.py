@@ -118,6 +118,8 @@ def main() -> None:
             library.wait_for_selector("body[data-library-state='ready']", timeout=10_000)
             library.evaluate(
                 """() => {
+                  Object.defineProperty(window, 'showOpenFilePicker', {value: undefined, configurable: true});
+                  Object.defineProperty(window, 'showDirectoryPicker', {value: undefined, configurable: true});
                   const send = chrome.runtime.sendMessage.bind(chrome.runtime);
                   chrome.runtime.sendMessage = (message, ...rest) => {
                     if (message?.type !== 'START_IMPORT_JOB') return send(message, ...rest);
@@ -152,7 +154,23 @@ def main() -> None:
             expect(new_row.locator("input")).to_be_checked()
             expect(new_row.locator("input")).to_be_disabled()
             expect(library.locator("#import-auto-analyze")).to_be_checked()
-            library.locator("#import-project").select_option("collection:fixture")
+            expect(library.locator("#import-project")).to_have_attribute("role", "combobox")
+            library.locator("#import-project").click()
+            expect(library.locator(".project-combobox-option")).to_have_count(1)
+            import_project_menu = library.locator(".project-combobox-listbox").evaluate(
+                """node => {
+                  const menu = node.getBoundingClientRect();
+                  const boundary = node.closest('.import-dialog-body').getBoundingClientRect();
+                  return {background: getComputedStyle(node).backgroundColor, visible: !node.hidden, top: menu.top, bottom: menu.bottom, boundaryTop: boundary.top, boundaryBottom: boundary.bottom};
+                }"""
+            )
+            assert import_project_menu["visible"] is True
+            assert import_project_menu["background"] not in {"rgb(255, 255, 255)", "rgba(0, 0, 0, 0)"}, import_project_menu
+            assert import_project_menu["top"] >= import_project_menu["boundaryTop"] - 1, import_project_menu
+            assert import_project_menu["bottom"] <= import_project_menu["boundaryBottom"] + 1, import_project_menu
+            library.locator("#import-project").press("Escape")
+            expect(library.locator("#import-project")).to_have_attribute("aria-expanded", "false")
+            library.locator("#import-project").fill("Import Review")
             duplicate_row.locator("input").check()
             expect(duplicate_row).to_contain_text("仍导入")
 
@@ -237,7 +255,7 @@ def main() -> None:
             expect(library.locator("#import-file-list")).to_contain_text("Reference Folder/brief.txt")
             expect(library.locator("#import-file-list")).to_contain_text("Reference Folder/nested/brief.txt")
             expect(library.locator("#import-file-list")).to_contain_text("Reference Folder/nested/shot.md")
-            expect(library.locator("#import-project")).to_have_value("create:Reference Folder")
+            expect(library.locator("#import-project")).to_have_value("Reference Folder")
             library.locator("#import-cancel").click()
             expect(library.locator("#import-dialog")).not_to_be_visible()
 
@@ -323,6 +341,7 @@ def main() -> None:
                 "duplicateDefaultSkip": True,
                 "duplicateKeep": True,
                 "mobileNoOverflow": True,
+                "projectCombobox": import_project_menu,
                 "startPayloadFields": sorted(payload.keys()),
                 "refreshRestoredActiveJob": True,
                 "actions": ["cancel", "retry", "undo", "view-project"],

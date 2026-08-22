@@ -11,18 +11,21 @@ import {
   saveDerivedMedia,
   saveMediaBlob
 } from "./media-store.js";
-import { parseCompleteFolderBackup, parseLibraryPackage } from "./library-package.js";
+import { parseCompleteFolderBackup, parseLibraryPackage, projectPackageEntryIds } from "./library-package.js";
 import { parseCreativeExperimentPackage } from "./creative-experiment-package.js";
 import { readZipBlob } from "./zip.js";
 import {
+  ASSET_IMPORT_FAILURE_CODES,
   PORTABLE_LIBRARY_LIMITS,
   assertImageDimensions,
-  formatBytes
+  formatBytes,
+  importFailureDetails
 } from "./resource-limits.js";
 import {
   facetNodes,
   formatFacetNodePath,
-  normalizeFacetCatalog
+  normalizeFacetCatalog,
+  uniqueNames
 } from "./facets.js";
 import { createDetailOrganizationChunks, detailNavigation } from "./tag-taxonomy.js";
 import {
@@ -97,6 +100,13 @@ import {
   materializeLogicalCases,
   normalizeCompoundCases
 } from "./compound-cases.js";
+import {
+  LIBRARY_BATCH_ACTIONS,
+  buildLibraryBatchPayload,
+  clearLibrarySelection,
+  selectAllFilteredLogicalCases,
+  toggleLibraryCaseSelection
+} from "./library-selection.js";
 import { bindTransientMenus } from "./transient-menu.js";
 import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { CONTENT_ROLES, CONTENT_TYPE_VISIBILITY, contentRoleForEntry } from "./taxonomy.js";
@@ -118,20 +128,39 @@ import { markdownPlainText, renderMarkdownDocument } from "./markdown-renderer.j
 import { COLLECTION_VISIBILITY, isEntryVisibleInLibrary } from "./organizer.js";
 import { promptForEntryImage, visualAnalysisPromptReplacement } from "./image-prompt.js";
 import {
+  CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY,
+  CLIPBOARD_READ_PERMISSIONS,
+  CONTINUOUS_CAPTURE_ORIGINS,
+  inspectCapturePermissionBundle
+} from "./capture-permissions.js";
+import {
+  LOCAL_ASSET_FILE_ACCEPT,
+  createUnsupportedLocalAssetReference,
   extractLocalDocumentText,
   findExactMediaDuplicate,
   prepareLocalMedia as prepareSharedLocalMedia
 } from "./local-media.js";
+import {
+  LOCAL_ASSET_LINK_STATUS,
+  deleteLocalAssetHandle,
+  getLocalAssetHandleRecord,
+  inspectLocalAssetHandle,
+  saveLocalAssetHandle
+} from "./local-asset-store.js";
 import {
   LIBRARY_RETURN_STORAGE_KEY,
   parseLibraryReturnSnapshot,
   serializeLibraryReturnSnapshot
 } from "./navigation-state.js";
 import { CURATED_SUBMISSION_URL } from "./curated-config.js";
+import { moveProjectLogicalCase, sortLibraryCases, sortProjects } from "./library-view.js";
+import { createTagEditor, normalizeTagValue } from "./tag-editor.js";
+import { attachProjectCombobox } from "./project-combobox.js";
+import { SIDEBAR_WIDTH_LIMITS, normalizeSidebarWidth } from "./preferences.js";
 
-const uiPreferences = await initializeUi();
+let uiPreferences = await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".package-menu, .project-menu, .detail-analysis-menu");
+bindTransientMenus(document, ".package-menu, .project-menu, .detail-analysis-menu, .detail-project-menu");
 const libraryWindowId = (await chrome.windows.getCurrent()).id;
 
 const elements = Object.fromEntries([
@@ -145,22 +174,25 @@ const elements = Object.fromEntries([
   "creative-experiment-file", "export-creative-experiments", "import-creative-experiments",
   "create-node-form", "delete-content-type", "detail-close", "detail-content", "detail-drawer", "detail-navigation", "detail-next",
   "detail-prev", "drawer-backdrop", "drawer-toolbar", "empty-filter", "empty-library", "empty-state",
-  "facet-filters", "feedback", "filter-sidebar", "gallery-heading", "legacy-candidates", "library-summary",
+  "facet-filters", "feedback", "filter-sidebar", "sidebar-resizer", "gallery-heading", "gallery-sort", "gallery-view-controls", "manage-case-order", "project-manual-sort-option", "legacy-candidates",
   "image-lightbox", "image-lightbox-close", "image-lightbox-image", "library-title", "load-more", "load-sentinel", "manage-facets", "manager-close", "manager-dialog", "manager-feedback",
   "manager-pending", "manager-content-types", "manager-vocabulary", "new-node-aliases",
   "new-node-name", "new-node-parent", "pending-count", "pending-filter",
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
-  "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "restore-analysis-default", "search-input", "selection-hint", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library",
+  "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library",
   "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-add-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-project-target", "open-settings", "settings-dialog", "settings-close",
-  "project-section", "selection-simple-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree", "maintenance-progress", "maintenance-progress-bar",
+  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
+  "project-section", "manage-project-order", "selection-simple-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
-  "open-curated", "open-skills", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
-  "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder",
+  "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
+  "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
   "vision-batch-dialog", "vision-batch-close", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze",
   "vision-batch-start", "vision-batch-pause", "vision-batch-resume", "vision-batch-retry", "vision-batch-cancel", "vision-batch-feedback",
-  "library-drop-target", "import-dialog", "import-dialog-title", "import-close", "import-source", "import-choose-files", "import-last-job", "import-actions", "import-preparing", "import-confirmation", "import-supported-count", "import-skipped-count", "import-duplicate-count", "import-byte-size", "import-project", "import-auto-analyze", "import-file-list", "import-feedback", "import-job-panel", "import-job-title", "import-job-count", "import-job-progress", "import-job-feedback", "import-cancel", "import-retry", "import-undo", "import-view-project", "import-start"
+  "library-drop-target", "import-dialog", "import-dialog-title", "import-close", "import-source", "import-choose-files", "import-last-job", "import-actions", "import-preparing", "import-confirmation", "import-supported-count", "import-skipped-count", "import-duplicate-count", "import-byte-size", "import-project", "import-project-hint", "import-auto-analyze", "import-label-editor", "import-file-list", "import-feedback", "import-job-panel", "import-job-title", "import-job-count", "import-job-progress", "import-job-feedback", "import-cancel", "import-retry", "import-undo", "import-view-project", "import-start"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
+
+elements.mediaFile.accept = LOCAL_ASSET_FILE_ACCEPT;
+elements.mediaFolder.accept = LOCAL_ASSET_FILE_ACCEPT;
 
 const managerTabs = [...document.querySelectorAll("[data-manager-tab]")];
 const settingsTabs = [...document.querySelectorAll("[data-settings-tab]")];
@@ -210,6 +242,7 @@ let classificationRules = [];
 let facetCatalog = { facets: [], nodes: [] };
 let settings = {};
 let organizerState = { collections: [] };
+let importJobsState = { items: [] };
 let aiSettings = { configured: false, consent: false, analysisModel: "deepseek-v4-flash" };
 let visionSettings = normalizeVisionSettings();
 let aiServiceProfiles = { gemini: { configured: false, model: "" }, xai: { configured: false, textModel: "", imageModel: "", videoModel: "" } };
@@ -222,6 +255,11 @@ let visibleEntries = [];
 let renderedCount = 0;
 let selectedContentId = "";
 let selectedCollectionId = "";
+let caseSortMode = "added-desc";
+let caseOrderManagementActive = false;
+let projectOrderManagementActive = false;
+let projectOrderSaving = false;
+let projectDragState = null;
 let selectedFacets = new Map();
 let activeManagerTab = "content-types";
 let selectedVocabularyFacet = "";
@@ -244,7 +282,9 @@ let activeVideoAnalysisUi = null;
 let selectionMode = "";
 let projectSelectionId = "";
 const selectedCaseIds = new Set();
+let trashItems = [];
 let shareDialogContext = null;
+let shareLocalAssetRecords = [];
 let submissionDownloadIds = [];
 let analysisBatchJob = null;
 let visionBatchJob = null;
@@ -289,6 +329,18 @@ let importPollTimer = 0;
 let importDragDepth = 0;
 let externalLibraryRefreshTimer = 0;
 let externalLibraryRefreshPending = false;
+let extensionUpdateStatus = null;
+
+const importTagEditor = createTagEditor({
+  placeholder: "例如：风格不错，很喜欢",
+  onChange(values) {
+    if (!pendingLocalImport) return false;
+    pendingLocalImport.customLabels = values;
+    return true;
+  }
+});
+elements.importLabelEditor.replaceChildren(importTagEditor.element);
+const importProjectCombobox = attachProjectCombobox(elements.importProject, { projects: [] });
 
 const mobileLayout = matchMedia("(max-width: 640px)");
 if (mobileLayout.matches) workspace.classList.add("filters-collapsed");
@@ -321,6 +373,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   externalLibraryRefreshPending = true;
   scheduleExternalLibraryRefresh();
 });
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== "EXTENSION_UPDATE_STATUS_CHANGED") return;
+  renderExtensionUpdateStatus(message.status);
+});
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && externalLibraryRefreshPending) scheduleExternalLibraryRefresh();
 });
@@ -335,6 +391,7 @@ elements.uiTheme.value = uiPreferences.theme;
 elements.uiMotion.value = uiPreferences.motion;
 elements.showAnalysisDiagnostics.checked = uiPreferences.analysisDiagnostics;
 elements.aboutVersion.textContent = `PromptDirector ${chrome.runtime.getManifest().version}`;
+void refreshExtensionUpdateStatus();
 await refreshLibrary();
 await openRequestedLibraryTarget();
 await resumeImportJob();
@@ -358,6 +415,13 @@ function scheduleExternalLibraryRefresh() {
     externalLibraryRefreshPending = false;
     await refreshLibrary();
   }, 80);
+}
+
+function consumePendingExternalLibraryRefresh() {
+  externalLibraryRefreshPending = false;
+  if (!externalLibraryRefreshTimer) return;
+  clearTimeout(externalLibraryRefreshTimer);
+  externalLibraryRefreshTimer = 0;
 }
 
 async function previewDeepSeekAnalysisBatch(mode = "incremental") {
@@ -459,9 +523,9 @@ function bindEvents() {
   elements.searchInput.addEventListener("input", () => { if (!searchComposing) scheduleSearchRender(); });
   elements.pendingFilter.addEventListener("change", renderStructuredFilterResults);
   elements.addMedia.addEventListener("click", () => { elements.addMenu.open = false; void openLocalImportSource(); });
-  elements.importChooseFiles.addEventListener("click", () => elements.mediaFile.click());
+  elements.importChooseFiles.addEventListener("click", () => void chooseLocalImportFiles());
   elements.mediaFile.addEventListener("change", importLocalMediaCases);
-  elements.addFolder.addEventListener("click", () => elements.mediaFolder.click());
+  elements.addFolder.addEventListener("click", () => void chooseLocalImportFolder());
   elements.mediaFolder.addEventListener("change", importLocalMediaFolder);
   elements.importLastJob.addEventListener("click", () => void openLatestImportJob());
   elements.importClose.addEventListener("click", closeImportDialog);
@@ -483,6 +547,10 @@ function bindEvents() {
   elements.addQuickNote.addEventListener("click", () => { elements.addMenu.open = false; createQuickNote(); });
   elements.openSettings.addEventListener("click", () => openSettingsDialog("general"));
   elements.settingsClose.addEventListener("click", () => elements.settingsDialog.close());
+  elements.checkExtensionUpdate.addEventListener("click", checkExtensionUpdate);
+  elements.applyExtensionUpdate.addEventListener("click", applyExtensionUpdate);
+  elements.revokeCaptureWebPermission.addEventListener("click", () => void revokeCapturePermission("web"));
+  elements.revokeCaptureClipboardPermission.addEventListener("click", () => void revokeCapturePermission("clipboard"));
   elements.settingsDialog.addEventListener("cancel", (event) => {
     if (dataSafetyOperationActive) event.preventDefault();
   });
@@ -497,6 +565,13 @@ function bindEvents() {
   aiAdvancedSettingsSummary?.addEventListener("click", () => preserveSettingsAnchor(aiAdvancedSettingsSummary));
   elements.clearFilters.addEventListener("click", clearFilters);
   elements.createCollection.addEventListener("click", () => createProjectCollection(elements.createCollection));
+  elements.gallerySort.addEventListener("change", () => {
+    caseSortMode = elements.gallerySort.value;
+    caseOrderManagementActive = false;
+    renderGalleryResults({ refreshNavigation: false });
+  });
+  elements.manageCaseOrder.addEventListener("click", toggleCaseOrderManagement);
+  elements.manageProjectOrder.addEventListener("click", toggleProjectOrderManagement);
   elements.projectSelectionSelectFiltered.addEventListener("click", () => selectVisionCases("filtered"));
   elements.projectSelectionSelectAll.addEventListener("click", () => selectVisionCases("all"));
   elements.projectSelectionClear.addEventListener("click", clearVisionSelection);
@@ -509,7 +584,8 @@ function bindEvents() {
         locale: elements.uiLocale.value,
         theme: elements.uiTheme.value,
         motion: elements.uiMotion.value,
-        analysisDiagnostics: uiPreferences.analysisDiagnostics
+        analysisDiagnostics: uiPreferences.analysisDiagnostics,
+        sidebarWidth: uiPreferences.sidebarWidth
       });
     });
   }
@@ -518,6 +594,7 @@ function bindEvents() {
     workspace.classList.toggle("filters-collapsed");
     renderFilterToggleState();
   });
+  bindSidebarResize();
   elements.workspaceLibrary.addEventListener("click", clearFilters);
   elements.openCurated.addEventListener("click", () => {
     navigateWithinPromptDirector("curated.html");
@@ -576,10 +653,27 @@ function bindEvents() {
   elements.shareDialogShowFiles.addEventListener("click", showSubmissionFiles);
   elements.shareDialogOpenForm.addEventListener("click", () => chrome.tabs.create({ url: CURATED_SUBMISSION_URL, active: true }));
   elements.selectionCombine.addEventListener("click", saveCompoundSelection);
+  elements.selectionSelectFiltered.addEventListener("click", selectAllFilteredCases);
+  elements.selectionClear.addEventListener("click", clearSelectedCases);
+  elements.selectionLabelInput.addEventListener("input", updateSelectionBar);
+  elements.selectionLabelInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void addLabelsToSelection();
+  });
+  elements.selectionAddLabels.addEventListener("click", addLabelsToSelection);
   elements.selectionAddProject.addEventListener("click", addSelectionToProject);
   elements.selectionNewProject.addEventListener("click", createProjectFromSelection);
   elements.selectionAnalyze.addEventListener("click", analyzeSelectedCases);
+  elements.selectionTrash.addEventListener("click", moveSelectionToTrash);
   elements.selectionProjectTarget.addEventListener("change", updateSelectionBar);
+  elements.openTrash.addEventListener("click", openTrashDialog);
+  elements.trashClose.addEventListener("click", () => elements.trashDialog.close());
+  elements.trashRestoreAll.addEventListener("click", restoreAllTrashItems);
+  elements.trashEmpty.addEventListener("click", emptyTrashFromDialog);
+  elements.trashDialog.addEventListener("click", (event) => {
+    if (event.target === elements.trashDialog) elements.trashDialog.close();
+  });
   elements.manageFacets.addEventListener("click", () => {
     elements.managerFeedback.hidden = true;
     activeManagerTab = "content-types";
@@ -771,6 +865,10 @@ async function refreshLibrary() {
   facetCatalog = normalizeFacetCatalog(response.facetCatalog);
   settings = response.settings ?? {};
   organizerState = response.organizerState ?? { collections: [] };
+  importJobsState = response.importJobs ?? { items: [] };
+  trashItems = Array.isArray(response.trashState?.items) ? response.trashState.items : [];
+  elements.trashCount.hidden = trashItems.length === 0;
+  elements.trashCount.textContent = String(trashItems.length);
   aiSettings = response.aiSettings ?? aiSettings;
   visionSettings = response.visionSettings ?? visionSettings;
   aiServiceProfiles = response.aiServiceProfiles ?? aiServiceProfiles;
@@ -807,7 +905,6 @@ async function refreshLibrary() {
   sanitizeSelections();
   caseCardCache.clear();
   rebuildLibraryDerivedState();
-  updateLibrarySummary();
   renderGallery();
   document.body.dataset.libraryState = "ready";
   restoreLibraryScrollPosition();
@@ -821,7 +918,7 @@ async function refreshLibrary() {
   }).catch(() => undefined);
   if (elements.managerDialog.open) renderManager();
   if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
-  if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty) renderDetail();
+  if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty) await renderDetail();
   if (analysisBatchJob?.status === "running") runAnalysisBatch();
   scheduleMaintenanceStatusPoll();
   if (response.restoredArchivedFacetCount) {
@@ -896,7 +993,7 @@ function renderGallery() {
   const projectEntryIds = selectedCollectionId && selectionMode !== "project"
     ? new Set(organizerState.collections.find((item) => item.id === selectedCollectionId)?.entryIds ?? [])
     : null;
-  const galleryEntries = projectEntryIds
+  let galleryEntries = projectEntryIds
     ? modeEntries.filter((entry) => entry.memberEntryIds
       ? entry.memberEntryIds.some((id) => projectEntryIds.has(id))
       : projectEntryIds.has(entry.id))
@@ -951,11 +1048,20 @@ function renderGalleryResults({ refreshNavigation }) {
       pendingOnly: elements.pendingFilter.checked
     }, facetCatalog);
   }
+  syncGallerySortControl();
+  const project = selectedCollectionId
+    ? organizerState.collections.find((item) => item.id === selectedCollectionId)
+    : null;
+  visibleEntries = sortLibraryCases(visibleEntries, {
+    mode: caseSortMode,
+    projectEntryIds: project?.entryIds ?? []
+  });
   renderedCount = 0;
   imageObserver.disconnect();
   reconcileInitialCaseCards();
   if (refreshNavigation) {
     renderProjectFilters();
+    elements.workspaceLibrary.setAttribute("aria-current", selectedCollectionId ? "false" : "page");
     renderContentFilters(galleryEntries);
     renderFacetFilters(galleryEntries);
   }
@@ -980,10 +1086,31 @@ function renderGalleryResults({ refreshNavigation }) {
   elements.pendingCount.textContent = String(pendingCount);
 }
 
-function updateLibrarySummary() {
-  const screenshots = entries.reduce((count, entry) => count + entryMediaAssets(entry)
-    .filter((asset) => asset.kind === "image" && asset.usage !== "poster").length, 0);
-  elements.librarySummary.textContent = translateUiMessage(`${logicalCases.length} 条案例 / ${screenshots} 张截图`);
+function projectManualOrderAvailable() {
+  return Boolean(selectedCollectionId && !selectionMode &&
+    !selectedContentId && !selectedFacets.size && !elements.pendingFilter.checked && !elements.searchInput.value.trim());
+}
+
+function syncGallerySortControl() {
+  const available = projectManualOrderAvailable();
+  if (!available) caseOrderManagementActive = false;
+  elements.projectManualSortOption.hidden = !available;
+  elements.projectManualSortOption.disabled = !available;
+  if (!available && caseSortMode === "project-manual") caseSortMode = "added-desc";
+  elements.gallerySort.value = caseSortMode;
+  elements.manageCaseOrder.hidden = !available;
+  elements.selectCases.hidden = caseOrderManagementActive;
+  const label = caseOrderManagementActive ? "完成案例排序" : "管理案例顺序";
+  elements.manageCaseOrder.setAttribute("aria-label", label);
+  elements.manageCaseOrder.title = label;
+  elements.manageCaseOrder.replaceChildren(createUiIcon(caseOrderManagementActive ? "circle-check-big" : "sliders-horizontal"));
+}
+
+function toggleCaseOrderManagement() {
+  if (!projectManualOrderAvailable()) return;
+  caseOrderManagementActive = !caseOrderManagementActive;
+  if (caseOrderManagementActive) caseSortMode = "project-manual";
+  renderGalleryResults({ refreshNavigation: false });
 }
 
 function reconcileInitialCaseCards() {
@@ -1041,6 +1168,15 @@ function syncCaseCardInteraction(card, entry) {
   card.setAttribute("aria-label", translateUiMessage(selectable ? `选择案例：${entry.title}` : `查看案例：${entry.title}`));
   card.setAttribute("aria-pressed", selectable ? String(selectedCaseIds.has(entry.id)) : "false");
   card.setAttribute("aria-disabled", String(ineligible));
+  const manualOrder = caseOrderManagementActive && projectManualOrderAvailable() && caseSortMode === "project-manual";
+  const reorderControls = card.querySelector(".case-reorder-controls");
+  card.classList.toggle("manual-project-order", manualOrder);
+  if (reorderControls) {
+    const index = visibleEntries.findIndex((item) => item.id === entry.id);
+    const [moveUp, moveDown] = reorderControls.querySelectorAll("button");
+    moveUp.disabled = !manualOrder || index <= 0;
+    moveDown.disabled = !manualOrder || index < 0 || index >= visibleEntries.length - 1;
+  }
 }
 
 function renderNextBatch(generation = galleryGeneration) {
@@ -1159,22 +1295,134 @@ function createCaseCard(entry) {
     } else card.append(createVideoLinkCover(entry, mainVisual));
   } else if (mainVisual?.kind === "document") {
     card.append(mainVisual.mimeType === "application/pdf" ? createPdfCaseCover(entry, mainVisual) : createTextCaseCover(entry, mainVisual));
+  } else if (mainVisual?.kind === "audio") {
+    card.append(createAudioCaseCover(entry, mainVisual));
+  } else if (mainVisual?.kind === "attachment") {
+    card.append(createSourceFileCaseCover(entry, mainVisual));
   } else {
     card.append(entry.text?.trim() ? createTextCaseCover(entry) : textEl("div", "case-shot-missing", "无媒体"));
   }
-  card.append(textEl("span", "share-check", "✓"));
+  const reorderControls = el("span", "case-reorder-controls");
+  const moveUp = el("button", "case-move-up");
+  const moveDown = el("button", "case-move-down");
+  moveUp.append(createUiIcon("chevron-left"));
+  moveDown.append(createUiIcon("chevron-right"));
+  moveUp.type = moveDown.type = "button";
+  moveUp.setAttribute("aria-label", `上移案例：${entry.title}`);
+  moveDown.setAttribute("aria-label", `下移案例：${entry.title}`);
+  moveUp.title = `上移案例：${entry.title}`;
+  moveDown.title = `下移案例：${entry.title}`;
+  moveUp.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void reorderProjectCase(entry, "up", moveUp);
+  });
+  moveDown.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void reorderProjectCase(entry, "down", moveDown);
+  });
+  reorderControls.addEventListener("keydown", (event) => event.stopPropagation());
+  reorderControls.append(moveUp, moveDown);
+  card.append(reorderControls, textEl("span", "share-check", "✓"));
   return card;
+}
+
+async function reorderProjectCase(entry, direction, button) {
+  if (!caseOrderManagementActive || !projectManualOrderAvailable() || caseSortMode !== "project-manual") return;
+  const collection = organizerState.collections.find((item) => item.id === selectedCollectionId);
+  const index = visibleEntries.findIndex((item) => item.id === entry.id);
+  const adjacent = visibleEntries[index + (direction === "up" ? -1 : 1)];
+  if (!collection || !adjacent) return;
+  const entryIds = moveProjectLogicalCase(collection.entryIds, entry, adjacent, direction);
+  const response = await perform(button, {
+    type: "REPLACE_COLLECTION_ENTRIES",
+    collectionId: collection.id,
+    entryIds
+  }, false);
+  if (!response?.ok) return;
+  organizerState = response.organizerState ?? organizerState;
+  renderGallery();
 }
 
 function createTextCaseCover(entry, asset = null) {
   const mimeLabels = { "text/plain": "TXT", "text/markdown": "MD", "text/html": "HTML" };
-  const label = asset ? mimeLabels[asset.mimeType] || "DOC" : "NOTE";
+  const label = asset ? (["srt", "vtt", "ass", "ssa", "sbv", "lrc"].includes(asset.sourceFormat)
+    ? `${assetFormatLabel(asset)} 字幕`
+    : mimeLabels[asset.mimeType] || assetFormatLabel(asset) || "DOC") : "NOTE";
   const cover = el("div", "case-text-cover");
   cover.append(rawTextEl("span", "case-text-kind", label), rawTextEl("strong", "case-text-title", entry.title || (asset ? asset.sourceTitle : "快速笔记")));
   const source = String(entry.text ?? "").trim();
   const summary = asset?.mimeType === "text/markdown" ? markdownPlainText(source) : source;
   cover.append(rawTextEl("p", "case-text-excerpt", summary || "打开查看文档内容"));
   return cover;
+}
+
+function createAudioCaseCover(entry, asset) {
+  const cover = el("div", "case-asset-cover case-audio-cover");
+  const format = assetFormatLabel(asset);
+  cover.append(
+    rawTextEl("span", "case-text-kind", `AUDIO · ${format}`),
+    rawTextEl("strong", "case-text-title", asset.sourceTitle || entry.title || "音频")
+  );
+  const metadata = rawTextEl("p", "case-asset-meta", mediaMetadataText(asset));
+  const audio = document.createElement("audio");
+  audio.className = "case-audio-player";
+  audio.controls = true;
+  audio.preload = "metadata";
+  audio.addEventListener("click", (event) => event.stopPropagation());
+  audio.addEventListener("keydown", (event) => event.stopPropagation());
+  audio.addEventListener("loadedmetadata", () => {
+    if (!asset.durationMs && Number.isFinite(audio.duration)) {
+      metadata.textContent = mediaMetadataText({ ...asset, durationMs: Math.round(audio.duration * 1000) });
+    }
+  });
+  void mediaObjectUrl(asset.id).then((url) => { if (url) audio.src = url; });
+  cover.append(metadata, audio);
+  return cover;
+}
+
+function createSourceFileCaseCover(entry, asset) {
+  const cover = el("div", "case-asset-cover case-source-file-cover");
+  cover.append(
+    rawTextEl("span", "case-text-kind", `${assetCategoryLabel(asset)} · ${assetFormatLabel(asset)}`),
+    rawTextEl("strong", "case-text-title", asset.sourceTitle || entry.title || "创作源文件"),
+    rawTextEl("p", "case-asset-path", asset.relativePath || "本机资料"),
+    rawTextEl("p", "case-asset-meta", mediaMetadataText(asset))
+  );
+  if (asset.recordType === "local-asset-reference") {
+    cover.append(rawTextEl("span", "case-local-link-badge", "本机链接"));
+  }
+  return cover;
+}
+
+function assetCategoryLabel(asset) {
+  return ({
+    "design-source": "设计源文件",
+    "motion-project": "动效工程",
+    "editing-project": "剪辑工程",
+    "audio-project": "音频工程",
+    font: "字体",
+    "3d-vfx": "三维 / 特效",
+    "local-link": "本机源文件"
+  })[asset?.formatCategory] || (asset?.kind === "document" ? "文档" : "创作源文件");
+}
+
+function assetFormatLabel(asset) {
+  const source = String(asset?.sourceFormat || asset?.sourceTitle?.split(".").at(-1) || "FILE").trim();
+  return source ? source.toLocaleUpperCase("en-US") : "FILE";
+}
+
+function mediaMetadataText(asset) {
+  return [asset?.durationMs ? formatMediaTime(asset.durationMs) : "", assetFormatLabel(asset), asset?.byteSize ? formatBytes(asset.byteSize) : ""]
+    .filter(Boolean).join(" · ");
+}
+
+async function mediaObjectUrl(assetId) {
+  if (originalUrls.has(assetId)) return originalUrls.get(assetId);
+  const blob = await getMediaBlob(assetId);
+  if (!blob) return "";
+  const url = URL.createObjectURL(blob);
+  originalUrls.set(assetId, url);
+  return url;
 }
 
 function createVideoLinkCover(entry, asset) {
@@ -1279,17 +1527,35 @@ async function extractAndCachePdfText(assetId, blob, derived) {
 
 function renderProjectFilters() {
   const fragment = document.createDocumentFragment();
-  for (const collection of organizerState.collections) {
+  const collections = sortProjects(organizerState.collections, "manual");
+  const projectOrderingUnavailable = Boolean(selectionMode);
+  elements.manageProjectOrder.hidden = false;
+  elements.manageProjectOrder.disabled = projectOrderingUnavailable;
+  const managementLabel = projectOrderingUnavailable
+    ? "结束案例选择后可排序项目"
+    : projectOrderManagementActive ? "完成项目排序" : "管理项目顺序";
+  elements.manageProjectOrder.setAttribute("aria-label", managementLabel);
+  elements.manageProjectOrder.title = managementLabel;
+  elements.manageProjectOrder.replaceChildren(createUiIcon(projectOrderManagementActive ? "circle-check-big" : "sliders-horizontal"));
+  for (const [projectIndex, collection] of collections.entries()) {
     const row = el("div", "project-row");
+    row.dataset.collectionId = collection.id;
+    row.setAttribute("role", "listitem");
+    row.classList.toggle("project-ordering", projectOrderManagementActive);
+    row.tabIndex = projectOrderManagementActive ? 0 : -1;
+    row.setAttribute("aria-label", projectOrderManagementActive ? `拖动排序：${collection.name}，当前位置 ${projectIndex + 1}` : collection.name);
     const logicalCount = new Set(collection.entryIds.map((id) => logicalIdByEntryId.get(id)).filter(Boolean)).size;
     const filter = el("button", "project-filter");
     filter.type = "button";
+    filter.tabIndex = projectOrderManagementActive ? -1 : 0;
     filter.disabled = ["project", "vision", "combine"].includes(selectionMode);
     filter.setAttribute("aria-pressed", String(selectedCollectionId === collection.id));
     filter.setAttribute("aria-label", `${collection.name} ${logicalCount}`);
     const meta = el("span", "project-filter-meta");
     meta.append(rawTextEl("span", "project-filter-count", String(logicalCount)));
     filter.addEventListener("click", () => {
+      if (projectOrderManagementActive) return;
+      caseOrderManagementActive = false;
       selectedCollectionId = selectedCollectionId === collection.id ? "" : collection.id;
       renderGallery();
     });
@@ -1298,7 +1564,7 @@ function renderProjectFilters() {
     }
     filter.append(rawTextEl("span", "project-filter-name", collection.name), meta);
     const menu = el("details", "project-menu");
-    menu.hidden = ["project", "vision", "combine"].includes(selectionMode);
+    menu.hidden = projectOrderManagementActive || ["project", "vision", "combine"].includes(selectionMode);
     const summary = el("summary", "");
     summary.append(createUiIcon("ellipsis"));
     summary.setAttribute("aria-label", `${t("管理项目")}：${collection.name}`);
@@ -1306,15 +1572,15 @@ function renderProjectFilters() {
     const actions = el("div", "project-menu-panel");
     const manage = textEl("button", "project-menu-primary", "管理案例");
     const share = textEl("button", "button-secondary", "分享项目");
-    const analyze = textEl("button", "button-secondary", "批量分析画面");
+    const analyze = textEl("button", "button-secondary", "批量分析");
     const visibility = textEl(
       "button",
       "button-secondary",
-      collection.visibility === COLLECTION_VISIBILITY.projectOnly ? "在全部项目中显示" : "仅在项目内显示"
+      collection.visibility === COLLECTION_VISIBILITY.projectOnly ? "资料库可见" : "仅项目可见"
     );
     const rename = textEl("button", "button-secondary", "重命名");
-    const remove = textEl("button", "quiet-danger", "删除项目");
-    const removeWithEntries = textEl("button", "quiet-danger", "删除项目及全部案例…");
+    const remove = textEl("button", "quiet-danger", "仅删除项目");
+    const removeWithEntries = textEl("button", "quiet-danger", "删除项目及案例");
     manage.addEventListener("click", () => enterProjectSelection(collection.id));
     share.addEventListener("click", () => shareProjectCollection(collection));
     analyze.addEventListener("click", () => enterVisionSelection(collection));
@@ -1324,10 +1590,121 @@ function renderProjectFilters() {
     removeWithEntries.addEventListener("click", () => deleteProjectCollectionWithEntries(collection, removeWithEntries));
     actions.append(manage, analyze, share, visibility, rename, remove, removeWithEntries);
     menu.append(summary, actions);
+    if (projectOrderManagementActive) bindProjectOrderInteractions(row, collection);
     row.append(filter, menu);
     fragment.append(row);
   }
   elements.collectionFilters.replaceChildren(fragment);
+}
+
+function toggleProjectOrderManagement() {
+  if (selectionMode) return;
+  cancelProjectDrag();
+  projectOrderManagementActive = !projectOrderManagementActive;
+  renderProjectFilters();
+}
+
+function bindProjectOrderInteractions(row, collection) {
+  row.addEventListener("pointerdown", (event) => {
+    if (projectOrderSaving || event.button > 0) return;
+    event.preventDefault();
+    row.focus({ preventScroll: true });
+    projectDragState = {
+      pointerId: event.pointerId,
+      row,
+      collectionId: collection.id,
+      startY: event.clientY,
+      moved: false,
+      beforeIds: sortProjects(organizerState.collections, "manual").map((item) => item.id)
+    };
+    try { row.setPointerCapture(event.pointerId); } catch {}
+  });
+  row.addEventListener("pointermove", (event) => {
+    const drag = projectDragState;
+    if (!drag || drag.row !== row || drag.pointerId !== event.pointerId) return;
+    if (!drag.moved && Math.abs(event.clientY - drag.startY) < 4) return;
+    event.preventDefault();
+    drag.moved = true;
+    row.classList.add("is-dragging");
+    elements.collectionFilters.classList.add("is-project-dragging");
+    const siblings = [...elements.collectionFilters.querySelectorAll(":scope > .project-row")].filter((item) => item !== row);
+    const before = siblings.find((item) => event.clientY < item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2);
+    let reordered = false;
+    if (before && row.nextElementSibling !== before) {
+      elements.collectionFilters.insertBefore(row, before);
+      reordered = true;
+    } else if (!before && row !== elements.collectionFilters.lastElementChild) {
+      elements.collectionFilters.append(row);
+      reordered = true;
+    }
+    if (reordered && !row.hasPointerCapture(event.pointerId)) {
+      try { row.setPointerCapture(event.pointerId); } catch {}
+    }
+  });
+  const finish = (event) => {
+    const drag = projectDragState;
+    if (!drag || drag.row !== row || drag.pointerId !== event.pointerId) return;
+    const moved = drag.moved;
+    const beforeIds = drag.beforeIds;
+    cancelProjectDrag();
+    if (!moved) return;
+    const collectionIds = projectIdsFromRenderedRows();
+    if (collectionIds.every((id, index) => id === beforeIds[index])) return;
+    void persistProjectCollectionOrder(collectionIds, collection.id);
+  };
+  row.addEventListener("pointerup", finish);
+  row.addEventListener("pointercancel", () => {
+    cancelProjectDrag();
+    renderProjectFilters();
+  });
+  row.addEventListener("keydown", (event) => {
+    if (!projectOrderManagementActive || projectOrderSaving || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const collectionIds = sortProjects(organizerState.collections, "manual").map((item) => item.id);
+    const index = collectionIds.indexOf(collection.id);
+    const target = index + (event.key === "ArrowUp" ? -1 : 1);
+    if (index < 0 || target < 0 || target >= collectionIds.length) return;
+    [collectionIds[index], collectionIds[target]] = [collectionIds[target], collectionIds[index]];
+    void persistProjectCollectionOrder(collectionIds, collection.id);
+  });
+}
+
+function projectIdsFromRenderedRows() {
+  return [...elements.collectionFilters.querySelectorAll(":scope > .project-row")]
+    .map((row) => row.dataset.collectionId)
+    .filter(Boolean);
+}
+
+function cancelProjectDrag() {
+  const drag = projectDragState;
+  if (!drag) return;
+  if (drag.row.hasPointerCapture?.(drag.pointerId)) {
+    try { drag.row.releasePointerCapture(drag.pointerId); } catch {}
+  }
+  drag.row.classList.remove("is-dragging");
+  elements.collectionFilters.classList.remove("is-project-dragging");
+  projectDragState = null;
+}
+
+async function persistProjectCollectionOrder(collectionIds, focusCollectionId) {
+  if (projectOrderSaving) return;
+  projectOrderSaving = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "REORDER_COLLECTIONS", collectionIds });
+    if (!response?.ok) throw new Error(response?.message || "项目顺序保存失败");
+    organizerState = response.organizerState ?? organizerState;
+    const ordered = sortProjects(organizerState.collections, "manual");
+    const project = ordered.find((item) => item.id === focusCollectionId);
+    const position = ordered.findIndex((item) => item.id === focusCollectionId) + 1;
+    elements.projectOrderStatus.textContent = `已将${project?.name || "项目"}移动到第 ${position} 位`;
+    renderProjectFilters();
+    queueMicrotask(() => elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(focusCollectionId)}"]`)?.focus());
+  } catch (error) {
+    showFeedback(error.message || "项目顺序保存失败", true);
+    renderProjectFilters();
+  } finally {
+    projectOrderSaving = false;
+  }
 }
 
 async function updateProjectVisibility(collection, button) {
@@ -1358,7 +1735,7 @@ async function renameProjectCollection(collection) {
 }
 
 async function deleteProjectCollection(collection) {
-  if (!await confirmAppAction({ title: translateUiMessage(`删除项目“${collection.name}”？`), description: t("其中案例仍会保留在资料库。"), confirmLabel: t("删除项目"), danger: true })) return;
+  if (!await confirmAppAction({ title: translateUiMessage(`将项目“${collection.name}”移入回收站？`), description: t("其中案例仍会保留在资料库，可从回收站恢复项目。"), confirmLabel: t("移入回收站"), danger: true })) return;
   if (selectedCollectionId === collection.id) selectedCollectionId = "";
   await perform(elements.createCollection, { type: "DELETE_COLLECTION", collectionId: collection.id });
 }
@@ -1369,24 +1746,17 @@ async function deleteProjectCollectionWithEntries(collection, button) {
   const mediaCount = new Set(memberEntries.flatMap((entry) =>
     normalizeEntryMedia(entry).mediaAssets.map((asset) => asset.id)
   )).size;
-  const result = await showAppDialog({
-    title: `永久删除项目“${collection.name}”？`,
-    description: `将删除 ${memberEntries.length} 个案例和 ${mediaCount} 项媒体；案例也会从其他项目及组合案例中移除。请输入完整项目名称以确认。`,
-    confirmLabel: "永久删除",
-    danger: true,
-    fields: [{ id: "confirmationName", label: "项目名称", type: "text", required: true }],
-    onSubmit: ({ confirmationName }) => {
-      if (confirmationName.trim() !== collection.name) throw new Error("项目名称不匹配");
-      return { confirmationName: confirmationName.trim() };
-    }
-  });
-  if (!result) return;
-  const confirmationName = result.confirmationName;
+  if (!await confirmAppAction({
+    title: `将项目“${collection.name}”及全部案例移入回收站？`,
+    description: `将归档 ${memberEntries.length} 个案例和 ${mediaCount} 项媒体；可从回收站恢复。`,
+    confirmLabel: "全部移入回收站",
+    danger: true
+  })) return;
   if (selectedCollectionId === collection.id) selectedCollectionId = "";
   await perform(button, {
     type: "DELETE_COLLECTION_WITH_ENTRIES",
     collectionId: collection.id,
-    confirmationName
+    confirmationName: collection.name
   });
 }
 
@@ -1396,6 +1766,8 @@ async function enterProjectSelection(collectionId) {
   if (!await closeDetail()) return;
   selectionMode = "project";
   projectSelectionId = collection.id;
+  caseOrderManagementActive = false;
+  projectOrderManagementActive = false;
   selectedCollectionId = collection.id;
   selectedCaseIds.clear();
   const members = new Set(collection.entryIds);
@@ -1422,6 +1794,8 @@ async function enterVisionSelection(collection) {
   if (!await closeDetail()) return;
   selectionMode = "vision";
   projectSelectionId = collection.id;
+  caseOrderManagementActive = false;
+  projectOrderManagementActive = false;
   selectedCollectionId = collection.id;
   selectedCaseIds.clear();
   selectedContentId = "";
@@ -1435,6 +1809,8 @@ async function enterVisionSelection(collection) {
 async function enterSelectMode() {
   if (!await closeDetail()) return;
   selectionMode = "select";
+  caseOrderManagementActive = false;
+  projectOrderManagementActive = false;
   selectedCaseIds.clear();
   updateSelectionBar();
   renderGallery();
@@ -1444,6 +1820,7 @@ function exitSelectionMode() {
   selectionMode = "";
   projectSelectionId = "";
   selectedCaseIds.clear();
+  elements.selectionLabelInput.value = "";
   updateSelectionBar();
   renderGallery();
 }
@@ -1457,11 +1834,26 @@ function exitProjectSelection() {
 }
 
 function toggleCaseSelection(entryId, card) {
-  if (selectedCaseIds.has(entryId)) selectedCaseIds.delete(entryId);
-  else selectedCaseIds.add(entryId);
+  replaceSelectedCaseIds(toggleLibraryCaseSelection([...selectedCaseIds], entryId));
   const selected = selectedCaseIds.has(entryId);
   card.classList.toggle("selected-for-share", selected);
   card.setAttribute("aria-pressed", String(selected));
+}
+
+function selectAllFilteredCases() {
+  if (selectionMode !== "select") return;
+  replaceSelectedCaseIds(selectAllFilteredLogicalCases(visibleEntries.map((entry) => entry.id)));
+  renderGallery();
+}
+
+function clearSelectedCases() {
+  replaceSelectedCaseIds(clearLibrarySelection());
+  renderGallery();
+}
+
+function replaceSelectedCaseIds(values) {
+  selectedCaseIds.clear();
+  values.forEach((id) => selectedCaseIds.add(id));
   updateSelectionBar();
 }
 
@@ -1479,8 +1871,9 @@ function updateSelectionBar() {
   elements.selectionSimpleActions.hidden = false;
   elements.projectSelectionActions.hidden = !taskSelecting;
   elements.projectSelectionTitle.hidden = !taskSelecting;
-  elements.resultCount.hidden = taskSelecting;
+  elements.resultCount.hidden = Boolean(selectionMode);
   elements.selectCases.hidden = Boolean(selectionMode);
+  elements.galleryViewControls.hidden = Boolean(selectionMode);
   elements.projectSelectionTitle.textContent = selectionMode === "combine"
     ? `${t("组合案例")} · ${translateUiMessage(`已选择 ${selectedCaseIds.size} 个案例`)}`
     : project
@@ -1502,24 +1895,27 @@ function updateSelectionBar() {
   elements.projectSelectionSelectAll.textContent = translateUiMessage(`选中全部可分析（${allEligibleCount}）`);
   elements.projectSelectionClear.hidden = !visionSelection;
   elements.projectSelectionClear.disabled = selectedCaseIds.size === 0;
-  elements.shareCount.textContent = selectedCaseIds.size
-    ? translateUiMessage(`已选择 ${selectedCaseIds.size} 个案例`)
-    : t("选择案例");
-  elements.selectionHint.textContent = selectedCaseIds.size
-    ? (currentLocale() === "en" ? "Add to a project, combine, or share" : "现在可以加入项目、组合或分享")
-    : (currentLocale() === "en" ? "Select a case to begin" : "点击案例开始选择");
+  elements.shareCount.textContent = currentLocale() === "en" ? `Selected ${selectedCaseIds.size}` : `已选 ${selectedCaseIds.size}`;
   const selectedProject = elements.selectionProjectTarget.value;
   const options = [option("", t("加入项目…"))];
   for (const collection of organizerState.collections) options.push(option(collection.id, collection.name));
   elements.selectionProjectTarget.replaceChildren(...options);
   elements.selectionProjectTarget.value = organizerState.collections.some((item) => item.id === selectedProject) ? selectedProject : "";
   elements.selectionAddProject.disabled = !selectedCaseIds.size || !elements.selectionProjectTarget.value;
+  elements.selectionSelectFiltered.disabled = selectionMode !== "select" || visibleEntries.length === 0;
+  elements.selectionSelectFiltered.textContent = currentLocale() === "en" ? `Select current (${visibleEntries.length})` : `全选当前（${visibleEntries.length}）`;
+  elements.selectionSelectFiltered.setAttribute("aria-label", currentLocale() === "en"
+    ? `Select all ${visibleEntries.length} cases in the current filtered results`
+    : `全选当前筛选结果，共 ${visibleEntries.length} 个案例`);
+  elements.selectionClear.disabled = selectedCaseIds.size === 0;
+  elements.selectionAddLabels.disabled = !selectedCaseIds.size || !splitInput(elements.selectionLabelInput.value).length;
   elements.selectionCombine.disabled = selectedCaseIds.size < 2;
   elements.selectionNewProject.disabled = !selectedCaseIds.size;
   elements.selectionAnalyze.disabled = ![...selectedCaseIds]
     .some((id) => isVisionSelectableEntry(logicalCases.find((entry) => entry.id === id)));
   elements.shareExport.textContent = t("分享");
   elements.shareExport.disabled = !selectedCaseIds.size;
+  elements.selectionTrash.disabled = !selectedCaseIds.size;
   elements.createCollection.disabled = taskSelecting;
 }
 
@@ -1565,13 +1961,12 @@ async function addSelectionToProject() {
   if (!collection || !selectedCaseIds.size) return;
   elements.selectionAddProject.disabled = true;
   try {
-    const entryIds = new Set(collection.entryIds);
-    expandLogicalCaseIds([...selectedCaseIds], compoundCases).forEach((id) => entryIds.add(id));
-    const response = await chrome.runtime.sendMessage({
-      type: "REPLACE_COLLECTION_ENTRIES",
+    const message = buildLibraryBatchPayload([...selectedCaseIds], compoundCases, {
+      type: LIBRARY_BATCH_ACTIONS.setProject,
       collectionId: collection.id,
-      entryIds: [...entryIds]
+      mode: "add"
     });
+    const response = await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || "加入项目失败");
     organizerState = response.organizerState ?? organizerState;
     showFeedback(`已加入项目“${collection.name}”`);
@@ -1580,6 +1975,39 @@ async function addSelectionToProject() {
     showFeedback(error.message || "加入项目失败", true);
     updateSelectionBar();
   }
+}
+
+async function addLabelsToSelection() {
+  if (!selectedCaseIds.size) return;
+  const customLabels = splitInput(elements.selectionLabelInput.value);
+  if (!customLabels.length) return elements.selectionLabelInput.focus();
+  const message = buildLibraryBatchPayload([...selectedCaseIds], compoundCases, {
+    type: LIBRARY_BATCH_ACTIONS.addCustomLabels,
+    customLabels
+  });
+  const response = await perform(elements.selectionAddLabels, message, false);
+  if (!response?.ok) return;
+  elements.selectionLabelInput.value = "";
+  exitSelectionMode();
+  await refreshLibrary();
+}
+
+async function moveSelectionToTrash() {
+  if (!selectedCaseIds.size) return;
+  const logicalCount = selectedCaseIds.size;
+  const message = buildLibraryBatchPayload([...selectedCaseIds], compoundCases, {
+    type: LIBRARY_BATCH_ACTIONS.moveToTrash
+  });
+  if (!await confirmAppAction({
+    title: `将所选 ${logicalCount} 个案例移入回收站？`,
+    description: "案例及其媒体会保留在回收站，可以恢复。",
+    confirmLabel: "移入回收站",
+    danger: true
+  })) return;
+  const response = await perform(elements.selectionTrash, message, false);
+  if (!response?.ok) return;
+  exitSelectionMode();
+  await refreshLibrary();
 }
 
 async function createProjectFromSelection() {
@@ -1653,12 +2081,18 @@ async function saveCompoundSelection() {
 
 async function saveProjectSelection() {
   const collectionId = projectSelectionId;
+  const collection = organizerState.collections.find((item) => item.id === collectionId);
+  const selectedEntryIds = expandLogicalCaseIds([...selectedCaseIds], compoundCases);
+  const selected = new Set(selectedEntryIds);
+  const retainedOrder = (collection?.entryIds ?? []).filter((entryId) => selected.has(entryId));
+  const retained = new Set(retainedOrder);
+  const entryIds = [...retainedOrder, ...selectedEntryIds.filter((entryId) => !retained.has(entryId))];
   elements.projectSelectionSave.disabled = true;
   try {
     const response = await chrome.runtime.sendMessage({
       type: "REPLACE_COLLECTION_ENTRIES",
       collectionId,
-      entryIds: expandLogicalCaseIds([...selectedCaseIds], compoundCases)
+      entryIds
     });
     if (!response?.ok) throw new Error(response?.message || "项目案例保存失败");
     organizerState = response.organizerState ?? organizerState;
@@ -1686,40 +2120,131 @@ function openShareDialog({ entryIds = [], collectionId = "", title = "", count =
   const selectedCount = count || entryIds.length;
   if (!selectedCount) return showFeedback(t("请先选择要分享的案例"), true);
   shareDialogContext = { entryIds, collectionId, title, count: selectedCount };
+  shareLocalAssetRecords = [];
   submissionDownloadIds = [];
   elements.shareDialogTitle.textContent = title || t("分享案例");
   elements.shareDialogMeta.textContent = t("{count} 个案例", { count: selectedCount });
   elements.shareDialogDisclosure.checked = false;
   elements.shareDialogSubmit.disabled = true;
-  elements.shareDialogExport.disabled = false;
+  elements.shareDialogExport.disabled = true;
   elements.shareDialogResult.hidden = true;
   elements.shareDialogOptions.hidden = false;
   elements.shareDialog.showModal();
-  elements.shareDialogExport.focus();
+  void prepareShareLocalAssetRecords();
 }
 
 function closeShareDialog() {
   if (elements.shareDialog.open) elements.shareDialog.close();
   shareDialogContext = null;
+  shareLocalAssetRecords = [];
   submissionDownloadIds = [];
+}
+
+async function prepareShareLocalAssetRecords() {
+  if (!shareDialogContext) return;
+  const context = shareDialogContext;
+  try {
+    const requestedIds = context.collectionId
+      ? projectPackageEntryIds({ entries, compoundCases, organizerState }, context.collectionId)
+      : expandLogicalCaseIds(context.entryIds, compoundCases);
+    const idSet = new Set(requestedIds);
+    const linked = entries.filter((entry) => idSet.has(entry.id)).flatMap((entry) =>
+      entryMediaAssets(entry)
+        .filter((asset) => asset.recordType === "local-asset-reference")
+        .map((asset) => ({ entry, asset }))
+    );
+    const records = await Promise.all(linked.map(async (item) => ({
+      ...item,
+      record: await getLocalAssetHandleRecord(item.asset.id)
+    })));
+    if (shareDialogContext !== context) return;
+    shareLocalAssetRecords = records;
+    elements.shareDialogMeta.textContent = linked.length
+      ? `${t("{count} 个案例", { count: context.count })} · ${linked.length} 个本机源文件将在导出时检查权限`
+      : t("{count} 个案例", { count: context.count });
+    elements.shareDialogExport.disabled = false;
+    elements.shareDialogExport.focus();
+  } catch (error) {
+    if (shareDialogContext !== context) return;
+    elements.shareDialogMeta.textContent = error.message || "无法检查本机源文件链接";
+    elements.shareDialogExport.disabled = true;
+  }
+}
+
+async function authorizeShareLocalAssets() {
+  for (const item of shareLocalAssetRecords) {
+    const { entry, asset, record } = item;
+    if (!record) {
+      showFeedback(`“${asset.sourceTitle || entry.title}”的本机链接已丢失，请先在详情中重新链接`, true);
+      return false;
+    }
+    let inspection = await inspectLocalAssetHandle(record, Number.isFinite(Number(asset.sourceLastModified)) ? asset : undefined);
+    if (inspection.status === LOCAL_ASSET_LINK_STATUS.NEEDS_PERMISSION) {
+      if (typeof record.handle.requestPermission !== "function") {
+        showFeedback(`当前浏览器无法重新授权“${asset.sourceTitle}”，请先重新链接源文件`, true);
+        return false;
+      }
+      const permission = await record.handle.requestPermission({ mode: "read" });
+      if (permission !== "granted") {
+        showFeedback(`你取消了“${asset.sourceTitle}”的读取授权，分享包未导出`, true);
+        return false;
+      }
+      inspection = await inspectLocalAssetHandle(record, Number.isFinite(Number(asset.sourceLastModified)) ? asset : undefined);
+    }
+    if (inspection.status === LOCAL_ASSET_LINK_STATUS.MISSING) {
+      showFeedback(`“${asset.sourceTitle || entry.title}”已移动、改名或删除，请先重新链接；分享包未导出`, true);
+      return false;
+    }
+    if (inspection.status === LOCAL_ASSET_LINK_STATUS.CHANGED) {
+      const file = inspection.file;
+      const confirmed = await confirmAppAction({
+        title: "源文件自上次链接后发生变化",
+        description: `“${asset.sourceTitle}”现在是 ${formatBytes(file.size)}。确认后会更新文件信息并把当前版本放入分享包；取消则不导出。`,
+        confirmLabel: "使用当前版本"
+      });
+      if (!confirmed) return false;
+      await saveLocalAssetHandle(asset.id, record.handle, file);
+      const response = await chrome.runtime.sendMessage({
+        type: "UPDATE_LOCAL_ASSET_REFERENCE",
+        entryId: entry.id,
+        assetId: asset.id,
+        sourceTitle: file.name,
+        relativePath: file.name,
+        sourceFormat: file.name.split(".").at(-1)?.toLocaleLowerCase("en-US") || asset.sourceFormat,
+        mimeType: file.type || asset.mimeType || "application/octet-stream",
+        byteSize: file.size,
+        sourceLastModified: file.lastModified
+      });
+      if (!response?.ok) throw new Error(response?.message || `无法更新“${file.name}”的文件信息`);
+      item.asset = response.asset ?? { ...asset, sourceTitle: file.name, byteSize: file.size, sourceLastModified: file.lastModified };
+      item.record = await getLocalAssetHandleRecord(asset.id);
+    }
+  }
+  return true;
 }
 
 async function exportFromShareDialog() {
   if (!shareDialogContext) return;
+  const context = shareDialogContext;
   elements.shareDialogExport.disabled = true;
   try {
-    const message = shareDialogContext.collectionId
-      ? { type: "EXPORT_PROJECT", collectionId: shareDialogContext.collectionId }
-      : { type: "EXPORT_ARCHIVE", entryIds: shareDialogContext.entryIds };
+    if (!await authorizeShareLocalAssets()) {
+      if (shareDialogContext === context) elements.shareDialogExport.disabled = false;
+      return;
+    }
+    if (shareDialogContext !== context) return;
+    const message = context.collectionId
+      ? { type: "EXPORT_PROJECT", collectionId: context.collectionId }
+      : { type: "EXPORT_ARCHIVE", entryIds: context.entryIds };
     const response = await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || t("无法导出分享包"));
     showFeedback(response.message);
-    const selected = Boolean(shareDialogContext.entryIds.length);
+    const selected = Boolean(context.entryIds.length);
     closeShareDialog();
     if (selected) exitSelectionMode();
   } catch (error) {
     showFeedback(error.message || t("无法导出分享包"), true);
-    elements.shareDialogExport.disabled = false;
+    if (shareDialogContext === context) elements.shareDialogExport.disabled = false;
   }
 }
 
@@ -1782,7 +2307,8 @@ function saveLibraryReturnSnapshot() {
       facetNodeIds: [...selectedFacets.values()].flatMap((nodeIds) => [...nodeIds]),
       pendingOnly: elements.pendingFilter.checked,
       query: elements.searchInput.value,
-      scrollY: window.scrollY
+      scrollY: window.scrollY,
+      sortMode: caseSortMode
     }));
   } catch {
   }
@@ -1800,6 +2326,7 @@ function restoreLibraryReturnSnapshot() {
   selectedCollectionId = organizerState.collections.some((item) => item.id === snapshot.collectionId)
     ? snapshot.collectionId
     : "";
+  caseSortMode = snapshot.sortMode;
   selectedContentId = snapshot.contentId;
   selectedFacets = new Map();
   const nodesById = new Map(facetCatalog.nodes.map((node) => [node.id, node]));
@@ -1838,6 +2365,8 @@ async function openRequestedLibraryTarget() {
   try { sessionStorage.removeItem(LIBRARY_RETURN_STORAGE_KEY); } catch {}
   selectedContentId = "";
   selectedFacets.clear();
+  caseOrderManagementActive = false;
+  projectOrderManagementActive = false;
   elements.pendingFilter.checked = false;
   elements.searchInput.value = "";
   libraryReturnScrollY = null;
@@ -2036,7 +2565,151 @@ function renderSettingsPanels({ resetActiveScroll = false } = {}) {
   if (resetActiveScroll) resetActiveSettingsPanelScroll();
   if (activeSettingsTab === "ai") renderAnalysisSettings();
   if (activeSettingsTab === "tasks") renderBatchManager();
-  if (activeSettingsTab === "general") void renderDataSafetyStatus();
+  if (activeSettingsTab === "general") {
+    void renderDataSafetyStatus();
+    void renderCapturePermissionStatus();
+    void refreshExtensionUpdateStatus();
+  }
+}
+
+async function refreshExtensionUpdateStatus() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_EXTENSION_UPDATE_STATUS" });
+    if (!response?.ok || !response.status) throw new Error(response?.status?.lastError || response?.message || "无法读取更新状态");
+    renderExtensionUpdateStatus(response.status);
+  } catch (error) {
+    if (!extensionUpdateStatus) renderExtensionUpdateStatus(null, error?.message || "无法读取更新状态");
+  }
+}
+
+async function checkExtensionUpdate() {
+  elements.checkExtensionUpdate.disabled = true;
+  elements.checkExtensionUpdate.setAttribute("aria-busy", "true");
+  showUpdateFeedback("正在检查更新…");
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "CHECK_EXTENSION_UPDATE" });
+    if (response?.status) renderExtensionUpdateStatus(response.status);
+    if (!response?.ok) throw new Error(response?.status?.lastError || response?.message || "检查更新失败");
+    showUpdateFeedback(updateCheckFeedback(response.status));
+  } catch (error) {
+    showUpdateFeedback(error?.message || "检查更新失败", true);
+  } finally {
+    elements.checkExtensionUpdate.disabled = false;
+    elements.checkExtensionUpdate.removeAttribute("aria-busy");
+  }
+}
+
+async function applyExtensionUpdate() {
+  const status = extensionUpdateStatus;
+  if (!status?.canApply || !status.applyBehavior) return;
+  const development = status.applyBehavior === "reload_development_directory";
+  const confirmed = await confirmAppAction(development ? {
+    title: "安全重载当前目录？",
+    description: "当前资料库页面会关闭，Chrome 会重新载入你已经选择的本地目录。不会下载或覆盖代码，本地案例和素材不会丢失。",
+    confirmLabel: "安全重载"
+  } : {
+    title: "立即应用更新并重启 PromptDirector？",
+    description: "当前资料库页面会关闭，但本地案例和素材不会丢失。",
+    confirmLabel: "应用并重启"
+  });
+  if (!confirmed) return;
+  elements.applyExtensionUpdate.disabled = true;
+  elements.applyExtensionUpdate.setAttribute("aria-busy", "true");
+  showUpdateFeedback(development ? "正在安全重载当前目录…" : "正在应用更新并重启…");
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "APPLY_EXTENSION_UPDATE" });
+    if (response?.status) renderExtensionUpdateStatus(response.status);
+    if (!response?.ok) throw new Error(response?.status?.lastError || response?.message || "无法应用更新");
+  } catch (error) {
+    showUpdateFeedback(error?.message || "无法应用更新", true);
+    elements.applyExtensionUpdate.disabled = false;
+    elements.applyExtensionUpdate.removeAttribute("aria-busy");
+  }
+}
+
+function renderExtensionUpdateStatus(nextStatus, fallbackError = "") {
+  if (nextStatus) extensionUpdateStatus = { ...(extensionUpdateStatus ?? {}), ...nextStatus };
+  const status = extensionUpdateStatus;
+  const currentVersion = status?.currentVersion || chrome.runtime.getManifest().version;
+  elements.aboutVersion.textContent = `PromptDirector ${currentVersion}`;
+  if (!status) {
+    elements.updateChannel.textContent = "安装方式暂不可用";
+    elements.updateStatus.textContent = fallbackError ? "状态不可用" : "正在检查";
+    elements.updateStatus.className = `update-status-badge${fallbackError ? " is-error" : ""}`;
+    elements.updateCheckedAt.textContent = "最近检查：—";
+    elements.updateAvailableVersion.textContent = "可用版本：—";
+    elements.updateExplanation.textContent = "重新打开设置时会再次读取更新状态。";
+    showUpdateFeedback(fallbackError, Boolean(fallbackError));
+    return;
+  }
+
+  const development = status.channel === "development";
+  elements.updateChannel.textContent = development ? "本地开发版 · 手动替换代码" : "商店版 · Chrome 自动更新";
+  const updateVersion = status.pendingVersion || status.latestVersion || "—";
+  elements.updateCheckedAt.textContent = `最近检查：${formatUpdateCheckTime(status.checkedAt)}`;
+  elements.updateAvailableVersion.textContent = `可用版本：${updateVersion}`;
+
+  const display = updateStatusDisplay(status);
+  elements.updateStatus.textContent = display.label;
+  elements.updateStatus.className = `update-status-badge ${display.className}`.trim();
+  elements.updateExplanation.textContent = updateExplanation(status);
+
+  const releaseUrl = development && status.updateAvailable ? safeHttpUrl(status.releaseUrl) : "";
+  elements.updateReleaseLink.hidden = !releaseUrl;
+  if (releaseUrl) elements.updateReleaseLink.href = releaseUrl;
+  else elements.updateReleaseLink.removeAttribute("href");
+
+  elements.applyExtensionUpdate.hidden = !status.canApply;
+  elements.applyExtensionUpdate.disabled = false;
+  elements.applyExtensionUpdate.removeAttribute("aria-busy");
+  elements.applyExtensionUpdate.classList.toggle("button-secondary", development);
+  elements.applyExtensionUpdate.textContent = status.applyBehavior === "reload_development_directory"
+    ? "重新载入目录"
+    : "应用更新并重启";
+
+  const hasUpdate = Boolean(status.updateAvailable);
+  elements.settingsUpdateBadge.hidden = !hasUpdate;
+  elements.openSettings.setAttribute("aria-label", hasUpdate ? "设置，有可用更新" : "设置");
+  elements.openSettings.title = hasUpdate ? `设置 · ${display.label}` : "设置";
+  showUpdateFeedback(status.lastError || "", Boolean(status.lastError));
+}
+
+function updateStatusDisplay(status) {
+  if (status.updateKind === "store_downloaded") return { label: "已下载，可应用", className: "is-available" };
+  if (status.updateKind === "development_release" || status.updateAvailable) return { label: "发现新版本", className: "is-available" };
+  if (status.checkStatus === "error") return { label: "检查失败", className: "is-error" };
+  if (status.checkStatus === "no_update") return { label: "已是最新", className: "is-current" };
+  if (status.checkStatus === "throttled") return { label: "刚刚检查过", className: "is-current" };
+  return { label: "自动更新", className: "" };
+}
+
+function updateExplanation(status) {
+  if (status.channel === "development") {
+    return status.updateAvailable
+      ? "发现新的 GitHub Release。扩展无法自行覆盖本机目录；请从链接下载并替换代码，再安全重载。固定 ID 升级无需导出、导入案例。"
+      : "本地开发版不会被扩展自行覆盖。安全重载只会重新载入当前目录，不会下载或安装新版本；固定 ID 升级无需导出、导入案例。";
+  }
+  return status.updateKind === "store_downloaded"
+    ? "新版本已由 Chrome 下载。立即应用会关闭当前资料库页面并重启扩展；案例和素材不会丢失。"
+    : "商店版由 Chrome 自动更新，无需反复下载插件；更新下载完成后也可以在这里立即应用。";
+}
+
+function updateCheckFeedback(status) {
+  if (status?.updateAvailable) return status.channel === "development" ? "发现新版本，可打开 Release 下载。" : "新版本已下载，可以立即应用。";
+  if (status?.checkStatus === "throttled") return "刚刚检查过，已保留最近结果。";
+  return "已是最新版本。";
+}
+
+function formatUpdateCheckTime(value) {
+  if (!value) return "尚未检查";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "尚未检查";
+  return date.toLocaleString(currentLocale() === "en" ? "en" : "zh-CN");
+}
+
+function showUpdateFeedback(message, isError = false) {
+  elements.updateFeedback.textContent = message || "";
+  elements.updateFeedback.classList.toggle("error", isError);
 }
 
 function resetActiveSettingsPanelScroll() {
@@ -2188,11 +2861,20 @@ async function restoreCompleteFolderBackup() {
     try { library = JSON.parse(await libraryFile.text()); }
     catch { throw new Error("library.json 已损坏，无法恢复"); }
     const backupPaths = backupMediaPaths(library);
-    const totalBytes = [...backupPaths].reduce((sum, path) => sum + (files.get(path)?.size ?? 0), 0);
+    const backupMediaSizes = [...backupPaths].map((path) => files.get(path)?.size ?? 0);
+    const totalBytes = backupMediaSizes.reduce((sum, size) => sum + size, 0);
     if (completion.mediaCount !== backupPaths.size || completion.byteSize !== totalBytes) {
       throw new Error("完整备份的媒体数量或大小校验失败，未写入资料库");
     }
-    const parsed = await parseCompleteFolderBackup(library, files, { maxFileBytes: Number.MAX_SAFE_INTEGER });
+    const largestMediaBytes = Math.max(1, ...backupMediaSizes);
+    const restoreLimits = {
+      ...PORTABLE_LIBRARY_LIMITS,
+      maxArchiveBytes: Math.max(1, totalBytes),
+      maxFileBytes: largestMediaBytes,
+      maxImageBytes: largestMediaBytes,
+      maxVideoBytes: largestMediaBytes
+    };
+    const parsed = await parseCompleteFolderBackup(library, files, restoreLimits);
     await validateImportedImageDimensions(parsed.images);
     const restoredLibrary = { ...parsed };
     delete restoredLibrary.assets;
@@ -2254,7 +2936,14 @@ async function importSharedLibraryPackage() {
   setDataSafetyBusy(true);
   try {
     showDataSafetyFeedback(`正在检查 ${file.name}`);
-    const files = await readZipBlob(file);
+    const packageLimits = {
+      ...PORTABLE_LIBRARY_LIMITS,
+      maxArchiveBytes: file.size,
+      maxFileBytes: file.size,
+      maxImageBytes: file.size,
+      maxVideoBytes: file.size
+    };
+    const files = await readZipBlob(file, packageLimits);
     const libraryFile = files.get("library.json");
     if (!libraryFile) throw new Error("分享包缺少 library.json");
     if (libraryFile.size > PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes) {
@@ -2263,7 +2952,7 @@ async function importSharedLibraryPackage() {
     let library;
     try { library = JSON.parse(await libraryFile.text()); }
     catch { throw new Error("分享包中的 library.json 已损坏"); }
-    const parsed = parseLibraryPackage(library, files);
+    const parsed = parseLibraryPackage(library, files, packageLimits);
     await validateImportedImageDimensions(parsed.images);
     const importLibrary = { ...parsed };
     delete importLibrary.assets;
@@ -2763,8 +3452,65 @@ function renderFilterToggleState() {
   elements.toggleFilters.title = label;
 }
 
+function sidebarWidthLimit() {
+  return Math.max(SIDEBAR_WIDTH_LIMITS.min, Math.min(SIDEBAR_WIDTH_LIMITS.max, Math.floor(innerWidth * 0.45)));
+}
+
+function applySidebarWidth(value) {
+  const width = Math.min(normalizeSidebarWidth(value), sidebarWidthLimit());
+  workspace.style.setProperty("--sidebar-width", `${width}px`);
+  elements.sidebarResizer.setAttribute("aria-valuemax", String(sidebarWidthLimit()));
+  elements.sidebarResizer.setAttribute("aria-valuenow", String(width));
+  return width;
+}
+
+async function saveSidebarWidth(value) {
+  const sidebarWidth = normalizeSidebarWidth(value);
+  uiPreferences = await updateUiPreferences({ ...uiPreferences, sidebarWidth });
+  applySidebarWidth(sidebarWidth);
+}
+
+function bindSidebarResize() {
+  applySidebarWidth(uiPreferences.sidebarWidth);
+  let pointerId = null;
+  let originX = 0;
+  let originWidth = uiPreferences.sidebarWidth;
+  elements.sidebarResizer.addEventListener("pointerdown", (event) => {
+    if (innerWidth <= 900 || workspace.classList.contains("filters-collapsed")) return;
+    pointerId = event.pointerId;
+    originX = event.clientX;
+    originWidth = Number.parseInt(getComputedStyle(workspace).getPropertyValue("--sidebar-width"), 10) || uiPreferences.sidebarWidth;
+    elements.sidebarResizer.setPointerCapture(pointerId);
+    elements.sidebarResizer.classList.add("is-resizing");
+    event.preventDefault();
+  });
+  elements.sidebarResizer.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== pointerId) return;
+    applySidebarWidth(originWidth + event.clientX - originX);
+  });
+  const finishPointerResize = (event) => {
+    if (event.pointerId !== pointerId) return;
+    const width = Number(elements.sidebarResizer.getAttribute("aria-valuenow"));
+    pointerId = null;
+    elements.sidebarResizer.classList.remove("is-resizing");
+    void saveSidebarWidth(width);
+  };
+  elements.sidebarResizer.addEventListener("pointerup", finishPointerResize);
+  elements.sidebarResizer.addEventListener("pointercancel", finishPointerResize);
+  elements.sidebarResizer.addEventListener("keydown", (event) => {
+    if (innerWidth <= 900 || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const current = Number(elements.sidebarResizer.getAttribute("aria-valuenow"));
+    const next = applySidebarWidth(current + (event.key === "ArrowRight" ? 16 : -16));
+    void saveSidebarWidth(next);
+  });
+  addEventListener("resize", () => applySidebarWidth(uiPreferences.sidebarWidth), { passive: true });
+}
+
 function clearFilters() {
   selectedCollectionId = "";
+  caseOrderManagementActive = false;
+  projectOrderManagementActive = false;
   selectedContentId = "";
   selectedFacets.clear();
   elements.pendingFilter.checked = false;
@@ -2878,10 +3624,12 @@ async function renderDetail() {
   if (visualSetAnalyses) body.append(visualSetAnalyses);
   const attributes = createDetailAttributes(entry);
   if (attributes) body.append(attributes);
-  const metadata = createDetailMetadata(entry);
-  if (metadata) body.append(metadata);
+  body.append(createDetailQuickOrganization(entry));
   const breakdown = createFullAnalysis(entry);
   if (breakdown) body.append(breakdown);
+  const metadata = createDetailMetadata(entry, { includeDelete: true });
+  if (metadata) body.append(metadata);
+  else body.append(createDetailFooterActions(entry));
   primary.append(body);
   content.append(primary);
   const discovery = createLocalDiscovery(entry);
@@ -3014,7 +3762,7 @@ async function renderCompoundDetail(entry, content, body) {
     section.append(heading);
     if (entryHasMedia(member)) section.append(await createDetailMediaGallery(member));
     if (isEntryPending(member)) section.append(createPendingReviewPanel(member));
-    const prompt = createPromptSection(member);
+    const prompt = createPromptSection(member, { compoundMember: true });
     if (prompt) section.append(prompt);
     const vision = createVisionDescription(member);
     if (vision) section.append(vision);
@@ -3025,6 +3773,7 @@ async function renderCompoundDetail(entry, content, body) {
     section.append(createEntryEditor(member));
     body.append(section);
   }
+  body.append(createDetailQuickOrganization(entry), createDetailFooterActions(entry));
 }
 
 function createCompoundActions(entry) {
@@ -3352,6 +4101,8 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     gallery.classList.toggle("is-image-detail", asset.kind === "image");
     gallery.classList.toggle("is-video-detail", asset.kind === "video");
     gallery.classList.toggle("is-document-detail", asset.kind === "document");
+    gallery.classList.toggle("is-audio-detail", asset.kind === "audio");
+    gallery.classList.toggle("is-attachment-detail", asset.kind === "attachment");
     gallery.classList.toggle("is-video-reference", asset.kind === "video" && asset.storageMode === "reference");
     if (asset.kind !== "image") stage.style.removeProperty("height");
     activeController?.destroy?.();
@@ -3374,7 +4125,8 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     }
     activeController = body.mediaController || (localVideo ? localVideoController(localVideo) : null);
     const caption = el("figcaption", "detail-visual-caption");
-    caption.append(rawTextEl("span", "", asset.id === entry.primaryMediaId ? `主要媒体 · ${activeIndex + 1}/${entry.mediaAssets.length}` : `${activeIndex + 1}/${entry.mediaAssets.length}`));
+    const position = asset.id === entry.primaryMediaId ? `主要媒体 · ${activeIndex + 1}/${entry.mediaAssets.length}` : `${activeIndex + 1}/${entry.mediaAssets.length}`;
+    caption.append(rawTextEl("span", "", [position, mediaMetadataText(asset)].filter(Boolean).join(" · ")));
     const actions = el("span", "detail-visual-actions");
     if (!entry.compoundCase && asset.id !== entry.primaryMediaId) {
       const primary = textEl("button", "button-secondary", "设为主要媒体");
@@ -3394,9 +4146,9 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       if (asset.kind === "video" && asset.storageMode === "reference") {
         actions.append(createLocalMediaUploadControl(entry, { label: "附加本地视频", accept: "video/*" }));
       }
-      const remove = textEl("button", "button-danger-secondary", "删除此媒体");
+      const remove = textEl("button", "button-danger-secondary", "此媒体移入回收站");
       remove.addEventListener("click", async () => {
-        if (!await confirmAppAction({ title: "删除这项媒体？", description: "案例文字、笔记和其他媒体会保留。", confirmLabel: "删除媒体", danger: true })) return;
+        if (!await confirmAppAction({ title: "将这项媒体移入回收站？", description: "案例文字、笔记和其他媒体会保留；这项媒体可从回收站恢复。", confirmLabel: "媒体移入回收站", danger: true })) return;
         clearMediaAssetCache(asset.id);
         await perform(remove, { type: "DELETE_ENTRY_MEDIA", entryId: entry.id, assetId: asset.id });
       });
@@ -3430,7 +4182,13 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       image.src = imageUrls[index];
       button.append(image);
     } else {
-      button.append(textEl("span", "media-thumb-label", asset.kind === "video" ? "▶ 视频" : "PDF 文档"));
+      const labels = {
+        video: "▶ 视频",
+        audio: `♪ ${assetFormatLabel(asset)}`,
+        document: `${assetFormatLabel(asset)} 文档`,
+        attachment: `${assetFormatLabel(asset)} 源文件`
+      };
+      button.append(textEl("span", "media-thumb-label", labels[asset.kind] || "资料"));
     }
     button.addEventListener("click", async () => {
       const railScrollLeft = rail.scrollLeft;
@@ -3594,6 +4352,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
     });
     return image;
   }
+  if (asset.recordType === "local-asset-reference") return createLocalAssetReferenceViewer(asset, entry);
   if (asset.storageMode === "reference") return createReferencedMediaViewer(asset, entry);
   const blob = await getMediaBlob(asset.id);
   if (!blob) return textEl("div", "detail-placeholder", "本地媒体文件缺失；请从完整备份恢复");
@@ -3615,11 +4374,34 @@ async function createMediaViewer(asset, imageUrl, entry) {
     wrap.append(video, fallback);
     return wrap;
   }
+  if (asset.kind === "audio") {
+    const wrap = el("div", "detail-audio-wrap");
+    const audio = document.createElement("audio");
+    audio.className = "detail-audio";
+    audio.controls = true;
+    audio.preload = "metadata";
+    audio.autoplay = false;
+    audio.src = url;
+    const metadata = rawTextEl("p", "asset-file-meta", mediaMetadataText(asset));
+    audio.addEventListener("loadedmetadata", () => {
+      if (!asset.durationMs && Number.isFinite(audio.duration)) {
+        metadata.textContent = mediaMetadataText({ ...asset, durationMs: Math.round(audio.duration * 1000) });
+      }
+    });
+    wrap.append(
+      rawTextEl("span", "asset-kind-badge", `音频 · ${assetFormatLabel(asset)}`),
+      rawTextEl("strong", "asset-file-title", asset.sourceTitle || entry.title || "音频"),
+      metadata,
+      audio,
+      managedAssetDownloadLink(asset, url)
+    );
+    return wrap;
+  }
+  if (asset.kind === "attachment") return createManagedSourceFileViewer(asset, url);
   const wrap = el("div", "detail-document");
-  const open = textEl("a", "button-secondary media-open-link", "打开或下载文档");
+  const open = textEl("a", "button-secondary media-open-link", "下载本机副本");
   open.href = url;
-  open.target = "_blank";
-  open.rel = "noopener";
+  open.download = asset.sourceTitle || `document-${asset.id}`;
   if (asset.mimeType === "application/pdf") {
     try {
       wrap.append(await createPdfViewer(blob, entry.title));
@@ -3629,7 +4411,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
   } else if (asset.extractedTextFormat === "markdown" || asset.mimeType === "text/markdown") {
     const text = String(entry.text ?? "").trim() || await readDocumentText(blob, asset.mimeType);
     const reader = el("article", "document-text-reader");
-    reader.append(rawTextEl("div", "document-type-badge", documentTypeLabel(asset.mimeType)));
+    reader.append(rawTextEl("div", "document-type-badge", documentTypeLabel(asset.mimeType, asset.sourceFormat)));
     reader.append(renderMarkdownDocument(text, {
       loadRemoteImage: (urlValue) => loadRemoteMarkdownImage(asset.id, urlValue)
     }));
@@ -3637,11 +4419,145 @@ async function createMediaViewer(asset, imageUrl, entry) {
   } else {
     const text = String(entry.text ?? "").trim() || await readDocumentText(blob, asset.mimeType);
     const reader = el("article", "document-text-reader");
-    reader.append(rawTextEl("div", "document-type-badge", documentTypeLabel(asset.mimeType)), rawTextEl("pre", "", text || "这个文档没有可显示的文字"));
+    reader.append(rawTextEl("div", "document-type-badge", documentTypeLabel(asset.mimeType, asset.sourceFormat)), rawTextEl("pre", "", text || "这个文档没有可显示的文字"));
     wrap.append(reader);
   }
   wrap.append(open);
   return wrap;
+}
+
+function managedAssetDownloadLink(asset, url) {
+  const download = rawTextEl("a", "button-secondary media-open-link", "下载本机副本");
+  download.href = url;
+  download.download = asset.sourceTitle || `source-${asset.id}`;
+  return download;
+}
+
+function createManagedSourceFileViewer(asset, url) {
+  const panel = el("div", "detail-source-file");
+  panel.append(
+    rawTextEl("span", "asset-kind-badge", `${assetCategoryLabel(asset)} · ${assetFormatLabel(asset)}`),
+    rawTextEl("strong", "asset-file-title", asset.sourceTitle || "创作源文件"),
+    rawTextEl("p", "asset-file-path", asset.relativePath || "本机资料"),
+    rawTextEl("p", "asset-file-meta", mediaMetadataText(asset)),
+    rawTextEl("p", "asset-inert-note", "这是归档源文件。PromptDirector 不会执行或内嵌打开它。"),
+    managedAssetDownloadLink(asset, url)
+  );
+  return panel;
+}
+
+async function createLocalAssetReferenceViewer(asset, entry) {
+  const panel = el("div", "detail-source-file detail-local-asset-reference");
+  const expected = Number.isFinite(Number(asset.sourceLastModified)) ? asset : undefined;
+  let record = null;
+  let inspection;
+  try {
+    record = await getLocalAssetHandleRecord(asset.id);
+    inspection = await inspectLocalAssetHandle(record, expected);
+  } catch (error) {
+    inspection = { status: LOCAL_ASSET_LINK_STATUS.MISSING, permission: "unknown", error };
+  }
+  const statusLabels = {
+    [LOCAL_ASSET_LINK_STATUS.READY]: "链接可用",
+    [LOCAL_ASSET_LINK_STATUS.CHANGED]: "源文件已变化，请确认后重新链接",
+    [LOCAL_ASSET_LINK_STATUS.NEEDS_PERMISSION]: "需要你重新授权读取",
+    [LOCAL_ASSET_LINK_STATUS.MISSING]: "源文件已移动、改名或链接缺失"
+  };
+  panel.dataset.linkStatus = inspection.status;
+  panel.append(
+    rawTextEl("span", "asset-kind-badge", `本机链接 · ${assetFormatLabel(asset)}`),
+    rawTextEl("strong", "asset-file-title", asset.sourceTitle || "本机源文件"),
+    rawTextEl("p", "asset-file-path", asset.relativePath || asset.sourceTitle || "未记录相对路径"),
+    rawTextEl("p", "asset-file-meta", mediaMetadataText(asset)),
+    rawTextEl("p", "asset-link-status", statusLabels[inspection.status] || "链接状态未知"),
+    rawTextEl("p", "asset-inert-note", "这里只保存文件信息与本机授权。不会自动读取、上传、执行或内嵌源文件；导出分享包时会再次明确检查权限。")
+  );
+  const actions = el("div", "asset-file-actions");
+  if (inspection.status === LOCAL_ASSET_LINK_STATUS.NEEDS_PERMISSION) {
+    const authorize = rawTextEl("button", "button-secondary", "重新授权读取");
+    authorize.addEventListener("click", () => void authorizeLocalAssetReference(asset, record, authorize));
+    actions.append(authorize);
+  }
+  if (inspection.status === LOCAL_ASSET_LINK_STATUS.READY) {
+    const download = rawTextEl("button", "button-secondary", "下载本机副本");
+    download.addEventListener("click", () => void downloadLocalAssetReference(asset, record, download));
+    actions.append(download);
+  }
+  const relink = rawTextEl("button", "button-secondary", "重新链接源文件");
+  relink.title = "由你选择新的本机文件；确认后更新文件名、大小、格式与修改时间";
+  relink.addEventListener("click", () => void relinkLocalAssetReference(entry, asset, relink));
+  actions.append(relink);
+  panel.append(actions);
+  return panel;
+}
+
+async function authorizeLocalAssetReference(asset, record, button) {
+  button.disabled = true;
+  try {
+    if (!record) throw new Error("没有找到原本的本机链接，请重新选择源文件");
+    if (typeof record.handle.requestPermission !== "function") throw new Error("当前浏览器不支持重新授权，请重新链接源文件");
+    const permission = await record.handle.requestPermission({ mode: "read" });
+    if (permission !== "granted") throw new Error("你没有允许读取本机源文件，链接保持不变");
+    await renderDetail();
+  } catch (error) {
+    showFeedback(error.message || "无法恢复本机文件权限", true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function relinkLocalAssetReference(entry, asset, button) {
+  if (typeof window.showOpenFilePicker !== "function") return showFeedback("当前浏览器不支持持久本机链接，请使用最新版 Chrome", true);
+  button.disabled = true;
+  try {
+    const [handle] = await window.showOpenFilePicker({ multiple: false });
+    if (!handle) return;
+    const file = await handle.getFile();
+    const reference = createUnsupportedLocalAssetReference(file, asset.id, { relativePath: file.name });
+    const changed = file.name !== asset.sourceTitle || file.size !== asset.byteSize || file.lastModified !== asset.sourceLastModified;
+    if (changed && !await confirmAppAction({
+      title: "确认更新本机源文件链接？",
+      description: `将链接更新为“${file.name}”（${formatBytes(file.size)}）。只更新本机文件信息，不会立即上传或执行文件。`,
+      confirmLabel: "确认重新链接"
+    })) return;
+    await saveLocalAssetHandle(asset.id, handle, file);
+    const response = await chrome.runtime.sendMessage({
+      type: "UPDATE_LOCAL_ASSET_REFERENCE",
+      entryId: entry.id,
+      assetId: asset.id,
+      sourceTitle: reference.sourceTitle,
+      relativePath: reference.relativePath,
+      sourceFormat: reference.sourceFormat,
+      mimeType: reference.mimeType,
+      byteSize: reference.byteSize,
+      sourceLastModified: file.lastModified
+    });
+    if (!response?.ok) throw new Error(response?.message || "无法更新本机源文件信息");
+    showFeedback("本机源文件链接已更新");
+    await refreshLibrary();
+  } catch (error) {
+    if (error?.name !== "AbortError") showFeedback(error.message || "无法重新链接源文件", true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function downloadLocalAssetReference(asset, record, button) {
+  button.disabled = true;
+  try {
+    if (!record) throw new Error("本机源文件链接已丢失，请重新链接");
+    const file = await record.handle.getFile();
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file.name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  } catch (error) {
+    showFeedback(error.message || "无法读取本机源文件", true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadRemoteMarkdownImage(assetId, urlValue) {
@@ -4050,6 +4966,164 @@ function createDetailHeader(entry) {
   return section;
 }
 
+function createDetailQuickOrganization(entry) {
+  const section = el("section", "detail-section detail-quick-organization");
+
+  const projects = el("div", "detail-organization-group");
+  const projectHeading = el("div", "detail-organization-heading");
+  projectHeading.append(textEl("strong", "", "项目"));
+  projects.append(projectHeading);
+  const entryIds = expandLogicalCaseIds([entry.id], compoundCases);
+  const selectedProjectsForEntry = () => organizerState.collections.filter((collection) => {
+    const members = new Set(collection.entryIds);
+    return entryIds.every((id) => members.has(id));
+  });
+  const selectedProjects = selectedProjectsForEntry();
+  const projectMenu = el("details", "detail-project-menu");
+  const projectSummary = el("summary", "");
+  const projectSummaryText = rawTextEl(
+    "span",
+    "detail-project-summary-text",
+    selectedProjects.length === 0
+      ? "选择项目"
+      : selectedProjects.length === 1
+        ? selectedProjects[0].name
+        : `已加入 ${selectedProjects.length} 个项目`
+  );
+  const syncProjectSummary = () => {
+    const selected = selectedProjectsForEntry();
+    projectSummaryText.textContent = selected.length === 0
+      ? "选择项目"
+      : selected.length === 1
+        ? selected[0].name
+        : `已加入 ${selected.length} 个项目`;
+  };
+  projectSummary.append(projectSummaryText, createUiIcon("chevron-down"));
+  const projectPopover = el("div", "detail-project-popover");
+  const projectList = el("div", "detail-project-list");
+  for (const collection of organizerState.collections) {
+    const members = new Set(collection.entryIds);
+    const matchingCount = entryIds.filter((id) => members.has(id)).length;
+    const selected = matchingCount === entryIds.length;
+    const partiallySelected = matchingCount > 0 && !selected;
+    const label = el("label", "detail-project-option");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selected;
+    checkbox.indeterminate = partiallySelected;
+    checkbox.addEventListener("change", async () => {
+      const nextIds = new Set(collection.entryIds);
+      for (const id of entryIds) checkbox.checked ? nextIds.add(id) : nextIds.delete(id);
+      const response = await perform(checkbox, {
+        type: "REPLACE_COLLECTION_ENTRIES",
+        collectionId: collection.id,
+        entryIds: [...nextIds]
+      }, false);
+      if (!response) {
+        checkbox.checked = selected;
+        checkbox.indeterminate = partiallySelected;
+        return;
+      }
+      consumePendingExternalLibraryRefresh();
+      organizerState = response.organizerState ?? organizerState;
+      syncProjectSummary();
+    });
+    label.append(checkbox, rawTextEl("span", "", collection.name));
+    projectList.append(label);
+  }
+  const newProject = el("div", "detail-new-project");
+  const newProjectName = document.createElement("input");
+  newProjectName.placeholder = "输入新项目名称";
+  newProjectName.setAttribute("aria-label", "新项目名称");
+  const createProject = textEl("button", "button-secondary", "新建并加入");
+  const submitProject = async () => {
+    const name = newProjectName.value.trim();
+    if (!name) {
+      newProjectName.focus();
+      return;
+    }
+    const created = await perform(createProject, { type: "CREATE_COLLECTION", name }, false);
+    if (!created?.created?.id) return;
+    organizerState = created.organizerState ?? organizerState;
+    await perform(createProject, {
+      type: "REPLACE_COLLECTION_ENTRIES",
+      collectionId: created.created.id,
+      entryIds
+    });
+  };
+  createProject.addEventListener("click", submitProject);
+  newProjectName.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void submitProject();
+  });
+  newProject.append(newProjectName, createProject);
+  projectPopover.append(projectList, newProject);
+  projectMenu.append(projectSummary, projectPopover);
+  projects.append(projectMenu);
+
+  const labels = el("div", "detail-organization-group");
+  const labelHeading = el("div", "detail-organization-heading");
+  labelHeading.append(textEl("strong", "", "添加标签"));
+  labels.append(labelHeading);
+  const customLabels = uniqueNames(entry.compoundCase?.customLabels ?? entry.customLabels);
+  const editor = createTagEditor({
+    values: customLabels,
+    onChange: (values, trigger) => saveDetailCustomLabels(entry, trigger, values)
+  });
+  labels.append(editor.element);
+
+  section.append(projects, labels);
+  return section;
+}
+
+function createDetailDeleteAction(entry) {
+  const deleteButton = el("button", "button-danger-secondary detail-delete-action");
+  deleteButton.type = "button";
+  deleteButton.setAttribute("aria-label", `将“${entry.title}”移入回收站`);
+  deleteButton.append(createUiIcon("trash-2"), textEl("span", "", "移入回收站"));
+  deleteButton.addEventListener("click", async () => {
+    if (!await confirmAppAction({
+      title: `将“${entry.title}”移入回收站？`,
+      description: "案例及其媒体会移入回收站，可随时恢复。",
+      confirmLabel: "移入回收站",
+      danger: true
+    })) return;
+    await deleteCaseIncrementally(deleteButton, entry.id);
+  });
+  return deleteButton;
+}
+
+function createDetailFooterActions(entry) {
+  const footer = el("section", "detail-footer-actions");
+  const deleteButton = createDetailDeleteAction(entry);
+  footer.append(deleteButton);
+  return footer;
+}
+
+async function saveDetailCustomLabels(entry, button, customLabels) {
+  const response = entry.compoundCase
+    ? await perform(button, {
+      type: "UPDATE_COMPOUND_CASE",
+      compoundCaseId: entry.id,
+      customLabels: uniqueNames(customLabels)
+    }, false)
+    : await perform(button, {
+      type: "UPDATE_ENTRY_CUSTOM_LABELS",
+      entryId: entry.id,
+      customLabels: uniqueNames(customLabels)
+    }, false);
+  if (!response?.ok) return false;
+  consumePendingExternalLibraryRefresh();
+  if (entry.compoundCase && response.compoundCase) {
+    compoundCases = compoundCases.map((item) => item.id === response.compoundCase.id ? response.compoundCase : item);
+  } else if (Array.isArray(response.entries)) {
+    entries = response.entries;
+  }
+  rebuildLibraryDerivedState();
+  return true;
+}
+
 function createComposerAction(entry) {
   const targetType = composerTargetType(entry);
   const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId;
@@ -4284,7 +5358,19 @@ function createLocalMediaUploadControl(entry, { label, accept = elements.mediaFi
   input.accept = accept;
   input.className = "sr-only";
   const button = textEl("button", "button-secondary", label || "从本机添加媒体");
-  button.addEventListener("click", () => input.click());
+  button.addEventListener("click", async () => {
+    if (typeof window.showOpenFilePicker !== "function") return input.click();
+    try {
+      const [handle] = await window.showOpenFilePicker({ multiple: false });
+      if (!handle) return;
+      button.disabled = true;
+      await uploadLocalMediaToEntry(await handle.getFile(), entry.id);
+    } catch (error) {
+      if (error?.name !== "AbortError") showFeedback(error.message || "无法读取所选文件", true);
+    } finally {
+      button.disabled = false;
+    }
+  });
   input.addEventListener("change", async () => {
     const file = input.files?.[0];
     if (!file) return;
@@ -4359,6 +5445,48 @@ function renderImportSource() {
   elements.importLastJob.hidden = !latestImportJob;
 }
 
+async function chooseLocalImportFiles() {
+  if (typeof window.showOpenFilePicker !== "function") {
+    elements.mediaFile.click();
+    return;
+  }
+  try {
+    const handles = await window.showOpenFilePicker({ multiple: true });
+    const files = await Promise.all(handles.map(async (handle) => ({
+      handle,
+      file: await handle.getFile(),
+      relativePath: handle.name
+    })));
+    await prepareLocalImport(files, { source: "files" });
+  } catch (error) {
+    if (error?.name !== "AbortError") showImportFeedback(error.message || "无法读取所选文件", true);
+  }
+}
+
+async function chooseLocalImportFolder() {
+  if (typeof window.showDirectoryPicker !== "function") {
+    elements.mediaFolder.click();
+    return;
+  }
+  try {
+    const root = await window.showDirectoryPicker({ mode: "read" });
+    const files = await readImportDirectoryHandle(root, root.name);
+    await prepareLocalImport(files, { source: "folder" });
+  } catch (error) {
+    if (error?.name !== "AbortError") showImportFeedback(error.message || "无法读取所选文件夹", true);
+  }
+}
+
+async function readImportDirectoryHandle(directory, parentPath) {
+  const files = [];
+  for await (const [name, handle] of directory.entries()) {
+    const relativePath = `${parentPath}/${name}`;
+    if (handle.kind === "file") files.push({ handle, file: await handle.getFile(), relativePath });
+    else if (handle.kind === "directory") files.push(...await readImportDirectoryHandle(handle, relativePath));
+  }
+  return files;
+}
+
 async function importLocalMediaCases() {
   const files = [...(elements.mediaFile.files ?? [])].map((file) => ({ file, relativePath: file.name }));
   elements.mediaFile.value = "";
@@ -4385,7 +5513,7 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
   await discardPendingLocalImport();
   const browsingScrollY = window.scrollY;
   const rootName = source === "folder" ? commonImportRoot(fileItems) : "";
-  const draft = { source, rootName, browsingScrollY, stagedAssets: [], skipped: [] };
+  const draft = { source, rootName, browsingScrollY, customLabels: [], stagedAssets: [], skipped: [] };
   pendingLocalImport = draft;
   elements.importDialogTitle.textContent = "确认导入";
   elements.importSource.hidden = true;
@@ -4426,11 +5554,11 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
   }
 }
 
-async function prepareImportFile({ file, relativePath }, draft) {
+async function prepareImportFile({ file, handle = null, relativePath, forceImport = false }, draft) {
   const assetId = globalThis.crypto.randomUUID();
   let prepared = null;
   try {
-    prepared = await prepareLocalMedia(file, assetId, { relativePath });
+    prepared = await prepareLocalMedia(file, assetId, { relativePath, forceImport });
     const duplicateProbe = new File([prepared.blob], file.name, {
       type: prepared.blob.type,
       lastModified: file.lastModified
@@ -4458,6 +5586,7 @@ async function prepareImportFile({ file, relativePath }, draft) {
       name: file.name,
       relativePath: prepared.asset.relativePath,
       kind: prepared.asset.kind,
+      storageMode: prepared.asset.storageMode,
       mimeType: prepared.asset.mimeType,
       byteSize: prepared.blob.size,
       contentHash: duplicate.contentHash,
@@ -4469,7 +5598,8 @@ async function prepareImportFile({ file, relativePath }, draft) {
       ...(prepared.asset.playbackCapability ? { playbackCapability: prepared.asset.playbackCapability } : {}),
       ...(prepared.contentText ? { contentText: prepared.contentText } : {}),
       ...(prepared.contentFormat ? { contentFormat: prepared.contentFormat } : {}),
-      ...(prepared.sourceFormat ? { sourceFormat: prepared.sourceFormat } : {}),
+      ...(prepared.asset.sourceFormat || prepared.sourceFormat ? { sourceFormat: prepared.asset.sourceFormat || prepared.sourceFormat } : {}),
+      ...(prepared.asset.formatCategory ? { formatCategory: prepared.asset.formatCategory } : {}),
       ...(prepared.warnings?.length ? { warnings: prepared.warnings } : {}),
       ...(prepared.poster ? { posterAssetId: prepared.poster.asset.id, posterAsset: prepared.poster.asset } : {})
     });
@@ -4477,18 +5607,42 @@ async function prepareImportFile({ file, relativePath }, draft) {
     await deleteMediaBlob(assetId).catch(() => undefined);
     if (prepared?.poster?.asset?.id) await deleteMediaBlob(prepared.poster.asset.id).catch(() => undefined);
     if (pendingLocalImport === draft) {
-      draft.skipped.push({ name: file.name || relativePath || "未命名文件", reason: error.message || "无法读取" });
+      const failure = importFailureDetails(error);
+      const { code, message, forceAllowed, ...details } = failure;
+      draft.skipped.push({
+        name: file.name || relativePath || "未命名文件",
+        relativePath,
+        file,
+        handle,
+        reason: message,
+        code,
+        details,
+        ...(code === ASSET_IMPORT_FAILURE_CODES.TOO_LARGE && (forceAllowed || error?.canForceImport === true)
+          ? { forceAllowed: true }
+          : {})
+      });
     }
   }
 }
 
 function renderImportProjectOptions(rootName = "") {
-  const options = [option("", "不分组")];
-  for (const collection of organizerState.collections) options.push(option(collection.id, collection.name));
   const matching = rootName && organizerState.collections.find((item) => item.name.trim() === rootName);
-  if (rootName && !matching) options.push(option(`create:${rootName}`, `新建项目“${rootName}”`));
-  elements.importProject.replaceChildren(...options);
-  elements.importProject.value = matching?.id || (rootName ? `create:${rootName}` : selectedCollectionId || "");
+  const selected = organizerState.collections.find((item) => item.id === selectedCollectionId);
+  importProjectCombobox.setProjects(organizerState.collections);
+  elements.importProject.value = matching?.name || rootName || selected?.name || "";
+  importTagEditor.input.value = "";
+  importTagEditor.setValues(pendingLocalImport?.customLabels ?? []);
+  elements.importProjectHint.textContent = rootName
+    ? "已按根文件夹建议项目；可以修改或清空。"
+    : "";
+}
+
+function normalizeImportLabel(value) {
+  return normalizeTagValue(value);
+}
+
+function importLabelKey(value) {
+  return normalizeImportLabel(value).toLocaleLowerCase();
 }
 
 function renderImportConfirmation() {
@@ -4528,12 +5682,101 @@ function createImportFileRow(item) {
 }
 
 function createSkippedImportRow(item) {
-  const row = el("div", "import-file-row is-skipped");
+  const canForceImport = item.code === ASSET_IMPORT_FAILURE_CODES.TOO_LARGE
+    && item.forceAllowed === true
+    && item.file instanceof Blob;
+  const canKeepLocalLink = item.code === ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT
+    && item.file instanceof Blob;
+  const row = el("div", `import-file-row is-skipped${canForceImport || canKeepLocalLink ? " has-action" : ""}`);
   const spacer = document.createElement("span");
   const details = el("span");
-  details.append(textEl("strong", "", item.name), textEl("small", "", item.reason));
-  row.append(spacer, details, textEl("em", "", "跳过"));
+  details.append(textEl("strong", "", item.name), textEl("small", "import-file-reason", item.reason));
+  if (!canForceImport && !canKeepLocalLink) {
+    row.append(spacer, details, textEl("em", "", "未导入"));
+    return row;
+  }
+  if (canKeepLocalLink) {
+    const keepLink = rawTextEl("button", "button-secondary import-file-force", "保留本机链接");
+    keepLink.type = "button";
+    keepLink.title = "只保存文件信息与授权句柄，不复制或执行源文件；分享时才读取源文件";
+    keepLink.addEventListener("click", () => void preserveUnsupportedImportReference(item, keepLink));
+    row.append(spacer, details, keepLink);
+    return row;
+  }
+  const force = rawTextEl("button", "button-secondary import-file-force", "强制导入");
+  force.type = "button";
+  force.title = "忽略这项限制并再次检查；可能占用更多本机空间";
+  force.addEventListener("click", () => void forcePrepareSkippedImport(item, force));
+  row.append(spacer, details, force);
   return row;
+}
+
+async function preserveUnsupportedImportReference(item, button) {
+  const draft = pendingLocalImport;
+  if (!draft || !(item?.file instanceof Blob)) return;
+  button.disabled = true;
+  try {
+    let handle = item.handle;
+    let file = item.file;
+    let relativePath = item.relativePath || file.name;
+    if (!handle) {
+      if (typeof window.showOpenFilePicker !== "function") {
+        throw new Error("当前浏览器无法保存可跨重启使用的本机链接；请使用最新版 Chrome 后重新选择文件");
+      }
+      [handle] = await window.showOpenFilePicker({ multiple: false });
+      file = await handle.getFile();
+      relativePath = file.name;
+      if (file.name !== item.file.name || file.size !== item.file.size || file.lastModified !== item.file.lastModified) {
+        const confirmed = await confirmAppAction({
+          title: "改为链接刚选择的文件？",
+          description: `原失败项是“${item.file.name}”，刚选择的是“${file.name}”。只保存本机链接，不复制或执行文件。`,
+          confirmLabel: "链接这个文件"
+        });
+        if (!confirmed) return;
+      }
+    }
+    const assetId = globalThis.crypto.randomUUID();
+    const reference = createUnsupportedLocalAssetReference(file, assetId, { relativePath });
+    await saveLocalAssetHandle(assetId, handle, file);
+    if (pendingLocalImport !== draft) {
+      await deleteLocalAssetHandle(assetId).catch(() => undefined);
+      return;
+    }
+    draft.skipped = draft.skipped.filter((candidate) => candidate !== item);
+    draft.stagedAssets.push({
+      id: `staged:${globalThis.crypto.randomUUID()}`,
+      assetId,
+      name: reference.sourceTitle,
+      relativePath: reference.relativePath,
+      kind: reference.kind,
+      storageMode: reference.storageMode,
+      mimeType: reference.mimeType,
+      byteSize: reference.byteSize,
+      sourceFormat: reference.sourceFormat,
+      formatCategory: reference.formatCategory,
+      recordType: reference.recordType,
+      linkStatus: "linked",
+      sourceLastModified: file.lastModified,
+      importFailure: reference.importFailure,
+      keepDuplicate: false
+    });
+    showImportFeedback(`已保留“${reference.sourceTitle}”的本机链接；导出分享包时才会请求读取源文件`);
+    renderImportConfirmation();
+  } catch (error) {
+    if (error?.name !== "AbortError") showImportFeedback(error.message || "无法保留本机链接", true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function forcePrepareSkippedImport(item, button) {
+  const draft = pendingLocalImport;
+  if (!draft || !item?.file) return;
+  button.disabled = true;
+  draft.skipped = draft.skipped.filter((candidate) => candidate !== item);
+  showImportFeedback(`正在重新检查“${item.name}”…`);
+  await prepareImportFile({ file: item.file, relativePath: item.relativePath, forceImport: true }, draft);
+  if (pendingLocalImport === draft) renderImportConfirmation();
 }
 
 function importSelectedByteSize(staged) {
@@ -4543,12 +5786,15 @@ function importSelectedByteSize(staged) {
 
 async function startLocalImportJob() {
   if (!pendingLocalImport?.stagedAssets.length) return;
+  if (importTagEditor.input.value.trim()) await importTagEditor.commit();
   elements.importStart.disabled = true;
   showImportFeedback("正在把资料交给后台导入…");
   try {
-    let collectionId = elements.importProject.value;
-    if (collectionId.startsWith("create:")) {
-      const response = await chrome.runtime.sendMessage({ type: "CREATE_COLLECTION", name: collectionId.slice(7) });
+    const projectName = String(elements.importProject.value || "").trim();
+    const existingCollection = organizerState.collections.find((item) => item.name.trim().toLocaleLowerCase() === projectName.toLocaleLowerCase());
+    let collectionId = existingCollection?.id || "";
+    if (projectName && !collectionId) {
+      const response = await chrome.runtime.sendMessage({ type: "CREATE_COLLECTION", name: projectName });
       if (!response?.ok || !response.created?.id) throw new Error(response?.message || "无法创建目标项目");
       organizerState = response.organizerState ?? organizerState;
       collectionId = response.created.id;
@@ -4556,6 +5802,7 @@ async function startLocalImportJob() {
     const response = await chrome.runtime.sendMessage({
       type: "START_IMPORT_JOB",
       collectionId,
+      customLabels: [...(pendingLocalImport.customLabels ?? [])],
       stagedAssets: pendingLocalImport.stagedAssets,
       items: pendingLocalImport.stagedAssets.map((item) => ({
         stagedAssetId: item.id,
@@ -4716,6 +5963,7 @@ async function undoLocalImportJob() {
 function viewImportedProject() {
   const collectionId = activeImportJob?.collectionId;
   if (!collectionId) return;
+  caseOrderManagementActive = false;
   selectedCollectionId = collectionId;
   renderGallery();
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -4737,6 +5985,9 @@ async function discardPendingLocalImport() {
   const staged = pendingLocalImport?.stagedAssets ?? [];
   pendingLocalImport = null;
   await Promise.allSettled(staged.flatMap((item) => [item.assetId, item.posterAssetId].filter(Boolean)).map(deleteMediaBlob));
+  await Promise.allSettled(staged
+    .filter((item) => item.recordType === "local-asset-reference")
+    .map((item) => deleteLocalAssetHandle(item.assetId)));
 }
 
 function showImportFeedback(message, isError = false) {
@@ -4782,6 +6033,14 @@ async function handleLibraryDrop(event) {
 }
 
 async function droppedLocalFiles(dataTransfer) {
+  const handleRoots = (await Promise.all([...dataTransfer?.items ?? []].map(async (item) => {
+    if (item.kind !== "file" || typeof item.getAsFileSystemHandle !== "function") return null;
+    try { return await item.getAsFileSystemHandle(); } catch { return null; }
+  }))).filter(Boolean);
+  if (handleRoots.length) {
+    const nested = await Promise.all(handleRoots.map((handle) => readDroppedHandle(handle, "")));
+    return nested.flat();
+  }
   const roots = [...(dataTransfer?.items ?? [])].flatMap((item) => {
     const entry = item.kind === "file" ? item.webkitGetAsEntry?.() : null;
     return entry ? [entry] : [];
@@ -4789,6 +6048,15 @@ async function droppedLocalFiles(dataTransfer) {
   if (!roots.length) return [...(dataTransfer?.files ?? [])].map((file) => ({ file, relativePath: file.name }));
   const nested = await Promise.all(roots.map((entry) => readDroppedEntry(entry, "")));
   return nested.flat();
+}
+
+async function readDroppedHandle(handle, parentPath) {
+  const relativePath = parentPath ? `${parentPath}/${handle.name}` : handle.name;
+  if (handle.kind === "file") return [{ handle, file: await handle.getFile(), relativePath }];
+  if (handle.kind !== "directory") return [];
+  const nested = [];
+  for await (const child of handle.values()) nested.push(...await readDroppedHandle(child, relativePath));
+  return nested;
 }
 
 async function readDroppedEntry(entry, parentPath) {
@@ -4810,6 +6078,7 @@ async function readDroppedEntry(entry, parentPath) {
 }
 
 async function addVideoReference(entryId = "") {
+  const organizationFields = entryId ? [] : caseCreationOrganizationFields();
   const result = await showAppDialog({
     title: "添加视频链接",
     description: "支持 YouTube、Vimeo、Bilibili、抖音和 X。这里只保存来源引用卡，不下载视频文件。",
@@ -4822,8 +6091,13 @@ async function addVideoReference(entryId = "") {
       placeholder: "https://…",
       autocomplete: "url",
       required: true
-    }],
-    onSubmit: async ({ url }) => saveVideoReference(url, entryId)
+    }, ...organizationFields],
+    onReady: ({ controls }) => attachProjectSuggestions(controls.get("projectName")),
+    onSubmit: async ({ url, projectName, customLabels }) => saveVideoReference(
+      url,
+      entryId,
+      caseCreationOrganization(projectName, customLabels)
+    )
   });
   if (result) {
     showFeedback(result.message);
@@ -4831,7 +6105,7 @@ async function addVideoReference(entryId = "") {
   }
 }
 
-async function saveVideoReference(value, entryId = "") {
+async function saveVideoReference(value, entryId = "", organization = {}) {
   let posterAssetId = "";
   try {
     const metadata = await resolveMediaReference(value, {
@@ -4876,7 +6150,7 @@ async function saveVideoReference(value, entryId = "") {
     });
     const response = await chrome.runtime.sendMessage(entryId
       ? { type: "ADD_UPLOADED_MEDIA", entryId, asset, posterAsset }
-      : { type: "CREATE_MEDIA_REFERENCE", asset, posterAsset, title: metadata.title || url.hostname });
+      : { type: "CREATE_MEDIA_REFERENCE", asset, posterAsset, title: metadata.title || url.hostname, ...organization });
     if (!response?.ok) throw new Error(response?.message || "视频链接保存失败");
     return response;
   } catch (error) {
@@ -4904,10 +6178,17 @@ async function createQuickNote() {
     pendingLabel: "正在保存…",
     fields: [
       { id: "title", label: "标题（可留空）", type: "text", required: false, autocomplete: "off" },
-      { id: "text", label: "笔记正文", type: "textarea", rows: 8, required: true, placeholder: "写下创作想法、判断或待办…" }
+      { id: "text", label: "笔记正文", type: "textarea", rows: 8, required: true, placeholder: "写下创作想法、判断或待办…" },
+      ...caseCreationOrganizationFields()
     ],
-    onSubmit: async ({ title, text }) => {
-      const response = await chrome.runtime.sendMessage({ type: "CREATE_QUICK_NOTE", title, text });
+    onReady: ({ controls }) => attachProjectSuggestions(controls.get("projectName")),
+    onSubmit: async ({ title, text, projectName, customLabels }) => {
+      const response = await chrome.runtime.sendMessage({
+        type: "CREATE_QUICK_NOTE",
+        title,
+        text,
+        ...caseCreationOrganization(projectName, customLabels)
+      });
       if (!response?.ok) throw new Error(response?.message || "笔记保存失败");
       return response;
     }
@@ -4919,9 +6200,52 @@ async function createQuickNote() {
   }
 }
 
+function caseCreationOrganizationFields() {
+  return [
+    {
+      id: "projectName",
+      label: "项目",
+      type: "text",
+      required: false,
+      autocomplete: "off",
+      placeholder: "选择已有项目或输入新项目名"
+    },
+    {
+      id: "customLabels",
+      label: "添加标签",
+      type: "text",
+      required: false,
+      autocomplete: "off",
+      placeholder: "例如：风格不错，很喜欢"
+    }
+  ];
+}
+
+function attachProjectSuggestions(input) {
+  if (!input) return;
+  attachProjectCombobox(input, { projects: organizerState.collections, destroyOnDialogClose: true });
+}
+
+function caseCreationOrganization(projectNameValue, customLabelsValue) {
+  const projectName = String(projectNameValue ?? "").trim();
+  const existing = organizerState.collections.find((item) => (
+    item.name.trim().toLocaleLowerCase() === projectName.toLocaleLowerCase()
+  ));
+  const customLabels = String(customLabelsValue ?? "")
+    .split(/[,，\n\r]+/u)
+    .map(normalizeImportLabel)
+    .filter(Boolean)
+    .filter((label, index, values) => values.findIndex((item) => importLabelKey(item) === importLabelKey(label)) === index);
+  return {
+    ...(existing ? { collectionId: existing.id } : projectName ? { newCollectionName: projectName } : {}),
+    customLabels
+  };
+}
+
 async function prepareLocalMedia(file, assetId, options = {}) {
   return prepareSharedLocalMedia(file, assetId, {
     relativePath: options.relativePath || file.name,
+    forceImport: options.forceImport === true,
     estimateStorage: () => navigator.storage?.estimate?.() ?? {},
     readImageDimensions,
     readVideoMedia,
@@ -4941,7 +6265,9 @@ async function readDocumentText(blob, mimeType) {
   });
 }
 
-function documentTypeLabel(mimeType) {
+function documentTypeLabel(mimeType, sourceFormat = "") {
+  const extension = String(sourceFormat || "").toLocaleLowerCase("en-US");
+  if (["srt", "vtt", "ass", "ssa", "sbv", "lrc"].includes(extension)) return `${extension.toLocaleUpperCase("en-US")} 字幕`;
   return ({
     "text/plain": "TXT",
     "text/markdown": "Markdown",
@@ -5004,19 +6330,15 @@ function createDetailAttributes(entry) {
   const grouped = groupEntryAssignments(entry, facetCatalog, "confirmed");
   const tags = [];
   let stableOrder = 0;
-  const customFacet = { id: "custom", name: "自定义标签", color: "#65736d" };
   for (const facet of facetCatalog.facets.filter((item) => item.status === "active").sort((a, b) => a.order - b.order)) {
     const values = (grouped.get(facet.id) ?? []).toSorted((left, right) => Number(right.importance ?? 0) - Number(left.importance ?? 0));
-    values.forEach((item) => tags.push({ facet, label: item.path, priority: 0, importance: Number(item.importance ?? 0), stableOrder: stableOrder++ }));
+    values.forEach((item) => tags.push({ facet, label: item.name, path: item.path, priority: 0, importance: Number(item.importance ?? 0), stableOrder: stableOrder++ }));
     if (facet.id === "negative") entry.negativeTerms?.forEach((term) => tags.push({ facet, label: term, priority: 1, importance: 0, stableOrder: stableOrder++ }));
-  }
-  for (const label of entry.customLabels ?? []) {
-    tags.push({ facet: customFacet, label, priority: 1, importance: 0, stableOrder: stableOrder++ });
   }
   if (!tags.length) return null;
   tags.sort((left, right) => left.priority - right.priority || right.importance - left.importance || left.stableOrder - right.stableOrder);
   const section = el("section", "detail-section attribute-section");
-  section.append(textEl("h3", "", "标签"));
+  section.append(textEl("h3", "", "AI 标签"));
   const visible = el("div", "detail-tags");
   tags.slice(0, DETAIL_TAG_PREVIEW_LIMIT).forEach((item) => visible.append(detailTag(item)));
   section.append(visible);
@@ -5032,20 +6354,23 @@ function createDetailAttributes(entry) {
   return section;
 }
 
-function createDetailMetadata(entry) {
+function createDetailMetadata(entry, { includeDelete = false } = {}) {
   const rows = entrySourceMetadataRows(entry, currentLocale() === "en" ? "Source" : "来源");
   const sourceUrl = safeHttpUrl(entry.url);
   if (!rows.length && !sourceUrl) return null;
   const section = el("section", "detail-section metadata-section");
   const heading = el("div", "metadata-heading");
   heading.append(textEl("h3", "", currentLocale() === "en" ? "Source details" : "来源信息"));
+  const actions = el("div", "metadata-actions");
   if (sourceUrl) {
     const openSource = textEl("a", "button-secondary source-open-action", currentLocale() === "en" ? "Open source" : "打开来源");
     openSource.href = sourceUrl;
     openSource.target = "_blank";
     openSource.rel = "noopener noreferrer";
-    heading.append(openSource);
+    actions.append(openSource);
   }
+  if (includeDelete) actions.append(createDetailDeleteAction(entry));
+  if (actions.childElementCount) heading.append(actions);
   section.append(heading);
   const list = el("dl", "metadata-list");
   rows.forEach((row) => {
@@ -5100,11 +6425,12 @@ function createVisualSetAnalyses(entry) {
   return details;
 }
 
-function detailTag({ facet, label }) {
+function detailTag({ facet, label, path = label }) {
   const tag = rawTextEl("span", "attribute-pill", label);
   tag.style.setProperty("--facet-color", facet.color);
-  tag.title = facet.name;
-  tag.setAttribute("aria-label", `${facet.name}：${label}`);
+  const fullPath = [facet.name, path].filter(Boolean).join(" / ");
+  tag.title = fullPath;
+  tag.setAttribute("aria-label", fullPath);
   return tag;
 }
 
@@ -5136,11 +6462,14 @@ function createAnalysisCandidate(entry, item, queueAware = false) {
   return row;
 }
 
-function createPromptSection(entry) {
+function createPromptSection(entry, options = {}) {
   if (!entry.text && !entryHasMedia(entry)) return null;
   const section = el("section", "detail-section prompt-section");
   const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId;
   const activeImage = entryMediaAssets(entry).find((asset) => asset.id === activeAssetId && asset.kind === "image" && asset.usage !== "poster");
+  const imageAssets = entryMediaAssets(entry).filter((asset) => asset.kind === "image" && asset.usage !== "poster");
+  const managedImageAssets = imageAssets.filter((asset) => asset.storageMode === "managed");
+  const separatesCurrentAndShared = Boolean(activeImage && (imageAssets.length > 1 || options.compoundMember));
   const mediaPrompt = activeImage ? (entry.mediaPrompts || []).find((item) => item.assetId === activeImage.id) : null;
   const displayedPrompt = activeImage ? promptForEntryImage(entry, activeImage.id) : String(entry.text ?? "").trim();
   if (promptEditState?.entryId === entry.id) {
@@ -5190,7 +6519,7 @@ function createPromptSection(entry) {
   }
   const heading = el("div", "prompt-section-heading");
   heading.append(textEl("h3", "", activeImage
-    ? (mediaPrompt ? "当前图片提示词" : entry.text ? "当前图片 · 使用案例共享提示词" : "当前图片提示词")
+    ? separatesCurrentAndShared ? (mediaPrompt ? "当前图片提示词" : entry.text ? "当前图片 · 使用共享提示词" : "当前图片提示词") : "提示词"
     : "提示词"));
   const copy = textEl("button", "button-secondary", "复制提示词");
   const vision = primaryVisionAnalysis(entry);
@@ -5199,8 +6528,8 @@ function createPromptSection(entry) {
     ? textEl("button", "button-secondary", vision ? "重新分析主图" : "分析主图")
     : null;
   const analyze = textEl("button", "button-secondary", "分析检索标签");
-  const edit = textEl("button", "button-secondary", "编辑");
-  const editShared = activeImage && entry.text ? textEl("button", "button-secondary", "编辑共享提示词") : null;
+  const edit = textEl("button", "button-secondary", separatesCurrentAndShared ? "编辑当前图片" : "编辑");
+  const editShared = separatesCurrentAndShared && entry.text ? textEl("button", "button-secondary", "编辑共享提示词") : null;
   const promptReplacement = activeImage ? visualAnalysisPromptReplacement(entry, activeImage.id) : null;
   const replaceAnalyzedPrompt = promptReplacement ? textEl("button", "button-secondary", "更新为 V2 提示词") : null;
   copy.disabled = !displayedPrompt;
@@ -5214,7 +6543,7 @@ function createPromptSection(entry) {
   analyzeVisual?.addEventListener("click", () => analyzeEntryVision(entry, analyzeVisual));
   analyze.addEventListener("click", () => analyzeSingleEntry(entry, analyze));
   edit.addEventListener("click", () => {
-    promptEditState = { entryId: entry.id, assetId: activeImage?.id || "", originalText: displayedPrompt, draftText: displayedPrompt, dirty: false };
+    promptEditState = { entryId: entry.id, assetId: separatesCurrentAndShared ? activeImage?.id || "" : "", originalText: displayedPrompt, draftText: displayedPrompt, dirty: false };
     renderDetail();
   });
   editShared?.addEventListener("click", () => {
@@ -5241,8 +6570,7 @@ function createPromptSection(entry) {
   const analysisActions = el("div", "detail-analysis-actions");
   if (replaceAnalyzedPrompt) analysisActions.append(replaceAnalyzedPrompt);
   if (analyzeVisual) analysisActions.append(analyzeVisual);
-  const imageAssets = entryMediaAssets(entry).filter((asset) => asset.kind === "image" && asset.usage !== "poster" && asset.storageMode === "managed");
-  if (imageAssets.length > 1 && !entry.compoundCase) {
+  if (managedImageAssets.length > 1 && !entry.compoundCase) {
     const analyzeSet = textEl("button", "button-secondary", "批量图片分析");
     analyzeSet.addEventListener("click", () => analyzeEntryVisualSet(entry, analyzeSet));
     analysisActions.append(analyzeSet);
@@ -5445,15 +6773,18 @@ function createEntryEditor(entry, options = {}) {
   const titleField = el("label", "entry-edit-field");
   const titleInput = document.createElement("input");
   titleInput.value = entry.title || "";
-  titleField.append(textEl("span", "", "案例标题"), titleInput);
-  const saveTitle = textEl("button", "button-secondary", "保存标题");
+  titleField.append(textEl("span", "sr-only", "案例标题"), titleInput);
+  const saveTitle = textEl("button", "button-secondary", "保存");
   saveTitle.addEventListener("click", () => {
     const title = titleInput.value;
     return perform(saveTitle, { type: "UPDATE_ENTRY_TITLE", entryId: entry.id, title: title.trim() });
   });
-  body.append(textEl("h4", "", "案例标题"), titleField, saveTitle);
+  const titleRow = el("div", "entry-edit-row");
+  titleRow.append(titleField, saveTitle);
+  body.append(textEl("h4", "", "案例标题"), titleRow);
   if (entry.classification?.status !== "needs_review") {
     const classification = createClassificationControl(entry, {
+      buttonLabel: "保存",
       onSave: (button, select) => perform(button, { type: "CONFIRM_CLASSIFICATION", entryId: entry.id, pathIds: [select.value], rememberSource: false })
     });
     body.append(textEl("h4", "", "内容类型"), classification);
@@ -5464,8 +6795,8 @@ function createEntryEditor(entry, options = {}) {
     const field = el("label", "vision-edit-field");
     const textarea = document.createElement("textarea");
     textarea.value = vision.description;
-    field.append(textEl("span", "", "编辑画面描述"), textarea);
-    const saveDescription = textEl("button", "button-secondary", "保存画面描述");
+    field.append(textEl("span", "sr-only", "画面描述"), textarea);
+    const saveDescription = textEl("button", "button-secondary", "保存");
     saveDescription.addEventListener("click", () => perform(saveDescription, {
       type: "UPDATE_VISION_DESCRIPTION", entryId: entry.id, visualId: visual.id, description: textarea.value
     }));
@@ -5482,7 +6813,7 @@ function createEntryEditor(entry, options = {}) {
       selected.append(remove);
     }
   }
-  if (selected.childElementCount) body.append(textEl("h4", "", "已有标签"), selected);
+  if (selected.childElementCount) body.append(textEl("h4", "", "已有 AI 标签"), selected);
   const activeFacets = facetCatalog.facets.filter((item) => item.status === "active").sort((a, b) => a.order - b.order);
   if (activeFacets.length) {
     const addRow = el("div", "entry-tag-add");
@@ -5505,7 +6836,7 @@ function createEntryEditor(entry, options = {}) {
     tagSelect.addEventListener("change", () => { add.disabled = !tagSelect.value; });
     add.addEventListener("click", () => perform(add, { type: "SET_ENTRY_FACET", entryId: entry.id, facetId: facetSelect.value, nodeId: tagSelect.value, selected: true }));
     addRow.append(facetSelect, tagSelect, add);
-    body.append(textEl("h4", "", "添加标签"), addRow);
+    body.append(textEl("h4", "", "添加 AI 标签"), addRow);
   }
   body.append(textEl("h4", "", "媒体与来源"), createMediaActions(entry));
   const analysisCandidates = reusableAnalysisItems(entry.analysisCandidates);
@@ -5515,12 +6846,6 @@ function createEntryEditor(entry, options = {}) {
     for (const item of analysisCandidates) suggestions.append(createAnalysisCandidate(entry, item));
     body.append(suggestions);
   }
-  const deleteButton = textEl("button", "quiet-danger delete-entry", "删除这个案例");
-  deleteButton.addEventListener("click", async () => {
-    if (!await confirmAppAction({ title: `删除“${entry.title}”？`, description: "截图、文字和标签会一起从本机移除。", confirmLabel: "删除案例", danger: true })) return;
-    await deleteCaseIncrementally(deleteButton, entry.id);
-  });
-  body.append(deleteButton);
   section.append(body);
   return section;
 }
@@ -5835,18 +7160,18 @@ async function confirmArchiveChange(preview) {
 function renderBatchManager() {
   renderAnalysisBatch();
   const maintenanceActive = Boolean(maintenanceJob && ["running", "paused"].includes(maintenanceJob.status));
-  elements.previewReanalyze.hidden = maintenanceActive;
-  elements.applyReanalyze.hidden = maintenanceActive;
-  elements.applyReanalyze.disabled = !reanalysisPreview || !(
+  const maintenanceMissing = Boolean(reanalysisPreview && (
     reanalysisPreview.confirmed || reanalysisPreview.suggested || reanalysisPreview.paletteCount
-  );
+  ));
+  elements.previewReanalyze.hidden = maintenanceActive;
+  elements.previewReanalyze.textContent = reanalysisPreview || maintenanceJob ? "重新检查" : "检查缺失项";
+  elements.previewReanalyze.classList.toggle("button-secondary", Boolean(reanalysisPreview || maintenanceJob));
+  elements.applyReanalyze.hidden = maintenanceActive || !maintenanceMissing;
+  elements.applyReanalyze.disabled = !maintenanceMissing;
   elements.pauseLibraryMaintenance.hidden = maintenanceJob?.status !== "running";
   elements.resumeLibraryMaintenance.hidden = maintenanceJob?.status !== "paused";
   elements.cancelLibraryMaintenance.hidden = !maintenanceActive;
   elements.retryLibraryMaintenance.hidden = !maintenanceJob?.failed || maintenanceActive;
-  elements.maintenanceProgress.hidden = !maintenanceJob?.total;
-  elements.maintenanceProgressBar.max = Math.max(1, maintenanceJob?.total || 1);
-  elements.maintenanceProgressBar.value = Math.min(maintenanceJob?.processed || 0, maintenanceJob?.total || 0);
   renderReanalysisPreview();
   const legacy = entries.filter((entry) => entry.legacyFacetCandidates?.length);
   elements.legacyCandidates.hidden = !legacy.length;
@@ -6893,32 +8218,27 @@ function handleLibraryMaintenanceMessage(message) {
 
 function renderReanalysisPreview() {
   if (maintenanceJob?.total) {
-    const rate = maintenanceJob.itemsPerSecond > 0 ? `${maintenanceJob.itemsPerSecond.toFixed(1)} 项/秒` : "正在准备";
-    const eta = maintenanceJob.estimatedSeconds > 0 ? ` · 约剩 ${formatMaintenanceDuration(maintenanceJob.estimatedSeconds)}` : "";
-    const status = ({ running: "后台补全中", paused: "已暂停", completed: "补全完成", canceled: "已取消" })[maintenanceJob.status] || maintenanceJob.status;
-    elements.reanalyzePreview.textContent = `${status} · ${maintenanceJob.processed}/${maintenanceJob.total} · 成功 ${maintenanceJob.succeeded} · 失败 ${maintenanceJob.failed} · ${rate}${eta}`;
+    if (maintenanceJob.status === "completed" && !maintenanceJob.failed) {
+      elements.reanalyzePreview.textContent = "资料索引已完整";
+      return;
+    }
+    const status = ({ running: "补全中", paused: "已暂停", completed: "补全完成", canceled: "已取消" })[maintenanceJob.status] || maintenanceJob.status;
+    elements.reanalyzePreview.textContent = `${status} · 已处理 ${maintenanceJob.processed}/${maintenanceJob.total} · 成功 ${maintenanceJob.succeeded} · 失败 ${maintenanceJob.failed}`;
     return;
   }
   if (!reanalysisPreview) {
-    elements.reanalyzePreview.textContent = "尚未检查";
+    elements.reanalyzePreview.textContent = "";
     return;
   }
   const wrapper = el("div", "");
   const nothingMissing = !reanalysisPreview.confirmed && !reanalysisPreview.suggested && !reanalysisPreview.paletteCount;
   wrapper.append(textEl("strong", "", nothingMissing
-    ? "内容类型与色卡完整。"
-    : `将补全 ${reanalysisPreview.confirmed} 条明确内容类型，保留 ${reanalysisPreview.suggested} 条非常不确定项，并为 ${reanalysisPreview.paletteCount} 张截图补充色卡。`));
+    ? "资料索引已完整"
+    : `待补全：${reanalysisPreview.confirmed} 条内容类型，${reanalysisPreview.paletteCount} 张图片色卡。`));
   const list = el("div", "reanalyze-case-list");
   reanalysisPreview.cases.forEach((item) => list.append(rawTextEl("p", "", `${item.title}：${t("确认")} ${item.confirmed}，${currentLocale() === "en" ? "suggestions" : "建议"} ${item.suggested}`)));
   wrapper.append(list);
   elements.reanalyzePreview.replaceChildren(wrapper);
-}
-
-function formatMaintenanceDuration(secondsValue) {
-  const seconds = Math.max(0, Math.round(Number(secondsValue) || 0));
-  if (seconds < 60) return `${seconds} 秒`;
-  const minutes = Math.ceil(seconds / 60);
-  return minutes < 60 ? `${minutes} 分钟` : `${Math.ceil(minutes / 60)} 小时`;
 }
 
 function updateLibrarySettingsSaveState() {
@@ -7000,12 +8320,266 @@ function updateGalleryCounts() {
   elements.resultCount.textContent = translateUiMessage(`${visibleEntries.length} 个案例`);
   elements.pendingCount.textContent = String(pendingCount);
   pendingSwitch.hidden = !pendingCount;
-  const screenshots = entries.reduce((count, entry) => count + entryMediaAssets(entry)
-    .filter((asset) => asset.kind === "image" && asset.usage !== "poster").length, 0);
-  elements.librarySummary.textContent = translateUiMessage(`${logicalCases.length} 条案例 / ${screenshots} 张截图`);
   elements.emptyState.hidden = visibleEntries.length > 0;
   elements.emptyLibrary.hidden = logicalCases.length > 0;
   elements.emptyFilter.hidden = logicalCases.length === 0;
+}
+
+async function openTrashDialog() {
+  elements.trashFeedback.textContent = "";
+  if (!elements.trashDialog.open) elements.trashDialog.showModal();
+  await loadTrashItems();
+}
+
+async function loadTrashItems() {
+  elements.trashRestoreAll.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_TRASH_ITEMS" });
+    if (!response?.ok) throw new Error(response?.message || "无法读取回收站");
+    trashItems = Array.isArray(response.items) ? response.items : [];
+    renderTrashItems();
+  } catch (error) {
+    showTrashFeedback(error.message || "无法读取回收站", true);
+  } finally {
+    elements.trashRestoreAll.disabled = trashItems.length === 0;
+  }
+}
+
+function renderTrashItems() {
+  elements.trashCount.hidden = trashItems.length === 0;
+  elements.trashCount.textContent = String(trashItems.length);
+  elements.trashEmpty.disabled = trashItems.length === 0;
+  elements.trashRestoreAll.disabled = trashItems.length === 0;
+  if (!trashItems.length) {
+    elements.trashList.replaceChildren(textEl("strong", "trash-empty-title", "回收站为空"));
+    return;
+  }
+  const kindNames = { entry: "案例", collection: "项目", media: "媒体" };
+  elements.trashList.replaceChildren(...trashItems.map((item) => {
+    const row = el("article", "trash-item");
+    const preview = trashItemPreview(item);
+    const cover = el("div", "trash-item-cover");
+    if (preview.imageAsset) {
+      const image = document.createElement("img");
+      image.alt = `${preview.title} 封面`;
+      image.decoding = "async";
+      cover.append(image);
+      void hydrateTrashCover(image, preview.imageAsset.id);
+    } else {
+      cover.append(createUiIcon(preview.icon));
+      cover.setAttribute("aria-label", `${kindNames[item.kind] || "内容"}封面`);
+    }
+    const copy = el("div", "trash-item-copy");
+    const title = rawTextEl("strong", "", preview.title || `${kindNames[item.kind] || "内容"} ${item.targetId}`);
+    title.title = title.textContent;
+    copy.append(
+      title,
+      rawTextEl("small", "", `${kindNames[item.kind] || "内容"} · ${formatDate(item.deletedAt)}`)
+    );
+    if (preview.labels.length) {
+      const labels = el("div", "trash-item-labels");
+      labels.append(...preview.labels.map((value) => rawTextEl("span", "", value)));
+      copy.append(labels);
+    }
+    const actions = el("div", "trash-item-actions");
+    const restore = el("button", "icon-button button-secondary");
+    restore.type = "button";
+    restore.setAttribute("aria-label", `恢复：${preview.title}`);
+    restore.title = "恢复";
+    restore.append(createUiIcon("refresh-cw"));
+    const remove = el("button", "icon-button quiet-danger");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `永久删除：${preview.title}`);
+    remove.title = "永久删除";
+    remove.append(createUiIcon("trash-2"));
+    restore.addEventListener("click", () => restoreTrashItem(item, restore));
+    remove.addEventListener("click", () => permanentlyDeleteTrashItem(item, remove));
+    actions.append(restore, remove);
+    row.append(cover, copy, actions);
+    return row;
+  }));
+}
+
+function trashItemPreview(item) {
+  const entry = trashPreviewEntry(item);
+  const mediaAssets = entry ? entryMediaAssets(entry) : [];
+  const primary = item.kind === "media"
+    ? mediaAssets.find((asset) => asset.id === item.targetId) ?? mediaAssets.find((asset) => asset.usage !== "poster")
+    : primaryMediaAsset(entry ?? {});
+  const imageAsset = primary?.kind === "image"
+    ? primary
+    : primary?.kind === "video" ? posterAssetForVideo(entry ?? {}, primary) : null;
+  const title = item.kind === "collection"
+    ? String(item.snapshot?.name ?? "项目")
+    : item.kind === "media"
+      ? String(primary?.sourceTitle || entry?.title || "媒体")
+      : String(entry?.title ?? "案例");
+  const icon = item.kind === "collection"
+    ? "folder"
+    : ({ image: "image", video: "video", audio: "play", document: "file-text", attachment: "paperclip" }[primary?.kind] || "file-text");
+  return {
+    title,
+    imageAsset,
+    icon,
+    labels: item.kind === "entry" ? uniqueNames(entry?.customLabels) : []
+  };
+}
+
+function trashPreviewEntry(item) {
+  if (item.kind === "entry") return item.snapshot ?? null;
+  if (item.kind === "media") {
+    return {
+      title: entries.find((entry) => entry.id === item.relationships?.entryId)?.title || "媒体",
+      mediaAssets: item.snapshot?.mediaAssets ?? [],
+      primaryMediaId: item.targetId
+    };
+  }
+  for (const entryId of item.snapshot?.entryIds ?? []) {
+    const activeEntry = entries.find((entry) => entry.id === entryId);
+    if (activeEntry && primaryMediaAsset(activeEntry)) return activeEntry;
+    const deletedEntry = trashItems.find((candidate) => candidate.kind === "entry" && candidate.targetId === entryId)?.snapshot;
+    if (deletedEntry && primaryMediaAsset(deletedEntry)) return deletedEntry;
+  }
+  return null;
+}
+
+async function hydrateTrashCover(image, assetId) {
+  try {
+    let url = await createThumbnailUrl(assetId).catch(() => "");
+    if (!url) {
+      const blob = await getMediaBlob(assetId);
+      if (blob) {
+        url = URL.createObjectURL(blob);
+        thumbnailUrls.set(assetId, url);
+      }
+    }
+    if (url && image.isConnected) image.src = url;
+    else if (image.isConnected) image.replaceWith(createUiIcon("image"));
+  } catch {
+    if (image.isConnected) image.replaceWith(createUiIcon("image"));
+  }
+}
+
+async function restoreTrashItem(item, button) {
+  const response = await performTrashAction(button, {
+    type: "RESTORE_TRASH_ITEMS",
+    itemIds: relatedTrashGroupIds(item)
+  });
+  if (!response?.ok) return;
+  const unresolved = Array.isArray(response.unresolved) ? response.unresolved : [];
+  if (unresolved.length) {
+    showTrashFeedback(unresolved[0].reason || "当前关系已变化，暂时无法安全恢复", true);
+  } else {
+    showTrashFeedback(response.message || "已恢复");
+  }
+  await refreshLibrary();
+  await loadTrashItems();
+}
+
+async function restoreAllTrashItems() {
+  if (!trashItems.length) return;
+  const response = await performTrashAction(elements.trashRestoreAll, {
+    type: "RESTORE_TRASH_ITEMS",
+    itemIds: trashItems.map((item) => item.id)
+  });
+  if (!response?.ok) return;
+  const unresolved = Array.isArray(response.unresolved) ? response.unresolved : [];
+  const reasons = [...new Set(unresolved.map((item) => item.reason).filter(Boolean))];
+  showTrashFeedback([response.message || "恢复完成", ...reasons].join("；"), unresolved.length > 0);
+  await refreshLibrary();
+  await loadTrashItems();
+}
+
+function relatedTrashGroupIds(startItem) {
+  const selected = new Set([startItem.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const item of trashItems) {
+      if (!selected.has(item.id)) continue;
+      if (item.kind === "collection") {
+        const memberIds = new Set(item.snapshot?.entryIds ?? []);
+        for (const candidate of trashItems) {
+          if (candidate.kind === "entry" && memberIds.has(candidate.targetId) && !selected.has(candidate.id)) {
+            selected.add(candidate.id);
+            changed = true;
+          }
+        }
+      }
+      if (item.kind === "entry") {
+        const relatedCollectionIds = new Set((item.relationships?.collections ?? []).map((value) => value.id));
+        for (const candidate of trashItems) {
+          if (candidate.kind === "collection" && relatedCollectionIds.has(candidate.targetId) && !selected.has(candidate.id)) {
+            selected.add(candidate.id);
+            changed = true;
+          }
+          if (candidate.kind === "media" && candidate.relationships?.entryId === item.targetId && !selected.has(candidate.id)) {
+            selected.add(candidate.id);
+            changed = true;
+          }
+        }
+      }
+      if (item.kind === "media") {
+        const entryItem = trashItems.find((candidate) => (
+          candidate.kind === "entry" && candidate.targetId === item.relationships?.entryId
+        ));
+        if (entryItem && !selected.has(entryItem.id)) {
+          selected.add(entryItem.id);
+          changed = true;
+        }
+      }
+    }
+  }
+  return [...selected];
+}
+
+async function permanentlyDeleteTrashItem(item, button) {
+  const itemIds = relatedTrashGroupIds(item);
+  if (!await confirmAppAction({
+    title: "永久删除这项内容？",
+    description: itemIds.length > 1
+      ? `这项内容与另外 ${itemIds.length - 1} 项归档内容相互关联，将一起永久删除；本机文件也会被移除。`
+      : "本机保存的相关文件也会被移除，此操作无法恢复。",
+    confirmLabel: "永久删除",
+    danger: true
+  })) return;
+  const response = await performTrashAction(button, { type: "PERMANENT_DELETE_TRASH_ITEMS", itemIds });
+  if (!response?.ok) return;
+  showTrashFeedback(response.message || "已永久删除");
+  await loadTrashItems();
+}
+
+async function emptyTrashFromDialog() {
+  if (!trashItems.length) return;
+  if (!await confirmAppAction({
+    title: `清空回收站中的 ${trashItems.length} 项内容？`,
+    description: "相关本机文件会被永久移除，且无法恢复。",
+    confirmLabel: "永久清空",
+    danger: true
+  })) return;
+  const response = await performTrashAction(elements.trashEmpty, { type: "EMPTY_TRASH" });
+  if (!response?.ok) return;
+  showTrashFeedback(response.message || "回收站已清空");
+  await loadTrashItems();
+}
+
+function showTrashFeedback(message, isError = false) {
+  elements.trashFeedback.textContent = message;
+  elements.trashFeedback.classList.toggle("error", isError);
+}
+
+async function performTrashAction(button, message) {
+  button.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage(message);
+    if (!response?.ok) throw new Error(response?.message || "回收站操作失败");
+    return response;
+  } catch (error) {
+    showTrashFeedback(error.message || "回收站操作失败", true);
+    return null;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function openDataSafety() {
@@ -7037,6 +8611,57 @@ async function renderDataSafetyStatus() {
   elements.dataSafetyPassword.hidden = !(needsFolder || needsUnlock);
   elements.disconnectSyncFolder.hidden = !syncStatus.connected;
   if (missingLocation) elements.syncSettings.open = true;
+}
+
+async function renderCapturePermissionStatus() {
+  elements.capturePermissionSettingsFeedback.textContent = "";
+  elements.capturePermissionSettingsFeedback.classList.remove("error");
+  try {
+    const status = await inspectCapturePermissionBundle(chrome.permissions);
+    renderCapturePermissionItem(
+      elements.captureWebPermissionStatus,
+      elements.revokeCaptureWebPermission,
+      status.webCaptureGranted
+    );
+    renderCapturePermissionItem(
+      elements.captureClipboardPermissionStatus,
+      elements.revokeCaptureClipboardPermission,
+      status.clipboardGranted
+    );
+  } catch (error) {
+    elements.capturePermissionSettingsFeedback.textContent = error?.message || "无法读取采集权限状态";
+    elements.capturePermissionSettingsFeedback.classList.add("error");
+  }
+}
+
+function renderCapturePermissionItem(statusElement, button, granted) {
+  statusElement.textContent = granted ? "已授权" : "未授权";
+  statusElement.classList.toggle("is-granted", granted);
+  button.disabled = !granted;
+}
+
+async function revokeCapturePermission(kind) {
+  const web = kind === "web";
+  const button = web ? elements.revokeCaptureWebPermission : elements.revokeCaptureClipboardPermission;
+  const request = web
+    ? { origins: [...CONTINUOUS_CAPTURE_ORIGINS] }
+    : { permissions: [...CLIPBOARD_READ_PERMISSIONS] };
+  button.disabled = true;
+  elements.capturePermissionSettingsFeedback.textContent = "正在撤销权限…";
+  elements.capturePermissionSettingsFeedback.classList.remove("error");
+  try {
+    const removed = await chrome.permissions.remove(request);
+    if (!removed) throw new Error("Chrome 没有撤销这项权限，请稍后重试");
+    await chrome.storage.local.remove(CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY);
+    await renderCapturePermissionStatus();
+    elements.capturePermissionSettingsFeedback.textContent = web
+      ? "已撤销网页采集与截图权限"
+      : "已撤销剪贴板提取权限";
+  } catch (error) {
+    elements.capturePermissionSettingsFeedback.textContent = error?.message || "权限撤销失败";
+    elements.capturePermissionSettingsFeedback.classList.add("error");
+    button.disabled = false;
+  }
 }
 
 async function chooseSyncFolder() {

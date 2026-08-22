@@ -97,7 +97,9 @@ test("library return snapshots serialize canonical collection, facets, query, an
     facetNodeIds: ["facet:2", "facet:1", "facet:2"],
     pendingOnly: true,
     query: "银色角色",
-    scrollY: 428.7
+    scrollY: 428.7,
+    sortMode: "updated-desc",
+    projectSortMode: "recent"
   });
 
   assert.deepEqual(JSON.parse(serialized), {
@@ -106,7 +108,8 @@ test("library return snapshots serialize canonical collection, facets, query, an
     facetNodeIds: ["facet:2", "facet:1"],
     pendingOnly: true,
     query: "银色角色",
-    scrollY: 429
+    scrollY: 429,
+    sortMode: "updated-desc"
   });
 });
 
@@ -150,8 +153,42 @@ test("library return restore waits for initialization readiness and only applies
     facetNodeIds: ["facet:1"],
     pendingOnly: false,
     query: "雾夜",
-    scrollY: 320
+    scrollY: 320,
+    sortMode: "added-desc"
   }]);
   assert.equal(restore(true), false);
   assert.equal(storage.has(LIBRARY_RETURN_STORAGE_KEY), true);
+});
+
+test("old library return snapshots gain safe default sorting", () => {
+  assert.deepEqual(parseLibraryReturnSnapshot(JSON.stringify({
+    collectionId: "",
+    contentId: "",
+    facetNodeIds: [],
+    pendingOnly: false,
+    query: "",
+    scrollY: 0
+  })), {
+    collectionId: "",
+    contentId: "",
+    facetNodeIds: [],
+    pendingOnly: false,
+    query: "",
+    scrollY: 0,
+    sortMode: "added-desc"
+  });
+});
+
+test("removed oldest-first snapshots fall back to recent-first", () => {
+  const snapshot = parseLibraryReturnSnapshot(JSON.stringify({
+    collectionId: "",
+    contentId: "",
+    facetNodeIds: [],
+    pendingOnly: false,
+    query: "",
+    scrollY: 0,
+    sortMode: "added-asc",
+    projectSortMode: "manual"
+  }));
+  assert.equal(snapshot.sortMode, "added-desc");
 });

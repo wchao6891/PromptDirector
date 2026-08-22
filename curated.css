@@ -18,7 +18,7 @@ body { min-width: 320px; }
 .curated-header-actions button { min-height: 34px; }
 .tool-button, .page-back-action { display: inline-flex; align-items: center; gap: 7px; }
 .tool-button .ui-icon, .page-back-action .ui-icon { width: 15px; height: 15px; }
-.filter-wrap, .sort-menu { position: relative; }
+.filter-wrap { position: relative; }
 .menu-panel { position: absolute; z-index: 30; top: calc(100% + 7px); right: 0; display: grid; border: 1px solid var(--ui-border-strong); border-radius: var(--curated-radius); padding: 5px; background: var(--ui-surface); box-shadow: var(--ui-shadow); }
 .menu-panel[hidden] { display: none; }
 .filter-panel { width: 210px; gap: 4px; padding: 9px; }
@@ -26,15 +26,7 @@ body { min-width: 320px; }
 .filter-panel label { display: flex; min-height: 32px; align-items: center; gap: 8px; font-size: var(--ui-button-size); }
 .filter-panel input { width: 15px; min-height: 15px; accent-color: var(--ui-accent); }
 .filter-panel button { margin-top: 4px; }
-.sort-menu > summary { display: flex; min-width: 76px; min-height: 34px; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; cursor: pointer; font-size: var(--ui-button-size); font-weight: 750; list-style: none; }
-.sort-menu > summary::-webkit-details-marker { display: none; }
-.sort-menu > summary .ui-icon { width: 14px; height: 14px; transition: transform var(--ui-motion-fast) ease; }
-.sort-menu[open] > summary .ui-icon { transform: rotate(180deg); }
-.sort-panel { width: 110px; gap: 2px; }
-.sort-panel button { display: flex; min-height: 32px; align-items: center; justify-content: space-between; border: 0; padding: 5px 9px; color: var(--ui-text); background: transparent; text-align: left; }
-.sort-panel button:hover:not(:disabled), .sort-panel button[aria-current="true"] { background: var(--ui-hover); }
-.sort-panel .sort-check { display: none; width: 14px; height: 14px; }
-.sort-panel button[aria-current="true"] .sort-check { display: block; }
+.curated-sort select { width: 110px; min-height: 34px; padding-block: 5px; font-size: var(--ui-button-size); font-weight: 750; }
 
 .curated-status-bar { position: sticky; z-index: 15; top: 58px; display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--ui-border); padding: 5px max(12px, calc((100vw - var(--curated-max-width)) / 2)); color: var(--ui-muted); background: var(--ui-raised); font-size: var(--ui-meta-size); }
 .curated-status-bar[hidden] { display: none; }

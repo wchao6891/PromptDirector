@@ -90,7 +90,7 @@ def main() -> None:
         library.locator(".detail-visual-thumb").nth(1).click()
         expect(library.locator(".detail-video")).to_be_visible()
         expect(library.get_by_role("button", name="设为主要媒体")).to_be_visible()
-        expect(library.get_by_role("button", name="删除此媒体")).to_be_visible()
+        expect(library.get_by_role("button", name="此媒体移入回收站")).to_be_visible()
 
         desktop = layout_snapshot(library)
         assert desktop["safetyBand"] >= 16, desktop
@@ -112,7 +112,7 @@ def main() -> None:
         print({
             "desktop": desktop,
             "mobile": mobile,
-            "dangerActionSeparated": library.get_by_role("button", name="删除此媒体").evaluate(
+            "dangerActionSeparated": library.get_by_role("button", name="此媒体移入回收站").evaluate(
                 "button => button.classList.contains('button-danger-secondary')"
             ),
         })

@@ -24,6 +24,55 @@
         <button id="exit-target" class="quiet compact" type="button">退出</button>
       </section>
 
+      <dialog id="capture-permission-onboarding" class="app-dialog" aria-labelledby="capture-permission-title">
+        <form id="capture-permission-form" class="app-dialog-form" method="dialog">
+          <header>
+            <div>
+              <h2 id="capture-permission-title">一次说明，之后直接采集</h2>
+              <p>只在你主动选择采集方式时使用这些能力；授权完成后会继续刚才的操作，不会自动保存案例。</p>
+            </div>
+          </header>
+          <div class="app-dialog-body">
+            <div>
+              <strong>网页采集</strong>
+              <p>读取你主动采集的普通网页内容，用于智能选图、文字提取和整页采集。</p>
+            </div>
+            <div>
+              <strong>截图</strong>
+              <p>只在你点击智能选图或框选截图后，读取当前网页的可见画面。</p>
+            </div>
+            <label class="app-dialog-check">
+              <input id="capture-permission-clipboard" type="checkbox" checked />
+              <span><strong>剪贴板读取（默认开启，可取消）</strong><br /><small>仅当你点击“提取文字/图片”且网页没有可提取的高亮时读取；打开侧栏、点击网页或高亮文字都不会读取剪贴板。</small></span>
+            </label>
+            <p id="capture-permission-status" class="app-dialog-status" role="status" aria-live="polite"></p>
+          </div>
+          <footer>
+            <button id="capture-permission-cancel" class="button-secondary" type="button">暂不授权</button>
+            <button id="capture-permission-confirm" class="primary" type="submit">授权并继续</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog id="clipboard-permission-dialog" class="app-dialog" aria-labelledby="clipboard-permission-title">
+        <form id="clipboard-permission-form" class="app-dialog-form" method="dialog">
+          <header>
+            <div>
+              <h2 id="clipboard-permission-title">启用剪贴板提取？</h2>
+              <p>你首次授权时取消了剪贴板读取。只有确认此操作后，才会读取当前剪贴板中的文字或图片。</p>
+            </div>
+          </header>
+          <div class="app-dialog-body">
+            <p>启用后仍只会在你主动点击“提取文字/图片”且网页没有可用高亮时读取；打开侧栏、浏览或点击网页不会触发读取。</p>
+            <p id="clipboard-permission-status" class="app-dialog-status" role="status" aria-live="polite"></p>
+          </div>
+          <footer>
+            <button id="clipboard-permission-cancel" class="button-secondary" type="button">保持关闭</button>
+            <button id="clipboard-permission-confirm" class="primary" type="submit">启用并提取</button>
+          </footer>
+        </form>
+      </dialog>
+
       <section id="start-state" class="start-state">
         <div id="result-start" class="result-start" hidden>
           <div class="start-copy">
@@ -80,7 +129,7 @@
           <p>正文内已定位媒体默认纳入；保存按钮就是最终授权。位置不确定的素材默认不选。</p>
           <div id="page-capture-media-review-list" class="page-capture-media-review-list"></div>
         </section>
-        <div class="page-capture-actions">
+        <div id="page-capture-actions" class="page-capture-actions">
           <button id="page-capture-cancel" class="button-secondary" type="button">取消</button>
           <button id="page-capture-save-text-only" class="button-secondary" type="button" hidden>只保存正文</button>
           <button id="page-capture-save" class="primary" type="button">保存为一个案例</button>
@@ -121,24 +170,27 @@
       <section id="preview-state" class="preview-state" hidden>
         <header class="preview-heading">
           <div><small>待保存内容</small><h2 id="content-summary"></h2></div>
-          <span>临时保存在本机</span>
         </header>
         <div id="quick-preview" class="quick-preview"></div>
-        <section class="save-metadata" aria-label="保存设置">
+        <section id="capture-metadata" class="save-metadata" aria-label="保存设置">
+          <label>
+            <span>项目</span>
+            <select id="capture-collection"></select>
+          </label>
+          <label id="capture-new-collection-row" hidden>
+            <span>新项目名称</span>
+            <input id="capture-new-collection-name" autocomplete="off" placeholder="输入后会在保存案例时创建" />
+          </label>
           <label>
             <span data-i18n="一级分类">一级分类</span>
             <select id="content-type"></select>
           </label>
-          <details class="custom-label-editor">
-            <summary>自定义标签（可选）</summary>
-            <label>
-              <span class="sr-only">自定义标签</span>
-              <input id="custom-labels" autocomplete="off" placeholder="例如：喜欢、待复刻、广告参考" />
-            </label>
-            <small>用逗号分隔</small>
-          </details>
+          <div class="custom-label-editor">
+            <span>添加标签</span>
+            <div id="custom-labels"></div>
+          </div>
         </section>
-        <div class="add-more-actions">
+        <div id="capture-add-more-actions" class="add-more-actions">
           <button id="add-smart-visuals" class="quiet" type="button">＋ 智能选图</button>
           <button id="add-selection" class="quiet" type="button" data-i18n="＋ 提取文字/图片">＋ 提取文字/图片</button>
           <button id="add-page-capture" class="quiet" type="button">＋ 网页采集</button>

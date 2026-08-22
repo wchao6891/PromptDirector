@@ -74,20 +74,22 @@ export function normalizeSettings(value = {}, defaults = DEFAULT_SETTINGS) {
   };
 }
 
-export function buildEntry({ text, title, url, savedAt, allowEmptyText = false }) {
+export function buildEntry({ text, title, url, savedAt, libraryAddedAt, allowEmptyText = false }) {
   const normalizedText = normalizeSelection(text);
   if (!normalizedText && !allowEmptyText) {
     throw new Error("没有检测到高亮文字");
   }
 
   const parsedUrl = safeUrl(url);
+  const now = new Date().toISOString();
   return {
     id: globalThis.crypto.randomUUID(),
     text: normalizedText,
     textRevision: 1,
     title: String(title ?? "").trim() || parsedUrl?.hostname || "未命名网页",
     url: parsedUrl?.href || "",
-    savedAt: savedAt ?? new Date().toISOString()
+    savedAt: savedAt ?? now,
+    libraryAddedAt: libraryAddedAt ?? now
   };
 }
 
@@ -287,9 +289,9 @@ function renderEntry(entry, index, taxonomy, facetCatalog, locale) {
     `- 保存时间：${date}`,
     ...screenshot,
     "",
-    ...(attributeLines.length ? ["### 创作属性", "", ...attributeLines, ""] : []),
+    ...(attributeLines.length ? ["### AI 标签", "", ...attributeLines, ""] : []),
     ...(visionDescription ? ["### 画面描述", "", `${visionFence}text`, visionDescription, visionFence, ""] : []),
-    ...(entry.text ? ["### 原始提示词", "", `${fence}text`, entry.text, fence] : ["### 案例说明", "", "这是一条仅包含截图和创作属性的图片案例。"]),
+    ...(entry.text ? ["### 原始提示词", "", `${fence}text`, entry.text, fence] : ["### 案例说明", "", "这是一条仅包含截图和 AI 标签的图片案例。"]),
     ...(suggestionLines.length ? ["", "### 待确认建议", "", ...suggestionLines] : [])
   ].join("\n");
 }

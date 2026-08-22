@@ -43,15 +43,15 @@ test("image details reserve an in-flow action row below the large image", async 
   assert.match(actions, /flex-wrap:\s*wrap/);
 });
 
-test("detail titles clamp to two lines and project task actions wrap without overlap", async () => {
+test("detail titles stay fully readable and project task actions wrap without overlap", async () => {
   const source = await readFile(cssUrl, "utf8");
   const title = rule(source, ".detail-title");
   const heading = rule(source, ".gallery-heading.project-selection-mode");
   const actions = rule(source, ".project-selection-actions");
 
-  assert.match(title, /display:\s*-webkit-box/);
-  assert.match(title, /-webkit-line-clamp:\s*2/);
-  assert.match(title, /overflow:\s*hidden/);
+  assert.match(title, /overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(title, /-webkit-line-clamp/);
+  assert.doesNotMatch(title, /text-overflow:\s*ellipsis/);
   assert.match(heading, /flex-wrap:\s*wrap/);
   assert.match(actions, /flex-wrap:\s*wrap/);
 });

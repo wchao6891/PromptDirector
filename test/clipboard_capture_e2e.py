@@ -67,6 +67,13 @@ def main() -> None:
         )
         collector = session.open_page("collector.html")
         expect(collector.locator("#start-state")).to_be_visible()
+        collector.evaluate("""() => chrome.storage.local.set({
+          capturePermissionOnboarding: {
+            version: 1,
+            acknowledgedAt: new Date().toISOString(),
+            clipboardIncluded: true
+          }
+        })""")
         assert collector.evaluate("window.__promptDirectorClipboardReads") == 0
 
         collector.locator("#start-selection").click()
@@ -107,12 +114,29 @@ def main() -> None:
         cleared_text_draft = collector.evaluate("() => chrome.runtime.sendMessage({type: 'GET_CAPTURE_WORKSPACE'}).then(result => result.draft)")
         assert cleared_text_draft["fragments"] == [], cleared_text_draft
 
+        reads_before_decline = collector.evaluate("window.__promptDirectorClipboardReads")
+        collector.evaluate("""() => chrome.storage.local.set({
+          capturePermissionOnboarding: {
+            version: 1,
+            acknowledgedAt: new Date().toISOString(),
+            clipboardIncluded: false
+          }
+        })""")
+        collector.locator("#start-selection").click()
+        expect(collector.locator("#clipboard-permission-dialog")).to_be_visible()
+        assert collector.evaluate("window.__promptDirectorClipboardReads") == reads_before_decline
+        collector.locator("#clipboard-permission-cancel").click()
+        expect(collector.locator("#clipboard-permission-dialog")).to_be_hidden()
+        assert collector.evaluate("window.__promptDirectorClipboardReads") == reads_before_decline
+
         print({
             "automatic_clipboard_reads": 0,
             "explicit_clipboard_reads": 3,
             "copied_image_imported": True,
             "saved_clipboard_can_be_extracted_again": True,
             "single_item_removal": True,
+            "persisted_clipboard_opt_out_read": False,
+            "later_explicit_clipboard_enable_prompt": True,
             "mobile_sidebar": True,
         })
 

@@ -1,7 +1,7 @@
 import { normalizeVisual } from "./visuals.js";
 import { uniqueNames } from "./facets.js";
 
-export const CAPTURE_DRAFT_VERSION = 3;
+export const CAPTURE_DRAFT_VERSION = 4;
 
 export function createCaptureDraft(value = {}) {
   const now = new Date().toISOString();
@@ -24,6 +24,8 @@ export function createCaptureDraft(value = {}) {
     contentTypeExplicit: value.contentTypeExplicit === true,
     customLabels: uniqueNames(value.customLabels),
     customLabelsExplicit: value.customLabelsExplicit === true,
+    collectionId: clean(value.collectionId),
+    newCollectionName: clean(value.newCollectionName),
     createdAt: validIso(value.createdAt) || now,
     updatedAt: validIso(value.updatedAt) || now
   };

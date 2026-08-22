@@ -8,6 +8,7 @@ import {
   mergeOrganizerState,
   normalizeOrganizerState,
   planCollectionAndEntriesDeletion,
+  reorderCollections,
   removeEntriesFromOrganizer,
   replaceCollectionEntries,
   renameCollection,
@@ -51,6 +52,20 @@ test("organizer merge remaps entry ids and merges same-name collections", () => 
   assert.deepEqual(merged.collections[0].entryIds, ["local", "imported"]);
 });
 
+test("receiver-local project creation time is assigned only to newly imported projects", () => {
+  const merged = mergeOrganizerState({
+    collections: [{ id: "existing", name: "已有", order: 0, entryIds: ["one"], createdAt: "2026-01-01T00:00:00.000Z" }]
+  }, {
+    collections: [
+      { id: "same-name", name: "已有", order: 0, entryIds: ["two"] },
+      { id: "new", name: "新项目", order: 1, entryIds: ["three"], createdAt: "2025-01-01T00:00:00.000Z" }
+    ]
+  }, { two: "two", three: "three" }, { createdAt: "2026-08-22T00:00:00.000Z" });
+
+  assert.equal(merged.collections[0].createdAt, "2026-01-01T00:00:00.000Z");
+  assert.equal(merged.collections[1].createdAt, "2026-08-22T00:00:00.000Z");
+});
+
 test("removing a case also removes private organizer references", () => {
   const state = removeEntriesFromOrganizer({
     collections: [{ id: "collection:a", name: "A", entryIds: ["one", "two"] }]
@@ -76,7 +91,7 @@ test("project and entries deletion is planned atomically and removes shared proj
   assert.deepEqual(result.organizerState.collections, [{
     id: "collection:keep",
     name: "保留项目",
-    order: 1,
+    order: 0,
     entryIds: ["three"],
     visibility: COLLECTION_VISIBILITY.library
   }]);
@@ -93,6 +108,46 @@ test("project membership can be replaced atomically in visual selection order", 
     collections: [{ id: "collection:a", name: "A", entryIds: ["old", "keep"] }]
   }, "collection:a", ["keep", "new", "keep"]);
   assert.deepEqual(state.collections[0].entryIds, ["keep", "new"]);
+});
+
+test("project order is normalized after deletion so a new project cannot reuse a stale order", () => {
+  const initial = {
+    collections: [
+      { id: "collection:a", name: "A", order: 4, entryIds: [] },
+      { id: "collection:b", name: "B", order: 9, entryIds: [] }
+    ]
+  };
+  const afterDelete = deleteCollection(initial, "collection:a");
+  assert.deepEqual(afterDelete.collections.map((item) => item.order), [0]);
+  const created = createCollection(afterDelete, "C");
+  assert.deepEqual(created.state.collections.map((item) => item.order), [0, 1]);
+  assert.ok(Number.isFinite(Date.parse(created.item.createdAt)));
+});
+
+test("projects can be reordered without changing member order or inventing legacy creation time", () => {
+  const reordered = reorderCollections({
+    collections: [
+      { id: "collection:a", name: "A", order: 0, entryIds: ["one", "two"] },
+      { id: "collection:b", name: "B", order: 1, entryIds: ["three"], createdAt: "2026-08-22T01:02:03.000Z" }
+    ]
+  }, ["collection:b", "collection:a"]);
+  assert.deepEqual(reordered.collections.map((item) => item.id), ["collection:b", "collection:a"]);
+  assert.deepEqual(reordered.collections.map((item) => item.order), [0, 1]);
+  assert.deepEqual(reordered.collections[1].entryIds, ["one", "two"]);
+  assert.equal(Object.hasOwn(reordered.collections[1], "createdAt"), false);
+  assert.equal(reordered.collections[0].createdAt, "2026-08-22T01:02:03.000Z");
+});
+
+test("project reorder rejects stale, incomplete, or duplicate project lists", () => {
+  const state = {
+    collections: [
+      { id: "collection:a", name: "A", entryIds: [] },
+      { id: "collection:b", name: "B", entryIds: [] }
+    ]
+  };
+  assert.throws(() => reorderCollections(state, ["collection:a"]), /刷新后重试/);
+  assert.throws(() => reorderCollections(state, ["collection:a", "collection:a"]), /刷新后重试/);
+  assert.throws(() => reorderCollections(state, ["collection:a", "collection:missing"]), /刷新后重试/);
 });
 
 test("project-only cases leave the main library unless another visible project also contains them", () => {

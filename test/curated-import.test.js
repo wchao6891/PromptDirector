@@ -76,12 +76,14 @@ test("curated pack import creates one stable local project", () => {
   const result = mergeCuratedLibraryPackage(emptyState(), library, {
     packageId: catalogItem.packageId,
     projectName: catalogItem.title,
-    mode: "package"
+    mode: "package",
+    now: "2026-08-22T09:00:00.000Z"
   });
   assert.equal(result.importedCount, 2);
   assert.equal(result.existingCount, 0);
   assert.equal(result.projectId, "curated-project:test-pack");
   assert.deepEqual(result.state.organizerState.collections[0].entryIds.toSorted(), result.importedEntryIds.toSorted());
+  assert.equal(result.state.organizerState.collections[0].createdAt, "2026-08-22T09:00:00.000Z");
 });
 
 test("curated updates preserve personal edits and add only missing stable sources", () => {

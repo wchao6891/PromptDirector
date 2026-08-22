@@ -110,14 +110,20 @@ import {
   saveDerivedMetadata,
   saveMediaBlob
 } from "./media-store.js";
-import { findExactMediaDuplicate, sha256Blob } from "./local-media.js";
+import { deleteLocalAssetHandle } from "./local-asset-store.js";
+import {
+  LOCAL_ASSET_REFERENCE_RECORD_TYPE,
+  findExactMediaDuplicate,
+  sha256Blob
+} from "./local-media.js";
 import { tempReferenceAssetIds, unreadReferenceImageAssets } from "./temp-references.js";
 import {
   addStagedAsset,
   collectRetainedLocalAssetIds,
   normalizeImportStagingState,
   removeStagedAsset,
-  stagedAssetById
+  stagedAssetById,
+  stagedAssetMediaRecord
 } from "./import-staging.js";
 import {
   cancelImportJob,
@@ -142,10 +148,10 @@ import {
   addTimeNote,
   entryMediaAssets,
   normalizeEntryMedia,
-  removeEntryMedia,
   removeTimeNote,
   setEntryMediaPrompt,
-  setPrimaryMedia
+  setPrimaryMedia,
+  updateLocalAssetReferenceMetadata
 } from "./media.js";
 import {
   cancelLibraryMaintenance,
@@ -173,14 +179,25 @@ import { mergeCuratedLibraryPackage } from "./curated-import.js";
 import { prepareCuratedSubmissionState } from "./curated-submission.js";
 import {
   createCollection,
-  deleteCollection,
   normalizeOrganizerState,
-  planCollectionAndEntriesDeletion,
   removeEntriesFromOrganizer,
+  reorderCollections,
   replaceCollectionEntries,
   renameCollection,
+  setEntriesCollection,
   setCollectionVisibility
 } from "./organizer.js";
+import {
+  emptyTrash,
+  listTrashItems,
+  moveCollectionWithEntriesToTrash,
+  moveCollectionsToTrash,
+  moveEntriesToTrash,
+  moveMediaToTrash,
+  normalizeTrashState,
+  restoreTrashItems,
+  takeTrashItems
+} from "./trash.js";
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 import { CHROME_WEB_STORE_URL } from "./product-links.js";
 import { PALETTE_VERSION } from "./palette.js";
@@ -277,7 +294,6 @@ import {
   addEntryVisual,
   normalizeEntryVisuals,
   primaryVisual,
-  removeEntryVisual,
   setPrimaryVisual,
   updateEntryVisual
 } from "./visuals.js";
@@ -327,10 +343,15 @@ import {
   getSyncDirectoryHandle,
   saveSyncCryptoKey
 } from "./sync-store.js";
+import {
+  createExtensionUpdateLifecycle,
+  EXTENSION_UPDATE_STATUS_CHANGED
+} from "./extension-update.js";
 
 const STORAGE_KEYS = Object.freeze({
   schemaVersion: "schemaVersion",
   entries: "entries",
+  trashState: "trashState",
   compoundCases: "compoundCases",
   settings: "settings",
   taxonomy: "taxonomy",
@@ -368,6 +389,7 @@ const STORAGE_KEYS = Object.freeze({
 });
 const SYNCED_STORAGE_KEYS = new Set([
   STORAGE_KEYS.entries,
+  STORAGE_KEYS.trashState,
   STORAGE_KEYS.compoundCases,
   STORAGE_KEYS.settings,
   STORAGE_KEYS.taxonomy,
@@ -388,6 +410,15 @@ let automaticSyncScheduled = false;
 let creatingOffscreenDocument = null;
 let visionAnalysisInFlight = false;
 const aiProviderModule = createAiProviderModule();
+const extensionUpdateLifecycle = createExtensionUpdateLifecycle({
+  runtime: chrome.runtime,
+  storage: chrome.storage.local,
+  fetchFn: (...args) => fetch(...args),
+  notify: (status) => chrome.runtime.sendMessage({
+    type: EXTENSION_UPDATE_STATUS_CHANGED,
+    status
+  }).catch(() => undefined)
+});
 const VIDEO_ANALYSIS_ADAPTERS = Object.freeze({
   gemini: analyzeVideoWithGemini,
   chat_completions: analyzeVideoWithChatCompletions,
@@ -416,7 +447,8 @@ const captureRuntime = createCaptureWorkspace({
   resolveSourceContext: resolveCaptureSourceContext
 });
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
+  await extensionUpdateLifecycle.handleInstalled(details);
   await restrictLocalStorageAccess();
   await syncContextMenus();
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
@@ -424,6 +456,16 @@ chrome.runtime.onInstalled.addListener(async () => {
   const state = await readState();
   await commitLocalChanges({ [STORAGE_KEYS.settings]: state.settings });
   await migrateLegacyScreenshots(state.entries);
+});
+
+chrome.runtime.onUpdateAvailable.addListener((details) => {
+  extensionUpdateLifecycle.handleUpdateAvailable(details)
+    .catch((error) => console.error("PromptDirector update availability handling failed", error));
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  extensionUpdateLifecycle.handleStartup()
+    .catch((error) => console.error("PromptDirector development update check failed", error));
 });
 
 restrictLocalStorageAccess().catch((error) => console.error("PromptDirector storage access restriction failed", error));
@@ -507,6 +549,18 @@ async function handleMessage(message, interaction = {}) {
       return enqueueCapture(async () => captureWorkspace());
     case "GET_DATA_SAFETY_STATUS":
       return enqueue(async () => dataSafetyStatus(await readState()));
+    case "GET_EXTENSION_UPDATE_STATUS":
+      return extensionUpdateLifecycle.getStatus()
+        .then((status) => ({ ok: true, status }));
+    case "CHECK_EXTENSION_UPDATE":
+      return extensionUpdateLifecycle.check()
+        .then((status) => ({
+          ok: status.checkStatus !== "error",
+          status,
+          message: status.lastError
+        }));
+    case "APPLY_EXTENSION_UPDATE":
+      return extensionUpdateLifecycle.apply();
     case "CONNECT_SYNC_FOLDER":
       return enqueue(async () => connectSyncFolder(message.password));
     case "UNLOCK_SYNC_VAULT":
@@ -573,7 +627,10 @@ async function handleMessage(message, interaction = {}) {
     case "CANCEL_CAPTURE_DRAFT":
       return enqueueCapture(async () => captureRuntime.dispatch("cancel"));
     case "COMMIT_CAPTURE_DRAFT":
-      return enqueueCapture(async () => enqueue(async () => commitCaptureDraft(message.duplicateAction)));
+      return enqueueCapture(async () => enqueue(async () => commitCaptureDraft(message.duplicateAction, {
+        collectionId: message.collectionId,
+        newCollectionName: message.newCollectionName
+      })));
     case "START_CAPTURE_FOR_CASE":
       return enqueueCapture(async () => startCaptureForCase(message.caseId, message.partEntryId));
     case "CREATE_COMPOUND_CASE":
@@ -597,9 +654,9 @@ async function handleMessage(message, interaction = {}) {
     case "CREATE_MEDIA_CASE":
       return enqueue(async () => createMediaCase(message.asset, message.posterAsset, message.title, message.text));
     case "CREATE_MEDIA_REFERENCE":
-      return enqueue(async () => createMediaReferenceCase(message.asset, message.posterAsset, message.title));
+      return enqueue(async () => createMediaReferenceCase(message.asset, message.posterAsset, message.title, message));
     case "CREATE_QUICK_NOTE":
-      return enqueue(async () => createQuickNote(message.title, message.text));
+      return enqueue(async () => createQuickNote(message.title, message.text, message));
     case "ADD_TIME_NOTE":
       return enqueue(async () => addEntryTimeNote(message.entryId, message.note));
     case "ADD_VIDEO_KEYFRAME":
@@ -748,14 +805,32 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => applyEntryMediaPromptSuggestions(message));
     case "UPDATE_ENTRY_TITLE":
       return enqueue(async () => updateCaseTitle(message));
+    case "UPDATE_ENTRY_CUSTOM_LABELS":
+      return enqueue(async () => updateEntryCustomLabels(message));
+    case "UPDATE_LOCAL_ASSET_REFERENCE":
+      return enqueue(async () => updateLocalAssetReferenceAction(message));
+    case "BATCH_ADD_CUSTOM_LABELS":
+      return enqueue(async () => batchAddCustomLabels(message));
+    case "BATCH_SET_PROJECT":
+      return enqueue(async () => batchSetProject(message));
     case "UNDO_VISION_ANALYSIS":
       return enqueue(async () => undoEntryVisionAnalysis(message.entryId));
     case "UNDO_LAST":
       return enqueue(async () => undoLastSave());
     case "DELETE_ENTRY":
       return enqueue(async () => deleteEntry(message.entryId));
+    case "BATCH_MOVE_TO_TRASH":
+      return enqueue(async () => moveEntryBatchToTrash(message.entryIds));
     case "DELETE_COLLECTION_WITH_ENTRIES":
       return enqueue(async () => deleteCollectionWithEntries(message));
+    case "GET_TRASH_ITEMS":
+      return enqueue(async () => getTrashItems(message));
+    case "RESTORE_TRASH_ITEMS":
+      return enqueue(async () => restoreSelectedTrashItems(message));
+    case "PERMANENT_DELETE_TRASH_ITEMS":
+      return enqueue(async () => permanentlyDeleteTrashItems(message));
+    case "EMPTY_TRASH":
+      return enqueue(async () => emptyTrashAction());
     case "CONFIRM_CLASSIFICATION":
       return enqueue(async () => updateClassification(message));
     case "RENAME_CONTENT_TYPE":
@@ -777,6 +852,7 @@ async function handleMessage(message, interaction = {}) {
     case "CREATE_COLLECTION":
     case "RENAME_COLLECTION":
     case "DELETE_COLLECTION":
+    case "REORDER_COLLECTIONS":
     case "REPLACE_COLLECTION_ENTRIES":
     case "SET_COLLECTION_VISIBILITY":
       return enqueue(async () => updateOrganizer(message));
@@ -872,6 +948,7 @@ async function captureWorkspace() {
     STORAGE_KEYS.compoundCases,
     STORAGE_KEYS.taxonomy,
     STORAGE_KEYS.classificationRules,
+    STORAGE_KEYS.organizerState,
     STORAGE_KEYS.activeCreativeResult,
     STORAGE_KEYS.composerSessions
   ]);
@@ -879,6 +956,7 @@ async function captureWorkspace() {
     entries: Array.isArray(stored[STORAGE_KEYS.entries]) ? stored[STORAGE_KEYS.entries] : [],
     taxonomy: normalizeTaxonomy(stored[STORAGE_KEYS.taxonomy]),
     classificationRules: Array.isArray(stored[STORAGE_KEYS.classificationRules]) ? stored[STORAGE_KEYS.classificationRules] : [],
+    organizerState: normalizeOrganizerState(stored[STORAGE_KEYS.organizerState]),
     activeCreativeResult: normalizeActiveCreativeResult(stored[STORAGE_KEYS.activeCreativeResult]),
     composerSessions: normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions])
   };
@@ -906,6 +984,7 @@ async function captureWorkspace() {
     targetEntry,
     suggestedContentTypeId: suggested?.pathIds?.[0] || "",
     contentTypes: state.taxonomy.nodes.map((item) => ({ id: item.id, name: item.name })),
+    collections: state.organizerState.collections.map((item) => ({ id: item.id, name: item.name })),
     partContentTypes,
     activeCreativeResult: state.activeCreativeResult,
     activeCreativePrompt: activeCreativePromptSummary(state.activeCreativeResult, state.composerSessions),
@@ -1876,25 +1955,18 @@ async function splitCompoundCaseAction(compoundCaseId) {
 async function setEntryPrimaryVisual(entryId, visualId) {
   const state = await readState();
   const current = findEntry(state, entryId);
-  const updated = setPrimaryVisual(current, visualId);
+  const next = setPrimaryVisual(current, visualId);
+  const updated = next.primaryVisualId === current.primaryVisualId ? next : touchEntry(next);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: "主图已更新", entry: updated };
 }
 
 async function deleteEntryVisual(entryId, visualId) {
-  const state = await readState();
-  const current = normalizeEntryVisuals(findEntry(state, entryId));
-  const visual = current.visuals.find((item) => item.id === String(visualId ?? ""));
-  if (!visual) return { ok: false, message: "没有找到这张截图" };
-  let updated = removeEntryVisual(current, visual.id);
-  updated.facetAssignments = (updated.facetAssignments ?? []).filter((item) =>
-    !(item.source === "vision_model" && (item.visualId === visual.id || (!item.visualId && visual.visionAnalysis)))
-  );
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  await deleteScreenshotBlob(visual.id).catch(() => undefined);
-  return { ok: true, message: "这张截图已删除，案例文字和其他截图保持不变", entry: updated };
+  return moveEntryMediaToTrash(entryId, visualId, {
+    missingMessage: "没有找到这张截图",
+    successMessage: "截图已移入回收站，案例文字和其他截图保持不变"
+  });
 }
 
 async function addUploadedVisual(entryId, visualValue) {
@@ -1902,14 +1974,14 @@ async function addUploadedVisual(entryId, visualValue) {
   const current = findEntry(state, entryId);
   const visualId = String(visualValue?.id ?? "").trim();
   if (!visualId || !await getScreenshotBlob(visualId)) throw new Error("没有读取到待添加的图片");
-  const updated = addEntryVisual(current, {
+  const updated = touchEntry(addEntryVisual(current, {
     ...visualValue,
     id: visualId,
     sourceUrl: current.url,
     sourceTitle: current.title,
     capturedAt: new Date().toISOString(),
     reviewStatus: "verified"
-  });
+  }));
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   await queueAutomaticVisionAnalysis([updated.id]);
@@ -1919,26 +1991,64 @@ async function addUploadedVisual(entryId, visualValue) {
 async function setEntryPrimaryMedia(entryId, assetId) {
   const state = await readState();
   const current = findEntry(state, entryId);
-  const updated = setPrimaryMedia(current, assetId);
+  const next = setPrimaryMedia(current, assetId);
+  const updated = next.primaryMediaId === current.primaryMediaId ? next : touchEntry(next);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: "主要媒体已更新", entry: updated };
 }
 
 async function deleteEntryMedia(entryId, assetId) {
+  return moveEntryMediaToTrash(entryId, assetId, {
+    missingMessage: "没有找到这个媒体",
+    successMessage: "媒体已移入回收站，案例文字和其他资料保持不变"
+  });
+}
+
+async function moveEntryMediaToTrash(entryId, assetId, messages) {
   const state = await readState();
   const current = normalizeEntryMedia(findEntry(state, entryId));
   const asset = current.mediaAssets.find((item) => item.id === String(assetId ?? ""));
-  if (!asset) return { ok: false, message: "没有找到这个媒体" };
-  const updated = removeEntryMedia(current, asset.id);
-  const removedAssets = current.mediaAssets.filter((item) => !updated.mediaAssets.some((next) => next.id === item.id));
-  updated.facetAssignments = (updated.facetAssignments ?? []).filter((item) =>
-    !(item.source === "vision_model" && item.visualId === asset.id)
-  );
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  if (!asset) return { ok: false, message: messages.missingMessage };
+  const moved = moveMediaToTrash({
+    entries: state.entries,
+    trashState: state.trashState
+  }, current.id, [asset.id]);
+  const entries = touchEntries(moved.entries, [current.id]);
+  const updated = entries.find((entry) => entry.id === current.id);
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.trashState]: moved.trashState
+  });
+  return {
+    ok: true,
+    message: messages.successMessage,
+    movedItemIds: moved.movedItemIds,
+    entry: updated,
+    trashState: moved.trashState
+  };
+}
+
+async function updateLocalAssetReferenceAction(message = {}) {
+  const state = await readState();
+  const current = findEntry(state, String(message.entryId ?? "").trim());
+  const updated = updateLocalAssetReferenceMetadata(current, message.assetId, {
+    sourceTitle: message.sourceTitle,
+    relativePath: message.relativePath,
+    sourceFormat: message.sourceFormat,
+    mimeType: message.mimeType,
+    byteSize: message.byteSize,
+    sourceLastModified: message.sourceLastModified
+  });
+  const entry = touchEntry(updated.entry);
+  const entries = state.entries.map((item) => item.id === entry.id ? entry : item);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  await Promise.allSettled(removedAssets.filter((item) => item.storageMode === "managed").map((item) => deleteMediaBlob(item.id)));
-  return { ok: true, message: "媒体已删除，案例文字和其他资料保持不变", entry: updated };
+  return {
+    ok: true,
+    message: "本机源文件链接已更新",
+    entry,
+    asset: entry.mediaAssets.find((item) => item.id === updated.asset.id)
+  };
 }
 
 async function addUploadedMedia(entryId, assetValue, posterValue = null) {
@@ -1962,6 +2072,7 @@ async function addUploadedMedia(entryId, assetValue, posterValue = null) {
     if (!await getMediaBlob(posterValue.id)) throw new Error("没有读取到视频封面");
     updated = addEntryMedia(updated, { ...posterValue, usage: "poster", derivedFromAssetId: assetId, storageMode: "managed" });
   }
+  updated = touchEntry(updated);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   if (assetValue?.kind === "image") await queueAutomaticVisionAnalysis([updated.id]);
@@ -2000,7 +2111,7 @@ async function createMediaCase(assetValue, posterValue, titleValue, textValue = 
   return { ok: true, message: "资料已保存", entry };
 }
 
-async function createMediaReferenceCase(assetValue, posterValue, titleValue) {
+async function createMediaReferenceCase(assetValue, posterValue, titleValue, organization = {}) {
   const state = await readState();
   const sourceUrl = String(assetValue?.reference?.url || assetValue?.sourceUrl || "").trim();
   const base = buildEntry({ text: "", title: titleValue, url: sourceUrl, allowEmptyText: true });
@@ -2015,24 +2126,31 @@ async function createMediaReferenceCase(assetValue, posterValue, titleValue) {
     mediaAssets,
     primaryMediaId: assetValue?.id,
     classification: classifyContent({ ...base, mediaAssets }, state.classificationRules, state.taxonomy),
-    customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
+    customLabels: uniqueNames(organization.customLabels), metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
     rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
   });
   const entries = [...state.entries, entry];
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  const organizerState = organizerAfterCapturePlacement(state.organizerState, entries, [entry.id], organization);
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.organizerState]: organizerState
+  });
   await notifySaved(entries.length);
   return { ok: true, message: "视频来源已保存；不能嵌入的平台会打开原网页", entry };
 }
 
-async function createQuickNote(titleValue, textValue) {
+async function createQuickNote(titleValue, textValue, organization = {}) {
   const state = await readState();
   const entry = buildEntry({ text: textValue, title: titleValue, url: "" });
   entry.schemaVersion = SCHEMA_VERSION;
   entry.classification = classifyImportedMedia({ ...entry, sourceKind: "quick_note" }, state.taxonomy);
+  entry.customLabels = uniqueNames(organization.customLabels);
   const entries = [...state.entries, entry];
+  const organizerState = organizerAfterCapturePlacement(state.organizerState, entries, [entry.id], organization);
   await retireLastSaveUndo();
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.organizerState]: organizerState,
     [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id)
   });
   await notifySaved(entries.length);
@@ -2042,7 +2160,7 @@ async function createQuickNote(titleValue, textValue) {
 async function addEntryTimeNote(entryId, noteValue) {
   const state = await readState();
   const current = findEntry(state, entryId);
-  const updated = addTimeNote(current, noteValue);
+  const updated = touchEntry(addTimeNote(current, noteValue));
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: "时间点笔记已保存", entry: updated };
@@ -2062,6 +2180,7 @@ async function addVideoKeyframe(entryId, assetValue, noteValue) {
     reviewStatus: "verified"
   });
   updated = addTimeNote(updated, { ...noteValue, frameAssetId: frameId });
+  updated = touchEntry(updated);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: "当前画面和时间点笔记已保存", entry: updated };
@@ -2070,19 +2189,21 @@ async function addVideoKeyframe(entryId, assetValue, noteValue) {
 async function deleteEntryTimeNote(entryId, noteId) {
   const state = await readState();
   const current = findEntry(state, entryId);
-  const updated = removeTimeNote(current, noteId);
+  const next = removeTimeNote(current, noteId);
+  const updated = (next.timeNotes ?? []).length === (current.timeNotes ?? []).length ? next : touchEntry(next);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: "时间点笔记已删除", entry: updated };
 }
 
-async function commitCaptureDraft(duplicateAction = "") {
+async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
   const draft = await captureRuntime.getDraft();
   if (!draft.fragments.length && !draft.visuals.length) return { ok: false, message: "草稿里还没有可保存的文字或截图", draft };
   const state = await readState();
   const targetCompound = normalizeCompoundCases(state.compoundCases, state.entries)
     .find((compound) => compound.id === draft.targetCaseId) ?? null;
-  if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound);
+  const placement = capturePlacement(draft, placementValue);
+  if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound, placement);
   const text = draftText(draft);
   const sourcePages = mergeSourcePages(draftSourcePages(draft), draft.visuals.map((visual) => {
     const context = sourceContextForUrl(draft, visual.sourceUrl);
@@ -2143,13 +2264,22 @@ async function commitCaptureDraft(duplicateAction = "") {
       negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
     });
   }
-  const entries = target
+  let entries = target
     ? state.entries.map((item) => item.id === entry.id ? entry : item)
     : [...state.entries, entry];
+  const organizerState = organizerAfterCapturePlacement(state.organizerState, entries, [entry.id], placement);
+  const existingEntryIds = new Set(state.entries.map((item) => item.id));
+  const touchedEntryIds = new Set([
+    ...(target ? [entry.id] : []),
+    ...changedProjectEntryIds(state.organizerState, organizerState).filter((id) => existingEntryIds.has(id))
+  ]);
+  entries = touchEntries(entries, [...touchedEntryIds]);
+  entry = entries.find((item) => item.id === entry.id) ?? entry;
   const nextDraft = createCaptureDraft();
   await retireLastSaveUndo();
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
+    [STORAGE_KEYS.organizerState]: organizerState,
     ...captureCommitState(draft, nextDraft),
     ...(created ? { [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id) } : {})
   });
@@ -2158,10 +2288,11 @@ async function commitCaptureDraft(duplicateAction = "") {
   return { ok: true, message: target ? "内容已加入明确选择的案例" : "多段文字和截图已保存为新案例", entry, draft: nextDraft };
 }
 
-async function commitCaptureIntoCompound(draft, parts, state, targetCompound) {
+async function commitCaptureIntoCompound(draft, parts, state, targetCompound, placement = {}) {
   let entries = [...state.entries];
   let compounds = normalizeCompoundCases(state.compoundCases, entries);
   const memberIds = [...targetCompound.memberEntryIds];
+  const updatedExistingIds = new Set();
   for (const [index, part] of parts.entries()) {
     const partTarget = findCapturePartTarget({
       entries,
@@ -2172,6 +2303,7 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound) {
     if (partTarget) {
       const updated = mergeCapturePartIntoEntry(partTarget, part, draft, state);
       entries = entries.map((entry) => entry.id === updated.id ? updated : entry);
+      updatedExistingIds.add(updated.id);
       continue;
     }
     const created = createEntryFromCapturePart(part, draft, state, {
@@ -2184,12 +2316,19 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound) {
   const updated = updateCompoundCase(compounds, entries, targetCompound.id, { memberEntryIds: memberIds });
   compounds = updated.compoundCases;
   const compoundCase = updated.compoundCase;
+  const organizerState = organizerAfterCapturePlacement(state.organizerState, entries, compoundCase.memberEntryIds, placement);
+  const existingEntryIds = new Set(state.entries.map((entry) => entry.id));
+  for (const entryId of changedProjectEntryIds(state.organizerState, organizerState)) {
+    if (existingEntryIds.has(entryId)) updatedExistingIds.add(entryId);
+  }
+  entries = touchEntries(entries, [...updatedExistingIds]);
 
   const nextDraft = createCaptureDraft();
   await retireLastSaveUndo();
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
     [STORAGE_KEYS.compoundCases]: compounds,
+    [STORAGE_KEYS.organizerState]: organizerState,
     ...captureCommitState(draft, nextDraft)
   });
   await notifySaved(entries.length);
@@ -2204,6 +2343,32 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound) {
     compoundCase,
     draft: nextDraft
   };
+}
+
+function capturePlacement(draft, value = {}) {
+  const hasCollectionId = Object.hasOwn(value, "collectionId");
+  const hasNewCollectionName = Object.hasOwn(value, "newCollectionName");
+  return {
+    collectionId: String(hasCollectionId ? value.collectionId : draft.collectionId ?? "").trim(),
+    newCollectionName: String(hasNewCollectionName ? value.newCollectionName : draft.newCollectionName ?? "").trim()
+  };
+}
+
+function organizerAfterCapturePlacement(organizerValue, entries, entryIds, placement = {}) {
+  let organizerState = normalizeOrganizerState(organizerValue, entries.map((entry) => entry.id));
+  let collectionId = String(placement.collectionId ?? "").trim();
+  const newCollectionName = String(placement.newCollectionName ?? "").trim();
+  if (collectionId && newCollectionName) throw new Error("请选择已有项目或新建项目，不要同时填写");
+  if (newCollectionName) {
+    const created = createCollection(organizerState, newCollectionName);
+    organizerState = created.state;
+    collectionId = created.item.id;
+  }
+  if (!collectionId) return organizerState;
+  const target = organizerState.collections.find((collection) => collection.id === collectionId);
+  if (!target) throw new Error("保存目标项目已经不存在，请重新选择");
+  target.entryIds = [...new Set([...target.entryIds, ...entryIds])];
+  return normalizeOrganizerState(organizerState, entries.map((entry) => entry.id));
 }
 
 function captureCommitState(_draft, nextDraft) {
@@ -2355,97 +2520,188 @@ async function undoLastSave() {
 
 async function deleteEntry(entryId) {
   const state = await readState();
-  const entry = normalizeEntryMedia(findEntry(state, entryId));
-  const creativeVisualIds = new Set(state.creativeRuns.flatMap((run) =>
-    run.outputs.map((output) => output.visual.id)
-  ));
-  const removableVisualIds = entry.mediaAssets
-    .filter((visual) => !creativeVisualIds.has(visual.id))
-    .map((visual) => visual.id);
-  const entries = state.entries.filter((item) => item.id !== entry.id);
-  const organizerState = removeEntriesFromOrganizer(state.organizerState, [entry.id]);
-  const compoundCases = removeEntriesFromCompoundCases(state.compoundCases, state.entries, [entry.id]);
-  const visionAnalysisUndo = await visionUndoWithout(entry.id);
-  await commitMetadataThenDeleteImages({
-    imageIds: removableVisualIds,
-    deleteImage: deleteMediaBlob,
-    commitMetadata: () => commitLocalChanges({
-      [STORAGE_KEYS.entries]: entries,
-      [STORAGE_KEYS.compoundCases]: compoundCases,
-      [STORAGE_KEYS.organizerState]: organizerState,
-      [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
-    })
-  });
-  await Promise.allSettled([
-    clearLastSaveUndoForEntry(entry.id),
-    chrome.storage.local.remove(screenshotStorageKey(entry.id))
-  ]);
-  return {
-    ok: true,
-    message: "案例已从本机删除",
-    deletedEntryId: entry.id,
-    entries,
-    organizerState,
-    compoundCases
-  };
+  const entry = findEntry(state, entryId);
+  return moveEntryBatchToTrash([entry.id], state);
 }
 
 async function deleteCollectionWithEntries(message) {
   const state = await readState();
-  const deletion = planCollectionAndEntriesDeletion(
-    state.organizerState,
-    state.entries,
-    message.collectionId,
-    message.confirmationName
-  );
-  if (!deletion.deletedEntryIds.length) throw new Error("这个项目没有可删除的案例");
-
-  const deletedEntryIds = new Set(deletion.deletedEntryIds);
-  const retainedMediaIds = new Set(deletion.entries.flatMap((entry) =>
-    normalizeEntryMedia(entry).mediaAssets.map((asset) => asset.id)
-  ));
-  state.creativeRuns.forEach((run) => run.outputs.forEach((output) => retainedMediaIds.add(output.visual.id)));
-  const removableMediaIds = deletion.deletedEntries.flatMap((entry) =>
-    normalizeEntryMedia(entry).mediaAssets
-      .map((asset) => asset.id)
-      .filter((assetId) => !retainedMediaIds.has(assetId))
-  );
-  const compoundCases = removeEntriesFromCompoundCases(
-    state.compoundCases,
-    state.entries,
-    deletion.deletedEntryIds
-  );
-  const visionAnalysisUndo = await visionUndoWithoutEntries(deletedEntryIds);
-  const cleanup = await commitMetadataThenDeleteImages({
-    imageIds: removableMediaIds,
-    deleteImages: deleteMediaBlobs,
-    commitMetadata: () => commitLocalChanges({
-      [STORAGE_KEYS.entries]: deletion.entries,
-      [STORAGE_KEYS.compoundCases]: compoundCases,
-      [STORAGE_KEYS.organizerState]: deletion.organizerState,
-      [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
-    })
+  const organizerState = normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id));
+  const collection = organizerState.collections.find((item) => item.id === String(message.collectionId ?? "").trim());
+  if (!collection) throw new Error("项目不存在");
+  if (String(message.confirmationName ?? "").trim() !== collection.name) throw new Error("项目名称不匹配，未执行删除");
+  if (!collection.entryIds.length) throw new Error("这个项目没有可删除的案例");
+  const moved = moveCollectionWithEntriesToTrash({
+    entries: state.entries,
+    trashState: state.trashState,
+    organizerState,
+    compoundCases: state.compoundCases
+  }, collection.id);
+  const visionAnalysisUndo = await visionUndoWithoutEntries(new Set(moved.movedEntryIds));
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: moved.entries,
+    [STORAGE_KEYS.trashState]: moved.trashState,
+    [STORAGE_KEYS.compoundCases]: moved.compoundCases,
+    [STORAGE_KEYS.organizerState]: moved.organizerState,
+    [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
   });
-  await Promise.allSettled([
-    clearLastSaveUndoForEntries(deletedEntryIds),
-    chrome.storage.local.remove(deletion.deletedEntryIds.map(screenshotStorageKey))
-  ]);
-  const cleanupWarning = cleanup.failedIds.length
-    ? `；${cleanup.failedIds.length} 个已失去引用的媒体文件未能清理，可稍后重试`
-    : "";
   return {
     ok: true,
-    message: `已删除项目“${deletion.collection.name}”及其中 ${deletion.deletedEntryIds.length} 个案例${cleanupWarning}`,
-    deletedEntryCount: deletion.deletedEntryIds.length,
-    deletedMediaCount: cleanup.deletedIds.length,
-    failedMediaCount: cleanup.failedIds.length,
+    message: `项目“${collection.name}”及其中 ${moved.movedEntryIds.length} 个案例已移入回收站`,
+    movedEntryCount: moved.movedEntryIds.length,
+    movedItemIds: moved.movedItemIds,
     ...publicDomainState({
       ...state,
-      entries: deletion.entries,
-      organizerState: deletion.organizerState,
-      compoundCases
+      entries: moved.entries,
+      trashState: moved.trashState,
+      organizerState: moved.organizerState,
+      compoundCases: moved.compoundCases
     })
   };
+}
+
+async function moveEntryBatchToTrash(entryIdsValue, stateValue) {
+  const state = stateValue ?? await readState();
+  const activeIds = new Set(state.entries.map((entry) => entry.id));
+  const entryIds = uniqueNames(entryIdsValue).filter((entryId) => activeIds.has(entryId));
+  if (!entryIds.length) return { ok: false, message: "没有找到可移入回收站的案例" };
+  const moved = moveEntriesToTrash({
+    entries: state.entries,
+    trashState: state.trashState,
+    organizerState: state.organizerState,
+    compoundCases: state.compoundCases
+  }, entryIds);
+  const visionAnalysisUndo = await visionUndoWithoutEntries(new Set(entryIds));
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: moved.entries,
+    [STORAGE_KEYS.trashState]: moved.trashState,
+    [STORAGE_KEYS.organizerState]: moved.organizerState,
+    [STORAGE_KEYS.compoundCases]: moved.compoundCases,
+    [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
+  });
+  return {
+    ok: true,
+    message: moved.movedItemIds.length === 1
+      ? "案例已移入回收站"
+      : `${moved.movedItemIds.length} 个案例已移入回收站`,
+    movedEntryIds: entryIds,
+    movedItemIds: moved.movedItemIds,
+    ...publicDomainState({ ...state, ...moved })
+  };
+}
+
+async function getTrashItems(message = {}) {
+  const state = await readState();
+  const items = listTrashItems(state.trashState, { kind: message.kind });
+  return { ok: true, items, count: items.length, trashState: normalizeTrashState(state.trashState) };
+}
+
+async function restoreSelectedTrashItems(message = {}) {
+  const state = await readState();
+  const restored = restoreTrashItems({
+    entries: state.entries,
+    trashState: state.trashState,
+    organizerState: state.organizerState,
+    compoundCases: state.compoundCases
+  }, message.itemIds, { collectionReplacements: message.collectionReplacements });
+  if (!restored.restoredItemIds.length) {
+    return {
+      ok: false,
+      message: restored.unresolved[0]?.reason || "没有找到可恢复的内容",
+      unresolved: restored.unresolved,
+      trashState: restored.trashState
+    };
+  }
+  await commitLocalChanges({
+    [STORAGE_KEYS.entries]: restored.entries,
+    [STORAGE_KEYS.trashState]: restored.trashState,
+    [STORAGE_KEYS.organizerState]: restored.organizerState,
+    [STORAGE_KEYS.compoundCases]: restored.compoundCases
+  });
+  const unresolvedMessage = restored.unresolved.length ? `；另有 ${restored.unresolved.length} 项因关系冲突未恢复` : "";
+  return {
+    ok: true,
+    message: `已恢复 ${restored.restoredItemIds.length} 项${unresolvedMessage}`,
+    restoredItemIds: restored.restoredItemIds,
+    unresolved: restored.unresolved,
+    ...publicDomainState({ ...state, ...restored })
+  };
+}
+
+async function permanentlyDeleteTrashItems(message = {}) {
+  const state = await readState();
+  const retainedMediaIds = collectRetainedLocalAssetIds(state);
+  const taken = takeTrashItems(state.trashState, message.itemIds, {
+    retainedMediaIds: [...retainedMediaIds],
+    retainedEntryIds: state.entries.map((entry) => entry.id)
+  });
+  return commitTrashCleanup(taken, { retainedLocalAssetIds: [...retainedMediaIds] });
+}
+
+async function emptyTrashAction() {
+  const state = await readState();
+  const retainedMediaIds = collectRetainedLocalAssetIds(state);
+  const taken = emptyTrash(state.trashState, {
+    retainedMediaIds: [...retainedMediaIds],
+    retainedEntryIds: state.entries.map((entry) => entry.id)
+  });
+  return commitTrashCleanup(taken, { retainedLocalAssetIds: [...retainedMediaIds] });
+}
+
+async function commitTrashCleanup(taken, options = {}) {
+  if (!taken.takenItems.length) return { ok: false, message: "回收站中没有可永久删除的内容" };
+  const retainedLocalAssetIds = new Set(Array.isArray(options.retainedLocalAssetIds) ? options.retainedLocalAssetIds : []);
+  const localReferenceIds = [...new Set(taken.takenItems.flatMap(localReferenceIdsInTrashItem))]
+    .filter((assetId) => !retainedLocalAssetIds.has(assetId));
+  const cleanup = await commitMetadataThenDeleteImages({
+    imageIds: taken.cleanup.mediaIds,
+    deleteImages: deleteMediaBlobs,
+    commitMetadata: () => commitLocalChanges({ [STORAGE_KEYS.trashState]: taken.trashState })
+  });
+  if (cleanup.failedIds.length) {
+    const retryableTrashState = normalizeTrashState({
+      items: [...taken.trashState.items, ...taken.takenItems]
+    });
+    await commitLocalChanges({ [STORAGE_KEYS.trashState]: retryableTrashState });
+    return {
+      ok: false,
+      message: "本机文件清理失败，内容仍保留在回收站，可稍后重试",
+      failedMediaCount: cleanup.failedIds.length,
+      trashState: retryableTrashState
+    };
+  }
+  const screenshotResults = await Promise.allSettled(
+    taken.cleanup.screenshotEntryIds.map((entryId) => chrome.storage.local.remove(screenshotStorageKey(entryId)))
+  );
+  const localReferenceResults = await Promise.allSettled(localReferenceIds.map((assetId) => deleteLocalAssetHandle(assetId)));
+  const failedScreenshotCount = screenshotResults.filter((result) => result.status === "rejected").length;
+  const failedLocalReferenceCount = localReferenceResults.filter((result) => result.status === "rejected").length;
+  const warningParts = [
+    failedScreenshotCount ? `${failedScreenshotCount} 个旧版截图缓存未能清理` : "",
+    failedLocalReferenceCount ? `${failedLocalReferenceCount} 个本机链接记录未能清理` : ""
+  ].filter(Boolean);
+  const warning = warningParts.length ? `；${warningParts.join("；")}` : "";
+  return {
+    ok: true,
+    message: `已永久删除 ${taken.takenItems.length} 项${warning}`,
+    permanentlyDeletedItemIds: taken.takenItems.map((item) => item.id),
+    deletedMediaCount: cleanup.deletedIds.length,
+    deletedLocalReferenceCount: localReferenceIds.length - failedLocalReferenceCount,
+    failedMediaCount: 0,
+    failedLocalReferenceCount,
+    failedLegacyScreenshotCount: failedScreenshotCount,
+    trashState: taken.trashState
+  };
+}
+
+function localReferenceIdsInTrashItem(item) {
+  if (!item || !["entry", "media"].includes(item.kind)) return [];
+  const assets = Array.isArray(item.snapshot?.mediaAssets)
+    ? item.snapshot.mediaAssets
+    : Array.isArray(item.snapshot?.visuals) ? item.snapshot.visuals : [];
+  return assets.flatMap((asset) => asset?.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE && asset?.id
+    ? [String(asset.id).trim()]
+    : []).filter(Boolean);
 }
 
 function enqueue(task) {
@@ -2472,27 +2728,6 @@ async function retireLastSaveUndo(options = {}) {
     undo.entryId === options.preserveBackupEntryId &&
     undo.backupEntryId === `backup:${undo.entryId}`;
   if (undo?.type === "restore_replaced_screenshot" && !preserveCurrentFixedBackup) {
-    await discardSaveUndoBackup(undo).catch(() => undefined);
-  }
-  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
-}
-
-async function clearLastSaveUndoForEntry(entryId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.lastSaveUndo);
-  const undo = normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo]);
-  if (undo?.entryId !== entryId) return;
-  if (undo.type === "restore_replaced_screenshot") {
-    await discardSaveUndoBackup(undo).catch(() => undefined);
-  }
-  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
-}
-
-async function clearLastSaveUndoForEntries(entryIds) {
-  const ids = entryIds instanceof Set ? entryIds : new Set(entryIds);
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.lastSaveUndo);
-  const undo = normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo]);
-  if (!undo || !ids.has(undo.entryId)) return;
-  if (undo.type === "restore_replaced_screenshot") {
     await discardSaveUndoBackup(undo).catch(() => undefined);
   }
   await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
@@ -2530,6 +2765,7 @@ async function readState() {
   let state = migration?.state ?? {
     schemaVersion: SCHEMA_VERSION,
     entries: stored[STORAGE_KEYS.entries],
+    trashState: stored[STORAGE_KEYS.trashState],
     compoundCases: stored[STORAGE_KEYS.compoundCases],
     taxonomy: stored[STORAGE_KEYS.taxonomy],
     facetCatalog: stored[STORAGE_KEYS.facetCatalog],
@@ -3014,6 +3250,14 @@ async function startImportJobAction(message) {
   for (const value of incoming) {
     const assetId = String(value?.assetId ?? "").trim();
     const name = String(value?.name ?? "").trim();
+    const isLocalReference = value?.storageMode === "reference" &&
+      value?.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE;
+    if (isLocalReference) {
+      const staged = addStagedAsset(staging, value);
+      staging = staged.state;
+      jobItems.push({ stagedAssetId: staged.asset.id, keepDuplicate: true });
+      continue;
+    }
     const blob = assetId ? await getMediaBlob(assetId) : null;
     if (!(blob instanceof Blob)) throw new Error(`没有读取到待导入文件：${name || assetId || "未命名"}`);
     const file = new File([blob], name, { type: blob.type || value?.mimeType });
@@ -3047,7 +3291,8 @@ async function startImportJobAction(message) {
     items: jobItems,
     options: {
       duplicateAction: "skip",
-      autoAnalyze: message.options?.autoAnalyze === true
+      autoAnalyze: message.options?.autoAnalyze === true,
+      customLabels: uniqueNames(message.customLabels)
     }
   });
   const skippedCleanupIds = [];
@@ -3083,18 +3328,25 @@ async function cancelImportJobAction(jobId) {
   const canceled = cancelImportJob(stored[STORAGE_KEYS.importJobs], jobId);
   let staging = normalizeImportStagingState(stored[STORAGE_KEYS.importStaging]);
   const cleanupIds = [];
+  const localReferenceCleanupIds = [];
   for (const item of canceled.job.items.filter((value) => value.status === "skipped" && value.skipReason === "canceled")) {
     const staged = stagedAssetById(staging, item.stagedAssetId);
     if (!staged) continue;
     const removed = removeStagedAsset(staging, staged.id);
     staging = removed.state;
     cleanupIds.push(...removed.removedAssetIds);
+    if (staged.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE) localReferenceCleanupIds.push(staged.assetId);
   }
   await commitLocalChanges({
     [STORAGE_KEYS.importJobs]: canceled.state,
     [STORAGE_KEYS.importStaging]: staging
   });
   await deleteUnreferencedMedia(cleanupIds);
+  const committedState = await readState();
+  const retainedLocalAssetIds = collectRetainedLocalAssetIds({ ...committedState, importStaging: staging });
+  await Promise.allSettled(localReferenceCleanupIds
+    .filter((assetId) => !retainedLocalAssetIds.has(assetId))
+    .map((assetId) => deleteLocalAssetHandle(assetId)));
   return { ok: true, message: "已取消剩余导入项", job: canceled.job };
 }
 
@@ -3126,7 +3378,14 @@ async function undoImportJobAction(jobId) {
   const assetIds = removedEntries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets
     .filter((asset) => asset.storageMode !== "reference")
     .map((asset) => asset.id));
+  const localReferenceIds = removedEntries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets
+    .filter((asset) => asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE)
+    .map((asset) => asset.id));
   await deleteUnreferencedMedia(assetIds);
+  const retainedLocalAssetIds = collectRetainedLocalAssetIds({ ...state, entries });
+  await Promise.allSettled(localReferenceIds
+    .filter((assetId) => !retainedLocalAssetIds.has(assetId))
+    .map((assetId) => deleteLocalAssetHandle(assetId)));
   return { ok: true, message: `已撤销本次导入的 ${removedEntries.length} 个案例`, job: undone.job };
 }
 
@@ -3187,9 +3446,11 @@ async function importStagedItem(job, item) {
   const state = await readState();
   const staged = stagedAssetById(state.importStaging, item.stagedAssetId);
   if (!staged) throw new Error("暂存文件已经丢失，无法继续导入");
-  if (!await getMediaBlob(staged.assetId)) throw new Error(`本机媒体已经丢失：${staged.name}`);
+  if (staged.storageMode !== "reference" && !await getMediaBlob(staged.assetId)) {
+    throw new Error(`本机媒体已经丢失：${staged.name}`);
+  }
   if (staged.posterAssetId && !await getMediaBlob(staged.posterAssetId)) throw new Error(`视频或 GIF 封面已经丢失：${staged.name}`);
-  const entry = importedEntryFromStagedAsset(state, staged);
+  const entry = importedEntryFromStagedAsset(state, staged, job, item);
   const entries = [...state.entries, entry];
   let organizerState = normalizeOrganizerState(state.organizerState, entries.map((value) => value.id));
   if (job.collectionId) {
@@ -3210,26 +3471,15 @@ async function importStagedItem(job, item) {
   await queueImportJobAnalysis(finished.job);
 }
 
-function importedEntryFromStagedAsset(state, staged) {
-  const base = buildEntry({ text: staged.contentText || "", title: staged.name, url: "", allowEmptyText: true });
-  const asset = {
-    id: staged.assetId,
-    kind: staged.kind,
-    storageMode: "managed",
-    mimeType: staged.mimeType,
-    byteSize: staged.byteSize,
-    sourceTitle: staged.name,
-    relativePath: staged.relativePath,
-    contentHash: staged.contentHash,
-    capturedAt: new Date().toISOString(),
-    reviewStatus: "verified",
-    ...(staged.width ? { width: staged.width } : {}),
-    ...(staged.height ? { height: staged.height } : {}),
-    ...(staged.durationMs ? { durationMs: staged.durationMs } : {}),
-    ...(staged.playbackCapability ? { playbackCapability: staged.playbackCapability } : {}),
-    ...(staged.kind === "document" && staged.contentFormat ? { extractedTextFormat: staged.contentFormat } : {}),
-    ...(staged.posterAssetId ? { posterAssetId: staged.posterAssetId } : {})
-  };
+function importedEntryFromStagedAsset(state, staged, job, item) {
+  const base = buildEntry({
+    text: staged.contentText || "",
+    title: staged.name,
+    url: "",
+    libraryAddedAt: item.libraryAddedAt || job.libraryAddedAt,
+    allowEmptyText: true
+  });
+  const asset = stagedAssetMediaRecord(staged, { capturedAt: new Date().toISOString() });
   const mediaAssets = [asset];
   if (staged.posterAssetId) {
     mediaAssets.push({
@@ -3245,11 +3495,12 @@ function importedEntryFromStagedAsset(state, staged) {
   }
   return normalizeEntryMedia({
     ...base,
+    importBatchId: item.importBatchId || job.importBatchId,
     schemaVersion: SCHEMA_VERSION,
     mediaAssets,
     primaryMediaId: staged.assetId,
     classification: classifyImportedMedia({ ...base, mediaAssets }, state.taxonomy),
-    customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
+    customLabels: uniqueNames(job.options.customLabels), metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
     rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
   });
 }
@@ -3986,7 +4237,7 @@ async function updateClassification(message) {
   }
   const current = findEntry(state, message.entryId);
   const recovery = await recoverPaletteAfterClassification(confirmClassification(current, message.pathIds, state.taxonomy));
-  const updated = recovery.entry;
+  const updated = touchEntry(recovery.entry);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   let classificationRules = state.classificationRules;
   if (message.rememberSource) {
@@ -4110,11 +4361,13 @@ async function applyDetailTagOrganization(message) {
   const state = await readState();
   const before = domainState(state);
   const applied = applyDetailOrganizationMappings(before, message.mappings);
-  await persistDomainState(applied.state, before);
+  const changedIds = userVisibleEntryChanges(before.entries, applied.state.entries);
+  const nextState = { ...applied.state, entries: touchEntries(applied.state.entries, changedIds) };
+  await persistDomainState(nextState, before);
   return {
     ok: true,
     message: `已整理 ${applied.changedCount} 个三级标签，其中合并 ${applied.mergedCount} 个；旧名称仍可搜索`,
-    ...publicDomainState(applied.state),
+    ...publicDomainState(nextState),
     canUndoFacetUpdate: true
   };
 }
@@ -4531,7 +4784,8 @@ async function updateVisionDescription(entryId, visualIdValue, description) {
 async function updateEntryMediaPromptAction(message) {
   const state = await readState();
   const current = findEntry(state, message.entryId);
-  const updated = setEntryMediaPrompt(current, message.assetId, message.text, "manual");
+  const next = setEntryMediaPrompt(current, message.assetId, message.text, "manual");
+  const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return {
@@ -4554,6 +4808,7 @@ async function applyEntryMediaPromptSuggestions(message) {
     appliedCount += 1;
   }
   if (!appliedCount) return { ok: false, message: "没有需要保存的逐图提示词" };
+  updated = touchEntry(updated);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: `已确认并保存 ${appliedCount} 条逐图提示词`, entry: updated };
@@ -4602,7 +4857,8 @@ async function updateEntryFacet(message) {
   const current = findEntry(state, message.entryId);
   const node = state.facetCatalog.nodes.find((item) => item.id === message.nodeId && item.status === "active");
   if (!node || node.facetId !== message.facetId) return { ok: false, message: "创作标签无效" };
-  const updated = setManualAssignment(current, node.facetId, node.id, message.selected !== false);
+  const next = setManualAssignment(current, node.facetId, node.id, message.selected !== false);
+  const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: message.selected === false ? "标签已移除" : "创作标签已添加", entry: updated };
@@ -4611,7 +4867,8 @@ async function updateEntryFacet(message) {
 async function updateCaseText(message) {
   const state = await readState();
   const current = findEntry(state, message.entryId);
-  const updated = updateEntryText(current, message.text, message.textRevision);
+  const next = updateEntryText(current, message.text, message.textRevision);
+  const updated = next.text === current.text ? next : touchEntry(next);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return {
@@ -4626,15 +4883,74 @@ async function updateCaseTitle(message) {
   const current = findEntry(state, message.entryId);
   const title = String(message.title ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
   if (!title) return { ok: false, message: "案例标题不能为空" };
-  const updated = { ...current, title };
+  const updated = title === current.title ? current : touchEntry({ ...current, title });
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: title === current.title ? "标题没有变化" : "标题已保存", entry: updated };
 }
 
+async function updateEntryCustomLabels(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const customLabels = uniqueNames(message.customLabels);
+  const updated = stringListsEqual(customLabels, current.customLabels) ? current : touchEntry({ ...current, customLabels });
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "标签已保存", entry: updated, entries };
+}
+
+async function batchAddCustomLabels(message) {
+  const state = await readState();
+  const requested = new Set(uniqueNames(message.entryIds));
+  const labels = uniqueNames(message.customLabels);
+  if (!labels.length) return { ok: false, message: "请输入要添加的标签" };
+  let updatedCount = 0;
+  const updatedAt = new Date().toISOString();
+  const entries = state.entries.map((entry) => {
+    if (!requested.has(entry.id)) return entry;
+    const customLabels = uniqueNames([...(entry.customLabels ?? []), ...labels]);
+    if (stringListsEqual(customLabels, entry.customLabels)) return entry;
+    updatedCount += 1;
+    return touchEntry({ ...entry, customLabels }, updatedAt);
+  });
+  if (!updatedCount) return { ok: true, message: "所选案例已经包含这些标签", updatedCount: 0, entries };
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: `已为 ${updatedCount} 个案例添加标签`, updatedCount, entries };
+}
+
+async function batchSetProject(message) {
+  const state = await readState();
+  const validIds = new Set(state.entries.map((entry) => entry.id));
+  const entryIds = uniqueNames(message.entryIds).filter((entryId) => validIds.has(entryId));
+  if (!entryIds.length) return { ok: false, message: "没有找到可加入项目的案例" };
+  const mode = message.mode === "move" ? "move" : "add";
+  let organizerState = normalizeOrganizerState(state.organizerState, [...validIds]);
+  if (!organizerState.collections.some((collection) => collection.id === String(message.collectionId ?? "").trim())) {
+    return { ok: false, message: "项目不存在" };
+  }
+  const beforeOrganizer = organizerState;
+  if (mode === "move") organizerState = removeEntriesFromOrganizer(organizerState, entryIds);
+  organizerState = setEntriesCollection(organizerState, message.collectionId, entryIds, true);
+  const changedEntryIds = changedProjectEntryIds(beforeOrganizer, organizerState);
+  const entries = touchEntries(state.entries, changedEntryIds);
+  await commitLocalChanges({
+    ...(changedEntryIds.length ? { [STORAGE_KEYS.entries]: entries } : {}),
+    [STORAGE_KEYS.organizerState]: organizerState
+  });
+  return {
+    ok: true,
+    message: mode === "move" ? `已将 ${entryIds.length} 个案例移动到项目` : `已将 ${entryIds.length} 个案例加入项目`,
+    updatedCount: entryIds.length,
+    entries,
+    organizerState
+  };
+}
+
 async function updateOrganizer(message) {
   const state = await readState();
   let organizerState = normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id));
+  const beforeOrganizer = organizerState;
+  let trashState = normalizeTrashState(state.trashState);
   let created = null;
   if (message.type === "CREATE_COLLECTION") {
     const result = createCollection(organizerState, message.name);
@@ -4643,7 +4959,12 @@ async function updateOrganizer(message) {
   } else if (message.type === "RENAME_COLLECTION") {
     organizerState = renameCollection(organizerState, message.collectionId, message.name);
   } else if (message.type === "DELETE_COLLECTION") {
-    organizerState = deleteCollection(organizerState, message.collectionId);
+    const moved = moveCollectionsToTrash({ organizerState, trashState }, [message.collectionId]);
+    if (!moved.movedItemIds.length) throw new Error("项目不存在");
+    organizerState = normalizeOrganizerState(moved.organizerState, state.entries.map((entry) => entry.id));
+    trashState = moved.trashState;
+  } else if (message.type === "REORDER_COLLECTIONS") {
+    organizerState = reorderCollections(organizerState, message.collectionIds);
   } else if (message.type === "REPLACE_COLLECTION_ENTRIES") {
     const validIds = new Set(state.entries.map((entry) => entry.id));
     const entryIds = (Array.isArray(message.entryIds) ? message.entryIds : []).filter((id) => validIds.has(id));
@@ -4651,15 +4972,22 @@ async function updateOrganizer(message) {
   } else if (message.type === "SET_COLLECTION_VISIBILITY") {
     organizerState = setCollectionVisibility(organizerState, message.collectionId, message.visibility);
   }
-  await commitLocalChanges({ [STORAGE_KEYS.organizerState]: organizerState });
-  return { ok: true, message: organizerMessage(message.type), organizerState, created };
+  const changedEntryIds = changedProjectEntryIds(beforeOrganizer, organizerState);
+  const entries = touchEntries(state.entries, changedEntryIds);
+  await commitLocalChanges({
+    ...(changedEntryIds.length ? { [STORAGE_KEYS.entries]: entries } : {}),
+    [STORAGE_KEYS.organizerState]: organizerState,
+    ...(message.type === "DELETE_COLLECTION" ? { [STORAGE_KEYS.trashState]: trashState } : {})
+  });
+  return { ok: true, message: organizerMessage(message.type), entries, organizerState, trashState, created };
 }
 
 function organizerMessage(type) {
   return ({
     CREATE_COLLECTION: "项目已创建",
     RENAME_COLLECTION: "项目名称已保存",
-    DELETE_COLLECTION: "项目已删除，案例仍保留在资料库",
+    DELETE_COLLECTION: "项目已移入回收站，案例仍保留在资料库",
+    REORDER_COLLECTIONS: "项目顺序已保存",
     REPLACE_COLLECTION_ENTRIES: "项目案例已更新",
     SET_COLLECTION_VISIBILITY: "项目显示范围已更新"
   })[type] || "项目已更新";
@@ -5585,6 +5913,69 @@ function findEntry(state, entryId) {
   return entry;
 }
 
+function touchEntry(entry, updatedAt = new Date().toISOString()) {
+  return { ...entry, libraryUpdatedAt: updatedAt };
+}
+
+function touchEntries(entriesValue, entryIdsValue, updatedAt = new Date().toISOString()) {
+  const entryIds = new Set(Array.isArray(entryIdsValue) ? entryIdsValue : []);
+  if (!entryIds.size) return entriesValue;
+  return entriesValue.map((entry) => entryIds.has(entry.id) ? touchEntry(entry, updatedAt) : entry);
+}
+
+function stringListsEqual(leftValue, rightValue) {
+  const left = Array.isArray(leftValue) ? leftValue : [];
+  const right = Array.isArray(rightValue) ? rightValue : [];
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function userVisibleEntryEqual(left = {}, right = {}) {
+  return JSON.stringify({
+    title: left.title,
+    text: left.text,
+    customLabels: left.customLabels ?? [],
+    classification: left.classification ?? null,
+    facetAssignments: left.facetAssignments ?? [],
+    mediaPrompts: left.mediaPrompts ?? []
+  }) === JSON.stringify({
+    title: right.title,
+    text: right.text,
+    customLabels: right.customLabels ?? [],
+    classification: right.classification ?? null,
+    facetAssignments: right.facetAssignments ?? [],
+    mediaPrompts: right.mediaPrompts ?? []
+  });
+}
+
+function userVisibleEntryChanges(beforeValue, afterValue) {
+  const beforeById = new Map((Array.isArray(beforeValue) ? beforeValue : []).map((entry) => [entry.id, entry]));
+  return (Array.isArray(afterValue) ? afterValue : [])
+    .filter((entry) => beforeById.has(entry.id) && !userVisibleEntryEqual(beforeById.get(entry.id), entry))
+    .map((entry) => entry.id);
+}
+
+function changedProjectEntryIds(beforeValue, afterValue) {
+  const memberships = (value) => {
+    const result = new Map();
+    for (const collection of normalizeOrganizerState(value).collections) {
+      for (const entryId of collection.entryIds) {
+        const collectionIds = result.get(entryId) ?? [];
+        collectionIds.push(collection.id);
+        result.set(entryId, collectionIds);
+      }
+    }
+    return result;
+  };
+  const before = memberships(beforeValue);
+  const after = memberships(afterValue);
+  const entryIds = new Set([...before.keys(), ...after.keys()]);
+  return [...entryIds].filter((entryId) => {
+    const left = (before.get(entryId) ?? []).toSorted();
+    const right = (after.get(entryId) ?? []).toSorted();
+    return !stringListsEqual(left, right);
+  });
+}
+
 function requireAnalysisBatch(value, jobId, kind) {
   const job = normalizeAnalysisBatchJob(value);
   if (!job || (jobId && job.id !== jobId)) throw new Error("批量分析任务已变化，请刷新页面");
@@ -5634,6 +6025,7 @@ function domainState(state) {
   return {
     schemaVersion: SCHEMA_VERSION,
     entries: state.entries,
+    trashState: normalizeTrashState(state.trashState),
     compoundCases: normalizeCompoundCases(state.compoundCases, state.entries),
     taxonomy: state.taxonomy,
     facetCatalog: state.facetCatalog,
@@ -5645,6 +6037,7 @@ function domainState(state) {
 function publicDomainState(state) {
   return {
     entries: enrichContentMeanings(state.entries, state.taxonomy),
+    trashState: normalizeTrashState(state.trashState),
     compoundCases: normalizeCompoundCases(state.compoundCases, state.entries),
     taxonomy: state.taxonomy,
     facetCatalog: state.facetCatalog,
@@ -5670,6 +6063,7 @@ function publicLibraryState(state) {
 function folderBackupState(state) {
   return {
     entries: state.entries,
+    trashState: normalizeTrashState(state.trashState),
     settings: state.settings,
     taxonomy: state.taxonomy,
     facetCatalog: state.facetCatalog,
@@ -5699,6 +6093,7 @@ function storagePayload(state) {
   return {
     [STORAGE_KEYS.schemaVersion]: SCHEMA_VERSION,
     [STORAGE_KEYS.entries]: state.entries,
+    [STORAGE_KEYS.trashState]: normalizeTrashState(state.trashState),
     [STORAGE_KEYS.compoundCases]: normalizeCompoundCases(state.compoundCases, state.entries),
     [STORAGE_KEYS.taxonomy]: state.taxonomy,
     [STORAGE_KEYS.facetCatalog]: normalizeFacetCatalog(state.facetCatalog),
@@ -6245,6 +6640,7 @@ async function synchronizeWithVault(vault, settingsValue, reason) {
 async function prepareStateForSync(state, vault, onProgress = () => undefined) {
   const prepared = structuredClone({
     entries: state.entries,
+    trashState: normalizeTrashState(state.trashState),
     compoundCases: state.compoundCases,
     organizerState: state.organizerState,
     taxonomy: state.taxonomy,
@@ -6260,6 +6656,11 @@ async function prepareStateForSync(state, vault, onProgress = () => undefined) {
   const seenVisualIds = new Set();
   const visuals = [
     ...prepared.entries.flatMap((entry) => entry.mediaAssets ?? entry.visuals ?? []),
+    ...prepared.trashState.items.flatMap((item) => {
+      if (item.kind === "entry") return item.snapshot?.mediaAssets ?? item.snapshot?.visuals ?? [];
+      if (item.kind === "media") return item.snapshot?.mediaAssets ?? item.snapshot?.visuals ?? [];
+      return [];
+    }),
     ...prepared.creativeRuns.flatMap((run) => run.outputs.map((output) => output.visual)),
     ...(prepared.creativeSkills?.items ?? []).flatMap((skill) => skill.packageFiles ?? []),
     ...prepared.composerSessions.flatMap((session) => (session.referenceSnapshots ?? [])
@@ -6309,6 +6710,7 @@ function synchronizedStatePayload(current, synced) {
   const next = {
     schemaVersion: SCHEMA_VERSION,
     entries,
+    trashState: normalizeTrashState(synced.trashState ?? current.trashState),
     compoundCases: normalizeCompoundCases(synced.compoundCases ?? current.compoundCases, entries),
     taxonomy: synced.taxonomy ?? current.taxonomy,
     facetCatalog: synced.facetCatalog ?? current.facetCatalog,

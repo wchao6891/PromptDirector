@@ -99,16 +99,17 @@ async function* replacements(values) {
   for (const [id, blob] of values) yield { id, blob };
 }
 
-test("case and creative-output deletion both use metadata-first image cleanup", async () => {
+test("case deletion retains blobs in trash while creative-output deletion still uses metadata-first cleanup", async () => {
   const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
-  for (const [startName, endName] of [
-    ["async function deleteEntry(entryId)", "function enqueue(task)"],
-    ["async function deleteCreativeOutput(message)", "async function analyzeCreativeOutput"]
-  ]) {
-    const block = source.slice(source.indexOf(startName), source.indexOf(endName, source.indexOf(startName)));
-    assert.match(block, /commitMetadataThenDeleteImages/);
-    assert.doesNotMatch(block, /await deleteScreenshotBlob/);
-  }
+  const caseStart = source.indexOf("async function deleteEntry(entryId)");
+  const caseBlock = source.slice(caseStart, source.indexOf("async function deleteCollectionWithEntries", caseStart));
+  assert.match(caseBlock, /moveEntryBatchToTrash/);
+  assert.doesNotMatch(caseBlock, /deleteMediaBlob|deleteScreenshotBlob|commitMetadataThenDeleteImages/);
+
+  const outputStart = source.indexOf("async function deleteCreativeOutput(message)");
+  const outputBlock = source.slice(outputStart, source.indexOf("async function analyzeCreativeOutput", outputStart));
+  assert.match(outputBlock, /commitMetadataThenDeleteImages/);
+  assert.doesNotMatch(outputBlock, /await deleteScreenshotBlob/);
 });
 
 test("external Skill deletion commits metadata before cleaning package files", async () => {

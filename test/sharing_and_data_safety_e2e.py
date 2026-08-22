@@ -65,7 +65,7 @@ def main() -> None:
         expect(library.locator("#share-bar")).to_be_visible()
         library.locator(".case-card").nth(0).click()
         library.locator(".case-card").nth(1).click()
-        expect(library.locator("#share-count")).to_have_text("已选择 2 个案例")
+        expect(library.locator("#share-count")).to_have_text("已选 2")
         library.locator("#share-export").click()
         expect(library.locator("#share-dialog")).to_be_visible()
         expect(library.locator("#share-dialog-submit")).to_be_disabled()

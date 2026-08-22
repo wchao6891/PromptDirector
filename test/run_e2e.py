@@ -46,6 +46,7 @@ SCRIPTS = [
     "library-thumbnail-rebind-e2e.py",
     "creative_feedback_e2e.py",
     "ui_foundation_e2e.py",
+    "material_management_regressions_e2e.py",
     "ui_regressions_e2e.py",
     "settings_visual_anchor_e2e.py",
 ]

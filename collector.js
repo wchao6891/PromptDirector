@@ -8,11 +8,16 @@ import {
 import { prepareLocalMedia } from "./local-media.js";
 import { runCaptureTransaction } from "./capture-workspace.js";
 import {
+  CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY,
+  CAPTURE_PERMISSION_ONBOARDING_VERSION,
   ensureClipboardReadPermission,
   ensurePagePermission,
+  inspectCapturePermissionBundle,
   inspectPagePermission,
+  normalizeCapturePermissionOnboarding,
   pageCapturePermissionFailureMessage,
   readClipboardContentAfterFocus,
+  requestCapturePermissionBundle,
   RESTRICTED_PAGE_MESSAGE,
   resolveActivePage
 } from "./capture-permissions.js";
@@ -29,12 +34,13 @@ import {
   pageCaptureStructureMatches
 } from "./page-capture.js";
 import { PAGE_CAPTURE_LIMITS } from "./resource-limits.js";
+import { createTagEditor } from "./tag-editor.js";
 
 await initializeUi();
 
 const elements = Object.fromEntries([
   "add-selection", "add-screenshot", "add-smart-visuals", "collector-footer", "content-summary", "discard-draft", "draft-title",
-  "content-type", "custom-labels", "duplicate-panel", "duplicate-title", "exit-target", "feedback", "fragment-help", "fragment-list",
+  "content-type", "custom-labels", "capture-metadata", "capture-collection", "capture-new-collection-row", "capture-new-collection-name", "capture-add-more-actions", "duplicate-panel", "duplicate-title", "exit-target", "feedback", "fragment-help", "fragment-list",
   "fragment-section", "merge-duplicate", "open-library", "organizer", "organize-toggle", "preview-state",
   "quick-preview", "result-prompt-title", "result-screenshot", "result-smart-visuals", "result-start", "save-draft", "save-other-inspiration",
   "save-separate", "start-screenshot", "start-selection", "start-smart-visuals", "start-state", "normal-start",
@@ -45,14 +51,17 @@ const elements = Object.fromEntries([
   "page-capture-add-region", "page-capture-exclude-region", "page-capture-undo-region", "page-capture-reset-region",
   "page-capture-media-close", "page-capture-media-prev", "page-capture-media-next",
   "page-capture-list-setup", "page-capture-target-count", "page-capture-list-run", "page-capture-list-result", "page-capture-list-summary",
-  "page-capture-save-mode", "page-capture-combined-title-row", "page-capture-combined-title",
+  "page-capture-save-mode", "page-capture-combined-title-row", "page-capture-combined-title", "page-capture-actions",
   "region-capture-status", "region-capture-title", "region-capture-help", "region-capture-cancel",
+  "capture-permission-onboarding", "capture-permission-form", "capture-permission-clipboard", "capture-permission-status", "capture-permission-cancel", "capture-permission-confirm",
+  "clipboard-permission-dialog", "clipboard-permission-form", "clipboard-permission-status", "clipboard-permission-cancel", "clipboard-permission-confirm",
   "target-banner", "target-label", "visual-help", "visual-list", "visual-section"
 ].map((id) => [camel(id), document.getElementById(id)]));
 
 let draft = null;
 let targetEntry = null;
 let contentTypes = [];
+let collections = [];
 let suggestedContentTypeId = "";
 let partContentTypes = {};
 let activeCreativeResult = null;
@@ -74,11 +83,23 @@ const visualUrls = new Map();
 const FEEDBACK_DURATION_MS = 4000;
 const ERROR_FEEDBACK_DURATION_MS = 8000;
 let feedbackTimer = 0;
+let pendingCaptureAction = null;
+let pendingClipboardButton = null;
+let creatingCollection = false;
+const NEW_COLLECTION_OPTION_VALUE = "new-collection";
 const CLIPBOARD_IMAGE_EXTENSIONS = Object.freeze({
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/webp": "webp"
 });
+
+const customLabelEditor = createTagEditor({
+  onChange: async (values) => {
+    if (!draft) return false;
+    return Boolean(await updateDraft({ ...draft, customLabels: values, customLabelsExplicit: true }));
+  }
+});
+elements.customLabels.replaceChildren(customLabelEditor.element);
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" || !(changes.captureDraft || changes.activeCreativeResult || changes.composerSessions)) return;
@@ -100,17 +121,29 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
   if (tab.active && changeInfo.url) void refreshPageCapturePermissionState();
 });
 window.addEventListener("pagehide", () => void clearPageCaptureMarkers());
-elements.startSelection.addEventListener("click", () => extractClipboardOrSelection(elements.startSelection));
-elements.startScreenshot.addEventListener("click", () => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.startScreenshot));
-elements.startSmartVisuals.addEventListener("click", () => beginSmartVisualSelection(elements.startSmartVisuals));
-elements.startPageCapture.addEventListener("click", () => startPageCapture("loaded", elements.startPageCapture));
-elements.resultScreenshot.addEventListener("click", () => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.resultScreenshot, true));
-elements.resultSmartVisuals.addEventListener("click", () => beginSmartVisualSelection(elements.resultSmartVisuals, true));
+elements.startSelection.addEventListener("click", () => runAfterCapturePermissionOnboarding((context) => extractClipboardOrSelection(elements.startSelection, context)));
+elements.startScreenshot.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.startScreenshot)));
+elements.startSmartVisuals.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => beginSmartVisualSelection(elements.startSmartVisuals)));
+elements.startPageCapture.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => startPageCapture("loaded", elements.startPageCapture)));
+elements.resultScreenshot.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.resultScreenshot, true)));
+elements.resultSmartVisuals.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => beginSmartVisualSelection(elements.resultSmartVisuals, true)));
 elements.saveOtherInspiration.addEventListener("click", () => clearActiveCreativeResult());
-elements.addSelection.addEventListener("click", () => extractClipboardOrSelection(elements.addSelection));
-elements.addScreenshot.addEventListener("click", () => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.addScreenshot));
-elements.addSmartVisuals.addEventListener("click", () => beginSmartVisualSelection(elements.addSmartVisuals));
-elements.addPageCapture.addEventListener("click", () => startPageCapture("loaded", elements.addPageCapture));
+elements.addSelection.addEventListener("click", () => runAfterCapturePermissionOnboarding((context) => extractClipboardOrSelection(elements.addSelection, context)));
+elements.addScreenshot.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => captureFromActivePage("CAPTURE_ACTIVE_TAB_TO_DRAFT", elements.addScreenshot)));
+elements.addSmartVisuals.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => beginSmartVisualSelection(elements.addSmartVisuals)));
+elements.addPageCapture.addEventListener("click", () => runAfterCapturePermissionOnboarding(() => startPageCapture("loaded", elements.addPageCapture)));
+elements.capturePermissionCancel.addEventListener("click", cancelCapturePermissionOnboarding);
+elements.capturePermissionForm.addEventListener("submit", confirmCapturePermissionOnboarding);
+elements.capturePermissionOnboarding.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  cancelCapturePermissionOnboarding();
+});
+elements.clipboardPermissionCancel.addEventListener("click", cancelClipboardPermissionEnable);
+elements.clipboardPermissionForm.addEventListener("submit", confirmClipboardPermissionEnable);
+elements.clipboardPermissionDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  cancelClipboardPermissionEnable();
+});
 elements.pageCaptureScan.addEventListener("click", () => {
   elements.pageCaptureListSetup.open = true;
   elements.pageCaptureTargetCount.focus();
@@ -175,15 +208,26 @@ elements.contentType.addEventListener("change", () => updateDraft({
   contentTypeId: elements.contentType.value,
   contentTypeExplicit: true
 }));
-elements.customLabels.addEventListener("change", () => updateDraft({
+elements.captureCollection.addEventListener("change", () => {
+  creatingCollection = elements.captureCollection.value === NEW_COLLECTION_OPTION_VALUE;
+  const collectionId = creatingCollection ? "" : elements.captureCollection.value;
+  void updateDraft({
+    ...draft,
+    collectionId,
+    newCollectionName: creatingCollection ? draft.newCollectionName : ""
+  }).then(() => {
+    if (creatingCollection) elements.captureNewCollectionName.focus();
+  });
+});
+elements.captureNewCollectionName.addEventListener("change", () => updateDraft({
   ...draft,
-  customLabels: parseCustomLabels(elements.customLabels.value),
-  customLabelsExplicit: true
+  collectionId: "",
+  newCollectionName: elements.captureNewCollectionName.value
 }));
-elements.customLabels.addEventListener("keydown", (event) => {
+elements.captureNewCollectionName.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
-  elements.customLabels.blur();
+  elements.captureNewCollectionName.blur();
 });
 
 async function openLibraryTab() {
@@ -202,12 +246,88 @@ async function openLibraryTab() {
   }
 }
 
+async function runAfterCapturePermissionOnboarding(action) {
+  const stored = await chrome.storage.local.get(CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY);
+  const onboarding = normalizeCapturePermissionOnboarding(stored[CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY]);
+  if (onboarding.acknowledgedAt) {
+    return action({ clipboardPreferenceJustDeclined: false });
+  }
+  const permissionStatus = await inspectCapturePermissionBundle(chrome.permissions);
+  if (permissionStatus.webCaptureGranted && permissionStatus.clipboardGranted) {
+    await chrome.storage.local.set({
+      [CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY]: {
+        ...onboarding,
+        acknowledgedAt: new Date().toISOString(),
+        clipboardIncluded: true
+      }
+    });
+    return action({ clipboardPreferenceJustDeclined: false });
+  }
+  pendingCaptureAction = { action, permissionStatus };
+  elements.capturePermissionClipboard.checked = true;
+  elements.capturePermissionStatus.textContent = "";
+  elements.capturePermissionStatus.classList.remove("error");
+  elements.capturePermissionOnboarding.showModal();
+}
+
+function cancelCapturePermissionOnboarding() {
+  pendingCaptureAction = null;
+  elements.capturePermissionOnboarding.close();
+  showFeedback("已取消授权，待保存内容没有改变");
+}
+
+async function confirmCapturePermissionOnboarding(event) {
+  event.preventDefault();
+  if (!pendingCaptureAction) return elements.capturePermissionOnboarding.close();
+  const pending = pendingCaptureAction;
+  const includeClipboard = elements.capturePermissionClipboard.checked;
+  elements.capturePermissionConfirm.disabled = true;
+  elements.capturePermissionCancel.disabled = true;
+  elements.capturePermissionStatus.textContent = "正在等待 Chrome 确认…";
+  elements.capturePermissionStatus.classList.remove("error");
+  let permissionGranted = false;
+  try {
+    const permission = await requestCapturePermissionBundle(chrome.permissions, {
+      includeClipboard,
+      current: pending.permissionStatus
+    });
+    if (!permission.granted) {
+      elements.capturePermissionStatus.textContent = "未获得所选权限，待保存内容没有改变。你可以调整选择后重试。";
+      elements.capturePermissionStatus.classList.add("error");
+      return;
+    }
+    await chrome.storage.local.set({
+      [CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY]: {
+        version: CAPTURE_PERMISSION_ONBOARDING_VERSION,
+        acknowledgedAt: new Date().toISOString(),
+        clipboardIncluded: includeClipboard
+      }
+    });
+    permissionGranted = true;
+    pendingCaptureAction = null;
+  } catch (error) {
+    elements.capturePermissionStatus.textContent = error?.message || "权限申请失败，待保存内容没有改变。";
+    elements.capturePermissionStatus.classList.add("error");
+  } finally {
+    elements.capturePermissionConfirm.disabled = false;
+    elements.capturePermissionCancel.disabled = false;
+  }
+  if (!permissionGranted) return;
+  elements.capturePermissionOnboarding.close();
+  try {
+    await pending.action({ clipboardPreferenceJustDeclined: !includeClipboard });
+  } catch (error) {
+    showFeedback(error?.message || "采集没有完成，待保存内容没有改变", true);
+  }
+}
+
 async function refresh() {
   const response = await chrome.runtime.sendMessage({ type: "GET_CAPTURE_WORKSPACE" });
   if (!response?.ok) return showFeedback(response?.message || "无法读取待保存内容", true);
   draft = response.draft;
   targetEntry = response.targetEntry ?? null;
   contentTypes = response.contentTypes ?? [];
+  collections = response.collections ?? [];
   suggestedContentTypeId = response.suggestedContentTypeId || "";
   partContentTypes = response.partContentTypes ?? {};
   activeCreativeResult = response.activeCreativeResult ?? null;
@@ -230,7 +350,7 @@ async function tryAutoSelection() {
   }
 }
 
-async function extractClipboardOrSelection(button) {
+async function extractClipboardOrSelection(button, { clipboardPreferenceJustDeclined = false } = {}) {
   await withButton(button, async () => {
     try {
       let selection = null;
@@ -249,32 +369,81 @@ async function extractClipboardOrSelection(button) {
         return;
       }
 
-      showFeedback("当前网页没有可提取的高亮；Chrome 将询问一次剪贴板读取权限");
-      if (!await ensureClipboardReadPermission(chrome.permissions)) {
-        showFeedback("未获得剪贴板读取权限，未提取文字或图片", true);
+      const stored = await chrome.storage.local.get(CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY);
+      const onboarding = normalizeCapturePermissionOnboarding(stored[CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY]);
+      if (onboarding.acknowledgedAt && !onboarding.clipboardIncluded) {
+        if (clipboardPreferenceJustDeclined) {
+          showFeedback("没有网页高亮；已按你的选择保持剪贴板关闭，未读取任何内容");
+          return;
+        }
+        pendingClipboardButton = button;
+        elements.clipboardPermissionStatus.textContent = "";
+        elements.clipboardPermissionStatus.classList.remove("error");
+        elements.clipboardPermissionDialog.showModal();
         return;
       }
-      let clipboardContent;
-      try {
-        clipboardContent = await readClipboardContentAfterFocus();
-      } catch {
-        showFeedback("剪贴板读取失败，请保持采集台获得焦点后再试", true);
-        return;
-      }
-      const response = await addClipboardContentToDraft(clipboardContent);
-      if (!response.added) {
-        showFeedback(response.message, true);
-        return;
-      }
-      draft = response.draft;
-      showFeedback(response.message);
-      await refresh();
+      await extractClipboardContent();
     } catch (error) {
       if (error?.draft) draft = error.draft;
       if (draft) render();
       showFeedback(error.message || "文字或图片提取失败", true);
     }
   });
+}
+
+function cancelClipboardPermissionEnable() {
+  pendingClipboardButton = null;
+  elements.clipboardPermissionDialog.close();
+  showFeedback("剪贴板仍保持关闭，未读取任何内容");
+}
+
+async function confirmClipboardPermissionEnable(event) {
+  event.preventDefault();
+  const button = pendingClipboardButton;
+  if (!button) return elements.clipboardPermissionDialog.close();
+  elements.clipboardPermissionConfirm.disabled = true;
+  elements.clipboardPermissionCancel.disabled = true;
+  elements.clipboardPermissionStatus.textContent = "正在等待 Chrome 确认…";
+  elements.clipboardPermissionStatus.classList.remove("error");
+  try {
+    if (!await ensureClipboardReadPermission(chrome.permissions)) {
+      elements.clipboardPermissionStatus.textContent = "未获得剪贴板读取权限，未读取任何内容。";
+      elements.clipboardPermissionStatus.classList.add("error");
+      return;
+    }
+    const stored = await chrome.storage.local.get(CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY);
+    const onboarding = normalizeCapturePermissionOnboarding(stored[CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY]);
+    await chrome.storage.local.set({
+      [CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY]: { ...onboarding, clipboardIncluded: true }
+    });
+    pendingClipboardButton = null;
+    elements.clipboardPermissionDialog.close();
+    await withButton(button, extractClipboardContent);
+  } catch (error) {
+    showFeedback(error?.message || "剪贴板提取失败，未改变待保存内容", true);
+  } finally {
+    elements.clipboardPermissionConfirm.disabled = false;
+    elements.clipboardPermissionCancel.disabled = false;
+  }
+}
+
+async function extractClipboardContent() {
+  showFeedback("正在读取你明确授权的当前剪贴板内容");
+  let clipboardContent;
+  try {
+    clipboardContent = await readClipboardContentAfterFocus();
+  } catch {
+    showFeedback("剪贴板读取失败，请保持采集台获得焦点后再试", true);
+    return;
+  }
+  const response = await addClipboardContentToDraft(clipboardContent);
+  if (!response.added) {
+    showFeedback(response.message, true);
+    return;
+  }
+  draft = response.draft;
+  showFeedback(response.message);
+  await refresh();
 }
 
 async function addClipboardContentToDraft({ text: clipboardText, image } = {}) {
@@ -337,6 +506,12 @@ function render() {
   elements.resultPromptTitle.textContent = activeCreativePrompt?.title || "";
   elements.smartSelection.hidden = !smartVisualSession;
   elements.pageCapture.hidden = !pageCaptureBatch;
+  if (pageCaptureBatch) {
+    elements.pageCaptureActions.before(elements.captureMetadata);
+  } else {
+    elements.captureAddMoreActions.before(elements.captureMetadata);
+  }
+  elements.captureMetadata.hidden = !pageCaptureBatch && !view.showPreview;
   elements.regionCaptureStatus.hidden = !regionCaptureState;
   elements.previewState.hidden = Boolean(smartVisualSession || pageCaptureBatch || regionCaptureState) || !view.showPreview;
   elements.collectorFooter.hidden = Boolean(smartVisualSession || pageCaptureBatch || regionCaptureState) || !view.showFooter;
@@ -365,7 +540,8 @@ function render() {
   elements.saveDraft.disabled = saving || !view.hasContent;
   elements.draftTitle.disabled = saving;
   elements.contentType.disabled = saving;
-  elements.customLabels.disabled = saving;
+  elements.captureCollection.disabled = saving;
+  elements.captureNewCollectionName.disabled = saving;
   for (const control of [
     elements.addSelection,
     elements.addScreenshot,
@@ -409,9 +585,21 @@ function render() {
     option.selected = true;
     elements.contentType.prepend(option);
   }
-  if (document.activeElement !== elements.customLabels) {
-    elements.customLabels.value = (draft.customLabels ?? []).join("，");
+  const selectedCollectionId = draft.collectionId && collections.some((item) => item.id === draft.collectionId)
+    ? draft.collectionId
+    : "";
+  creatingCollection = creatingCollection || Boolean(draft.newCollectionName);
+  elements.captureCollection.replaceChildren(
+    optionElement("", "不分组", !creatingCollection && !selectedCollectionId),
+    ...collections.map((item) => optionElement(item.id, item.name, !creatingCollection && item.id === selectedCollectionId)),
+    optionElement(NEW_COLLECTION_OPTION_VALUE, "＋ 新建项目", creatingCollection)
+  );
+  elements.captureNewCollectionRow.hidden = !creatingCollection;
+  if (document.activeElement !== elements.captureNewCollectionName) {
+    elements.captureNewCollectionName.value = draft.newCollectionName || "";
   }
+  customLabelEditor.setValues(draft.customLabels ?? []);
+  customLabelEditor.setDisabled(saving);
   elements.quickPreview.replaceChildren(...createQuickPreview());
   elements.addOtherCaptureMethods.open = smartVisualFallback;
   elements.otherCaptureMethods.classList.toggle("fallback-highlight", smartVisualFallback);
@@ -1191,7 +1379,8 @@ async function savePageCapture(textOnly = false) {
       }
       const response = await chrome.runtime.sendMessage({
         type: "COMMIT_PAGE_CAPTURE",
-        batch: normalizePageCaptureBatch({ ...pageCaptureBatch, sessionMediaAllowed })
+        batch: normalizePageCaptureBatch({ ...pageCaptureBatch, sessionMediaAllowed }),
+        ...captureMetadataForCommit()
       });
       if (!response?.ok) throw new Error(response?.message || t("网页内容保存失败"));
       const partial = response.results?.filter((item) => item.status === "partial" || item.status === "failed") || [];
@@ -1282,8 +1471,10 @@ async function updateDraft(value) {
     if (!response?.ok) throw new Error(response?.message || "标题更新失败");
     draft = response.draft;
     render();
+    return draft;
   } catch (error) {
     showFeedback(error.message || "标题更新失败", true);
+    return null;
   }
 }
 
@@ -1309,7 +1500,12 @@ async function commitDraft(duplicateAction = "", button) {
   }
   render();
   try {
-    const response = await chrome.runtime.sendMessage({ type: "COMMIT_CAPTURE_DRAFT", duplicateAction });
+    const metadata = captureMetadataForCommit();
+    const response = await chrome.runtime.sendMessage({
+      type: "COMMIT_CAPTURE_DRAFT",
+      duplicateAction,
+      ...metadata
+    });
     if (response?.duplicate) {
       elements.duplicateTitle.textContent = response.existing.title;
       elements.duplicatePanel.hidden = false;
@@ -1320,6 +1516,7 @@ async function commitDraft(duplicateAction = "", button) {
     draft = response.draft;
     targetEntry = null;
     organizing = false;
+    creatingCollection = false;
     elements.duplicatePanel.hidden = true;
     showFeedback(response.message);
   } catch (error) {
@@ -1345,6 +1542,7 @@ async function discardDraft() {
       draft = response.draft;
       targetEntry = null;
       organizing = false;
+      creatingCollection = false;
       elements.duplicatePanel.hidden = true;
       showFeedback("待保存内容已清空");
       render();
@@ -1420,16 +1618,31 @@ function text(value, tag = "span") {
   return node;
 }
 
+function optionElement(value, label, selected = false) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  option.selected = selected;
+  return option;
+}
+
+function captureMetadataForCommit() {
+  const selectedCollection = elements.captureCollection.value;
+  return {
+    collectionId: selectedCollection === NEW_COLLECTION_OPTION_VALUE ? "" : selectedCollection,
+    newCollectionName: selectedCollection === NEW_COLLECTION_OPTION_VALUE
+      ? elements.captureNewCollectionName.value.trim()
+      : "",
+    customLabels: customLabelEditor.values
+  };
+}
+
 function hostname(value) {
   try {
     return new URL(value).hostname;
   } catch {
     return "";
   }
-}
-
-function parseCustomLabels(value) {
-  return [...new Set(String(value ?? "").split(/[,，\n]+/).map((item) => item.trim()).filter(Boolean))];
 }
 
 function camel(value) {

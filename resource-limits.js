@@ -1,5 +1,53 @@
 const MEBIBYTE = 1024 * 1024;
 
+export const ASSET_IMPORT_FAILURE_CODES = Object.freeze({
+  INVALID_FILE: "invalid_file",
+  UNSUPPORTED_FORMAT: "unsupported_format",
+  TOO_LARGE: "too_large",
+  STORAGE_INSUFFICIENT: "storage_insufficient",
+  SAFETY_LIMIT_EXCEEDED: "safety_limit_exceeded",
+  READ_OR_DECODE_FAILED: "read_or_decode_failed",
+  STORAGE_WRITE_FAILED: "storage_write_failed"
+});
+
+const FAILURE_CODE_VALUES = new Set(Object.values(ASSET_IMPORT_FAILURE_CODES));
+
+export class AssetImportError extends Error {
+  constructor(code, message, details = {}, options = {}) {
+    super(String(message ?? "").trim() || "无法导入这个文件", options);
+    this.name = "AssetImportError";
+    this.code = FAILURE_CODE_VALUES.has(code) ? code : ASSET_IMPORT_FAILURE_CODES.READ_OR_DECODE_FAILED;
+    this.reasonCode = this.code;
+    this.details = normalizeFailureDetails(details);
+    this.forceAllowed = this.code === ASSET_IMPORT_FAILURE_CODES.TOO_LARGE && this.details.forceAllowed === true;
+  }
+}
+
+export function assetImportError(code, message, details = {}, options = {}) {
+  return new AssetImportError(code, message, details, options);
+}
+
+export function isAssetImportError(value) {
+  return value instanceof AssetImportError || (
+    value instanceof Error && FAILURE_CODE_VALUES.has(value.code)
+  );
+}
+
+export function importFailureDetails(value) {
+  const error = isAssetImportError(value)
+    ? value
+    : assetImportError(
+      ASSET_IMPORT_FAILURE_CODES.READ_OR_DECODE_FAILED,
+      String(value?.message ?? value ?? "").trim() || "文件读取或解析失败"
+    );
+  return {
+    code: error.code,
+    message: error.message,
+    ...normalizeFailureDetails(error.details),
+    forceAllowed: error.forceAllowed === true
+  };
+}
+
 export const PORTABLE_LIBRARY_LIMITS = Object.freeze({
   maxArchiveBytes: 128 * MEBIBYTE,
   maxFileCount: 4096,
@@ -45,10 +93,17 @@ export function assertImageDimensions(width, height, limitsValue = {}) {
   const w = Number(width);
   const h = Number(height);
   if (!Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w < 1 || h < 1) {
-    throw new Error("图片尺寸无效");
+    throw assetImportError(
+      ASSET_IMPORT_FAILURE_CODES.READ_OR_DECODE_FAILED,
+      "无法读取有效的图片尺寸"
+    );
   }
   if (w * h > limits.maxImagePixels) {
-    throw new Error(`图片像素超过 ${formatCount(limits.maxImagePixels)} 上限`);
+    throw assetImportError(
+      ASSET_IMPORT_FAILURE_CODES.SAFETY_LIMIT_EXCEEDED,
+      `图片像素超过 ${formatCount(limits.maxImagePixels)} 安全上限，不能强制导入`,
+      { maxPixels: limits.maxImagePixels, actualPixels: w * h }
+    );
   }
 }
 
@@ -61,4 +116,15 @@ export function formatBytes(bytes) {
 
 function formatCount(value) {
   return Number(value).toLocaleString("en-US");
+}
+
+function normalizeFailureDetails(value) {
+  if (!value || typeof value !== "object") return {};
+  const result = {};
+  for (const key of ["actualBytes", "maxBytes", "requiredBytes", "availableBytes", "actualPixels", "maxPixels"]) {
+    const number = Number(value[key]);
+    if (Number.isSafeInteger(number) && number >= 0) result[key] = number;
+  }
+  if (value.forceAllowed === true) result.forceAllowed = true;
+  return result;
 }

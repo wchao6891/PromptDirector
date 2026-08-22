@@ -37,6 +37,7 @@ test("retry creates a new job containing only failed items", () => {
   const source = normalizeImportJobsState({ items: [{
     id: "job:source",
     status: "failed",
+    createdAt: "2026-08-08T00:30:00.000Z",
     items: [
       { id: "item:done", stagedAssetId: "staged:done", status: "imported", entryId: "entry:done" },
       { id: "item:failed", stagedAssetId: "staged:failed", status: "failed", error: "文件损坏" }
@@ -53,11 +54,15 @@ test("retry creates a new job containing only failed items", () => {
   });
 
   assert.equal(result.job.retryOf, "job:source");
+  assert.equal(result.job.importBatchId, "job:source");
+  assert.equal(result.job.libraryAddedAt, "2026-08-08T00:30:00.000Z");
   assert.equal(result.job.collectionId, "collection:one");
   assert.deepEqual(result.job.options, { duplicateAction: "skip", autoAnalyze: true });
   assert.deepEqual(result.job.items, [{
     id: "item:retry:staged:failed",
     stagedAssetId: "staged:failed",
+    importBatchId: "job:source",
+    libraryAddedAt: "2026-08-08T00:30:00.000Z",
     status: "queued"
   }]);
   assert.equal(result.state.items.length, 2);
@@ -137,8 +142,64 @@ test("duplicate items default to skipped unless explicitly kept", () => {
   });
 
   assert.deepEqual(result.job.items, [
-    { id: "item:staged:skip", stagedAssetId: "staged:skip", status: "skipped", skipReason: "duplicate" },
-    { id: "item:staged:keep", stagedAssetId: "staged:keep", status: "queued" }
+    {
+      id: "item:staged:skip",
+      stagedAssetId: "staged:skip",
+      importBatchId: "job:duplicates",
+      libraryAddedAt: "2026-08-08T06:00:00.000Z",
+      status: "skipped",
+      skipReason: "duplicate"
+    },
+    {
+      id: "item:staged:keep",
+      stagedAssetId: "staged:keep",
+      importBatchId: "job:duplicates",
+      libraryAddedAt: "2026-08-08T06:00:00.000Z",
+      status: "queued"
+    }
   ]);
   assert.equal(result.job.status, "queued");
+});
+
+test("new import jobs expose one stable logical batch and library-added time", () => {
+  const result = createImportJob({}, {
+    stagedAssetIds: ["staged:one", "staged:two"],
+    options: { customLabels: ["客户 A", " 客户 A ", "待调整"] }
+  }, {
+    id: "job:first-attempt",
+    itemId: (assetId) => `item:${assetId}`,
+    now: "2026-08-08T07:00:00.000Z"
+  });
+
+  assert.equal(result.job.importBatchId, "job:first-attempt");
+  assert.equal(result.job.libraryAddedAt, "2026-08-08T07:00:00.000Z");
+  assert.deepEqual(result.job.options.customLabels, ["客户 A", "待调整"]);
+  assert.deepEqual(result.job.items.map((item) => ({
+    importBatchId: item.importBatchId,
+    libraryAddedAt: item.libraryAddedAt
+  })), [
+    { importBatchId: "job:first-attempt", libraryAddedAt: "2026-08-08T07:00:00.000Z" },
+    { importBatchId: "job:first-attempt", libraryAddedAt: "2026-08-08T07:00:00.000Z" }
+  ]);
+});
+
+test("legacy import jobs derive additive batch metadata without losing saved results", () => {
+  const state = normalizeImportJobsState({ items: [{
+    id: "job:legacy",
+    status: "completed",
+    createdAt: "2026-08-01T09:00:00.000Z",
+    items: [{
+      id: "item:legacy",
+      stagedAssetId: "staged:legacy",
+      status: "imported",
+      entryId: "entry:legacy"
+    }],
+    createdEntryIds: ["entry:legacy"]
+  }] });
+
+  assert.equal(state.items[0].importBatchId, "job:legacy");
+  assert.equal(state.items[0].libraryAddedAt, "2026-08-01T09:00:00.000Z");
+  assert.equal(state.items[0].items[0].importBatchId, "job:legacy");
+  assert.equal(state.items[0].items[0].libraryAddedAt, "2026-08-01T09:00:00.000Z");
+  assert.equal(state.items[0].items[0].entryId, "entry:legacy");
 });

@@ -1,6 +1,17 @@
-import { normalizeLocalRelativePath } from "./local-media.js";
+import {
+  LOCAL_ASSET_REFERENCE_RECORD_TYPE,
+  normalizeLocalRelativePath
+} from "./local-media.js";
+import {
+  SUPPORTED_ASSET_KINDS,
+  assetFormatForExtension,
+  assetFormatForFile,
+  fileExtension,
+  isReportedMimeCompatible
+} from "./asset-formats.js";
+import { ASSET_IMPORT_FAILURE_CODES } from "./resource-limits.js";
 
-const KINDS = new Set(["image", "video", "document"]);
+const KINDS = new Set(SUPPORTED_ASSET_KINDS);
 
 export function normalizeImportStagingState(value = {}) {
   return {
@@ -27,7 +38,9 @@ export function removeStagedAsset(stateValue, stagedAssetId) {
   return {
     state: { ...state, assets: state.assets.filter((item) => item.id !== id) },
     asset,
-    removedAssetIds: [...new Set([asset.assetId, asset.posterAssetId].filter(Boolean))]
+    removedAssetIds: asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE
+      ? []
+      : [...new Set([asset.assetId, asset.posterAssetId].filter(Boolean))]
   };
 }
 
@@ -68,9 +81,15 @@ function normalizeStagedAsset(value) {
   const name = fileName(value?.name);
   const kind = KINDS.has(value?.kind) ? value.kind : "";
   const mimeType = clean(value?.mimeType).toLocaleLowerCase("en-US");
+  const requestedSourceFormat = clean(value?.sourceFormat).toLocaleLowerCase("en-US").replace(/^\./u, "");
+  const format = assetFormatForExtension(requestedSourceFormat) ?? assetFormatForFile({ name, type: mimeType });
   const byteSize = Math.max(0, Math.floor(Number(value?.byteSize) || 0));
   const contentHash = clean(value?.contentHash).toLocaleLowerCase("en-US");
-  if (!id || !assetId || !name || !kind || !mimeType || !byteSize || !/^[a-f0-9]{64}$/u.test(contentHash)) return null;
+  const matchesSupportedFormat = Boolean(format && format.kind === kind && isReportedMimeCompatible(format, mimeType));
+  const localReference = normalizeUnsupportedLocalReference(value, { kind, matchesSupportedFormat });
+  if (!id || !assetId || !name || !kind || !mimeType || !byteSize) return null;
+  if (!localReference && !/^[a-f0-9]{64}$/u.test(contentHash)) return null;
+  if (!localReference && !matchesSupportedFormat) return null;
   let relativePath;
   try {
     relativePath = normalizeLocalRelativePath(value?.relativePath, name);
@@ -83,20 +102,76 @@ function normalizeStagedAsset(value) {
     name,
     relativePath,
     kind,
+    storageMode: kind === "attachment" && value?.storageMode === "reference" ? "reference" : "managed",
     mimeType,
     byteSize,
-    contentHash,
+    ...(nonNegativeIntegerOrNull(value?.sourceLastModified) !== null
+      ? { sourceLastModified: nonNegativeIntegerOrNull(value.sourceLastModified) }
+      : {}),
+    ...(contentHash ? { contentHash } : {}),
+    sourceFormat: requestedSourceFormat || fileExtension(name),
+    formatCategory: localReference ? "local-link" : format.category,
+    ...(localReference ?? {}),
     ...(positiveInteger(value?.width) ? { width: positiveInteger(value.width) } : {}),
     ...(positiveInteger(value?.height) ? { height: positiveInteger(value.height) } : {}),
     ...(positiveInteger(value?.durationMs) ? { durationMs: positiveInteger(value.durationMs) } : {}),
     ...(clean(value?.playbackCapability) ? { playbackCapability: clean(value.playbackCapability) } : {}),
     ...(clean(value?.contentText) ? { contentText: clean(value.contentText) } : {}),
     ...(["markdown", "plain"].includes(value?.contentFormat) ? { contentFormat: value.contentFormat } : {}),
-    ...(clean(value?.sourceFormat) ? { sourceFormat: clean(value.sourceFormat) } : {}),
     ...(Array.isArray(value?.warnings) ? { warnings: [...new Set(value.warnings.map(clean).filter(Boolean))] } : {}),
     ...(clean(value?.posterAssetId) ? { posterAssetId: clean(value.posterAssetId) } : {}),
     ...(normalizePoster(value?.posterAsset) ? { posterAsset: normalizePoster(value.posterAsset) } : {}),
     ...(clean(value?.duplicateAssetId) ? { duplicateAssetId: clean(value.duplicateAssetId) } : {})
+  };
+}
+
+function normalizeUnsupportedLocalReference(value, context) {
+  if (context.kind !== "attachment" || value?.storageMode !== "reference" || !["relink-required", "linked"].includes(value?.linkStatus)) {
+    return null;
+  }
+  if (value?.recordType !== LOCAL_ASSET_REFERENCE_RECORD_TYPE) return null;
+  if (context.matchesSupportedFormat) return null;
+  if (value?.importFailure?.code !== ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT) return null;
+  const message = clean(value.importFailure.message);
+  if (!message) return null;
+  return {
+    recordType: LOCAL_ASSET_REFERENCE_RECORD_TYPE,
+    linkStatus: value.linkStatus,
+    importFailure: {
+      code: ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT,
+      message,
+      forceAllowed: false
+    }
+  };
+}
+
+export function stagedAssetMediaRecord(value, options = {}) {
+  const staged = normalizeStagedAsset(value);
+  if (!staged) throw new Error("暂存资料缺少有效元数据");
+  const capturedAt = clean(options.capturedAt) || new Date().toISOString();
+  return {
+    id: staged.assetId,
+    kind: staged.kind,
+    storageMode: staged.storageMode,
+    mimeType: staged.mimeType,
+    byteSize: staged.byteSize,
+    sourceTitle: staged.name,
+    relativePath: staged.relativePath,
+    sourceFormat: staged.sourceFormat,
+    formatCategory: staged.formatCategory,
+    ...(staged.contentHash ? { contentHash: staged.contentHash } : {}),
+    ...(staged.sourceLastModified !== undefined ? { sourceLastModified: staged.sourceLastModified } : {}),
+    ...(staged.recordType ? { recordType: staged.recordType } : {}),
+    ...(staged.linkStatus ? { linkStatus: staged.linkStatus } : {}),
+    ...(staged.importFailure ? { importFailure: structuredClone(staged.importFailure) } : {}),
+    capturedAt,
+    reviewStatus: staged.storageMode === "reference" ? "unverified" : "verified",
+    ...(staged.width ? { width: staged.width } : {}),
+    ...(staged.height ? { height: staged.height } : {}),
+    ...(staged.durationMs ? { durationMs: staged.durationMs } : {}),
+    ...(staged.playbackCapability ? { playbackCapability: staged.playbackCapability } : {}),
+    ...(staged.kind === "document" && staged.contentFormat ? { extractedTextFormat: staged.contentFormat } : {}),
+    ...(staged.posterAssetId ? { posterAssetId: staged.posterAssetId } : {})
   };
 }
 
@@ -126,6 +201,11 @@ function fileName(value) {
 function positiveInteger(value) {
   const number = Math.floor(Number(value) || 0);
   return Number.isSafeInteger(number) && number > 0 ? number : 0;
+}
+
+function nonNegativeIntegerOrNull(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : null;
 }
 
 function clean(value) {

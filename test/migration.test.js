@@ -16,7 +16,36 @@ test("older schemas upgrade without changing entry content", () => {
   assert.deepEqual(result.state.compoundCases, []);
   assert.equal(result.state.entries[0].id, entry.id);
   assert.equal(result.state.entries[0].text, entry.text);
+  assert.equal("libraryAddedAt" in result.state.entries[0], false);
+  assert.deepEqual(result.state.trashState, { version: 1, items: [] });
   assert.equal(needsMigration(result.state), false);
+});
+
+test("schema upgrade preserves valid recycle-bin snapshots without reviving them", () => {
+  const stored = {
+    schemaVersion: 26,
+    taxonomy: createDefaultTaxonomy(),
+    facetCatalog: { version: 2, revision: 1, facets: [], nodes: [] },
+    organizerState: { version: 6, collections: [] },
+    compoundCases: [],
+    entries: [],
+    trashState: {
+      version: 1,
+      items: [{
+        id: "trash:entry:removed",
+        kind: "entry",
+        targetId: "removed",
+        deletedAt: "2026-08-22T00:00:00.000Z",
+        snapshot: { id: "removed", title: "已删除案例" },
+        relationships: { collections: [] }
+      }]
+    }
+  };
+
+  const result = migrateLibraryState(stored).state;
+  assert.deepEqual(result.entries, []);
+  assert.equal(result.trashState.items[0].snapshot.title, "已删除案例");
+  assert.equal(needsMigration(result), false);
 });
 
 test("fixed-tree upgrade keeps mapped DeepSeek labels usable until an explicit rebuild", () => {

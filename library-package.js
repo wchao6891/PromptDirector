@@ -14,6 +14,11 @@ import { migrateLibraryState } from "./migration.js";
 import { LIBRARY_PACKAGE_FORMAT, isSupportedLibraryPackageVersion } from "./library-package-format.js";
 import { remapArticleDocumentAssets } from "./article-document.js";
 import { boundedMediaBlobFromResponse, isSupportedDocumentMimeType } from "./bounded-media.js";
+import {
+  assetFormatForExtension,
+  fileExtension,
+  isReportedMimeCompatible
+} from "./asset-formats.js";
 
 export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}) {
   const preparedFiles = new Map(files);
@@ -50,8 +55,22 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
   const assets = new Map();
   const images = new Map();
   const skillAssets = new Map();
+  if (value.version >= 4) {
+    for (const entry of data.entries) {
+      for (const asset of Array.isArray(entry?.mediaAssets) ? entry.mediaAssets : []) {
+        if (asset?.storageMode === "reference") continue;
+        validatePortableMediaDescriptor(asset, clean(asset?.assetPath), value.version);
+      }
+    }
+  }
   data.entries = data.entries.map((entry) => {
     const normalized = normalizeEntryVisuals(entry);
+    if (value.version >= 4) {
+      const normalizedIds = new Set(normalized.mediaAssets.map((asset) => asset.id));
+      const missingAsset = (Array.isArray(entry?.mediaAssets) ? entry.mediaAssets : [])
+        .find((asset) => asset?.storageMode !== "reference" && clean(asset?.id) && !normalizedIds.has(clean(asset.id)));
+      if (missingAsset) throw new Error("案例包包含无法安全规范化的媒体描述");
+    }
     normalized.customLabels = uniqueNames(entry?.customLabels);
     normalized.metadataLabels = uniqueNames(entry?.metadataLabels);
     return normalized;
@@ -71,9 +90,9 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
       visualIds.add(asset.id);
       if (asset.storageMode === "reference") continue;
       const path = clean(asset.assetPath);
-      if (!validMediaPath(path, asset.kind)) throw new Error(`“${entry.title || "未命名案例"}”的媒体路径无效`);
+      const format = validatePortableMediaDescriptor(asset, path, value.version);
       const blob = files.get(path);
-      if (!(blob instanceof Blob) || !blobMatchesKind(blob, asset.kind)) {
+      if (!(blob instanceof Blob) || !blobMatchesKind(blob, asset, format, value.version)) {
         throw new Error(asset.kind === "image"
           ? `“${entry.title || "未命名案例"}”的截图缺失`
           : `“${entry.title || "未命名案例"}”的媒体文件缺失或类型不符`);
@@ -244,21 +263,43 @@ export function selectProjectPackage(state = {}, collectionId) {
   const collection = organizer.collections.find((item) => item.id === clean(collectionId));
   if (!collection) throw new Error("项目不存在");
   if (!collection.entryIds.length) throw new Error("这个项目还没有可分享的案例");
-  const selected = selectLibraryPackage(state, collection.entryIds);
+  const exportedEntryIds = projectPackageEntryIds(state, collection.id);
+  const selected = selectLibraryPackage(state, exportedEntryIds);
   selected.organizerState = normalizeOrganizerState({
     version: organizer.version,
     collections: [{
       id: collection.id,
       name: collection.name,
       order: 0,
-      entryIds: collection.entryIds
+      entryIds: exportedEntryIds
     }]
   }, selected.entries.map((entry) => entry.id));
   return selected;
 }
 
+export function projectPackageEntryIds(state = {}, collectionId) {
+  const entries = Array.isArray(state.entries) ? state.entries : [];
+  const validEntryIds = new Set(entries.map((entry) => clean(entry?.id)).filter(Boolean));
+  const organizer = normalizeOrganizerState(state.organizerState, [...validEntryIds]);
+  const collection = organizer.collections.find((item) => item.id === clean(collectionId));
+  if (!collection) throw new Error("项目不存在");
+  const selectedIds = [...collection.entryIds];
+  const selectedSet = new Set(selectedIds);
+  for (const compound of normalizeCompoundCases(state.compoundCases, entries)) {
+    if (!compound.memberEntryIds.some((entryId) => selectedSet.has(entryId))) continue;
+    for (const entryId of compound.memberEntryIds) {
+      if (selectedSet.has(entryId)) continue;
+      selectedSet.add(entryId);
+      selectedIds.push(entryId);
+    }
+  }
+  return selectedIds.filter((entryId) => validEntryIds.has(entryId));
+}
+
 function sanitizeSharedEntry(entry) {
   const next = normalizeEntryVisuals(entry);
+  delete next.libraryAddedAt;
+  delete next.importBatchId;
   next.mediaAssets = next.mediaAssets.map((asset) => {
     if (!asset.visionAnalysis) return asset;
     const {
@@ -285,13 +326,14 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   const imported = parseLibraryPackage(importedValue, packageImagePlaceholders(importedValue), {
     skipMediaByteValidation: true
   });
+  const importMetadata = localImportMetadata(options);
   const empty = !(current.entries ?? []).length && options.preserveLibraryConfiguration !== true;
   if (empty) {
     const skillMerge = mergeCreativeSkillsState(current.creativeSkills, imported.creativeSkills, options);
     return {
       state: {
         ...structuredClone(current),
-        entries: imported.entries.map(withoutArchivePath),
+        entries: imported.entries.map((entry) => withLocalImportMetadata(withoutArchivePath(entry), importMetadata)),
         settings: imported.settings,
         taxonomy: imported.taxonomy,
         facetCatalog: imported.facetCatalog,
@@ -353,6 +395,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     const targetId = preferred && !usedEntryIds.has(preferred) ? preferred : source.id;
     if (usedEntryIds.has(targetId)) throw new Error("导入期间案例库发生变化，请重试");
     const entry = withoutArchivePath(structuredClone(source));
+    Object.assign(entry, importMetadata);
     entry.id = targetId;
     const sourceContentId = entry.classification?.pathIds?.[0];
     const targetContentId = taxonomyMerge.idMap[sourceContentId];
@@ -400,7 +443,12 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     if (!importedEntry?.creationMeta?.sourceEntryIds) continue;
     importedEntry.creationMeta.sourceEntryIds = importedEntry.creationMeta.sourceEntryIds.map((id) => organizerEntryIdMap[id] ?? id);
   }
-  next.organizerState = mergeOrganizerState(next.organizerState, imported.organizerState, organizerEntryIdMap);
+  next.organizerState = mergeOrganizerState(
+    next.organizerState,
+    imported.organizerState,
+    organizerEntryIdMap,
+    options.preserveLibraryConfiguration === true ? { createdAt: importMetadata.libraryAddedAt } : {}
+  );
   const usedCompoundIds = new Set([
     ...next.entries.map((entry) => entry.id),
     ...next.compoundCases.map((item) => item.id)
@@ -470,6 +518,21 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     importedCount,
     skippedCount
   };
+}
+
+function localImportMetadata(options = {}) {
+  const requestedTime = clean(options.libraryAddedAt ?? options.now);
+  const parsedTime = requestedTime && Number.isFinite(Date.parse(requestedTime))
+    ? new Date(requestedTime).toISOString()
+    : new Date().toISOString();
+  return {
+    libraryAddedAt: parsedTime,
+    importBatchId: clean(options.importBatchId) || `library-import:${globalThis.crypto.randomUUID()}`
+  };
+}
+
+function withLocalImportMetadata(entry, metadata) {
+  return { ...entry, ...metadata };
 }
 
 function mergeComposerSessions(currentValue, importedValue, entryIdMap, preferredIds = {}, visualIdMap = {}) {
@@ -570,7 +633,7 @@ function packageImagePlaceholders(value) {
   const entryImages = (value?.entries ?? []).flatMap((entryValue) => {
     const entry = normalizeEntryMedia(entryValue);
     return entry.mediaAssets.flatMap((asset) => asset.assetPath
-      ? [[asset.assetPath, new Blob(["placeholder"], { type: mediaType(asset.assetPath, asset.kind) })]] : []);
+      ? [[asset.assetPath, new Blob(["placeholder"], { type: mediaType(asset.assetPath, asset.kind, asset.mimeType) })]] : []);
   });
   const creativeAssets = normalizeCreativeRuns(value?.creativeRuns).flatMap((run) =>
     run.outputs.flatMap((output) => (output.visual.assetPath || output.visual.screenshotPath)
@@ -634,7 +697,9 @@ function imageType(path) {
   return "image/webp";
 }
 
-function mediaType(path, kind) {
+function mediaType(path, kind, declaredMimeType = "") {
+  const declared = clean(declaredMimeType).toLocaleLowerCase("en-US");
+  if (declared) return declared;
   if (kind === "image") return imageType(path);
   if (/\.mp4$/i.test(path)) return "video/mp4";
   if (/\.webm$/i.test(path)) return "video/webm";
@@ -648,11 +713,37 @@ function mediaType(path, kind) {
   return "text/plain";
 }
 
-function validMediaPath(path, kind) {
+function validatePortableMediaDescriptor(asset, path, packageVersion) {
+  if (!validMediaPath(path, asset.kind, packageVersion)) {
+    throw new Error("案例包包含无效或与媒体类型不符的文件路径");
+  }
+  if (packageVersion < 4) return null;
+  const extension = fileExtension(path);
+  const format = assetFormatForExtension(extension);
+  const genericAttachment = asset.kind === "attachment" && !format && /^[a-z0-9]+$/u.test(extension);
+  if (!format && !genericAttachment) throw new Error("案例包包含未登记的媒体格式");
+  if (format && (format.kind !== asset.kind || !isReportedMimeCompatible(format, asset.mimeType))) {
+    throw new Error("案例包中的扩展名、媒体类型和 MIME 不一致");
+  }
+  const declaredFormat = clean(asset.sourceFormat).toLocaleLowerCase("en-US").replace(/^\./u, "");
+  if (declaredFormat && declaredFormat !== extension) {
+    throw new Error("案例包中的源文件格式和文件扩展名不一致");
+  }
+  return format;
+}
+
+function validMediaPath(path, kind, packageVersion = 4) {
   if (!path || path.includes("..")) return false;
-  if (kind === "image") return /^images\/[A-Za-z0-9._/-]+\.(?:png|jpe?g|webp)$/i.test(path);
-  if (kind === "video") return /^videos\/[A-Za-z0-9._/-]+\.(?:mp4|webm|mov|mkv|avi|video)$/i.test(path);
-  return /^documents\/[A-Za-z0-9._/-]+\.(?:pdf|rtf|md|txt|html?|bin)$/i.test(path);
+  const safeFile = "[A-Za-z0-9._/-]+\\.[A-Za-z0-9]+";
+  const directories = packageVersion >= 4
+    ? { image: "images", video: "videos", audio: "audio", document: "documents", attachment: "attachments" }
+    : { image: "images", video: "videos", document: "documents" };
+  const directory = directories[kind];
+  if (!directory || !(new RegExp(`^${directory}\\/${safeFile}$`, "i")).test(path)) return false;
+  if (packageVersion >= 4) return true;
+  if (kind === "image") return /\.(?:png|jpe?g|webp)$/i.test(path);
+  if (kind === "video") return /\.(?:mp4|webm|mov|mkv|avi|video)$/i.test(path);
+  return /\.(?:pdf|rtf|md|txt|html?|bin)$/i.test(path);
 }
 
 function validCreativeResultPath(path, kind) {
@@ -661,10 +752,21 @@ function validCreativeResultPath(path, kind) {
   return /^(?:images|creative-results)\/[A-Za-z0-9._/-]+\.(?:png|jpe?g|webp)$/i.test(path);
 }
 
-function blobMatchesKind(blob, kind) {
-  if (kind === "image") return blob.type.startsWith("image/");
-  if (kind === "video") return blob.type.startsWith("video/");
-  return isSupportedDocumentMimeType(blob.type);
+function blobMatchesKind(blob, asset, format, packageVersion) {
+  if (typeof asset === "string") {
+    if (asset === "image") return clean(blob.type).startsWith("image/");
+    if (asset === "video") return clean(blob.type).startsWith("video/");
+    return isSupportedDocumentMimeType(blob.type);
+  }
+  const blobType = clean(blob.type).toLocaleLowerCase("en-US");
+  if (packageVersion >= 4) {
+    if (!blobType || ["application/octet-stream", "application/x-unknown"].includes(blobType)) return true;
+    if (format) return isReportedMimeCompatible(format, blobType);
+    return asset.kind === "attachment";
+  }
+  if (asset.kind === "image") return blobType.startsWith("image/");
+  if (asset.kind === "video") return blobType.startsWith("video/");
+  return isSupportedDocumentMimeType(blobType);
 }
 
 function completeBackupDocumentPaths(value = {}) {

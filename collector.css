@@ -372,6 +372,8 @@ main {
   font-size: 11px;
   font-weight: 700;
 }
+.custom-label-editor { display: grid; gap: 7px; }
+.custom-label-editor > span { color: var(--muted); font-size: 11px; font-weight: 700; }
 .custom-label-editor label { display: block; margin-top: 8px; }
 .custom-label-editor small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
 

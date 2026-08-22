@@ -4,7 +4,7 @@ import tempfile
 import os
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 
 EXTENSION_DIR = Path(__file__).resolve().parents[1]
@@ -31,7 +31,7 @@ def main() -> None:
                 page_errors = []
                 page.on("pageerror", lambda error: page_errors.append(str(error)))
                 page.goto(f"chrome-extension://{extension_id}/library.html")
-                page.locator("#library-summary").get_by_text("0 条案例", exact=False).wait_for(timeout=1500)
+                expect(page.locator("#result-count")).to_have_text("0 个案例", timeout=1500)
                 page.evaluate(
                     """async (nodeCount) => {
                       const {SCHEMA_VERSION, createDefaultTaxonomy} = await import(chrome.runtime.getURL('taxonomy.js'));
@@ -43,6 +43,7 @@ def main() -> None:
                         text: `tracking shot ${index}`,
                         url: `https://example.com/${index}`,
                         savedAt: '2026-07-19T00:00:00.000Z',
+                        classification: {pathIds: ['content:prompt:image'], status: 'confirmed', source: 'manual'},
                         facetAssignments: [{
                           facetId: 'camera', nodeId: `detail:camera.lens:e2e-${index % nodeCount}`,
                           status: 'confirmed', source: 'manual'
@@ -74,7 +75,7 @@ def main() -> None:
                 )
                 page.reload()
                 page.wait_for_load_state("networkidle")
-                page.locator("#library-summary").get_by_text("43 条案例", exact=False).wait_for(timeout=1500)
+                expect(page.locator("#result-count")).to_have_text("43 个案例", timeout=1500)
                 started = page.evaluate("performance.now()")
                 page.locator("#manage-facets").click(timeout=1500)
                 page.locator("#manager-dialog").wait_for(state="visible", timeout=1500)

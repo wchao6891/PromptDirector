@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from playwright.sync_api import expect
+
 from e2e_support import extension_session
 
 
@@ -93,6 +95,68 @@ def main() -> None:
         )
         assert wall_metrics == {"gap": "2px", "radius": "2px"}, wall_metrics
 
+        library.evaluate(
+            """async () => chrome.storage.local.set({
+              organizerState: {version: 5, collections: [
+                {id: 'collection:combobox-one', name: '优质精选', order: 0, entryIds: [], visibility: 'library'},
+                {id: 'collection:combobox-two', name: 'AIArtWorks · MJ 精选', order: 1, entryIds: [], visibility: 'library'}
+              ]}
+            })"""
+        )
+        library.reload(wait_until="networkidle")
+        library.set_viewport_size({"width": 560, "height": 620})
+        library.locator("#add-menu > summary").click()
+        library.locator("#add-quick-note").click()
+        project_input = library.locator("#promptdirector-app-dialog-projectName")
+        expect(project_input).to_have_attribute("role", "combobox")
+        expect(project_input).to_have_attribute("aria-autocomplete", "list")
+        project_input.click()
+        dialog = library.locator("#promptdirector-app-dialog")
+        expect(dialog.locator(".project-combobox-option")).to_have_count(2)
+        menu_style = dialog.locator(".project-combobox-listbox").evaluate(
+            "node => ({background: getComputedStyle(node).backgroundColor, border: getComputedStyle(node).borderColor})"
+        )
+        assert menu_style["background"] not in {"rgb(255, 255, 255)", "rgba(0, 0, 0, 0)"}, menu_style
+        quick_note_menu = dialog.locator(".project-combobox-listbox").evaluate(
+            """node => {
+              const menu = node.getBoundingClientRect();
+              const boundary = node.closest('.app-dialog-body').getBoundingClientRect();
+              const footer = node.closest('form').querySelector('footer').getBoundingClientRect();
+              return {placement: node.dataset.placement, top: menu.top, bottom: menu.bottom, boundaryTop: boundary.top, boundaryBottom: boundary.bottom, footerTop: footer.top};
+            }"""
+        )
+        assert quick_note_menu["placement"] == "top", quick_note_menu
+        assert quick_note_menu["top"] >= quick_note_menu["boundaryTop"] - 1, quick_note_menu
+        assert quick_note_menu["bottom"] <= min(quick_note_menu["boundaryBottom"], quick_note_menu["footerTop"]) + 1, quick_note_menu
+        project_input.press("ArrowDown")
+        project_input.press("Enter")
+        expect(project_input).to_have_value("优质精选")
+        project_input.fill("新建导演项目")
+        expect(project_input).to_have_value("新建导演项目")
+        project_input.fill("优")
+        expect(project_input).to_have_attribute("aria-expanded", "true")
+        project_input.press("Escape")
+        expect(project_input).to_have_attribute("aria-expanded", "false")
+        dialog.get_by_role("button", name="取消", exact=True).click()
+
+        library.locator("#add-menu > summary").click()
+        library.locator("#add-video-reference").click()
+        video_dialog = library.locator("#promptdirector-app-dialog")
+        video_project = video_dialog.locator("#promptdirector-app-dialog-projectName")
+        video_project.click()
+        video_menu = video_dialog.locator(".project-combobox-listbox").evaluate(
+            """node => {
+              const menu = node.getBoundingClientRect();
+              const boundary = node.closest('.app-dialog-body').getBoundingClientRect();
+              const footer = node.closest('form').querySelector('footer').getBoundingClientRect();
+              return {top: menu.top, bottom: menu.bottom, boundaryTop: boundary.top, boundaryBottom: boundary.bottom, footerTop: footer.top};
+            }"""
+        )
+        assert video_menu["top"] >= video_menu["boundaryTop"] - 1, video_menu
+        assert video_menu["bottom"] <= min(video_menu["boundaryBottom"], video_menu["footerTop"]) + 1, video_menu
+        video_dialog.get_by_role("button", name="取消", exact=True).click()
+        library.set_viewport_size({"width": 1440, "height": 900})
+
         first_page.evaluate(
             """async () => {
               await chrome.storage.local.set({uiPreferences: {locale: 'system', theme: 'light', motion: 'none'}});
@@ -133,6 +197,7 @@ def main() -> None:
             "pages": page_metrics,
             "icon": icon_metrics,
             "wall": wall_metrics,
+            "project_combobox": menu_style,
             "migrated": migrated,
         })
 

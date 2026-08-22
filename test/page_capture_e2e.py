@@ -81,7 +81,15 @@ def main() -> None:
 
         run.context.route(f"{FIXTURE_ORIGIN}/**", route_fixture)
         collector = run.open_page("collector.html", wait_until="networkidle")
-        run.seed_storage(collector, {"schemaVersion": 24, "entries": []})
+        run.seed_storage(collector, {
+            "schemaVersion": 24,
+            "entries": [],
+            "capturePermissionOnboarding": {
+                "version": 1,
+                "acknowledgedAt": "2026-08-22T00:00:00.000Z",
+                "clipboardIncluded": True,
+            },
+        })
         fixture = run.context.new_page()
         fixture.goto(fixture_url, wait_until="networkidle")
         fixture.bring_to_front()

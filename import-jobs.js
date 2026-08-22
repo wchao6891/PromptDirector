@@ -13,17 +13,22 @@ export function normalizeImportJobsState(value = {}, options = {}) {
 export function normalizeImportJob(value, { recoverRunning = false } = {}) {
   const id = clean(value?.id);
   if (!id) return null;
+  const createdAt = clean(value?.createdAt);
+  const importBatchId = clean(value?.importBatchId) || id;
+  const libraryAddedAt = clean(value?.libraryAddedAt) || createdAt;
   const items = (Array.isArray(value?.items) ? value.items : [])
-    .map((item) => normalizeImportItem(item, { recoverRunning }))
+    .map((item) => normalizeImportItem(item, { importBatchId, libraryAddedAt }))
     .filter(Boolean);
   let status = JOB_STATUSES.has(value?.status) ? value.status : "queued";
   if (recoverRunning && status === "running") status = "queued";
   return {
     id,
+    importBatchId,
     status,
     collectionId: clean(value?.collectionId),
-    createdAt: clean(value?.createdAt),
+    createdAt,
     updatedAt: clean(value?.updatedAt),
+    ...(libraryAddedAt ? { libraryAddedAt } : {}),
     ...(clean(value?.retryOf) ? { retryOf: clean(value.retryOf) } : {}),
     ...(clean(value?.undoneAt) ? { undoneAt: clean(value.undoneAt) } : {}),
     ...(clean(value?.analysisQueuedAt) ? { analysisQueuedAt: clean(value.analysisQueuedAt) } : {}),
@@ -55,7 +60,8 @@ export function createImportJob(stateValue, request = {}, options = {}) {
     ? request.items.map((item) => ({
         stagedAssetId: clean(item?.stagedAssetId),
         duplicateAssetId: clean(item?.duplicateAssetId),
-        keepDuplicate: item?.keepDuplicate === true
+        keepDuplicate: item?.keepDuplicate === true,
+        libraryAddedAt: clean(item?.libraryAddedAt)
       })).filter((item) => item.stagedAssetId)
     : uniqueStrings(request.stagedAssetIds).map((stagedAssetId) => ({ stagedAssetId }));
   const importItems = [...new Map(requestedItems.map((item) => [item.stagedAssetId, item])).values()];
@@ -64,8 +70,13 @@ export function createImportJob(stateValue, request = {}, options = {}) {
   const makeItemId = typeof options.itemId === "function"
     ? options.itemId
     : () => `import-item:${crypto.randomUUID()}`;
+  const jobId = clean(options.id) || `import-job:${crypto.randomUUID()}`;
+  const importBatchId = clean(request.importBatchId) || jobId;
+  const libraryAddedAt = clean(request.libraryAddedAt) || now;
   const job = normalizeImportJob({
-    id: clean(options.id) || `import-job:${crypto.randomUUID()}`,
+    id: jobId,
+    importBatchId,
+    libraryAddedAt,
     collectionId: request.collectionId,
     status: importItems.some((item) => !item.duplicateAssetId || item.keepDuplicate) ? "queued" : "completed",
     createdAt: now,
@@ -75,6 +86,8 @@ export function createImportJob(stateValue, request = {}, options = {}) {
     items: importItems.map((item) => ({
       id: makeItemId(item.stagedAssetId),
       stagedAssetId: item.stagedAssetId,
+      importBatchId,
+      libraryAddedAt: item.libraryAddedAt || libraryAddedAt,
       status: item.duplicateAssetId && !item.keepDuplicate ? "skipped" : "queued",
       ...(item.duplicateAssetId && !item.keepDuplicate ? { skipReason: "duplicate" } : {})
     }))
@@ -163,6 +176,8 @@ export function retryImportJob(stateValue, jobId, options = {}) {
     : () => `import-item:${crypto.randomUUID()}`;
   const job = normalizeImportJob({
     id: clean(options.id) || `import-job:${crypto.randomUUID()}`,
+    importBatchId: source.importBatchId,
+    libraryAddedAt: source.libraryAddedAt,
     retryOf: source.id,
     collectionId: source.collectionId,
     status: "queued",
@@ -171,6 +186,8 @@ export function retryImportJob(stateValue, jobId, options = {}) {
     items: failed.map((item) => ({
       id: makeItemId(item.stagedAssetId),
       stagedAssetId: item.stagedAssetId,
+      importBatchId: item.importBatchId,
+      libraryAddedAt: item.libraryAddedAt,
       status: "queued"
     })),
     options: source.options
@@ -178,7 +195,7 @@ export function retryImportJob(stateValue, jobId, options = {}) {
   return { state: { ...state, items: [...state.items, job] }, job };
 }
 
-function normalizeImportItem(value, { recoverRunning = false } = {}) {
+function normalizeImportItem(value, defaults = {}) {
   const id = clean(value?.id);
   const stagedAssetId = clean(value?.stagedAssetId);
   if (!id || !stagedAssetId) return null;
@@ -186,6 +203,10 @@ function normalizeImportItem(value, { recoverRunning = false } = {}) {
   return {
     id,
     stagedAssetId,
+    importBatchId: clean(value?.importBatchId) || clean(defaults.importBatchId),
+    ...(clean(value?.libraryAddedAt) || clean(defaults.libraryAddedAt)
+      ? { libraryAddedAt: clean(value?.libraryAddedAt) || clean(defaults.libraryAddedAt) }
+      : {}),
     status,
     ...(clean(value?.entryId) ? { entryId: clean(value.entryId) } : {}),
     ...(clean(value?.skipReason) ? { skipReason: clean(value.skipReason) } : {}),
@@ -216,5 +237,10 @@ function uniqueStrings(value) {
 function normalizeOptions(value) {
   if (!value || typeof value !== "object") return {};
   const duplicateAction = value.duplicateAction === "skip" ? "skip" : "import";
-  return { duplicateAction, autoAnalyze: value.autoAnalyze === true };
+  const customLabels = uniqueStrings(value.customLabels);
+  return {
+    duplicateAction,
+    autoAnalyze: value.autoAnalyze === true,
+    ...(customLabels.length ? { customLabels } : {})
+  };
 }

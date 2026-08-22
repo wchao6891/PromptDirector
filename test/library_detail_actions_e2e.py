@@ -32,32 +32,88 @@ def main() -> None:
         "reviewStatus": "verified",
     }]
     entry["primaryMediaId"] = "detail-actions-image"
+    no_source_entry = base_entry(
+        "detail-no-source",
+        "无来源详情验收案例",
+        "用于确认没有来源信息时仍能删除案例。",
+        "content:prompt:text",
+        7,
+    )
+    no_source_entry["url"] = ""
+    no_source_entry["metadataLabels"] = []
+    projects = [{
+        "id": f"collection:detail-{index}",
+        "name": f"详情项目 {index:02d} " + ("完整项目名称需要换行显示" if index == 20 else ""),
+        "order": index,
+        "entryIds": [entry["id"]],
+        "visibility": "library",
+    } for index in range(21)]
     screenshots = Path(tempfile.gettempdir())
 
     with extension_session("prompt-director-detail-actions-", viewport={"width": 1440, "height": 900}) as session:
         setup = session.open_page("collector.html")
         setup.evaluate(
-            """async ({entry, png}) => {
+            """async ({entry, noSourceEntry, projects, png}) => {
               const {saveMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
               const bytes = Uint8Array.from(atob(png), value => value.charCodeAt(0));
               await chrome.storage.local.clear();
               await chrome.storage.local.set({
                 schemaVersion: 25,
-                entries: [entry],
+                entries: [entry, noSourceEntry],
+                organizerState: {version: 5, collections: projects},
                 uiPreferences: {locale: 'zh-CN', theme: 'dark', motion: 'reduced'}
               });
               await saveMediaBlob(entry.primaryMediaId, new Blob([bytes], {type: 'image/png'}), {checkCapacity: false});
             }""",
-            {"entry": entry, "png": PNG_BASE64},
+            {"entry": entry, "noSourceEntry": no_source_entry, "projects": projects, "png": PNG_BASE64},
         )
 
         library = session.open_page("library.html", wait_until="networkidle")
-        library.locator(".case-card").click()
+        library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
         expect(library.locator(".detail-header-section .entry-editor-inline > summary")).to_be_visible()
         expect(library.locator(".prompt-section-heading", has_text="提示词")).to_be_visible()
         expect(library.locator(".detail-core-actions > button")).to_have_count(2)
         expect(library.get_by_role("button", name="复制提示词")).to_be_enabled()
         expect(library.get_by_role("button", name="以此创作")).to_be_enabled()
+        expect(library.get_by_role("button", name="编辑共享提示词", exact=True)).to_have_count(0)
+        project_menu = library.locator(".detail-project-menu")
+        expect(project_menu.locator(":scope > summary")).to_have_text("已加入 21 个项目")
+        closed_height = project_menu.locator(":scope > summary").evaluate("node => node.getBoundingClientRect().height")
+        assert closed_height <= 40, closed_height
+        project_menu.locator(":scope > summary").click()
+        expect(project_menu.locator(".detail-project-option")).to_have_count(21)
+        checkbox_widths = project_menu.locator('.detail-project-option input[type="checkbox"]').evaluate_all(
+            "nodes => nodes.map(node => node.getBoundingClientRect().width)"
+        )
+        assert checkbox_widths and max(checkbox_widths) <= 18, checkbox_widths
+        long_project = project_menu.locator(".detail-project-option").nth(20)
+        expect(long_project).to_contain_text("完整项目名称需要换行显示")
+        long_project.locator("input").click()
+        expect(project_menu.locator(":scope > summary")).to_have_text("已加入 20 个项目")
+        project_menu.locator('input[aria-label="新项目名称"]').fill("详情新建项目")
+        project_menu.get_by_role("button", name="新建并加入", exact=True).click()
+        expect(library.locator(".detail-project-menu > summary")).to_have_text("已加入 21 个项目")
+        expect(library.locator(".detail-quick-organization")).not_to_contain_text("快捷整理")
+        detail_order = library.evaluate(
+            """() => {
+              const prompt = document.querySelector('.prompt-section');
+              const organizer = document.querySelector('.detail-quick-organization');
+              return Boolean(prompt && organizer && (prompt.compareDocumentPosition(organizer) & Node.DOCUMENT_POSITION_FOLLOWING));
+            }"""
+        )
+        assert detail_order is True
+        tag_input = library.locator(".detail-quick-organization .tag-editor input")
+        tag_input.fill("客户喜欢，待复刻")
+        library.locator(".detail-quick-organization .tag-editor").get_by_role("button", name="添加", exact=True).click()
+        expect(library.locator(".detail-quick-organization .tag-editor-chip")).to_have_count(2)
+        expect(library.locator(".detail-quick-organization .tag-editor-chip")).to_contain_text(["客户喜欢", "待复刻"])
+        expect(library.locator(".detail-quick-organization")).not_to_contain_text("可选")
+        expect(library.locator(".detail-quick-organization")).not_to_contain_text("不用预先创建")
+        expect(library.locator(".detail-quick-organization")).not_to_contain_text("任意输入")
+        expect(library.locator(".detail-quick-organization .detail-delete-action")).to_have_count(0)
+        expect(library.locator(".metadata-section .detail-delete-action")).to_contain_text("移入回收站")
+        expect(library.locator(".metadata-actions > *")).to_have_count(2)
+        expect(library.locator(".detail-content > .detail-footer-actions")).to_have_count(0)
 
         core_geometry = library.locator(".detail-core-actions > button").evaluate_all(
             "buttons => buttons.map(button => ({width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height}))"
@@ -75,6 +131,13 @@ def main() -> None:
         assert edit_geometry["delta"] < 8, edit_geometry
         library.locator(".entry-editor-inline > summary").click()
         expect(library.locator(".entry-editor-inline .entry-editor-body")).to_be_visible()
+        expect(library.locator(".entry-editor-inline h4", has_text="案例标题")).to_have_count(1)
+        expect(library.locator(".entry-editor-inline .entry-edit-row")).to_be_visible()
+        expect(library.locator(".entry-editor-inline .entry-edit-row").get_by_role("button", name="保存", exact=True)).to_be_visible()
+        title_row = library.locator(".entry-editor-inline .entry-edit-row").evaluate(
+            """node => ({display: getComputedStyle(node).display, columns: node.children.length})"""
+        )
+        assert title_row == {"display": "grid", "columns": 2}, title_row
         library.locator(".entry-editor-inline > summary").click()
 
         library.get_by_role("button", name="编辑", exact=True).click()
@@ -91,9 +154,16 @@ def main() -> None:
         expect(source).to_have_attribute("href", entry["url"])
         expect(source).to_have_attribute("target", "_blank")
         expect(source).to_have_attribute("rel", "noopener noreferrer")
+        expect(library.locator(".metadata-actions .detail-delete-action")).to_be_visible()
         library.screenshot(path=str(screenshots / "promptdirector-step3-detail-desktop.png"), full_page=True)
 
         library.set_viewport_size({"width": 390, "height": 844})
+        mobile_project_menu = library.locator(".detail-project-menu")
+        mobile_project_popover = library.locator(".detail-project-popover")
+        if mobile_project_menu.get_attribute("open") is None:
+            mobile_project_menu.locator(":scope > summary").click()
+        expect(mobile_project_menu).to_have_attribute("open", "")
+        expect(mobile_project_popover).to_be_visible()
         library.locator(".prompt-section").scroll_into_view_if_needed()
         mobile = library.evaluate(
             """() => {
@@ -112,6 +182,12 @@ def main() -> None:
         expect(library.get_by_role("button", name="复制提示词")).to_be_visible()
         expect(library.get_by_role("button", name="以此创作")).to_be_visible()
         library.screenshot(path=str(screenshots / "promptdirector-step3-detail-mobile.png"), full_page=True)
+
+        library.locator("#detail-close").click()
+        library.locator(f'.case-card[data-entry-id="{no_source_entry["id"]}"]').click()
+        expect(library.locator(".metadata-section")).to_have_count(0)
+        expect(library.locator(".detail-body > .detail-footer-actions .detail-delete-action")).to_contain_text("移入回收站")
+        expect(library.locator(".detail-body > .detail-footer-actions")).to_be_visible()
 
         print({
             "core_actions": core_geometry,

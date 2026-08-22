@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from playwright.sync_api import expect
 
 from e2e_support import base_entry, extension_session
@@ -70,6 +73,8 @@ def main() -> None:
         expect(library.locator(".case-card")).to_have_count(1)
         library.locator(".case-card").click()
         expect(library.locator(".detail-visual-thumb")).to_have_count(15)
+        expect(library.get_by_role("button", name="编辑当前图片", exact=True)).to_be_visible()
+        expect(library.get_by_role("button", name="编辑共享提示词", exact=True)).to_be_visible()
         stable_before = library.evaluate(
             """() => {
               const gallery = document.querySelector('.detail-visual-gallery');
@@ -115,12 +120,12 @@ def main() -> None:
         library.locator(".detail-visual-thumb").nth(14).click()
 
         assert_action_is_reachable(library, "设为主要媒体")
-        assert_action_is_reachable(library, "删除此媒体")
+        assert_action_is_reachable(library, "此媒体移入回收站")
 
         library.set_viewport_size({"width": 390, "height": 844})
         expect(library.locator(".detail-visual-caption")).to_be_visible()
         assert_action_is_reachable(library, "设为主要媒体")
-        assert_action_is_reachable(library, "删除此媒体")
+        assert_action_is_reachable(library, "此媒体移入回收站")
 
         library.get_by_role("button", name="设为主要媒体").click()
         expect(library.locator(".detail-visual-caption")).to_contain_text("主要媒体")
@@ -128,10 +133,10 @@ def main() -> None:
         assert state["entries"][0]["primaryMediaId"] == "multi-image-15"
         expect(library.locator(".case-card img[data-visual-id]")).to_have_attribute("data-visual-id", "multi-image-15")
 
-        library.get_by_role("button", name="删除此媒体").click()
+        library.get_by_role("button", name="此媒体移入回收站").click()
         delete_dialog = library.locator("#promptdirector-app-dialog")
         expect(delete_dialog).to_be_visible()
-        delete_dialog.get_by_role("button", name="删除媒体", exact=True).click()
+        delete_dialog.get_by_role("button", name="媒体移入回收站", exact=True).click()
         expect(library.locator(".detail-visual-thumb")).to_have_count(14)
         expect(library.locator("#detail-content")).to_contain_text("切换主图后保留的案例文字。")
         state = library.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
@@ -139,11 +144,43 @@ def main() -> None:
         assert state["entries"][0]["primaryMediaId"] == "multi-image-1"
         expect(library.locator(".case-card img[data-visual-id]")).to_have_attribute("data-visual-id", "multi-image-1")
 
+        library.locator(".detail-visual-thumb").nth(13).click()
+        library.get_by_role("button", name="此媒体移入回收站").click()
+        expect(delete_dialog).to_be_visible()
+        delete_dialog.get_by_role("button", name="媒体移入回收站", exact=True).click()
+        expect(library.locator(".detail-visual-thumb")).to_have_count(13)
+
+        library.locator("#detail-close").click()
+        library.locator("#toggle-filters").click()
+        expect(library.locator(".workspace")).to_have_class("workspace")
+        library.locator("#open-trash").click()
+        expect(library.locator("#trash-dialog")).to_be_visible()
+        expect(library.locator(".trash-item")).to_have_count(2)
+        expect(library.locator(".trash-item-cover img")).to_have_count(2)
+        expect(library.locator(".trash-item-copy strong")).to_have_text(["多图案例", "多图案例"])
+        restore = library.locator(".trash-item button[aria-label^='恢复：']").first
+        remove = library.locator(".trash-item button[aria-label^='永久删除：']").first
+        expect(restore).to_have_attribute("title", "恢复")
+        expect(remove).to_have_attribute("title", "永久删除")
+        assert restore.evaluate("node => node.getBoundingClientRect().height") >= 44
+        trash_screenshot = Path(tempfile.gettempdir()) / "promptdirector-trash-mobile.png"
+        library.screenshot(path=str(trash_screenshot), full_page=True)
+        restore.focus()
+        restore.press("Enter")
+        expect(library.locator(".trash-item")).to_have_count(1)
+        expect(library.get_by_role("button", name="全部恢复", exact=True)).to_be_enabled()
+        library.get_by_role("button", name="全部恢复", exact=True).click()
+        expect(library.locator(".trash-empty-title")).to_have_text("回收站为空")
+        expect(library.get_by_role("button", name="全部恢复", exact=True)).to_be_disabled()
+        expect(library.locator("#trash-dialog")).not_to_contain_text("RECYCLE BIN")
+
         print({
             "desktop_actions_reachable": True,
             "mobile_actions_reachable": True,
             "primary_media_updated": True,
             "delete_preserved_case": True,
+            "trash_cover_and_keyboard_restore": True,
+            "trash_screenshot": str(trash_screenshot),
             "rapid_selection_last_wins": "12/15",
             "visual_anchor_shift_px": 1,
         })

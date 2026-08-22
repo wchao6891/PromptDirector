@@ -93,6 +93,9 @@ function normalizeLibraryReturnSnapshot(value) {
   const pendingOnly = typeof value?.pendingOnly === "boolean" ? value.pendingOnly : null;
   const query = typeof value?.query === "string" ? value.query : null;
   const scrollY = Number.isFinite(value?.scrollY) ? Math.max(0, Math.round(value.scrollY)) : null;
+  const sortMode = ["added-desc", "updated-desc", "title", "project-manual"].includes(value?.sortMode)
+    ? value.sortMode
+    : "added-desc";
   if (collectionId === null || contentId === null || facetNodeIds === null || pendingOnly === null || query === null || scrollY === null) return null;
-  return { collectionId, contentId, facetNodeIds, pendingOnly, query, scrollY };
+  return { collectionId, contentId, facetNodeIds, pendingOnly, query, scrollY, sortMode };
 }

@@ -163,7 +163,7 @@ test("screenshot-only cases can have no prompt text and export as image referenc
   }]);
   assert.equal(entry.text, "");
   assert.match(markdown, /- 内容类型：图片案例/);
-  assert.match(markdown, /仅包含截图和创作属性/);
+  assert.match(markdown, /仅包含截图和 AI 标签/);
   assert.doesNotMatch(markdown, /### 原始提示词/);
 });
 
@@ -189,7 +189,7 @@ test("library JSON is machine-readable and references screenshots without base64
   const parsed = JSON.parse(json);
 
   assert.equal(parsed.format, "prompt-case-library");
-  assert.equal(parsed.version, 3);
+  assert.equal(parsed.version, 4);
   assert.equal(parsed.schemaVersion, SCHEMA_VERSION);
   assert.equal(parsed.entries[0].visuals[0].screenshotPath, "images/case-1/visual-1.webp");
   assert.equal(json.includes("base64,"), false);

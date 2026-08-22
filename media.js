@@ -1,36 +1,51 @@
 import { normalizeArticleDocument, removeArticleDocumentAsset } from "./article-document.js";
+import { LOCAL_ASSET_REFERENCE_RECORD_TYPE } from "./local-media.js";
+import { ASSET_IMPORT_FAILURE_CODES } from "./resource-limits.js";
+import {
+  SUPPORTED_ASSET_KINDS,
+  assetFormatForExtension,
+  assetFormatForFile,
+  assetKindFromFileMetadata,
+  fileExtension,
+  isReportedMimeCompatible
+} from "./asset-formats.js";
 
-const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"]);
-const VIDEO_MIME_TYPES = new Set([
-  "video/mp4", "video/webm", "video/quicktime", "video/x-matroska", "video/x-msvideo"
-]);
-const DOCUMENT_MIME_TYPES = new Set(["application/pdf", "text/html", "text/markdown", "text/plain", "application/rtf", "text/rtf", "application/x-rtf"]);
-const MEDIA_KINDS = new Set(["image", "video", "document"]);
+const MEDIA_KINDS = new Set(SUPPORTED_ASSET_KINDS);
 const STORAGE_MODES = new Set(["managed", "reference"]);
 const MEDIA_USAGES = new Set(["content", "poster"]);
 const PLAYBACK_MODES = new Set(["local", "embed", "source"]);
 const OFFICIAL_EMBED_PROVIDERS = new Set(["youtube", "vimeo", "bilibili", "douyin", "x"]);
 const PLAYBACK_CAPABILITIES = new Set(["native", "external", "unknown"]);
+const LOCAL_ASSET_LINK_STATUSES = new Set(["relink-required", "linked", "missing", "needs-permission", "changed"]);
+const GENERIC_ATTACHMENT_MIME_TYPES = new Set(["application/octet-stream", "application/x-unknown"]);
 
-export const SUPPORTED_MEDIA_KINDS = Object.freeze([...MEDIA_KINDS]);
+export const SUPPORTED_MEDIA_KINDS = SUPPORTED_ASSET_KINDS;
 
 export function normalizeMediaAsset(value = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const id = clean(value.id);
   if (!id) return null;
   const mimeType = clean(value.mimeType).toLocaleLowerCase("en-US");
-  const kind = inferKind(value.kind, mimeType);
+  const sourceTitle = clean(value.sourceTitle);
+  const requestedSourceFormat = clean(value.sourceFormat).toLocaleLowerCase("en-US").replace(/^\./u, "");
+  const format = assetFormatForExtension(requestedSourceFormat) ?? assetFormatForFile({ name: sourceTitle, type: mimeType });
+  const kind = inferKind(value.kind, mimeType, format);
   if (!kind) return null;
+  const localAssetReference = normalizeLocalAssetReference(value, kind);
+  const genericManagedAttachment = normalizeGenericManagedAttachment(value, { kind, format, mimeType, requestedSourceFormat });
+  if (kind === "attachment" && !localAssetReference && !genericManagedAttachment &&
+      (format?.kind !== "attachment" || !isReportedMimeCompatible(format, mimeType))) return null;
   const sourceUrl = safeHttpUrl(value.sourceUrl);
   const reference = normalizeReference(value.reference, sourceUrl);
-  const storageMode = kind === "video"
+  const storageMode = kind === "video" || kind === "audio" || kind === "attachment"
     ? STORAGE_MODES.has(value.storageMode)
       ? value.storageMode
-      : reference.url && !value.assetPath && !value.screenshotPath
+      : kind === "video" && reference.url && !value.assetPath && !value.screenshotPath
         ? "reference"
         : "managed"
     : "managed";
   const assetPath = safeAssetPath(value.assetPath || value.screenshotPath);
+  const relativePath = safeAssetPath(value.relativePath);
   const width = positiveInteger(value.width);
   const height = positiveInteger(value.height);
   const durationMs = positiveInteger(value.durationMs);
@@ -43,29 +58,82 @@ export function normalizeMediaAsset(value = {}) {
     usage,
     storageMode,
     sourceUrl,
-    sourceTitle: clean(value.sourceTitle),
+    sourceTitle,
     sourceAuthor: clean(value.sourceAuthor),
     originalWorkUrl: safeHttpUrl(value.originalWorkUrl),
     capturedAt,
-    ...(mimeTypeForKind(kind, mimeType) ? { mimeType } : {}),
+    ...(mimeTypeForKind(kind, mimeType, format) || localAssetReference || genericManagedAttachment
+      ? { mimeType: mimeType || "application/octet-stream" }
+      : {}),
+    ...(format?.kind === kind
+      ? { sourceFormat: requestedSourceFormat || fileExtension(sourceTitle), formatCategory: format.category }
+      : localAssetReference ? {
+          sourceFormat: requestedSourceFormat || fileExtension(sourceTitle),
+          formatCategory: ["local-link", "other-source"].includes(value.formatCategory) ? value.formatCategory : "local-link"
+        } : genericManagedAttachment ? {
+          sourceFormat: genericManagedAttachment.sourceFormat,
+          formatCategory: "other-source"
+        } : {}),
     ...(width ? { width } : {}),
     ...(height ? { height } : {}),
     ...(durationMs ? { durationMs } : {}),
     ...(byteSize ? { byteSize } : {}),
+    ...(localAssetReference?.sourceLastModified !== undefined
+      ? { sourceLastModified: localAssetReference.sourceLastModified }
+      : {}),
     ...(/^[a-f0-9]{64}$/iu.test(clean(value.contentHash)) ? { contentHash: clean(value.contentHash).toLocaleLowerCase("en-US") } : {}),
     ...(["source", "css-background", "pixel-fallback"].includes(value.captureMethod) ? { captureMethod: value.captureMethod } : {}),
     playbackCapability: PLAYBACK_CAPABILITIES.has(value.playbackCapability)
       ? value.playbackCapability
       : storageMode === "reference" ? "external" : "unknown",
     ...(assetPath ? { assetPath } : {}),
+    ...(relativePath ? { relativePath } : {}),
     ...(clean(value.posterAssetId) ? { posterAssetId: clean(value.posterAssetId) } : {}),
-    ...(kind === "document" ? { extractedTextFormat: normalizeExtractedTextFormat(value.extractedTextFormat, mimeType) } : {}),
+    ...(kind === "document" ? { extractedTextFormat: normalizeExtractedTextFormat(value.extractedTextFormat, format) } : {}),
     ...(usage === "poster" && clean(value.derivedFromAssetId) ? { derivedFromAssetId: clean(value.derivedFromAssetId) } : {}),
     ...(kind === "video" && storageMode === "reference" && reference.url ? { reference } : {}),
+    ...(localAssetReference ?? {}),
     ...(value.palette?.colors?.length ? { palette: structuredClone(value.palette) } : {}),
     ...(value.visionAnalysis?.description?.trim() ? { visionAnalysis: structuredClone(value.visionAnalysis) } : {}),
     reviewStatus: value.reviewStatus === "verified" ? "verified" : "unverified"
   };
+}
+
+export function updateLocalAssetReferenceMetadata(entryValue, assetIdValue, metadata = {}) {
+  const entry = normalizeEntryMedia(entryValue);
+  const assetId = clean(assetIdValue);
+  const index = entry.mediaAssets.findIndex((asset) => asset.id === assetId);
+  if (index < 0) throw new Error("没有找到这个本机源文件链接");
+  const current = entry.mediaAssets[index];
+  if (current.kind !== "attachment" || current.recordType !== LOCAL_ASSET_REFERENCE_RECORD_TYPE) {
+    throw new Error("只有本机源文件链接可以更新链接状态");
+  }
+  const sourceTitle = clean(metadata.sourceTitle).replaceAll("\\", "/").split("/").at(-1) || "";
+  const byteSize = positiveInteger(metadata.byteSize);
+  const sourceLastModified = nonNegativeIntegerOrNull(metadata.sourceLastModified);
+  if (!sourceTitle || !byteSize || sourceLastModified === null) throw new Error("本机源文件核验信息不完整");
+  let relativePath = current.relativePath;
+  if (metadata.relativePath !== undefined) {
+    relativePath = safeAssetPath(metadata.relativePath);
+    if (!relativePath) throw new Error("本机源文件必须使用安全相对路径");
+  }
+  const sourceFormat = clean(metadata.sourceFormat).toLocaleLowerCase("en-US").replace(/^\./u, "") || fileExtension(sourceTitle);
+  const mimeType = clean(metadata.mimeType).toLocaleLowerCase("en-US") || current.mimeType || "application/octet-stream";
+  const asset = normalizeMediaAsset({
+    ...current,
+    storageMode: "reference",
+    sourceTitle,
+    relativePath,
+    sourceFormat,
+    mimeType,
+    byteSize,
+    sourceLastModified,
+    linkStatus: "linked",
+    reviewStatus: "unverified"
+  });
+  if (!asset) throw new Error("本机源文件链接元数据无效");
+  entry.mediaAssets[index] = asset;
+  return { entry, asset };
 }
 
 export function normalizeEntryMedia(entryValue = {}) {
@@ -268,12 +336,7 @@ export function mediaDescriptions(entryValue = {}) {
 }
 
 export function mediaKindFromFile(file) {
-  const mimeType = clean(file?.type).toLocaleLowerCase("en-US");
-  const name = clean(file?.name).toLocaleLowerCase("en-US");
-  if (mimeType.startsWith("image/") || /\.(?:avif|gif|png|jpe?g|webp)$/.test(name)) return "image";
-  if (mimeType.startsWith("video/") || /\.(?:mp4|webm|mov|mkv|avi)$/.test(name)) return "video";
-  if (DOCUMENT_MIME_TYPES.has(mimeType) || /\.(?:pdf|md|markdown|txt|html?|rtf)$/.test(name)) return "document";
-  return "";
+  return assetKindFromFileMetadata(file);
 }
 
 function normalizeTimeNotes(values, assetIds) {
@@ -361,9 +424,9 @@ function uniqueMediaAssets(values) {
   });
 }
 
-function normalizeExtractedTextFormat(value, mimeType) {
+function normalizeExtractedTextFormat(value, format) {
   if (value === "markdown" || value === "plain") return value;
-  return mimeType === "text/markdown" || mimeType === "text/html" || ["application/rtf", "text/rtf", "application/x-rtf"].includes(mimeType)
+  return ["markdown", "html", "rtf"].includes(format?.id)
     ? "markdown"
     : "plain";
 }
@@ -381,23 +444,50 @@ function normalizeReference(value, fallbackUrl) {
   return { url, provider, playbackMode, metadataStatus, ...(author ? { author } : {}) };
 }
 
+function normalizeLocalAssetReference(value, kind) {
+  if (kind !== "attachment" || value?.storageMode !== "reference" || value?.recordType !== LOCAL_ASSET_REFERENCE_RECORD_TYPE) return null;
+  const linkStatus = LOCAL_ASSET_LINK_STATUSES.has(value?.linkStatus) ? value.linkStatus : "";
+  const message = clean(value?.importFailure?.message);
+  if (!linkStatus || value?.importFailure?.code !== ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT || !message) return null;
+  const sourceLastModified = nonNegativeIntegerOrNull(value.sourceLastModified);
+  return {
+    recordType: LOCAL_ASSET_REFERENCE_RECORD_TYPE,
+    linkStatus,
+    importFailure: {
+      code: ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT,
+      message,
+      forceAllowed: false
+    },
+    ...(sourceLastModified !== null ? { sourceLastModified } : {})
+  };
+}
+
+function normalizeGenericManagedAttachment(value, context) {
+  if (context.kind !== "attachment" || value?.storageMode !== "managed" || value?.formatCategory !== "other-source") return null;
+  if (context.format || !GENERIC_ATTACHMENT_MIME_TYPES.has(context.mimeType)) return null;
+  if (!/^[a-z0-9]+$/u.test(context.requestedSourceFormat)) return null;
+  return { sourceFormat: context.requestedSourceFormat };
+}
+
 function providerForUrl(url) {
   return detectMediaReferenceProvider(url);
 }
 
-function inferKind(value, mimeType) {
+function inferKind(value, mimeType, format) {
   if (MEDIA_KINDS.has(value)) return value;
-  if (IMAGE_MIME_TYPES.has(mimeType) || mimeType.startsWith("image/")) return "image";
-  if (VIDEO_MIME_TYPES.has(mimeType) || mimeType.startsWith("video/")) return "video";
-  if (DOCUMENT_MIME_TYPES.has(mimeType)) return "document";
+  if (format) return format.kind;
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
   return value ? "" : "image";
 }
 
-function mimeTypeForKind(kind, mimeType) {
+function mimeTypeForKind(kind, mimeType, format) {
   if (!mimeType) return false;
   if (kind === "image") return mimeType.startsWith("image/");
   if (kind === "video") return mimeType.startsWith("video/");
-  return DOCUMENT_MIME_TYPES.has(mimeType);
+  if (kind === "audio") return mimeType.startsWith("audio/") || format?.kind === "audio";
+  return format?.kind === kind;
 }
 
 function safeAssetPath(value) {
@@ -422,6 +512,11 @@ function positiveInteger(value) {
 function nonNegativeInteger(value) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
+function nonNegativeIntegerOrNull(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : null;
 }
 
 function validIso(value) {

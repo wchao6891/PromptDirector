@@ -9,7 +9,8 @@ import {
   normalizeMediaAsset,
   posterAssetForVideo,
   removeEntryMedia,
-  setPrimaryMedia
+  setPrimaryMedia,
+  updateLocalAssetReferenceMetadata
 } from "../media.js";
 import { normalizeEntryVisuals, reorderEntryVisuals } from "../visuals.js";
 
@@ -167,6 +168,139 @@ test("file media kinds are derived from actual file metadata and supported exten
   assert.equal(mediaKindFromFile({ name: "notes.pdf", type: "" }), "document");
   assert.equal(mediaKindFromFile({ name: "frame.webp", type: "image/webp" }), "image");
   assert.equal(mediaKindFromFile({ name: "motion.gif", type: "image/gif" }), "image");
+  assert.equal(mediaKindFromFile({ name: "score.wav", type: "audio/wav" }), "audio");
+  assert.equal(mediaKindFromFile({ name: "captions.srt", type: "text/plain" }), "document");
+  assert.equal(mediaKindFromFile({ name: "layout.psd", type: "application/octet-stream" }), "attachment");
+  assert.equal(mediaKindFromFile({ name: "font.otf", type: "font/otf" }), "attachment");
   assert.equal(normalizeMediaAsset({ id: "gif", kind: "image", mimeType: "image/gif" }).mimeType, "image/gif");
   assert.equal(mediaKindFromFile({ name: "archive.bin", type: "application/octet-stream" }), "");
+});
+
+test("audio and inert attachment assets survive canonical normalization", () => {
+  const audio = normalizeMediaAsset({
+    id: "audio:score",
+    kind: "audio",
+    storageMode: "managed",
+    sourceTitle: "score.wav",
+    mimeType: "audio/wav",
+    durationMs: 3200
+  });
+  const attachment = normalizeMediaAsset({
+    id: "attachment:scene",
+    kind: "attachment",
+    storageMode: "reference",
+    sourceTitle: "scene.aep",
+    relativePath: "project/scene.aep",
+    mimeType: "application/x-after-effects"
+  });
+
+  assert.equal(audio.kind, "audio");
+  assert.equal(audio.formatCategory, "audio");
+  assert.equal(attachment.kind, "attachment");
+  assert.equal(attachment.storageMode, "reference");
+  assert.equal(attachment.sourceFormat, "aep");
+  assert.equal(attachment.formatCategory, "motion-project");
+  assert.equal(attachment.relativePath, "project/scene.aep");
+  assert.equal(normalizeMediaAsset({
+    id: "attachment:unsafe",
+    kind: "attachment",
+    sourceTitle: "payload.exe",
+    mimeType: "application/octet-stream"
+  }), null);
+});
+
+test("unknown local source references require record identity while packaged copies require a generic managed descriptor", () => {
+  const reference = {
+    id: "attachment:unknown",
+    kind: "attachment",
+    storageMode: "reference",
+    recordType: "local-asset-reference",
+    linkStatus: "linked",
+    sourceTitle: "custom.zzz",
+    relativePath: "sources/custom.zzz",
+    sourceFormat: "zzz",
+    formatCategory: "local-link",
+    mimeType: "application/x-custom",
+    byteSize: 20,
+    sourceLastModified: 1_776_500_123_000,
+    importFailure: {
+      code: "unsupported_format",
+      message: "暂不支持这种文件格式：custom.zzz",
+      forceAllowed: false
+    }
+  };
+  const normalized = normalizeMediaAsset(reference);
+  const packaged = normalizeMediaAsset({
+    id: "attachment:packaged",
+    kind: "attachment",
+    storageMode: "managed",
+    sourceTitle: "custom.zzz",
+    sourceFormat: "zzz",
+    formatCategory: "other-source",
+    mimeType: "application/octet-stream",
+    byteSize: 20,
+    assetPath: "attachments/case/custom.zzz"
+  });
+
+  assert.equal(normalized.recordType, "local-asset-reference");
+  assert.equal(normalized.linkStatus, "linked");
+  assert.equal(normalized.sourceLastModified, 1_776_500_123_000);
+  assert.equal(normalized.importFailure.code, "unsupported_format");
+  assert.equal(packaged.storageMode, "managed");
+  assert.equal(packaged.formatCategory, "other-source");
+  assert.equal(packaged.sourceFormat, "zzz");
+  assert.equal(packaged.recordType, undefined);
+  assert.equal(normalizeMediaAsset({ ...packaged, id: "attachment:reference", storageMode: "reference" }), null);
+  assert.equal(normalizeMediaAsset({ ...packaged, id: "attachment:wrong-category", formatCategory: "local-link" }), null);
+  assert.equal(normalizeMediaAsset({ ...packaged, id: "attachment:unsafe-format", sourceFormat: "../zzz" }), null);
+  assert.equal(normalizeMediaAsset({ ...packaged, id: "attachment:specific-mime", mimeType: "application/x-custom" }), null);
+  assert.equal(normalizeMediaAsset({
+    ...packaged,
+    id: "attachment:registered-mismatch",
+    sourceTitle: "layout.psd",
+    sourceFormat: "psd",
+    mimeType: "text/html"
+  }), null);
+});
+
+test("relinking an inert local source updates only verifiable file metadata", () => {
+  const original = normalizeEntryMedia({
+    id: "entry:source",
+    primaryMediaId: "attachment:unknown",
+    mediaAssets: [{
+      id: "attachment:unknown",
+      kind: "attachment",
+      storageMode: "reference",
+      recordType: "local-asset-reference",
+      linkStatus: "relink-required",
+      sourceTitle: "custom.zzz",
+      relativePath: "old/custom.zzz",
+      sourceFormat: "zzz",
+      mimeType: "application/x-custom",
+      byteSize: 20,
+      importFailure: {
+        code: "unsupported_format",
+        message: "暂不支持这种文件格式：custom.zzz",
+        forceAllowed: false
+      }
+    }]
+  });
+  const updated = updateLocalAssetReferenceMetadata(original, "attachment:unknown", {
+    sourceTitle: "custom-v2.zzz",
+    relativePath: "new/custom-v2.zzz",
+    sourceFormat: "zzz",
+    mimeType: "application/x-custom",
+    byteSize: 32,
+    sourceLastModified: 1_776_500_999_000
+  });
+
+  assert.equal(updated.asset.linkStatus, "linked");
+  assert.equal(updated.asset.sourceTitle, "custom-v2.zzz");
+  assert.equal(updated.asset.relativePath, "new/custom-v2.zzz");
+  assert.equal(updated.asset.byteSize, 32);
+  assert.equal(updated.asset.sourceLastModified, 1_776_500_999_000);
+  assert.equal(updated.entry.primaryMediaId, "attachment:unknown");
+  assert.throws(() => updateLocalAssetReferenceMetadata(original, "attachment:unknown", {
+    sourceTitle: "custom.zzz", relativePath: "../custom.zzz", byteSize: 20, sourceLastModified: 1
+  }), /安全相对路径/u);
 });

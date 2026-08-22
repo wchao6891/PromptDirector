@@ -109,6 +109,100 @@ test("temporary composer references keep encrypted media through private sync", 
   assert.deepEqual(merged.imageRefs["temp-reference-asset:one"], { objectId, contentType: "image/webp" });
 });
 
+test("trashed entries sync as trash records without becoming active entries", async () => {
+  const source = state();
+  source.trashState.items.push(trashItem({
+    id: "trash:entry:case:one",
+    kind: "entry",
+    targetId: "case:one",
+    snapshot: entry("case:one", "已删除案例")
+  }));
+
+  const snapshot = await createRevisionSnapshot(source, { deviceId: "device-a", logicalClock: 1 });
+  const merged = mergeRevisionSnapshots([snapshot]);
+
+  assert.equal(snapshot.version, 1);
+  assert.equal(merged.state.entries.length, 0);
+  assert.equal(merged.state.trashState.items.length, 1);
+  assert.equal(merged.state.trashState.items[0].snapshot.id, "case:one");
+  assert.equal(syncStateHasContent(merged.state), true);
+});
+
+test("managed assets inside entry and media trash snapshots keep their encrypted sync references", async () => {
+  const entryObjectId = "e".repeat(64);
+  const mediaObjectId = "f".repeat(64);
+  const source = state();
+  source.trashState.items.push(
+    trashItem({
+      id: "trash:entry:case:one",
+      kind: "entry",
+      targetId: "case:one",
+      snapshot: {
+        ...entry("case:one", "已删除案例"),
+        mediaAssets: [{ id: "asset:entry", kind: "image", storageMode: "managed", mimeType: "image/webp" }]
+      }
+    }),
+    trashItem({
+      id: "trash:media:case:two:asset:media",
+      kind: "media",
+      targetId: "asset:media",
+      snapshot: {
+        mediaAssets: [{ id: "asset:media", kind: "video", storageMode: "managed", mimeType: "video/mp4" }]
+      }
+    })
+  );
+  const attached = attachSyncImageReferences(source, {
+    "asset:entry": { objectId: entryObjectId, contentType: "image/webp" },
+    "asset:media": { objectId: mediaObjectId, contentType: "video/mp4" }
+  });
+
+  assert.equal(attached.trashState.items[0].snapshot.mediaAssets[0].syncObjectId, entryObjectId);
+  assert.equal(attached.trashState.items[1].snapshot.mediaAssets[0].syncObjectId, mediaObjectId);
+  assert.deepEqual(collectSyncImageReferences(attached), {
+    "asset:entry": { objectId: entryObjectId, contentType: "image/webp" },
+    "asset:media": { objectId: mediaObjectId, contentType: "video/mp4" }
+  });
+
+  const snapshot = await createRevisionSnapshot(attached, { deviceId: "device-a", logicalClock: 1 });
+  const merged = mergeRevisionSnapshots([snapshot]);
+  assert.equal(merged.state.entries.length, 0);
+  assert.equal(merged.state.trashState.items.length, 2);
+  assert.deepEqual(merged.imageRefs, {
+    "asset:entry": { objectId: entryObjectId, contentType: "image/webp" },
+    "asset:media": { objectId: mediaObjectId, contentType: "video/mp4" }
+  });
+});
+
+test("emptying trash wins over a concurrent trash edit without resurrecting the item", async () => {
+  const baseState = state();
+  baseState.trashState.items.push(trashItem({
+    id: "trash:entry:case:one",
+    kind: "entry",
+    targetId: "case:one",
+    snapshot: entry("case:one", "base")
+  }));
+  const base = await createRevisionSnapshot(baseState, { deviceId: "device-a", logicalClock: 1 });
+  const emptied = await createRevisionSnapshot(state(), {
+    deviceId: "device-a",
+    logicalClock: 2,
+    baseSnapshot: base
+  });
+  const editedState = structuredClone(baseState);
+  editedState.trashState.items[0].snapshot.title = "concurrent edit";
+  const edited = await createRevisionSnapshot(editedState, {
+    deviceId: "device-b",
+    logicalClock: 2,
+    baseSnapshot: base
+  });
+
+  const merged = mergeRevisionSnapshots([base, emptied, edited]);
+  assert.equal(merged.state.entries.length, 0);
+  assert.equal(merged.state.trashState.items.length, 0);
+  assert.deepEqual(merged.conflicts.map(({ entityType, reason }) => ({ entityType, reason })), [
+    { entityType: "trash_item", reason: "delete_edit" }
+  ]);
+});
+
 function state(entries = [], collections = [], compoundCases = []) {
   return {
     entries,
@@ -119,7 +213,19 @@ function state(entries = [], collections = [], compoundCases = []) {
     classificationRules: [],
     composerSessions: [],
     creativeRuns: [],
-    creativeSkills: { version: 1, items: [] }
+    creativeSkills: { version: 1, items: [] },
+    trashState: { version: 1, items: [] }
+  };
+}
+
+function trashItem({ id, kind, targetId, snapshot }) {
+  return {
+    id,
+    kind,
+    targetId,
+    deletedAt: "2026-08-22T00:00:00.000Z",
+    snapshot,
+    relationships: {}
   };
 }
 

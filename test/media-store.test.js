@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   assertStorageCapacity,
+  mediaStorageWriteError,
   normalizeDerivedMedia,
   normalizeDerivedMetadata,
   validateMediaBlob
@@ -11,11 +12,16 @@ import {
 
 const source = await readFile(new URL("../media-store.js", import.meta.url), "utf8");
 
-test("media storage accepts images videos and creative documents", () => {
+test("media storage accepts images videos audio documents and inert creator sources", () => {
   assert.doesNotThrow(() => validateMediaBlob(new Blob(["frame"], { type: "image/webp" })));
   assert.doesNotThrow(() => validateMediaBlob(new Blob(["clip"], { type: "video/mp4" })));
+  assert.doesNotThrow(() => validateMediaBlob(new Blob(["audio"], { type: "audio/flac" })));
   assert.doesNotThrow(() => validateMediaBlob(new Blob(["pdf"], { type: "application/pdf" })));
-  assert.throws(() => validateMediaBlob(new Blob(["binary"], { type: "application/octet-stream" })), /暂不支持/);
+  assert.doesNotThrow(() => validateMediaBlob(new Blob(["source"], { type: "application/x-after-effects" })));
+  assert.throws(() => validateMediaBlob(new Blob(["binary"], { type: "application/octet-stream" })), (error) => {
+    assert.equal(error.code, "unsupported_format");
+    return true;
+  });
 });
 
 test("derived document data remains a rebuildable cache with bounded metadata", () => {
@@ -62,5 +68,19 @@ test("undoing a media replacement invalidates the replacement thumbnail before r
 test("media import blocks only when the reported physical capacity is insufficient", () => {
   assert.doesNotThrow(() => assertStorageCapacity({}, 500));
   assert.doesNotThrow(() => assertStorageCapacity({ quota: 1000, usage: 200 }, 800));
-  assert.throws(() => assertStorageCapacity({ quota: 1000, usage: 201 }, 800), /可用空间不足/);
+  assert.throws(() => assertStorageCapacity({ quota: 1000, usage: 201 }, 800), (error) => {
+    assert.equal(error.code, "storage_insufficient");
+    assert.equal(error.details.requiredBytes, 800);
+    assert.equal(error.details.availableBytes, 799);
+    assert.match(error.message, /可用空间不足/);
+    return true;
+  });
+});
+
+test("unexpected IndexedDB write failures keep their cause and expose a stable reason code", () => {
+  const cause = new Error("transaction aborted");
+  const error = mediaStorageWriteError(cause);
+  assert.equal(error.code, "storage_write_failed");
+  assert.equal(error.cause, cause);
+  assert.match(error.message, /写入本机资料库失败.*transaction aborted/);
 });

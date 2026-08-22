@@ -46,6 +46,14 @@ test("detail panels and selected projects use the themed surface and product acc
   assert.match(css, /\.project-filter\[aria-pressed="true"\]\s*\{[^}]*color:\s*var\(--accent-ink\)[^}]*background:\s*var\(--accent-soft\)[^}]*var\(--accent\)/);
 });
 
+test("library refresh waits for detail rebuilding before returning control", () => {
+  const refreshLibrary = library.slice(
+    library.indexOf("async function refreshLibrary"),
+    library.indexOf("async function loadImageDerivedMetadata")
+  );
+  assert.match(refreshLibrary, /if \(currentDetailId[\s\S]*await renderDetail\(\)/);
+});
+
 test("composer keeps only primary controls exposed and moves secondary choices into one settings menu", () => {
   assert.match(composerHtml, /class="composer-options-panel"/);
   assert.match(composerHtml, /id="composer-applied-skills"[^>]*hidden/);

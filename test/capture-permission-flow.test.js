@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
+  CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY,
+  CAPTURE_PERMISSION_ONBOARDING_VERSION,
   CLIPBOARD_READ_PERMISSIONS,
   CONTINUOUS_CAPTURE_ORIGINS,
   ensureClipboardReadPermission,
@@ -10,9 +12,12 @@ import {
   readClipboardContentAfterFocus,
   ensureContinuousCapturePermission,
   ensurePagePermission,
+  inspectCapturePermissionBundle,
   inspectPagePermission,
+  normalizeCapturePermissionOnboarding,
   pageCapturePermissionFailureMessage,
   pagePermissionPattern,
+  requestCapturePermissionBundle,
   RESTRICTED_PAGE_MESSAGE,
   resolveActivePage
 } from "../capture-permissions.js";
@@ -149,6 +154,7 @@ test("denied screenshot permission stops before tab lookup and leaves the draft 
 test("continuous capture requests the declared all-sites permission from the user gesture", async () => {
   const requests = [];
   const granted = await ensureContinuousCapturePermission({
+    contains: async () => false,
     request: async (request) => {
       requests.push(request);
       return true;
@@ -157,6 +163,98 @@ test("continuous capture requests the declared all-sites permission from the use
 
   assert.equal(granted, true);
   assert.deepEqual(requests, [{ origins: [...CONTINUOUS_CAPTURE_ORIGINS] }]);
+});
+
+test("first-use capture onboarding requests web capture and the default clipboard choice together", async () => {
+  const requests = [];
+  const permissions = {
+    contains: async () => false,
+    request: async (request) => {
+      requests.push(request);
+      return true;
+    }
+  };
+
+  assert.equal(CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY, "capturePermissionOnboarding");
+  assert.deepEqual(normalizeCapturePermissionOnboarding(null), {
+    version: CAPTURE_PERMISSION_ONBOARDING_VERSION,
+    acknowledgedAt: "",
+    clipboardIncluded: true
+  });
+  const current = await inspectCapturePermissionBundle(permissions);
+  assert.deepEqual(current, { webCaptureGranted: false, clipboardGranted: false });
+  assert.deepEqual(await requestCapturePermissionBundle(permissions, { current }), {
+    granted: true,
+    requested: {
+      origins: [...CONTINUOUS_CAPTURE_ORIGINS],
+      permissions: [...CLIPBOARD_READ_PERMISSIONS]
+    }
+  });
+  assert.deepEqual(requests, [{
+    origins: [...CONTINUOUS_CAPTURE_ORIGINS],
+    permissions: [...CLIPBOARD_READ_PERMISSIONS]
+  }]);
+});
+
+test("first-use capture onboarding can omit clipboard without adding another request", async () => {
+  const requests = [];
+  const result = await requestCapturePermissionBundle({
+    request: async (request) => {
+      requests.push(request);
+      return true;
+    }
+  }, {
+    includeClipboard: false,
+    current: { webCaptureGranted: false, clipboardGranted: false }
+  });
+
+  assert.deepEqual(result, {
+    granted: true,
+    requested: { origins: [...CONTINUOUS_CAPTURE_ORIGINS] }
+  });
+  assert.deepEqual(requests, [{ origins: [...CONTINUOUS_CAPTURE_ORIGINS] }]);
+});
+
+test("collector explains every first-use capability and resumes only the pending capture action", async () => {
+  const [source, html] = await Promise.all([
+    readFile(new URL("collector.js", projectRoot), "utf8"),
+    readFile(new URL("collector.html", projectRoot), "utf8")
+  ]);
+  assert.match(html, /id="capture-permission-onboarding"/);
+  assert.match(html, /网页采集/);
+  assert.match(html, /截图/);
+  assert.match(html, /id="capture-permission-clipboard"[^>]*checked/);
+  assert.match(html, /打开侧栏、点击网页或高亮文字都不会读取剪贴板/);
+  assert.match(html, /不会自动保存案例/);
+  assert.match(source, /pendingCaptureAction = \{ action, permissionStatus \}/);
+  assert.match(source, /await pending\.action\(\{ clipboardPreferenceJustDeclined: !includeClipboard \}\)/);
+  const cancelFlow = source.slice(source.indexOf("function cancelCapturePermissionOnboarding"), source.indexOf("async function confirmCapturePermissionOnboarding"));
+  assert.doesNotMatch(cancelFlow, /storage\.local\.set|pending\.action/);
+  const autoFlow = source.slice(source.indexOf("async function tryAutoSelection"), source.indexOf("async function extractClipboardOrSelection"));
+  assert.doesNotMatch(autoFlow, /readClipboardContentAfterFocus|ensureClipboardReadPermission/);
+});
+
+test("declining clipboard is honored for the original action and later enablement stays explicit", async () => {
+  const [source, html] = await Promise.all([
+    readFile(new URL("collector.js", projectRoot), "utf8"),
+    readFile(new URL("collector.html", projectRoot), "utf8")
+  ]);
+  const fallback = source.slice(
+    source.indexOf("async function extractClipboardOrSelection"),
+    source.indexOf("function cancelClipboardPermissionEnable")
+  );
+  assert.match(fallback, /clipboardPreferenceJustDeclined/);
+  assert.match(fallback, /已按你的选择保持剪贴板关闭，未读取任何内容/);
+  assert.match(fallback, /pendingClipboardButton = button/);
+  assert.match(fallback, /clipboardPermissionDialog\.showModal\(\)/);
+  const explicitEnable = source.slice(
+    source.indexOf("async function confirmClipboardPermissionEnable"),
+    source.indexOf("async function extractClipboardContent")
+  );
+  assert.match(explicitEnable, /ensureClipboardReadPermission\(chrome\.permissions\)/);
+  assert.match(explicitEnable, /clipboardIncluded: true/);
+  assert.match(html, /id="clipboard-permission-confirm"[^>]*>启用并提取/);
+  assert.match(html, /打开侧栏、浏览或点击网页不会触发读取/);
 });
 
 test("text collection keeps its narrower per-site permission", async () => {
