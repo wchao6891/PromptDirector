@@ -215,16 +215,16 @@ test("first-use capture onboarding can omit clipboard without adding another req
   assert.deepEqual(requests, [{ origins: [...CONTINUOUS_CAPTURE_ORIGINS] }]);
 });
 
-test("collector explains every first-use capability and resumes only the pending capture action", async () => {
+test("collector presents one compact first-use authorization and resumes only the pending capture action", async () => {
   const [source, html] = await Promise.all([
     readFile(new URL("collector.js", projectRoot), "utf8"),
     readFile(new URL("collector.html", projectRoot), "utf8")
   ]);
   assert.match(html, /id="capture-permission-onboarding"/);
-  assert.match(html, /网页采集/);
-  assert.match(html, /截图/);
+  assert.match(html, /一次授权，之后直接采集/);
+  assert.match(html, /统一开启网页读取与截图能力/);
   assert.match(html, /id="capture-permission-clipboard"[^>]*checked/);
-  assert.match(html, /打开侧栏、点击网页或高亮文字都不会读取剪贴板/);
+  assert.match(html, /仅在你主动点击“提取文字\/图片”且网页没有高亮内容时读取/);
   assert.match(html, /不会自动保存案例/);
   assert.match(source, /pendingCaptureAction = \{ action, permissionStatus \}/);
   assert.match(source, /await pending\.action\(\{ clipboardPreferenceJustDeclined: !includeClipboard \}\)/);

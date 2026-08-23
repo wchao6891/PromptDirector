@@ -18,17 +18,46 @@ import { normalizeCompoundCases } from "./compound-cases.js";
 import { CURRENT_LIBRARY_PACKAGE_VERSION, LIBRARY_PACKAGE_FORMAT } from "./library-package-format.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({
-  libraryTitle: "我的视觉灵感库",
+  libraryTitle: "视觉创作灵感库",
   outputPath: "提示词导演/提示词导演-灵感库.zip"
 });
 
 export const DEFAULT_SETTINGS_EN = Object.freeze({
-  libraryTitle: "My Visual Archive",
+  libraryTitle: "Visual Inspiration Library",
   outputPath: "PromptDirector/PromptDirector-Visual-Archive.zip"
 });
 
+const LEGACY_DEFAULT_LIBRARY_TITLES = new Set([
+  "优秀提示词案例库",
+  "视觉创作资料库",
+  "视觉提示词灵感库",
+  "提示词导演灵感库",
+  "Visual Creative Archive",
+  "Visual Creation Library",
+  "My Visual Archive"
+]);
+
+const SYSTEM_DEFAULT_LIBRARY_TITLES = new Set([
+  DEFAULT_SETTINGS.libraryTitle,
+  DEFAULT_SETTINGS_EN.libraryTitle,
+  ...LEGACY_DEFAULT_LIBRARY_TITLES
+]);
+
 export function defaultSettingsForLocale(locale) {
   return locale === "en" ? DEFAULT_SETTINGS_EN : DEFAULT_SETTINGS;
+}
+
+export function libraryTitleForLocale(value, locale) {
+  const title = String(value ?? "").trim();
+  return !title || SYSTEM_DEFAULT_LIBRARY_TITLES.has(title)
+    ? defaultSettingsForLocale(locale).libraryTitle
+    : title;
+}
+
+export function libraryTitleForStorage(displayValue, storedValue, locale) {
+  const displayedTitle = String(displayValue ?? "").trim();
+  const storedTitle = String(storedValue ?? "").trim();
+  return displayedTitle === libraryTitleForLocale(storedTitle, locale) ? storedTitle : displayedTitle;
 }
 
 export const SCREENSHOT_SETTINGS = Object.freeze({
@@ -67,7 +96,8 @@ export function normalizeOutputPath(value, fallback = DEFAULT_SETTINGS.outputPat
 }
 
 export function normalizeSettings(value = {}, defaults = DEFAULT_SETTINGS) {
-  const title = String(value.libraryTitle ?? "").trim();
+  const storedTitle = String(value.libraryTitle ?? "").trim();
+  const title = LEGACY_DEFAULT_LIBRARY_TITLES.has(storedTitle) ? defaults.libraryTitle : storedTitle;
   return {
     libraryTitle: title || defaults.libraryTitle,
     outputPath: normalizeOutputPath(value.outputPath, defaults.outputPath)
@@ -178,12 +208,13 @@ export function renderMarkdown(
 ) {
   const locale = options.locale === "en" ? "en" : "zh-CN";
   const normalizedSettings = normalizeSettings(settings);
+  const libraryTitle = libraryTitleForLocale(normalizedSettings.libraryTitle, locale);
   const normalizedTaxonomy = normalizeTaxonomy(taxonomy);
   const normalizedFacets = normalizeFacetCatalog(facetCatalog);
   const sections = entries.map((entry, index) => renderEntry(entry, index, normalizedTaxonomy, normalizedFacets, locale));
   const introduction = locale === "en"
-    ? [`# ${escapeHeading(normalizedSettings.libraryTitle)}`, "", `${entries.length} cases.`]
-    : [`# ${escapeHeading(normalizedSettings.libraryTitle)}`, "", `共 ${entries.length} 条案例。`];
+    ? [`# ${escapeHeading(libraryTitle)}`, "", `${entries.length} cases.`]
+    : [`# ${escapeHeading(libraryTitle)}`, "", `共 ${entries.length} 条案例。`];
 
   return `${[...introduction, ...sections].join("\n")}\n`;
 }

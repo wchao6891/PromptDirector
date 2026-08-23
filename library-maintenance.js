@@ -51,6 +51,25 @@ export function normalizeLibraryMaintenanceJob(value) {
   return job;
 }
 
+export function extendLibraryMaintenanceJob(currentValue, targets = {}, options = {}) {
+  const current = normalizeLibraryMaintenanceJob(currentValue);
+  if (!current || ["completed", "canceled"].includes(current.status)) {
+    return createLibraryMaintenanceJob({ ...targets, id: options.id, now: options.now });
+  }
+  const processedClassifications = new Set(current.classificationEntryIds.slice(0, current.classificationCursor));
+  const processedPalettes = new Set(current.paletteAssetIds.slice(0, current.paletteCursor));
+  current.classificationEntryIds = uniqueIds([
+    ...current.classificationEntryIds,
+    ...uniqueIds(targets.classificationEntryIds).filter((id) => !processedClassifications.has(id))
+  ]);
+  current.paletteAssetIds = uniqueIds([
+    ...current.paletteAssetIds,
+    ...uniqueIds(targets.paletteAssetIds).filter((id) => !processedPalettes.has(id))
+  ]);
+  current.updatedAt = validDate(options.now) || new Date().toISOString();
+  return current;
+}
+
 export function nextLibraryMaintenanceItem(value) {
   const job = requireJob(value);
   if (job.status !== "running") return null;
@@ -114,7 +133,10 @@ export function mergeLibraryMaintenanceProgress(currentValue, progressValue) {
   const current = normalizeLibraryMaintenanceJob(currentValue);
   const progress = normalizeLibraryMaintenanceJob(progressValue);
   if (!progress || !current || current.id !== progress.id) return current;
+  progress.classificationEntryIds = uniqueIds([...progress.classificationEntryIds, ...current.classificationEntryIds]);
+  progress.paletteAssetIds = uniqueIds([...progress.paletteAssetIds, ...current.paletteAssetIds]);
   if (current.status !== "running") progress.status = current.status;
+  else if (maintenanceProcessed(progress) < maintenanceTotal(progress)) progress.status = "running";
   return progress;
 }
 

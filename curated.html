@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>精选案例</title>
+    <title data-i18n="精选案例">精选案例</title>
     <script src="theme-bootstrap.js"></script>
     <link rel="stylesheet" href="ui-foundation.css" />
     <link rel="stylesheet" href="curated.css" />
@@ -11,8 +11,7 @@
   <body>
     <header class="curated-header">
       <div class="curated-title-group">
-        <img class="curated-brand-mark" src="assets/icons/icon-source.svg" alt="" />
-        <h1 data-i18n="精选案例">精选案例</h1>
+        <a class="curated-brand-home product-brand" href="library.html" aria-label="返回视觉创作灵感库" data-i18n-aria-label="返回视觉创作灵感库" title="返回视觉创作灵感库" data-i18n-title="返回视觉创作灵感库"><img class="curated-brand-mark product-brand-mark" src="assets/icons/icon-source.svg" alt="" /><span class="product-brand-copy"><strong class="product-brand-name">PromptDirector</strong><span class="product-brand-tagline" data-i18n="视觉创作灵感库">视觉创作灵感库</span></span></a>
         <nav class="curated-sections ui-segmented" aria-label="精选内容" data-i18n-aria-label="精选内容">
           <a class="ui-segmented-item" href="curated.html" aria-current="page" data-i18n="精选案例">精选案例</a>
           <a class="ui-segmented-item" href="curated-skills.html" data-i18n="精选 Skill">精选 Skill</a>
@@ -24,17 +23,19 @@
         <input id="curated-search" type="search" autocomplete="off" placeholder="搜索创作包或包内案例" data-i18n-placeholder="搜索创作包或包内案例" />
       </label>
       <div class="curated-header-actions">
-        <div class="filter-wrap">
-          <button id="filter-button" class="button-secondary tool-button" type="button" aria-expanded="false"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg><span data-i18n="筛选">筛选</span><span id="filter-count"></span></button>
-          <div id="filter-popover" class="menu-panel filter-panel" hidden>
-            <strong data-i18n="内容类型">内容类型</strong>
-            <label><input type="checkbox" value="image_prompt" /><span data-i18n="图片案例">图片案例</span></label>
-            <label><input type="checkbox" value="video_prompt" /><span data-i18n="视频案例">视频案例</span></label>
-            <label><input type="checkbox" value="followed" /><span data-i18n="已关注">已关注</span></label>
-            <button id="clear-filters" type="button" data-i18n="清除筛选">清除筛选</button>
+        <div class="curated-header-tools">
+          <div class="filter-wrap">
+            <button id="filter-button" class="button-secondary tool-button" type="button" aria-expanded="false"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg><span data-i18n="筛选">筛选</span><span id="filter-count"></span></button>
+            <div id="filter-popover" class="menu-panel filter-panel" hidden>
+              <strong data-i18n="内容类型">内容类型</strong>
+              <label><input type="checkbox" value="image_prompt" /><span data-i18n="图片案例">图片案例</span></label>
+              <label><input type="checkbox" value="video_prompt" /><span data-i18n="视频案例">视频案例</span></label>
+              <label><input type="checkbox" value="followed" /><span data-i18n="已关注">已关注</span></label>
+              <button id="clear-filters" type="button" data-i18n="清除筛选">清除筛选</button>
+            </div>
           </div>
+          <label class="curated-sort"><span class="visually-hidden" data-i18n="精选案例排序">精选案例排序</span><select id="sort-menu" aria-label="精选案例排序" data-i18n-aria-label="精选案例排序"><option value="recommended" data-i18n="推荐">推荐</option><option value="latest" data-i18n="最新">最新</option><option id="sort-downloads" value="downloads" data-i18n="下载" disabled>下载</option></select></label>
         </div>
-        <label class="curated-sort"><span class="visually-hidden">精选案例排序</span><select id="sort-menu" aria-label="精选案例排序"><option value="recommended" data-i18n="推荐">推荐</option><option value="latest" data-i18n="最新">最新</option><option id="sort-downloads" value="downloads" data-i18n="下载" disabled>下载</option></select></label>
         <button id="return-library" class="button-secondary page-back-action" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span data-i18n="返回案例库">返回案例库</span></button>
       </div>
     </header>

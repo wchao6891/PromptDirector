@@ -322,7 +322,7 @@ def main() -> None:
           localStorage.setItem('promptDirectorMotion', 'reduced');
         }""")
         curated.reload(wait_until="networkidle")
-        expect(curated.locator(".curated-header h1")).to_have_text("Curated cases")
+        expect(curated.locator('.curated-sections [aria-current="page"]')).to_have_text("Curated cases")
         expect(curated.locator("#curated-search")).to_have_attribute("placeholder", "Search packs or cases")
         expect(curated.locator("#return-library")).to_have_text("Back to library")
 

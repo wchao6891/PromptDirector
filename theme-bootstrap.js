@@ -24,7 +24,7 @@
     : null;
   const prefersDark = prefersDarkQuery?.matches === true;
   const resolvedTheme = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
-  const backgroundColor = resolvedTheme === "dark" ? "#0f1113" : "#eef0ef";
+  const backgroundColor = resolvedTheme === "dark" ? "#0f1113" : "#e2e6e3";
   const colorScheme = resolvedTheme === "dark" ? "dark" : "light";
 
   root.dataset.theme = theme;

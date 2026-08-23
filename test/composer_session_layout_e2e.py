@@ -73,11 +73,37 @@ def main() -> None:
         expect(composer.locator(".composer-session-group-label")).to_have_text(["今天", "昨天", "近 7 天", "更早"])
         long_title = composer.locator('.composer-session-item[data-session-id="layout-session-0"] strong')
         assert long_title.evaluate("node => node.scrollWidth > node.clientWidth")
+        session_alignment = composer.locator('.composer-session-item[data-session-id="layout-session-0"] > button:first-child').evaluate(
+            """node => {
+              const button = node.getBoundingClientRect();
+              const title = node.querySelector('strong').getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return {justifyContent: style.justifyContent, textAlign: style.textAlign, buttonLeft: button.left, titleLeft: title.left, paddingLeft: parseFloat(style.paddingLeft)};
+            }"""
+        )
+        assert session_alignment["justifyContent"] in {"start", "flex-start"}, session_alignment
+        assert session_alignment["textAlign"] == "left", session_alignment
+        assert abs(session_alignment["titleLeft"] - session_alignment["buttonLeft"] - session_alignment["paddingLeft"]) <= 1, session_alignment
         menu = composer.locator('.composer-session-item[data-session-id="layout-session-1"] .composer-session-menu')
         menu.locator("xpath=..").hover()
         menu.locator("summary").click()
-        expect(menu.get_by_role("menuitem", name="删除", exact=True)).to_be_visible()
-        menu.get_by_role("menuitem", name="删除", exact=True).click()
+        delete_item = menu.get_by_role("menuitem", name="删除", exact=True)
+        expect(delete_item).to_be_visible()
+        delete_metrics = delete_item.evaluate(
+            """node => {
+              const action = node.getBoundingClientRect();
+              const panel = node.closest('.composer-session-menu-panel').getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return {actionHeight: action.height, panelWidth: panel.width, color: style.color, background: style.backgroundColor, danger: getComputedStyle(document.documentElement).getPropertyValue('--ui-danger').trim()};
+            }"""
+        )
+        assert abs(delete_metrics["actionHeight"] - 30) <= 1, delete_metrics
+        assert 84 <= delete_metrics["panelWidth"] <= 96, delete_metrics
+        assert delete_metrics["background"] == "rgba(0, 0, 0, 0)", delete_metrics
+        delete_item.hover()
+        hovered_background = delete_item.evaluate("node => getComputedStyle(node).backgroundColor")
+        assert hovered_background != "rgba(0, 0, 0, 0)", hovered_background
+        delete_item.click()
         delete_dialog = composer.locator("#promptdirector-app-dialog")
         expect(delete_dialog).to_contain_text("删除这段对话？")
         delete_dialog.get_by_role("button", name="取消", exact=True).click()

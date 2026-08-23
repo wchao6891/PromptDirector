@@ -1,7 +1,7 @@
 {
-  "extensionName": { "message": "PromptDirector — Visual Creative Archive" },
-  "extensionDescription": { "message": "Save web visuals with their prompts, then organize, back up, share, and reuse them in a local visual archive." },
-  "actionTitle": { "message": "Visual Prompt Archive: capture and create" },
+  "extensionName": { "message": "PromptDirector" },
+  "extensionDescription": { "message": "PromptDirector, your private visual inspiration library. Save web visuals and prompts; organize, back up, and reuse them locally." },
+  "actionTitle": { "message": "PromptDirector: capture and create" },
   "saveSelectionCommand": { "message": "Add highlighted text to the current capture draft" },
   "menuSaveSelectionToPromptDirector": { "message": "Save selection to PromptDirector" },
   "menuSmartVisualsToPromptDirector": { "message": "Smart-select with PromptDirector" },

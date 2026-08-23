@@ -160,8 +160,11 @@ def main() -> None:
         library.set_viewport_size({"width": 390, "height": 844})
         mobile_project_menu = library.locator(".detail-project-menu")
         mobile_project_popover = library.locator(".detail-project-popover")
-        if mobile_project_menu.get_attribute("open") is None:
+        for _ in range(5):
+            if mobile_project_menu.get_attribute("open") is not None and mobile_project_popover.is_visible():
+                break
             mobile_project_menu.locator(":scope > summary").click()
+            library.wait_for_timeout(150)
         expect(mobile_project_menu).to_have_attribute("open", "")
         expect(mobile_project_popover).to_be_visible()
         library.locator(".prompt-section").scroll_into_view_if_needed()

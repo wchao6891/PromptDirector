@@ -23,7 +23,7 @@ test("curated cases and curated Skills are independent sibling pages", async () 
   assert.match(skillsHtml, /aria-current="page"[^>]*>精选 Skill</);
   assert.match(skillsHtml, /id="return-library"/);
   assert.match(skillsHtml, /src="curated-skill-page\.js"/);
-  assert.match(skillsCenter, /href="curated-skills\.html">精选 Skill</);
+  assert.match(skillsCenter, /href="curated-skills\.html"[^>]*>精选 Skill</);
 });
 
 test("ordinary lossless export and curated submission are separate Skill detail actions", async () => {

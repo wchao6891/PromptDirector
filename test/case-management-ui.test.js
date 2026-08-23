@@ -20,6 +20,10 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
     "share-export",
     "selection-trash"
   ]) assert.match(bar, new RegExp(`id="${id}"`));
+  assert.match(bar, /id="selection-selected-actions"[^>]*hidden/);
+  assert.match(bar, /id="selection-label-menu"[\s\S]*id="selection-label-input"[\s\S]*id="selection-add-labels"/);
+  assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-project-target"[\s\S]*id="selection-new-project"/);
+  assert.match(bar, /id="selection-more-menu"[\s\S]*id="selection-combine"[\s\S]*id="selection-analyze"[\s\S]*id="selection-trash"/);
 
   const selectAll = source.slice(source.indexOf("function selectAllFilteredCases"), source.indexOf("function clearSelectedCases"));
   assert.match(selectAll, /visibleEntries\.map\(\(entry\) => entry\.id\)/);
@@ -30,6 +34,8 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
   assert.match(source, /LIBRARY_BATCH_ACTIONS\.addCustomLabels/);
   assert.match(source, /LIBRARY_BATCH_ACTIONS\.setProject/);
   assert.match(source, /LIBRARY_BATCH_ACTIONS\.moveToTrash/);
+  assert.match(source, /elements\.selectionSelectFiltered\.hidden = selectedCaseIds\.size > 0/);
+  assert.match(source, /elements\.selectionSelectedActions\.hidden = selectedCaseIds\.size === 0/);
 });
 
 test("recycle bin is a first-class workspace action with restore and explicit permanent cleanup", () => {

@@ -21,7 +21,7 @@ import {
   RESTRICTED_PAGE_MESSAGE,
   resolveActivePage
 } from "./capture-permissions.js";
-import { initializeUi, t } from "./i18n.js";
+import { initializeUi, t, translateUiMessage } from "./i18n.js";
 import { confirmAppAction } from "./ui-dialogs.js";
 import { createUiIcon } from "./ui-icons.js";
 import { ingestHtmlDocument } from "./document-ingestion.js";
@@ -283,7 +283,7 @@ async function confirmCapturePermissionOnboarding(event) {
   const includeClipboard = elements.capturePermissionClipboard.checked;
   elements.capturePermissionConfirm.disabled = true;
   elements.capturePermissionCancel.disabled = true;
-  elements.capturePermissionStatus.textContent = "正在等待 Chrome 确认…";
+  elements.capturePermissionStatus.textContent = t("正在等待 Chrome 确认…");
   elements.capturePermissionStatus.classList.remove("error");
   let permissionGranted = false;
   try {
@@ -292,7 +292,7 @@ async function confirmCapturePermissionOnboarding(event) {
       current: pending.permissionStatus
     });
     if (!permission.granted) {
-      elements.capturePermissionStatus.textContent = "未获得所选权限，待保存内容没有改变。你可以调整选择后重试。";
+      elements.capturePermissionStatus.textContent = t("未获得所选权限，待保存内容没有改变。你可以调整选择后重试。");
       elements.capturePermissionStatus.classList.add("error");
       return;
     }
@@ -403,11 +403,11 @@ async function confirmClipboardPermissionEnable(event) {
   if (!button) return elements.clipboardPermissionDialog.close();
   elements.clipboardPermissionConfirm.disabled = true;
   elements.clipboardPermissionCancel.disabled = true;
-  elements.clipboardPermissionStatus.textContent = "正在等待 Chrome 确认…";
+  elements.clipboardPermissionStatus.textContent = t("正在等待 Chrome 确认…");
   elements.clipboardPermissionStatus.classList.remove("error");
   try {
     if (!await ensureClipboardReadPermission(chrome.permissions)) {
-      elements.clipboardPermissionStatus.textContent = "未获得剪贴板读取权限，未读取任何内容。";
+      elements.clipboardPermissionStatus.textContent = t("未获得剪贴板读取权限，未读取任何内容。");
       elements.clipboardPermissionStatus.classList.add("error");
       return;
     }
@@ -516,27 +516,27 @@ function render() {
   elements.previewState.hidden = Boolean(smartVisualSession || pageCaptureBatch || regionCaptureState) || !view.showPreview;
   elements.collectorFooter.hidden = Boolean(smartVisualSession || pageCaptureBatch || regionCaptureState) || !view.showFooter;
   if (regionCaptureState) {
-    elements.regionCaptureTitle.textContent = regionCaptureMessage(regionCaptureState.phase);
+    elements.regionCaptureTitle.textContent = t(regionCaptureMessage(regionCaptureState.phase));
     elements.regionCaptureHelp.textContent = regionCaptureState.phase === "selecting"
-      ? "请切回网页拖动选择画面；按 Esc 或在这里取消。"
-      : "请保持当前网页与侧边栏打开，完成后会自动回到待保存内容。";
+      ? t("请切回网页拖动选择画面；按 Esc 或在这里取消。")
+      : t("请保持当前网页与侧边栏打开，完成后会自动回到待保存内容。");
     elements.regionCaptureCancel.disabled = !regionCaptureState.sessionId || ["capturing"].includes(regionCaptureState.phase);
   }
   if (pageCaptureBatch) renderPageCapture();
   if (smartVisualSession) {
-    elements.smartSelectionCount.textContent = `已选 ${smartVisualSession.selectedCount || 0} 张`;
-    elements.smartSelectionHelp.textContent = `网页中识别到 ${smartVisualSession.candidateCount || 0} 个候选；点击画面选择，页面滚动或布局变化后会自动重新对齐。`;
+    elements.smartSelectionCount.textContent = t("已选 {count} 张", { count: smartVisualSession.selectedCount || 0 });
+    elements.smartSelectionHelp.textContent = t("网页中识别到 {count} 个候选；点击画面选择，页面滚动或布局变化后会自动重新对齐。", { count: smartVisualSession.candidateCount || 0 });
     elements.smartSelectionConfirm.disabled = !(smartVisualSession.selectedCount > 0);
     const overlayUnavailable = smartVisualSession.overlayReady === false;
     elements.smartSelectionWarning.hidden = !overlayUnavailable;
     elements.smartSelectionWarning.textContent = overlayUnavailable
-      ? "当前页面没有成功显示选图层，请退出网页元素全屏后重试。"
+      ? t("当前页面没有成功显示选图层，请退出网页元素全屏后重试。")
       : "";
   }
   elements.targetBanner.hidden = !targetEntry;
-  elements.targetLabel.textContent = view.targetLabel;
-  elements.contentSummary.textContent = view.summary;
-  elements.saveDraft.textContent = view.saveLabel;
+  elements.targetLabel.textContent = translateUiMessage(view.targetLabel);
+  elements.contentSummary.textContent = translateUiMessage(view.summary);
+  elements.saveDraft.textContent = t(view.saveLabel);
   elements.saveDraft.disabled = saving || !view.hasContent;
   elements.draftTitle.disabled = saving;
   elements.contentType.disabled = saving;
@@ -562,11 +562,11 @@ function render() {
   }
   elements.organizer.hidden = !view.showOrganizer;
   elements.organizeToggle.setAttribute("aria-expanded", String(view.showOrganizer));
-  elements.organizeToggle.textContent = view.showOrganizer ? "收起整理" : "编辑与整理";
+  elements.organizeToggle.textContent = t(view.showOrganizer ? "收起整理" : "编辑与整理");
   elements.fragmentSection.hidden = !view.showOrganizer || !draft.fragments.length;
   elements.visualSection.hidden = !view.showOrganizer || !draft.visuals.length;
-  elements.fragmentHelp.textContent = view.canReorderFragments ? "使用箭头调整段落顺序" : "";
-  elements.visualHelp.textContent = view.canReorderVisuals ? "使用箭头调整图片顺序" : "";
+  elements.fragmentHelp.textContent = view.canReorderFragments ? t("使用箭头调整段落顺序") : "";
+  elements.visualHelp.textContent = view.canReorderVisuals ? t("使用箭头调整图片顺序") : "";
   if (document.activeElement !== elements.draftTitle) {
     elements.draftTitle.value = draft.title || targetEntry?.title || "";
   }
@@ -574,14 +574,14 @@ function render() {
   elements.contentType.replaceChildren(...contentTypes.map((item) => {
     const option = document.createElement("option");
     option.value = item.id;
-    option.textContent = item.name;
+    option.textContent = item.customized ? item.name : t(item.name);
     option.selected = item.id === selectedContentType;
     return option;
   }));
   if (!selectedContentType || !contentTypes.some((item) => item.id === selectedContentType)) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "待确认";
+    option.textContent = t("待确认");
     option.selected = true;
     elements.contentType.prepend(option);
   }
@@ -590,9 +590,9 @@ function render() {
     : "";
   creatingCollection = creatingCollection || Boolean(draft.newCollectionName);
   elements.captureCollection.replaceChildren(
-    optionElement("", "不分组", !creatingCollection && !selectedCollectionId),
+    optionElement("", t("不分组"), !creatingCollection && !selectedCollectionId),
     ...collections.map((item) => optionElement(item.id, item.name, !creatingCollection && item.id === selectedCollectionId)),
-    optionElement(NEW_COLLECTION_OPTION_VALUE, "＋ 新建项目", creatingCollection)
+    optionElement(NEW_COLLECTION_OPTION_VALUE, t("＋ 新建项目"), creatingCollection)
   );
   elements.captureNewCollectionRow.hidden = !creatingCollection;
   if (document.activeElement !== elements.captureNewCollectionName) {
@@ -641,10 +641,10 @@ function renderPageCapture() {
   const selections = new Map(pageCaptureBatch.selections.map((selection) => [selection.candidateId, selection]));
   const selectedCount = pageCaptureBatch.selections.length;
   const listMode = pageCaptureBatch.captureMode === "list";
-  elements.pageCaptureTitle.textContent = t("已识别 {count} 个主体方案 · 已确认 {selected} 个", { count: pageCaptureBatch.candidates.length, selected: selectedCount });
+  elements.pageCaptureTitle.textContent = t("识别到 {count} 个可保存区域 · 已选 {selected} 个", { count: pageCaptureBatch.candidates.length, selected: selectedCount });
   elements.pageCaptureHelp.textContent = pageCaptureBatch.status === "scanning"
     ? t("正在扫描已加载内容；可随时停止，结束后会恢复原滚动位置。")
-    : t("先查看并修正网页区域，再确认一个创作主体。确认后会按原始顺序保存完整文章和相关资源。");
+    : t("确认一个主体后即可保存；需要时再展开预览或修正识别结果。");
   const selectedMediaCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
   const saveBlocked = !selectedCount || pageCaptureBatch.status === "saving" || (listMode && !["multiple", "combined"].includes(pageCaptureBatch.saveMode));
   elements.pageCaptureSave.disabled = saveBlocked;
@@ -690,7 +690,12 @@ function renderPageCapture() {
     heading.append(copy);
     if (!listMode) heading.append(inspect);
     card.append(heading);
-    card.append(createPageCaptureArticlePreview(candidate, selections.get(candidate.id)));
+    const previewDetails = document.createElement("details");
+    previewDetails.className = "page-capture-preview-details";
+    const previewSummary = document.createElement("summary");
+    previewSummary.textContent = t("预览完整内容");
+    previewDetails.append(previewSummary, createPageCaptureArticlePreview(candidate, selections.get(candidate.id)));
+    card.append(previewDetails);
     if (candidate.possibleOmissions?.length) {
       const omissions = document.createElement("details");
       omissions.className = "page-capture-omissions";
@@ -1109,7 +1114,7 @@ function createQuickPreview() {
     const card = div("quick-item quick-text");
     const marker = text("Aa", "strong");
     const copy = div("quick-copy");
-    copy.append(text(fragment.text, "p"), text(fragment.sourceTitle || hostname(fragment.sourceUrl) || "当前网页", "small"));
+    copy.append(text(fragment.text, "p"), text(fragment.sourceTitle || hostname(fragment.sourceUrl) || t("当前网页"), "small"));
     const remove = createQuickRemoveButton(`删除第 ${index + 1} 段文字`, (button) =>
       sendDraftAction(button, "REMOVE_CAPTURE_FRAGMENT", { fragmentId: fragment.id }));
     card.append(marker, copy, remove);
@@ -1129,7 +1134,7 @@ function createQuickPreview() {
       strip.append(item);
     });
     const copy = div("quick-copy");
-    copy.append(text(`${draft.visuals.length} 张图片`, "strong"), text(draft.visuals[0].sourceTitle || hostname(draft.visuals[0].sourceUrl) || "当前网页", "small"));
+    copy.append(text(t("{count} 张图片", { count: draft.visuals.length }), "strong"), text(draft.visuals[0].sourceTitle || hostname(draft.visuals[0].sourceUrl) || t("当前网页"), "small"));
     card.append(strip, copy);
     nodes.push(card);
   }
@@ -1152,8 +1157,9 @@ function createFragmentCard(fragment, index, canReorder) {
   textarea.addEventListener("change", () =>
     sendDraftAction(null, "UPDATE_CAPTURE_FRAGMENT", { fragmentId: fragment.id, text: textarea.value }));
   const meta = div("item-meta");
-  const source = text(fragment.sourceTitle || hostname(fragment.sourceUrl) || "当前网页");
-  const partType = text(partContentTypes[fragment.sourceUrl || "source:unknown"]?.name || "待确认", "small");
+  const source = text(fragment.sourceTitle || hostname(fragment.sourceUrl) || t("当前网页"));
+  const partContentType = partContentTypes[fragment.sourceUrl || "source:unknown"];
+  const partType = text(partContentType?.customized ? partContentType.name : t(partContentType?.name || "待确认"), "small");
   meta.append(source, partType);
   const actions = div("item-actions");
   if (canReorder) {
@@ -1177,8 +1183,8 @@ function createVisualCard(visual, index, view) {
   loadVisual(image, visual.id);
   const copy = div("visual-copy");
   copy.append(
-    text(draft.primaryVisualId === visual.id ? "主图" : `图片 ${index + 1}`, "strong"),
-    text(visual.sourceTitle || hostname(visual.sourceUrl) || "当前网页", "small")
+    text(draft.primaryVisualId === visual.id ? t("主图") : t("图片 {count}", { count: index + 1 }), "strong"),
+    text(visual.sourceTitle || hostname(visual.sourceUrl) || t("当前网页"), "small")
   );
   const actions = div("item-actions");
   if (view.canChoosePrimary && draft.primaryVisualId !== visual.id) {
@@ -1584,7 +1590,7 @@ async function withButton(button, task) {
 function showFeedback(message, error = false) {
   if (feedbackTimer) window.clearTimeout(feedbackTimer);
   feedbackTimer = 0;
-  const value = message || "";
+  const value = translateUiMessage(message || "");
   elements.feedback.textContent = value;
   elements.feedback.classList.toggle("error", error);
   if (value) {
@@ -1597,11 +1603,11 @@ function showFeedback(message, error = false) {
 }
 
 function action(label, handler, disabled = false, className = "", ariaLabel = "") {
-  const button = text(label, "button");
+  const button = text(translateUiMessage(label), "button");
   button.type = "button";
   button.disabled = disabled;
   button.className = className;
-  if (ariaLabel) button.setAttribute("aria-label", ariaLabel);
+  if (ariaLabel) button.setAttribute("aria-label", translateUiMessage(ariaLabel));
   button.addEventListener("click", () => handler(button));
   return button;
 }

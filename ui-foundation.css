@@ -1,23 +1,36 @@
 :root {
   color-scheme: light;
-  --ui-browser: #eef0ef;
-  --ui-page: #f5f6f5;
-  --ui-surface: #ffffff;
-  --ui-raised: #e9ecea;
-  --ui-hover: #e1e5e2;
+  --ui-browser: #e2e6e3;
+  --ui-page: #edf0ed;
+  --ui-surface: #f8f9f8;
+  --ui-raised: #e5e9e6;
+  --ui-hover: #dce2de;
   --ui-text: #121714;
-  --ui-muted: #606963;
+  --ui-muted: #5b645e;
   --ui-border-weak: rgba(18, 23, 20, .05);
   --ui-border: rgba(18, 23, 20, .10);
   --ui-border-strong: rgba(18, 23, 20, .20);
   --ui-accent: #d1fe17;
   --ui-accent-hover: #c2ed12;
   --ui-accent-contrast: #0f1113;
+  --ui-accent-emphasis: var(--ui-accent);
+  --ui-accent-emphasis-contrast: var(--ui-accent-contrast);
+  --ui-accent-subtle: color-mix(in srgb, var(--ui-accent) 10%, var(--ui-surface));
+  --ui-selected-surface: color-mix(in srgb, var(--ui-accent) 16%, var(--ui-surface));
+  --ui-project-active-surface: var(--ui-selected-surface);
+  --ui-content-active-surface: var(--ui-selected-surface);
+  --ui-card-border: var(--ui-border-weak);
+  --ui-field-focus-border: var(--ui-border-strong);
+  --ui-field-focus-outline: none;
+  --ui-field-focus-shadow: 0 0 0 2px var(--ui-accent-subtle);
+  --ui-primary-border: transparent;
   --ui-success: #2f8257;
   --ui-warning: #9a6300;
   --ui-danger: #b4232f;
-  --ui-focus: color-mix(in srgb, var(--ui-accent) 78%, #557000);
+  --ui-focus: var(--ui-accent-emphasis);
   --ui-shadow: 0 18px 52px rgba(22, 34, 27, .14);
+  --ui-code-bg: #e5e9e6;
+  --ui-code-text: #1e2822;
   --ui-control-height: 36px;
   --ui-compact-height: 30px;
   --ui-icon-size: 36px;
@@ -34,7 +47,9 @@
   --ui-motion-fast: 120ms;
   --ui-motion-normal: 160ms;
   --ui-popover-gap: 5px;
-  --ui-combobox-max-height: 320px;
+  --ui-popover-viewport-inset: 12px;
+  --ui-browse-max-width: 1500px;
+  --ui-browse-gutter: max(12px, calc((100vw - var(--ui-browse-max-width)) / 2));
 
   /* Compatibility aliases while page-specific layout styles are migrated. */
   --ink: var(--ui-text);
@@ -47,11 +62,13 @@
   --line: var(--ui-border);
   --accent: var(--ui-accent);
   --accent-hover: var(--ui-accent-hover);
-  --accent-ink: #526900;
-  --accent-bright: var(--ui-accent);
+  --accent-ink: var(--ui-text);
+  --accent-bright: var(--ui-accent-emphasis);
+  --accent-emphasis: var(--ui-accent-emphasis);
+  --accent-emphasis-contrast: var(--ui-accent-emphasis-contrast);
   --accent-contrast: var(--ui-accent-contrast);
   --button-ink: var(--ui-accent-contrast);
-  --accent-soft: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+  --accent-soft: var(--ui-accent-subtle);
   --warning: var(--ui-warning);
   --danger: var(--ui-danger);
   --shadow: var(--ui-shadow);
@@ -62,7 +79,7 @@
   --selection: color-mix(in srgb, var(--ui-text) 6%, var(--ui-surface));
   --selection-hover: color-mix(in srgb, var(--ui-text) 9%, var(--ui-surface));
   --selection-edge: var(--ui-border-strong);
-  --selection-indicator: color-mix(in srgb, var(--ui-text) 40%, transparent);
+  --selection-indicator: var(--ui-accent-emphasis);
   --focus-ring: var(--ui-focus);
   --subtle-card: color-mix(in srgb, var(--ui-page) 62%, var(--ui-surface));
   --editor: var(--ui-raised);
@@ -91,7 +108,19 @@
   --ui-warning: #f0b94f;
   --ui-danger: #ff717a;
   --ui-focus: var(--ui-accent);
+  --ui-accent-emphasis: var(--ui-accent);
+  --ui-accent-emphasis-contrast: var(--ui-accent-contrast);
+  --ui-accent-subtle: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+  --ui-project-active-surface: var(--ui-accent-subtle);
+  --ui-content-active-surface: color-mix(in srgb, var(--ui-text) 6%, var(--ui-surface));
+  --ui-card-border: var(--ui-border);
+  --ui-field-focus-border: var(--ui-border);
+  --ui-field-focus-outline: 2px solid var(--ui-focus);
+  --ui-field-focus-shadow: none;
+  --ui-primary-border: transparent;
   --ui-shadow: 0 18px 52px rgba(0, 0, 0, .38);
+  --ui-code-bg: #11161b;
+  --ui-code-text: #edf2f4;
   --accent-ink: var(--ui-accent);
   --bar: var(--ui-page);
   --subtle-card: color-mix(in srgb, var(--ui-page) 55%, var(--ui-surface));
@@ -117,7 +146,19 @@
     --ui-warning: #f0b94f;
     --ui-danger: #ff717a;
     --ui-focus: var(--ui-accent);
+    --ui-accent-emphasis: var(--ui-accent);
+    --ui-accent-emphasis-contrast: var(--ui-accent-contrast);
+    --ui-accent-subtle: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+    --ui-project-active-surface: var(--ui-accent-subtle);
+    --ui-content-active-surface: color-mix(in srgb, var(--ui-text) 6%, var(--ui-surface));
+    --ui-card-border: var(--ui-border);
+    --ui-field-focus-border: var(--ui-border);
+    --ui-field-focus-outline: 2px solid var(--ui-focus);
+    --ui-field-focus-shadow: none;
+    --ui-primary-border: transparent;
     --ui-shadow: 0 18px 52px rgba(0, 0, 0, .38);
+    --ui-code-bg: #11161b;
+    --ui-code-text: #edf2f4;
     --accent-ink: var(--ui-accent);
     --bar: var(--ui-page);
     --subtle-card: color-mix(in srgb, var(--ui-page) 55%, var(--ui-surface));
@@ -168,6 +209,12 @@ button:active:not(:disabled) { transform: none; }
 button:disabled { cursor: not-allowed; opacity: .48; }
 button[aria-busy="true"] { cursor: progress; }
 
+.ui-content-row {
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+}
+
 .button-secondary,
 .icon-button,
 button.quiet {
@@ -181,6 +228,15 @@ button.quiet:hover:not(:disabled) {
   border-color: var(--ui-border-strong);
   color: var(--ui-text);
   background: var(--ui-hover);
+}
+.quiet-danger {
+  color: var(--ui-danger);
+  background: transparent;
+  font-size: var(--ui-meta-size);
+}
+.quiet-danger:hover:not(:disabled) {
+  color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger) 10%, transparent);
 }
 .button-compact,
 button.compact {
@@ -223,7 +279,7 @@ button.compact {
 .ui-segmented-item[aria-pressed="true"] {
   color: var(--ui-text);
   background: var(--ui-raised);
-  box-shadow: inset 0 0 0 1px var(--ui-accent);
+  box-shadow: inset 0 0 0 1px var(--ui-accent-emphasis);
 }
 .ui-skill-card {
   display: flex;
@@ -240,7 +296,7 @@ button.compact {
 .ui-skill-card:hover {
   border-color: var(--ui-border-strong);
   background: var(--ui-raised);
-  box-shadow: inset 2px 0 var(--ui-accent);
+  box-shadow: inset 2px 0 var(--ui-accent-emphasis);
 }
 .ui-skill-card-title {
   margin: 0;
@@ -320,8 +376,8 @@ select option {
 select option:hover,
 select option:focus-visible { background: var(--ui-hover); }
 select option:checked {
-  color: var(--ui-accent-contrast);
-  background: var(--ui-accent);
+  color: var(--ui-accent-emphasis-contrast);
+  background: var(--ui-accent-emphasis);
   font-weight: 750;
 }
 select::picker-icon {
@@ -331,14 +387,14 @@ select::picker-icon {
 select:open::picker-icon { rotate: 180deg; }
 select:disabled { cursor: not-allowed; }
 .project-combobox-listbox {
-  position: absolute;
+  position: fixed;
   z-index: 80;
-  top: calc(100% + var(--ui-popover-gap));
-  right: 0;
+  top: 0;
+  right: auto;
   left: 0;
   display: grid;
   min-height: 0;
-  max-height: min(var(--ui-combobox-max-height), var(--project-combobox-available-height, calc(100dvh - 32px)));
+  max-height: var(--project-combobox-available-height, calc(100dvh - 32px));
   overflow: auto;
   gap: 2px;
   border: 1px solid var(--ui-border-strong);
@@ -348,10 +404,6 @@ select:disabled { cursor: not-allowed; }
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow);
 }
-.project-combobox-listbox[data-placement="top"] {
-  top: auto;
-  bottom: calc(100% + var(--ui-popover-gap));
-}
 .project-combobox-option {
   min-height: var(--ui-control-height);
   border: 0;
@@ -360,23 +412,30 @@ select:disabled { cursor: not-allowed; }
   color: var(--ui-text);
   background: transparent;
   font-weight: 600;
+  overflow-wrap: anywhere;
   text-align: left;
+  white-space: normal;
 }
 .project-combobox-option:hover:not(:disabled),
 .project-combobox-option[aria-selected="true"] {
-  color: var(--ui-accent-contrast);
-  background: var(--ui-accent);
+  color: var(--ui-accent-emphasis-contrast);
+  background: var(--ui-accent-emphasis);
 }
 .app-dialog-field:has(> input[role="combobox"]),
 .import-project-field:has(> input[role="combobox"]) { position: relative; }
 button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
 summary:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--ui-field-focus-border);
+  outline: var(--ui-field-focus-outline);
+  outline-offset: 2px;
+  box-shadow: var(--ui-field-focus-shadow);
 }
 
 .ui-icon {
@@ -394,6 +453,14 @@ summary:focus-visible,
   pointer-events: none;
 }
 .ui-icon use { pointer-events: none; }
+.product-brand { display: flex; min-width: 0; align-items: center; gap: 9px; color: inherit; text-decoration: none; }
+.product-brand-mark { width: 36px; height: 36px; flex: none; border-radius: 7px; }
+.product-brand-copy { display: grid; width: max-content; min-width: 0; max-width: 100%; gap: 1px; }
+.product-brand-name,
+.product-brand-tagline { display: block; min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
+.product-brand-name { color: var(--ui-text); font-size: 14px; font-weight: 780; line-height: 17px; }
+.product-brand-tagline { margin: 0; color: var(--ui-muted); font-size: 10px; font-weight: 550; line-height: 13px; letter-spacing: 0; }
+.product-brand:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
 .sr-only {
   position: absolute;
   width: 1px;
@@ -420,7 +487,7 @@ summary:focus-visible,
   border-radius: 999px;
   padding: 3px 4px 3px 9px;
   color: var(--ui-text);
-  background: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+  background: var(--ui-accent-subtle);
   font-size: var(--ui-meta-size);
   font-weight: 700;
 }
@@ -488,7 +555,7 @@ summary:focus-visible,
 .app-dialog-field small { color: var(--ui-muted); font-weight: 400; line-height: 1.5; }
 .app-dialog-check { display: flex; align-items: flex-start; gap: 9px; color: var(--ui-text); }
 .app-dialog-check input { width: 16px; min-height: 16px; margin-top: 2px; }
-.app-dialog-status { margin: 0; color: var(--ui-accent); font-size: var(--ui-meta-size); }
+.app-dialog-status { margin: 0; color: var(--ui-text); font-size: var(--ui-meta-size); }
 .app-dialog-status.error { color: var(--ui-danger); }
 .app-dialog-form > footer { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--ui-border); padding: 12px 16px; background: var(--ui-page); }
 .button-danger { border-color: color-mix(in srgb, var(--ui-danger) 52%, transparent); color: #fff; background: var(--ui-danger); }

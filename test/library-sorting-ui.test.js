@@ -10,10 +10,10 @@ const [html, source, css] = await Promise.all([
 
 test("library exposes four case sorts and keeps project ordering as an on-demand action", () => {
   const gallerySort = html.slice(html.indexOf('id="gallery-sort"'), html.indexOf("</select>", html.indexOf('id="gallery-sort"')));
-  assert.match(gallerySort, /value="added-desc">最近加入/);
-  assert.match(gallerySort, /value="updated-desc">最近更新/);
-  assert.match(gallerySort, /value="title">标题/);
-  assert.match(gallerySort, /value="project-manual"[^>]*hidden>手动排序/);
+  assert.match(gallerySort, /value="added-desc"[^>]*>最近加入/);
+  assert.match(gallerySort, /value="updated-desc"[^>]*>最近更新/);
+  assert.match(gallerySort, /value="title"[^>]*>标题/);
+  assert.match(gallerySort, /value="project-manual"[^>]*hidden[^>]*>手动排序/);
   assert.doesNotMatch(gallerySort, /最早加入|项目手动顺序/);
   assert.match(html, /id="manage-case-order"[^>]*aria-label="管理案例顺序"/);
 

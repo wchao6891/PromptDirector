@@ -37,7 +37,7 @@ test("detail organization follows prompt and AI tags without an extra section ti
 test("detail projects use a compact multi-project dropdown and can be created in place", () => {
   assert.match(quickOrganizer, /detail-project-menu/);
   assert.match(quickOrganizer, /"选择项目"/);
-  assert.match(quickOrganizer, /`已加入 \$\{selectedProjects\.length\} 个项目`/);
+  assert.match(quickOrganizer, /t\("已加入 \{count\} 个项目", \{ count: selectedProjects\.length \}\)/);
   assert.match(quickOrganizer, /checkbox\.type = "checkbox"/);
   assert.match(quickOrganizer, /type: "REPLACE_COLLECTION_ENTRIES"/);
   assert.match(quickOrganizer, /type: "CREATE_COLLECTION"/);

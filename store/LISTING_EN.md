@@ -2,7 +2,7 @@
 
 ## Name
 
-PromptDirector — Visual Creative Archive
+PromptDirector
 
 ## Short description
 
@@ -10,7 +10,7 @@ Save web visuals, prompts, and creative references together for reuse.
 
 ## Detailed description
 
-PromptDirector is a local-first creative reference library for AI image and video creators, filmmakers, art directors, photographers, illustrators, and designers.
+PromptDirector, your private visual inspiration library. It is local-first and built for AI image and video creators, filmmakers, art directors, photographers, illustrators, and designers.
 
 Use it to:
 

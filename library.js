@@ -1,4 +1,4 @@
-import { renderLibraryJson, screenshotStorageKey } from "./lib.js";
+import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
 import { readImageDimensions } from "./image-metadata.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import {
@@ -159,12 +159,12 @@ import { SIDEBAR_WIDTH_LIMITS, normalizeSidebarWidth } from "./preferences.js";
 
 let uiPreferences = await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".package-menu, .project-menu, .detail-analysis-menu, .detail-project-menu");
+bindTransientMenus(document, ".package-menu, .project-menu, .detail-analysis-menu, .detail-project-menu, .selection-menu");
 const libraryWindowId = (await chrome.windows.getCurrent()).id;
 
 const elements = Object.fromEntries([
-  "about-version", "active-filter-badge", "add-folder", "add-media", "add-video-reference", "ai-settings-form", "ai-settings-status", "ai-routing-summary", "ai-provider-list", "ai-assignment-list", "open-ai-routing", "analysis-instructions-en", "analysis-instructions-zh", "analysis-protocol", "apply-reanalyze", "case-list", "cancel-library-maintenance",
-  "clear-filters", "content-filters", "content-type-count", "content-type-name", "content-type-replacement", "content-type-replacement-field", "content-type-role", "content-type-role-help",
+  "about-version", "add-folder", "add-media", "add-video-reference", "ai-settings-form", "ai-settings-status", "ai-routing-summary", "ai-provider-list", "ai-assignment-list", "open-ai-routing", "analysis-instructions-en", "analysis-instructions-zh", "analysis-protocol", "apply-reanalyze", "case-list", "cancel-library-maintenance",
+  "content-filters", "content-type-count", "content-type-name", "content-type-replacement", "content-type-replacement-field", "content-type-role", "content-type-role-help",
   "content-type-list", "content-type-editor", "content-type-editor-title", "content-type-delete-transfer", "content-type-delete-message",
   "add-content-type", "cancel-content-type-edit", "cancel-delete-content-type", "confirm-delete-content-type", "save-content-type",
   "collection-filters", "create-collection",
@@ -181,7 +181,7 @@ const elements = Object.fromEntries([
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library",
   "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
   "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
-  "project-section", "manage-project-order", "selection-simple-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
+  "project-section", "manage-project-order", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
   "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
@@ -563,7 +563,6 @@ function bindEvents() {
     renderAiRoutingView();
   }));
   aiAdvancedSettingsSummary?.addEventListener("click", () => preserveSettingsAnchor(aiAdvancedSettingsSummary));
-  elements.clearFilters.addEventListener("click", clearFilters);
   elements.createCollection.addEventListener("click", () => createProjectCollection(elements.createCollection));
   elements.gallerySort.addEventListener("change", () => {
     caseSortMode = elements.gallerySort.value;
@@ -887,10 +886,12 @@ async function refreshLibrary() {
   visionBatchJob = response.visionBatchJob ?? null;
   canUndoAnalysisBatch = Boolean(response.canUndoAnalysisBatch);
   restoreLibraryReturnSnapshot();
-  elements.libraryTitle.textContent = settings.libraryTitle || (currentLocale() === "en" ? "Visual Creation Library" : "视觉创作资料库");
-  if (document.activeElement !== elements.libraryNameSetting) elements.libraryNameSetting.value = settings.libraryTitle || "";
+  const displayedLibraryTitle = libraryTitleForLocale(settings.libraryTitle, currentLocale());
+  elements.libraryTitle.textContent = displayedLibraryTitle;
+  if (document.activeElement !== elements.libraryNameSetting) elements.libraryNameSetting.value = displayedLibraryTitle;
   if (document.activeElement !== elements.exportPathSetting) elements.exportPathSetting.value = settings.outputPath || "";
-  elements.libraryNameSetting.dataset.savedValue = settings.libraryTitle || "";
+  elements.libraryNameSetting.dataset.savedValue = displayedLibraryTitle;
+  elements.libraryNameSetting.dataset.storedValue = settings.libraryTitle || "";
   elements.exportPathSetting.dataset.savedValue = settings.outputPath || "";
   updateLibrarySettingsSaveState();
   if (selectedCollectionId && !organizerState.collections.some((item) => item.id === selectedCollectionId)) selectedCollectionId = "";
@@ -953,7 +954,7 @@ function updateCachedDocumentCards() {
   for (const image of elements.caseList.querySelectorAll("img[data-document-id]")) {
     const derived = documentDerived.get(image.dataset.documentId);
     const pages = image.parentElement?.querySelector(".pdf-cover-label span");
-    if (pages && derived?.pageCount) pages.textContent = `${derived.pageCount} 页`;
+    if (pages && derived?.pageCount) pages.textContent = t("{count} 页", { count: derived.pageCount });
   }
 }
 
@@ -1309,8 +1310,8 @@ function createCaseCard(entry) {
   moveUp.type = moveDown.type = "button";
   moveUp.setAttribute("aria-label", `上移案例：${entry.title}`);
   moveDown.setAttribute("aria-label", `下移案例：${entry.title}`);
-  moveUp.title = `上移案例：${entry.title}`;
-  moveDown.title = `下移案例：${entry.title}`;
+  moveUp.title = t("上移案例：{title}", { title: entry.title });
+  moveDown.title = t("下移案例：{title}", { title: entry.title });
   moveUp.addEventListener("click", (event) => {
     event.stopPropagation();
     void reorderProjectCase(entry, "up", moveUp);
@@ -1348,10 +1349,10 @@ function createTextCaseCover(entry, asset = null) {
     ? `${assetFormatLabel(asset)} 字幕`
     : mimeLabels[asset.mimeType] || assetFormatLabel(asset) || "DOC") : "NOTE";
   const cover = el("div", "case-text-cover");
-  cover.append(rawTextEl("span", "case-text-kind", label), rawTextEl("strong", "case-text-title", entry.title || (asset ? asset.sourceTitle : "快速笔记")));
+  cover.append(rawTextEl("span", "case-text-kind", t(label)), rawTextEl("strong", "case-text-title", entry.title || (asset ? asset.sourceTitle : t("快速笔记"))));
   const source = String(entry.text ?? "").trim();
   const summary = asset?.mimeType === "text/markdown" ? markdownPlainText(source) : source;
-  cover.append(rawTextEl("p", "case-text-excerpt", summary || "打开查看文档内容"));
+  cover.append(rawTextEl("p", "case-text-excerpt", summary || t("打开查看文档内容")));
   return cover;
 }
 
@@ -1360,7 +1361,7 @@ function createAudioCaseCover(entry, asset) {
   const format = assetFormatLabel(asset);
   cover.append(
     rawTextEl("span", "case-text-kind", `AUDIO · ${format}`),
-    rawTextEl("strong", "case-text-title", asset.sourceTitle || entry.title || "音频")
+    rawTextEl("strong", "case-text-title", asset.sourceTitle || entry.title || t("音频"))
   );
   const metadata = rawTextEl("p", "case-asset-meta", mediaMetadataText(asset));
   const audio = document.createElement("audio");
@@ -1383,12 +1384,12 @@ function createSourceFileCaseCover(entry, asset) {
   const cover = el("div", "case-asset-cover case-source-file-cover");
   cover.append(
     rawTextEl("span", "case-text-kind", `${assetCategoryLabel(asset)} · ${assetFormatLabel(asset)}`),
-    rawTextEl("strong", "case-text-title", asset.sourceTitle || entry.title || "创作源文件"),
-    rawTextEl("p", "case-asset-path", asset.relativePath || "本机资料"),
+    rawTextEl("strong", "case-text-title", asset.sourceTitle || entry.title || t("创作源文件")),
+    rawTextEl("p", "case-asset-path", asset.relativePath || t("本机资料")),
     rawTextEl("p", "case-asset-meta", mediaMetadataText(asset))
   );
   if (asset.recordType === "local-asset-reference") {
-    cover.append(rawTextEl("span", "case-local-link-badge", "本机链接"));
+    cover.append(rawTextEl("span", "case-local-link-badge", t("本机链接")));
   }
   return cover;
 }
@@ -1429,7 +1430,7 @@ function createVideoLinkCover(entry, asset) {
   const cover = el("div", "case-video-link-cover");
   cover.append(rawTextEl("span", "case-text-kind", provider), rawTextEl("strong", "case-text-title", entry.title || asset.sourceTitle || provider));
   const source = safeHttpUrl(asset.reference?.url || asset.sourceUrl);
-  cover.append(rawTextEl("p", "case-text-excerpt", source ? new URL(source).hostname : "打开查看视频来源"));
+  cover.append(rawTextEl("p", "case-text-excerpt", source ? new URL(source).hostname : t("打开查看视频来源")));
   return cover;
 }
 
@@ -1468,7 +1469,7 @@ async function hydrateDocumentPreview(image) {
       }
       image.src = url;
       const pages = image.parentElement?.querySelector(".pdf-cover-label span");
-      if (pages && derived.pageCount) pages.textContent = `${derived.pageCount} 页`;
+      if (pages && derived.pageCount) pages.textContent = t("{count} 页", { count: derived.pageCount });
     }
   } catch (error) {
     image.hidden = true;
@@ -1695,7 +1696,7 @@ async function persistProjectCollectionOrder(collectionIds, focusCollectionId) {
     const ordered = sortProjects(organizerState.collections, "manual");
     const project = ordered.find((item) => item.id === focusCollectionId);
     const position = ordered.findIndex((item) => item.id === focusCollectionId) + 1;
-    elements.projectOrderStatus.textContent = `已将${project?.name || "项目"}移动到第 ${position} 位`;
+    elements.projectOrderStatus.textContent = t("已将 {project} 移动到第 {position} 位", { project: project?.name || t("项目"), position });
     renderProjectFilters();
     queueMicrotask(() => elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(focusCollectionId)}"]`)?.focus());
   } catch (error) {
@@ -1822,6 +1823,7 @@ function exitSelectionMode() {
   elements.selectionLabelInput.value = "";
   updateSelectionBar();
   renderGallery();
+  requestAnimationFrame(() => elements.selectCases.focus());
 }
 
 function exitProjectSelection() {
@@ -1848,6 +1850,7 @@ function selectAllFilteredCases() {
 function clearSelectedCases() {
   replaceSelectedCaseIds(clearLibrarySelection());
   renderGallery();
+  requestAnimationFrame(() => elements.selectionSelectFiltered.focus());
 }
 
 function replaceSelectedCaseIds(values) {
@@ -1902,19 +1905,27 @@ function updateSelectionBar() {
   elements.selectionProjectTarget.value = organizerState.collections.some((item) => item.id === selectedProject) ? selectedProject : "";
   elements.selectionAddProject.disabled = !selectedCaseIds.size || !elements.selectionProjectTarget.value;
   elements.selectionSelectFiltered.disabled = selectionMode !== "select" || visibleEntries.length === 0;
+  elements.selectionSelectFiltered.hidden = selectedCaseIds.size > 0;
   elements.selectionSelectFiltered.textContent = currentLocale() === "en" ? `Select current (${visibleEntries.length})` : `全选当前（${visibleEntries.length}）`;
   elements.selectionSelectFiltered.setAttribute("aria-label", currentLocale() === "en"
     ? `Select all ${visibleEntries.length} cases in the current filtered results`
     : `全选当前筛选结果，共 ${visibleEntries.length} 个案例`);
   elements.selectionClear.disabled = selectedCaseIds.size === 0;
+  elements.selectionSelectedActions.hidden = selectedCaseIds.size === 0;
   elements.selectionAddLabels.disabled = !selectedCaseIds.size || !splitInput(elements.selectionLabelInput.value).length;
   elements.selectionCombine.disabled = selectedCaseIds.size < 2;
+  elements.selectionCombine.title = selectedCaseIds.size < 2 ? t("至少选择 2 个案例") : "";
   elements.selectionNewProject.disabled = !selectedCaseIds.size;
-  elements.selectionAnalyze.disabled = ![...selectedCaseIds]
+  const selectionHasAnalyzableImage = [...selectedCaseIds]
     .some((id) => isVisionSelectableEntry(logicalCases.find((entry) => entry.id === id)));
+  elements.selectionAnalyze.disabled = !selectionHasAnalyzableImage;
+  elements.selectionAnalyze.title = selectionHasAnalyzableImage ? "" : t("所选案例中没有可分析的图片");
   elements.shareExport.textContent = t("分享");
   elements.shareExport.disabled = !selectedCaseIds.size;
   elements.selectionTrash.disabled = !selectedCaseIds.size;
+  if (!selectedCaseIds.size) {
+    for (const menu of document.querySelectorAll(".selection-menu[open]")) menu.open = false;
+  }
   elements.createCollection.disabled = taskSelecting;
 }
 
@@ -2632,26 +2643,26 @@ function renderExtensionUpdateStatus(nextStatus, fallbackError = "") {
   const currentVersion = status?.currentVersion || chrome.runtime.getManifest().version;
   elements.aboutVersion.textContent = `PromptDirector ${currentVersion}`;
   if (!status) {
-    elements.updateChannel.textContent = "安装方式暂不可用";
-    elements.updateStatus.textContent = fallbackError ? "状态不可用" : "正在检查";
+    elements.updateChannel.textContent = t("安装方式暂不可用");
+    elements.updateStatus.textContent = t(fallbackError ? "状态不可用" : "正在检查");
     elements.updateStatus.className = `update-status-badge${fallbackError ? " is-error" : ""}`;
-    elements.updateCheckedAt.textContent = "最近检查：—";
-    elements.updateAvailableVersion.textContent = "可用版本：—";
-    elements.updateExplanation.textContent = "重新打开设置时会再次读取更新状态。";
-    showUpdateFeedback(fallbackError, Boolean(fallbackError));
+    elements.updateCheckedAt.textContent = t("最近检查：—");
+    elements.updateAvailableVersion.textContent = t("可用版本：—");
+    elements.updateExplanation.textContent = t("重新打开设置时会再次读取更新状态。");
+    showUpdateFeedback(translateUiMessage(fallbackError), Boolean(fallbackError));
     return;
   }
 
   const development = status.channel === "development";
-  elements.updateChannel.textContent = development ? "本地开发版 · 手动替换代码" : "商店版 · Chrome 自动更新";
+  elements.updateChannel.textContent = t(development ? "本地开发版 · 手动替换代码" : "商店版 · Chrome 自动更新");
   const updateVersion = status.pendingVersion || status.latestVersion || "—";
-  elements.updateCheckedAt.textContent = `最近检查：${formatUpdateCheckTime(status.checkedAt)}`;
-  elements.updateAvailableVersion.textContent = `可用版本：${updateVersion}`;
+  elements.updateCheckedAt.textContent = t("最近检查：{time}", { time: formatUpdateCheckTime(status.checkedAt) });
+  elements.updateAvailableVersion.textContent = t("可用版本：{version}", { version: updateVersion });
 
   const display = updateStatusDisplay(status);
-  elements.updateStatus.textContent = display.label;
+  elements.updateStatus.textContent = t(display.label);
   elements.updateStatus.className = `update-status-badge ${display.className}`.trim();
-  elements.updateExplanation.textContent = updateExplanation(status);
+  elements.updateExplanation.textContent = t(updateExplanation(status));
 
   const releaseUrl = development && status.updateAvailable ? safeHttpUrl(status.releaseUrl) : "";
   elements.updateReleaseLink.hidden = !releaseUrl;
@@ -2662,15 +2673,15 @@ function renderExtensionUpdateStatus(nextStatus, fallbackError = "") {
   elements.applyExtensionUpdate.disabled = false;
   elements.applyExtensionUpdate.removeAttribute("aria-busy");
   elements.applyExtensionUpdate.classList.toggle("button-secondary", development);
-  elements.applyExtensionUpdate.textContent = status.applyBehavior === "reload_development_directory"
+  elements.applyExtensionUpdate.textContent = t(status.applyBehavior === "reload_development_directory"
     ? "重新载入目录"
-    : "应用更新并重启";
+    : "应用更新并重启");
 
   const hasUpdate = Boolean(status.updateAvailable);
   elements.settingsUpdateBadge.hidden = !hasUpdate;
-  elements.openSettings.setAttribute("aria-label", hasUpdate ? "设置，有可用更新" : "设置");
-  elements.openSettings.title = hasUpdate ? `设置 · ${display.label}` : "设置";
-  showUpdateFeedback(status.lastError || "", Boolean(status.lastError));
+  elements.openSettings.setAttribute("aria-label", t(hasUpdate ? "设置，有可用更新" : "设置"));
+  elements.openSettings.title = hasUpdate ? t("设置 · {status}", { status: t(display.label) }) : t("设置");
+  showUpdateFeedback(translateUiMessage(status.lastError || ""), Boolean(status.lastError));
 }
 
 function updateStatusDisplay(status) {
@@ -2694,15 +2705,15 @@ function updateExplanation(status) {
 }
 
 function updateCheckFeedback(status) {
-  if (status?.updateAvailable) return status.channel === "development" ? "发现新版本，可打开 Release 下载。" : "新版本已下载，可以立即应用。";
-  if (status?.checkStatus === "throttled") return "刚刚检查过，已保留最近结果。";
-  return "已是最新版本。";
+  if (status?.updateAvailable) return t(status.channel === "development" ? "发现新版本，可打开 Release 下载。" : "新版本已下载，可以立即应用。");
+  if (status?.checkStatus === "throttled") return t("刚刚检查过，已保留最近结果。");
+  return t("已是最新版本。");
 }
 
 function formatUpdateCheckTime(value) {
-  if (!value) return "尚未检查";
+  if (!value) return t("尚未检查");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "尚未检查";
+  if (Number.isNaN(date.getTime())) return t("尚未检查");
   return date.toLocaleString(currentLocale() === "en" ? "en" : "zh-CN");
 }
 
@@ -3365,7 +3376,7 @@ function renderFacetFilters(sourceEntries = entries) {
     details.style.setProperty("--facet-color", facet.color);
     details.open = Boolean(selected.size);
     const summary = el("summary", "");
-    summary.append(rawTextEl("span", "", facet.name), rawTextEl("span", "facet-filter-count", selected.size ? translateUiMessage(`已选 ${selected.size}`) : `${usageCount}`));
+    summary.append(rawTextEl("span", "", facetDisplayName(facet)), rawTextEl("span", "facet-filter-count", selected.size ? translateUiMessage(`已选 ${selected.size}`) : `${usageCount}`));
     details.append(summary);
     const body = el("div", "facet-filter-body");
     for (const parent of nodes.filter((item) => !item.parentId)) {
@@ -3395,10 +3406,11 @@ function createFacetFilterButton(node, selected, count, facet) {
   button.dataset.facetNodeId = node.id;
   button.style.setProperty("--facet-color", facet.color);
   button.setAttribute("aria-pressed", String(selected.has(node.id)));
-  button.setAttribute("aria-label", `${node.name} ${count}`);
+  const displayName = facetDisplayName(node);
+  button.setAttribute("aria-label", `${displayName} ${count}`);
   const check = el("span", "facet-option-check");
   check.append(createUiIcon("check"));
-  button.append(check, rawTextEl("span", "facet-option-name", node.name), rawTextEl("span", "facet-option-count", String(count)));
+  button.append(check, rawTextEl("span", "facet-option-name", displayName), rawTextEl("span", "facet-option-count", String(count)));
   button.addEventListener("click", () => {
     const next = new Set(selectedFacets.get(facet.id) ?? []);
     next.has(node.id) ? next.delete(node.id) : next.add(node.id);
@@ -3432,9 +3444,6 @@ function renderActiveFilters() {
     [...selectedFacets.values()].reduce((count, ids) => count + ids.size, 0) +
     Number(elements.pendingFilter.checked) +
     Number(Boolean(elements.searchInput.value.trim()));
-  elements.activeFilterBadge.hidden = activeFilterCount === 0;
-  elements.activeFilterBadge.textContent = activeFilterCount ? translateUiMessage(`筛选 ${activeFilterCount}`) : "";
-  elements.clearFilters.disabled = activeFilterCount === 0;
   renderFilterToggleState();
 }
 
@@ -3808,7 +3817,7 @@ function createCompoundOrganizer(entry) {
     order.replaceChildren(...memberIds.map((id, index) => {
       const member = entries.find((item) => item.id === id);
       const row = el("div", "compound-member-row");
-      row.append(rawTextEl("span", "", `${index + 1}. ${member?.title || "已移除案例"}`));
+      row.append(rawTextEl("span", "", `${index + 1}. ${member?.title || t("已移除案例")}`));
       const actions = el("span", "item-actions");
       const up = rawTextEl("button", "button-secondary", "↑");
       const down = rawTextEl("button", "button-secondary", "↓");
@@ -3898,7 +3907,7 @@ async function createCapturedPostView(entryValue) {
     section.append(textarea, actions);
     queueMicrotask(() => textarea.focus());
   } else {
-    section.append(rawTextEl("p", "captured-post-text", entry.text || "这条帖子没有可显示的文字"));
+    section.append(rawTextEl("p", "captured-post-text", entry.text || t("这条帖子没有可显示的文字")));
     const actions = el("div", "captured-post-actions");
     const copy = textEl("button", "button-secondary", "复制文字");
     const edit = textEl("button", "button-secondary", "编辑文字");
@@ -3955,10 +3964,10 @@ async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
       image.alt = `${entry.title} 视频封面`;
       link.append(image);
     }
-    link.append(rawTextEl("strong", "", post ? "打开原帖观看视频" : "打开视频来源"));
+    link.append(rawTextEl("strong", "", t(post ? "打开原帖观看视频" : "打开视频来源")));
     card.append(link);
   } else {
-    const link = rawTextEl("a", "compact-media-link compact-document-link", asset.sourceTitle || "打开文档来源");
+    const link = rawTextEl("a", "compact-media-link compact-document-link", asset.sourceTitle || t("打开文档来源"));
     link.href = asset.sourceUrl || entry.url || "#";
     link.target = "_blank";
     link.rel = "noopener noreferrer";
@@ -4011,11 +4020,11 @@ async function createArticleDocumentReader(entryValue) {
       const card = el("div", "article-document-resource");
       card.append(
         rawTextEl("span", "article-document-resource-type", block.kind === "document" ? "DOC" : "LINK"),
-        rawTextEl("strong", "", block.label || asset?.sourceTitle || "文章资源")
+        rawTextEl("strong", "", block.label || asset?.sourceTitle || t("文章资源"))
       );
       const sourceUrl = block.sourceUrl || asset?.sourceUrl || "";
       if (sourceUrl) card.append(articleSourceLink(sourceUrl, asset ? "打开来源" : "打开链接"));
-      if (asset?.kind === "document" && asset.storageMode === "managed") card.append(rawTextEl("small", "", "本地副本已保存在案例媒体中"));
+      if (asset?.kind === "document" && asset.storageMode === "managed") card.append(rawTextEl("small", "", t("本地副本已保存在案例媒体中")));
       reader.append(card);
     }
   }
@@ -4024,7 +4033,7 @@ async function createArticleDocumentReader(entryValue) {
 
 function articleSourceLink(urlValue, label) {
   const url = String(urlValue || "");
-  if (!url) return rawTextEl("span", "detail-placeholder", "来源暂时不可用");
+  if (!url) return rawTextEl("span", "detail-placeholder", t("来源暂时不可用"));
   const link = rawTextEl("a", "button-secondary media-open-link", label);
   link.href = url;
   link.target = "_blank";
@@ -4257,7 +4266,7 @@ function renderVideoAnalysisPanel(container, entry, asset, getController) {
     const heading = el("header", "");
     heading.append(
       rawTextEl("strong", "", `${videoAnalysisModeLabel(record.mode)} · 版本 ${records.length - index}`),
-      rawTextEl("span", "", `${record.provider || "未知服务"} · ${record.model || "未知模型"} · ${formatDate(record.createdAt)}`)
+      rawTextEl("span", "", `${record.provider || t("未知服务")} · ${record.model || t("未知模型")} · ${formatDate(record.createdAt)}`)
     );
     item.append(heading, renderTimestampedAnalysis(record.text, entry, asset, getController));
     if (record.usage?.totalTokens) item.append(rawTextEl("small", "", `本次用量：${record.usage.totalTokens} tokens`));
@@ -4399,7 +4408,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
     });
     wrap.append(
       rawTextEl("span", "asset-kind-badge", `音频 · ${assetFormatLabel(asset)}`),
-      rawTextEl("strong", "asset-file-title", asset.sourceTitle || entry.title || "音频"),
+      rawTextEl("strong", "asset-file-title", asset.sourceTitle || entry.title || t("音频")),
       metadata,
       audio,
       managedAssetDownloadLink(asset, url)
@@ -4428,7 +4437,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
   } else {
     const text = String(entry.text ?? "").trim() || await readDocumentText(blob, asset.mimeType);
     const reader = el("article", "document-text-reader");
-    reader.append(rawTextEl("div", "document-type-badge", documentTypeLabel(asset.mimeType, asset.sourceFormat)), rawTextEl("pre", "", text || "这个文档没有可显示的文字"));
+    reader.append(rawTextEl("div", "document-type-badge", documentTypeLabel(asset.mimeType, asset.sourceFormat)), rawTextEl("pre", "", text || t("这个文档没有可显示的文字")));
     wrap.append(reader);
   }
   wrap.append(open);
@@ -4436,7 +4445,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
 }
 
 function managedAssetDownloadLink(asset, url) {
-  const download = rawTextEl("a", "button-secondary media-open-link", "下载本机副本");
+  const download = rawTextEl("a", "button-secondary media-open-link", t("下载本机副本"));
   download.href = url;
   download.download = asset.sourceTitle || `source-${asset.id}`;
   return download;
@@ -4446,8 +4455,8 @@ function createManagedSourceFileViewer(asset, url) {
   const panel = el("div", "detail-source-file");
   panel.append(
     rawTextEl("span", "asset-kind-badge", `${assetCategoryLabel(asset)} · ${assetFormatLabel(asset)}`),
-    rawTextEl("strong", "asset-file-title", asset.sourceTitle || "创作源文件"),
-    rawTextEl("p", "asset-file-path", asset.relativePath || "本机资料"),
+    rawTextEl("strong", "asset-file-title", asset.sourceTitle || t("创作源文件")),
+    rawTextEl("p", "asset-file-path", asset.relativePath || t("本机资料")),
     rawTextEl("p", "asset-file-meta", mediaMetadataText(asset)),
     rawTextEl("p", "asset-inert-note", "这是归档源文件。PromptDirector 不会执行或内嵌打开它。"),
     managedAssetDownloadLink(asset, url)
@@ -4474,26 +4483,26 @@ async function createLocalAssetReferenceViewer(asset, entry) {
   };
   panel.dataset.linkStatus = inspection.status;
   panel.append(
-    rawTextEl("span", "asset-kind-badge", `本机链接 · ${assetFormatLabel(asset)}`),
-    rawTextEl("strong", "asset-file-title", asset.sourceTitle || "本机源文件"),
-    rawTextEl("p", "asset-file-path", asset.relativePath || asset.sourceTitle || "未记录相对路径"),
+    rawTextEl("span", "asset-kind-badge", `${t("本机链接")} · ${assetFormatLabel(asset)}`),
+    rawTextEl("strong", "asset-file-title", asset.sourceTitle || t("本机源文件")),
+    rawTextEl("p", "asset-file-path", asset.relativePath || asset.sourceTitle || t("未记录相对路径")),
     rawTextEl("p", "asset-file-meta", mediaMetadataText(asset)),
-    rawTextEl("p", "asset-link-status", statusLabels[inspection.status] || "链接状态未知"),
-    rawTextEl("p", "asset-inert-note", "这里只保存文件信息与本机授权。不会自动读取、上传、执行或内嵌源文件；导出分享包时会再次明确检查权限。")
+    rawTextEl("p", "asset-link-status", t(statusLabels[inspection.status] || "链接状态未知")),
+    rawTextEl("p", "asset-inert-note", t("这里只保存文件信息与本机授权。不会自动读取、上传、执行或内嵌源文件；导出分享包时会再次明确检查权限。"))
   );
   const actions = el("div", "asset-file-actions");
   if (inspection.status === LOCAL_ASSET_LINK_STATUS.NEEDS_PERMISSION) {
-    const authorize = rawTextEl("button", "button-secondary", "重新授权读取");
+    const authorize = rawTextEl("button", "button-secondary", t("重新授权读取"));
     authorize.addEventListener("click", () => void authorizeLocalAssetReference(asset, record, authorize));
     actions.append(authorize);
   }
   if (inspection.status === LOCAL_ASSET_LINK_STATUS.READY) {
-    const download = rawTextEl("button", "button-secondary", "下载本机副本");
+    const download = rawTextEl("button", "button-secondary", t("下载本机副本"));
     download.addEventListener("click", () => void downloadLocalAssetReference(asset, record, download));
     actions.append(download);
   }
-  const relink = rawTextEl("button", "button-secondary", "重新链接源文件");
-  relink.title = "由你选择新的本机文件；确认后更新文件名、大小、格式与修改时间";
+  const relink = rawTextEl("button", "button-secondary", t("重新链接源文件"));
+  relink.title = t("由你选择新的本机文件；确认后更新文件名、大小、格式与修改时间");
   relink.addEventListener("click", () => void relinkLocalAssetReference(entry, asset, relink));
   actions.append(relink);
   panel.append(actions);
@@ -4621,7 +4630,7 @@ async function createReferencedMediaViewer(asset, entry) {
     const status = textEl("p", "media-playback-status", "播放器正在加载…");
     const frame = document.createElement("iframe");
     frame.className = "detail-video detail-video-embed";
-    frame.title = `${providerLabel} 外部视频播放器`;
+    frame.title = t("{provider} 外部视频播放器", { provider: providerLabel });
     frame.src = provider === "vimeo" ? `${embedUrl}${embedUrl.includes("?") ? "&" : "?"}api=1&player_id=${encodeURIComponent(asset.id)}` : embedUrl;
     frame.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
     frame.allowFullscreen = true;
@@ -4685,7 +4694,7 @@ function youtubeMediaController(frame, status, playerId) {
   let ready = false;
   const origin = "https://www.youtube-nocookie.com";
   const timeoutId = setTimeout(() => {
-    if (!ready) status.textContent = "播放器响应超时，可重试或打开来源";
+    if (!ready) status.textContent = t("播放器响应超时，可重试或打开来源");
   }, 8000);
   const onMessage = (event) => {
     if (event.origin !== origin || event.source !== frame.contentWindow) return;
@@ -4693,7 +4702,7 @@ function youtubeMediaController(frame, status, playerId) {
     if (payload?.event === "onReady") {
       ready = true;
       clearTimeout(timeoutId);
-      status.textContent = "可以播放";
+      status.textContent = t("可以播放");
     } else if (payload?.event === "onError") {
       const failure = youtubePlaybackError(payload.info);
       clearTimeout(timeoutId);
@@ -4724,12 +4733,12 @@ function youtubeMediaController(frame, status, playerId) {
 
 function basicEmbedController(frame, status, providerLabel) {
   let timeoutId = setTimeout(() => {
-    status.textContent = `${providerLabel} 播放器响应超时，可打开来源`;
+    status.textContent = t("{provider} 播放器响应超时，可打开来源", { provider: providerLabel });
   }, 8000);
   const loaded = () => {
     clearTimeout(timeoutId);
     timeoutId = null;
-    status.textContent = "播放器已加载";
+    status.textContent = t("播放器已加载");
   };
   frame.addEventListener("load", loaded, { once: true });
   return {
@@ -4771,12 +4780,12 @@ function renderTimeNotes(container, entry, asset, getController) {
   form.hidden = true;
   const text = document.createElement("textarea");
   text.rows = 2;
-  text.placeholder = "记录这个画面、动作变化或提示词用法";
+  text.placeholder = t("记录这个画面、动作变化或提示词用法");
   const start = document.createElement("input");
   start.type = "number";
   start.min = "0";
   start.step = "0.1";
-  start.placeholder = "时间（秒）";
+  start.placeholder = t("时间（秒）");
   const save = textEl("button", "", "保存笔记");
   const cancel = textEl("button", "button-secondary", "取消");
   const advanced = el("details", "time-note-advanced");
@@ -4786,7 +4795,7 @@ function renderTimeNotes(container, entry, asset, getController) {
   end.type = "number";
   end.min = "0";
   end.step = "0.1";
-  end.placeholder = "片段结束秒数（可选）";
+  end.placeholder = t("片段结束秒数（可选）");
   advancedBody.append(end);
   const controller = getController();
   if (controller?.video) {
@@ -4994,18 +5003,18 @@ function createDetailQuickOrganization(entry) {
     "span",
     "detail-project-summary-text",
     selectedProjects.length === 0
-      ? "选择项目"
+      ? t("选择项目")
       : selectedProjects.length === 1
         ? selectedProjects[0].name
-        : `已加入 ${selectedProjects.length} 个项目`
+        : t("已加入 {count} 个项目", { count: selectedProjects.length })
   );
   const syncProjectSummary = () => {
     const selected = selectedProjectsForEntry();
     projectSummaryText.textContent = selected.length === 0
-      ? "选择项目"
+      ? t("选择项目")
       : selected.length === 1
         ? selected[0].name
-        : `已加入 ${selected.length} 个项目`;
+        : t("已加入 {count} 个项目", { count: selected.length });
   };
   projectSummary.append(projectSummaryText, createUiIcon("chevron-down"));
   const projectPopover = el("div", "detail-project-popover");
@@ -5042,7 +5051,7 @@ function createDetailQuickOrganization(entry) {
   }
   const newProject = el("div", "detail-new-project");
   const newProjectName = document.createElement("input");
-  newProjectName.placeholder = "输入新项目名称";
+  newProjectName.placeholder = t("输入新项目名称");
   newProjectName.setAttribute("aria-label", "新项目名称");
   const createProject = textEl("button", "button-secondary", "新建并加入");
   const submitProject = async () => {
@@ -5352,7 +5361,7 @@ function createMediaActions(entryValue) {
   const entry = normalizeEntryMedia(entryValue);
   const wrap = el("div", "screenshot-actions");
   const contentCount = entry.mediaAssets.filter((asset) => asset.usage !== "poster").length;
-  wrap.append(textEl("strong", "", contentCount ? `${contentCount} 项媒体` : "还没有媒体"));
+  wrap.append(rawTextEl("strong", "", contentCount ? t("{count} 项媒体", { count: contentCount }) : t("还没有媒体")));
   const uploadControl = createLocalMediaUploadControl(entry, { label: "从本机添加图片、视频或文档" });
   const addLink = textEl("button", "button-secondary", "添加视频链接");
   addLink.addEventListener("click", () => addVideoReference(entry.id));
@@ -5445,7 +5454,7 @@ async function openLocalImportSource() {
 }
 
 function renderImportSource() {
-  elements.importDialogTitle.textContent = "导入本机资料";
+  elements.importDialogTitle.textContent = t("导入本机资料");
   elements.importSource.hidden = false;
   elements.importPreparing.hidden = true;
   elements.importConfirmation.hidden = true;
@@ -5524,7 +5533,7 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
   const rootName = source === "folder" ? commonImportRoot(fileItems) : "";
   const draft = { source, rootName, browsingScrollY, customLabels: [], stagedAssets: [], skipped: [] };
   pendingLocalImport = draft;
-  elements.importDialogTitle.textContent = "确认导入";
+  elements.importDialogTitle.textContent = t("确认导入");
   elements.importSource.hidden = true;
   elements.importActions.hidden = false;
   renderImportProjectOptions(rootName);
@@ -5537,7 +5546,7 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
   elements.importConfirmation.hidden = true;
   elements.importJobPanel.hidden = true;
   elements.importStart.hidden = false;
-  elements.importCancel.textContent = "取消";
+  elements.importCancel.textContent = t("取消");
   elements.importRetry.hidden = true;
   elements.importUndo.hidden = true;
   elements.importViewProject.hidden = true;
@@ -5705,16 +5714,16 @@ function createSkippedImportRow(item) {
     return row;
   }
   if (canKeepLocalLink) {
-    const keepLink = rawTextEl("button", "button-secondary import-file-force", "保留本机链接");
+    const keepLink = rawTextEl("button", "button-secondary import-file-force", t("保留本机链接"));
     keepLink.type = "button";
-    keepLink.title = "只保存文件信息与授权句柄，不复制或执行源文件；分享时才读取源文件";
+    keepLink.title = t("只保存文件信息与授权句柄，不复制或执行源文件；分享时才读取源文件");
     keepLink.addEventListener("click", () => void preserveUnsupportedImportReference(item, keepLink));
     row.append(spacer, details, keepLink);
     return row;
   }
-  const force = rawTextEl("button", "button-secondary import-file-force", "强制导入");
+  const force = rawTextEl("button", "button-secondary import-file-force", t("强制导入"));
   force.type = "button";
-  force.title = "忽略这项限制并再次检查；可能占用更多本机空间";
+    force.title = t("忽略这项限制并再次检查；可能占用更多本机空间");
   force.addEventListener("click", () => void forcePrepareSkippedImport(item, force));
   row.append(spacer, details, force);
   return row;
@@ -5833,7 +5842,7 @@ async function startLocalImportJob() {
 function renderImportJob() {
   const job = activeImportJob;
   if (!job) return;
-  elements.importDialogTitle.textContent = "导入任务";
+  elements.importDialogTitle.textContent = t("导入任务");
   elements.importSource.hidden = true;
   elements.importActions.hidden = false;
   elements.importPreparing.hidden = true;
@@ -5846,12 +5855,12 @@ function renderImportJob() {
   const finished = imported + skipped + failed;
   const active = ["queued", "running"].includes(job.status);
   const labels = { queued: "等待导入", running: "正在导入", completed: "导入完成", failed: "部分导入失败", canceled: "导入已取消" };
-  elements.importJobTitle.textContent = labels[job.status] || "导入任务";
+  elements.importJobTitle.textContent = t(labels[job.status] || "导入任务");
   elements.importJobCount.textContent = `${finished}/${job.items.length}`;
   elements.importJobProgress.max = Math.max(1, job.items.length);
   elements.importJobProgress.value = finished;
-  elements.importJobFeedback.textContent = `${imported} 已导入 · ${skipped} 已跳过 · ${failed} 失败`;
-  elements.importCancel.textContent = active ? "取消剩余项" : "关闭";
+  elements.importJobFeedback.textContent = t("{imported} 已导入 · {skipped} 已跳过 · {failed} 失败", { imported, skipped, failed });
+  elements.importCancel.textContent = t(active ? "取消剩余项" : "关闭");
   elements.importRetry.hidden = active || !failed;
   elements.importUndo.hidden = active || !job.createdEntryIds?.length || Boolean(job.undoneAt);
   elements.importViewProject.hidden = !job.collectionId || !job.createdEntryIds?.length || Boolean(job.undoneAt);
@@ -6485,7 +6494,7 @@ function createPromptSection(entry, options = {}) {
     const textarea = document.createElement("textarea");
     textarea.className = "prompt-text prompt-editor";
     textarea.value = promptEditState.draftText;
-    textarea.setAttribute("aria-label", "编辑提示词");
+    textarea.setAttribute("aria-label", t("编辑提示词"));
     textarea.addEventListener("input", () => {
       promptEditState.draftText = textarea.value;
       promptEditState.dirty = textarea.value !== promptEditState.originalText;
@@ -6588,7 +6597,7 @@ function createPromptSection(entry, options = {}) {
   analysisMenu.append(analysisActions);
   section.append(
     heading,
-    rawTextEl("pre", `prompt-text${displayedPrompt ? "" : " is-empty"}`, displayedPrompt || "暂无提示词"),
+    rawTextEl("pre", `prompt-text${displayedPrompt ? "" : " is-empty"}`, displayedPrompt || t("暂无提示词")),
     coreActions,
     analysisMenu
   );
@@ -6670,8 +6679,8 @@ async function analyzeEntryVisualSet(entry, button) {
       const requestSummary = rawTextEl("p", "visual-analysis-request-summary", "");
       updateSelectionSummary = () => {
         const selectedCount = assets.filter((asset, index) => controls.get(`asset_${index}`)?.checked).length;
-        count.textContent = `已选 ${selectedCount}/${assets.length}`;
-        requestSummary.textContent = `将发送 ${selectedCount} 次图片分析请求 · ${controls.get("includeSummary")?.checked ? "1 次纯文字总结" : "不生成整组总结"}`;
+        count.textContent = t("已选 {selected}/{total}", { selected: selectedCount, total: assets.length });
+        requestSummary.textContent = t("将发送 {count} 次图片分析请求 · {summary}", { count: selectedCount, summary: controls.get("includeSummary")?.checked ? t("1 次纯文字总结") : t("不生成整组总结") });
       };
       const setChecks = (predicate) => {
         assets.forEach((asset, index) => {
@@ -6717,7 +6726,7 @@ async function analyzeEntryVisualSet(entry, button) {
         const card = cardByAssetId.get(asset.id);
         const statusLabel = card?.querySelector(".visual-analysis-card-status");
         if (card) card.dataset.state = "processing";
-        if (statusLabel) statusLabel.textContent = "正在分析…";
+        if (statusLabel) statusLabel.textContent = t("正在分析…");
         try {
           const response = await chrome.runtime.sendMessage({ type: "ANALYZE_ENTRY_IMAGE", entryId: entry.id, visualId: asset.id, outputLocale: currentLocale() });
           if (!response?.ok) throw new Error(response?.message || "逐图分析失败");
@@ -6728,7 +6737,7 @@ async function analyzeEntryVisualSet(entry, button) {
             input.disabled = true;
           }
           if (card) card.dataset.state = "completed";
-          if (statusLabel) statusLabel.textContent = "本次已完成";
+          if (statusLabel) statusLabel.textContent = t("本次已完成");
           updateSelectionSummary();
           const replacement = visualAnalysisPromptReplacement(response.entry, asset.id);
           if (replacement) savedPromptSuggestions.set(asset.id, { ...replacement, index: imageIndex + 1 });
@@ -6736,13 +6745,13 @@ async function analyzeEntryVisualSet(entry, button) {
           const message = error.message || "请重试";
           failures.push({ index: imageIndex + 1, message });
           if (card) card.dataset.state = "failed";
-          if (statusLabel) statusLabel.textContent = `失败 · ${message}`;
+          if (statusLabel) statusLabel.textContent = t("失败 · {message}", { message });
         }
       }
       if (failures.length) {
         const statusLine = status();
         statusLine.classList.add("error");
-        statusLine.textContent = `${failures.length} 张失败，已成功 ${completedAssetIds.size} 张且不会重复请求。可直接重试失败项。`;
+        statusLine.textContent = t("{failed} 张失败，已成功 {completed} 张且不会重复请求。可直接重试失败项。", { failed: failures.length, completed: completedAssetIds.size });
         await refreshLibrary();
         return false;
       }
@@ -6815,9 +6824,9 @@ function createEntryEditor(entry, options = {}) {
   const selected = el("div", "selected-edit-tags");
   for (const facet of facetCatalog.facets.filter((item) => item.status === "active").sort((a, b) => a.order - b.order)) {
     for (const item of grouped.get(facet.id) ?? []) {
-      const remove = rawTextEl("button", "", `${item.path} ×`);
+      const remove = rawTextEl("button", "", `${facetNodeDisplayPath(item.nodeId)} ×`);
       remove.style.setProperty("--facet-color", facet.color);
-      remove.title = facet.name;
+      remove.title = facetDisplayName(facet);
       remove.addEventListener("click", () => perform(remove, { type: "SET_ENTRY_FACET", entryId: entry.id, facetId: facet.id, nodeId: item.nodeId, selected: false }));
       selected.append(remove);
     }
@@ -6827,18 +6836,18 @@ function createEntryEditor(entry, options = {}) {
   if (activeFacets.length) {
     const addRow = el("div", "entry-tag-add");
     const facetSelect = document.createElement("select");
-    facetSelect.setAttribute("aria-label", "选择创作维度");
-    facetSelect.append(option("", "选择维度"), ...activeFacets.map((facet) => option(facet.id, facet.name)));
+    facetSelect.setAttribute("aria-label", t("选择创作维度"));
+    facetSelect.append(option("", t("选择维度")), ...activeFacets.map((facet) => option(facet.id, facetDisplayName(facet))));
     const tagSelect = document.createElement("select");
-    tagSelect.setAttribute("aria-label", "选择创作标签");
+    tagSelect.setAttribute("aria-label", t("选择创作标签"));
     tagSelect.disabled = true;
-    tagSelect.append(option("", "先选择维度"));
+    tagSelect.append(option("", t("先选择维度")));
     const add = textEl("button", "", "添加标签");
     add.disabled = true;
     facetSelect.addEventListener("change", () => {
       const facetId = facetSelect.value;
       const nodes = facetId ? facetNodes(facetCatalog, facetId) : [];
-      tagSelect.replaceChildren(option("", facetId ? "选择标签" : "先选择维度"), ...nodes.map((node) => option(node.id, formatFacetNodePath(facetCatalog, node.id))));
+      tagSelect.replaceChildren(option("", t(facetId ? "选择标签" : "先选择维度")), ...nodes.map((node) => option(node.id, facetNodeDisplayPath(node.id))));
       tagSelect.disabled = !nodes.length;
       add.disabled = true;
     });
@@ -6863,7 +6872,7 @@ function renderManager() {
   const pendingCount = entries.filter(isEntryPending).length;
   const pendingTab = managerTabs.find((button) => button.dataset.managerTab === "pending");
   pendingTab.hidden = !pendingCount;
-  pendingTab.textContent = `待确认 ${pendingCount}`;
+  pendingTab.textContent = t("待确认 {count}", { count: pendingCount });
   if (!pendingCount && activeManagerTab === "pending") activeManagerTab = "content-types";
   managerTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.managerTab === activeManagerTab)));
   Object.entries(managerPanels).forEach(([name, panel]) => { panel.hidden = name !== activeManagerTab; });
@@ -7173,7 +7182,7 @@ function renderBatchManager() {
     reanalysisPreview.confirmed || reanalysisPreview.suggested || reanalysisPreview.paletteCount
   ));
   elements.previewReanalyze.hidden = maintenanceActive;
-  elements.previewReanalyze.textContent = reanalysisPreview || maintenanceJob ? "重新检查" : "检查缺失项";
+  elements.previewReanalyze.textContent = t(reanalysisPreview || maintenanceJob ? "重新检查" : "检查缺失项");
   elements.previewReanalyze.classList.toggle("button-secondary", Boolean(reanalysisPreview || maintenanceJob));
   elements.applyReanalyze.hidden = maintenanceActive || !maintenanceMissing;
   elements.applyReanalyze.disabled = !maintenanceMissing;
@@ -7228,10 +7237,10 @@ function renderAiRoutingSummary() {
         const row = el("div", "ai-provider-row");
         row.dataset.providerId = profile.id;
         const status = `${providerConnectionLabel(profile)} · ${providerCatalogLabel(profile)}`;
-        const configure = textEl("button", "button-secondary", t(profile.credentialConfigured ? "编辑配置" : "配置"));
+        const configure = textEl("button", "button-secondary", profile.credentialConfigured ? "编辑配置" : "配置");
         configure.type = "button";
         configure.addEventListener("click", () => openAiProviderDialog(profile.id));
-        const refresh = textEl("button", "button-secondary", t("刷新模型"));
+        const refresh = textEl("button", "button-secondary", "刷新模型");
         refresh.type = "button";
         refresh.disabled = !profile.credentialConfigured;
         refresh.addEventListener("click", () => refreshAiProviderModels(profile.id, refresh));
@@ -7246,7 +7255,7 @@ function renderAiRoutingSummary() {
     const profile = aiProviderRegistry.providers?.[assignment.providerId];
     const row = el("div", "ai-assignment-row");
     const modelState = assignedModelState(profile, assignment.model);
-    const change = textEl("button", "button-secondary", t(assignment.providerId ? "更换" : "配置"));
+    const change = textEl("button", "button-secondary", assignment.providerId ? "更换" : "配置");
     change.type = "button";
     change.addEventListener("click", () => openAiTaskAssignmentDialog(task.id));
     row.append(
@@ -7477,7 +7486,7 @@ async function openAiProviderDialog(initialProviderId = "") {
       summary.append(title, description);
       const advancedBody = document.createElement("div");
       advancedBody.className = "ai-advanced-settings-body";
-      const micuPreset = textEl("button", "button-secondary", t("填入米醋个人中转预设"));
+      const micuPreset = textEl("button", "button-secondary", "填入米醋个人中转预设");
       micuPreset.type = "button";
       micuPreset.dataset.providerPreset = "micu-personal";
       micuPreset.hidden = true;
@@ -7914,7 +7923,7 @@ async function startDeepSeekAnalysisBatch() {
 async function organizeDetailTags() {
   const chunks = createDetailOrganizationChunks(facetCatalog, entries);
   if (!chunks.length) {
-    elements.organizeDetailStatus.textContent = "当前没有需要整理的三级标签组。";
+    elements.organizeDetailStatus.textContent = t("当前没有需要整理的三级标签组。");
     return;
   }
   const tagCount = chunks.reduce((sum, chunk) => sum + chunk.d.length, 0);
@@ -7929,14 +7938,14 @@ async function organizeDetailTags() {
   try {
     const settings = await privateAiSettings();
     for (let index = 0; index < chunks.length; index += 1) {
-      elements.organizeDetailStatus.textContent = `正在整理 ${index + 1}/${chunks.length}…`;
+      elements.organizeDetailStatus.textContent = t("正在整理 {current}/{total}…", { current: index + 1, total: chunks.length });
       const result = await organizeDetailTagsWithDeepSeek(chunks[index], settings);
       mappings.push(...result.mappings);
       for (const key of Object.keys(usage)) usage[key] += Math.max(0, Number(result.usage?.[key]) || 0);
     }
     const response = await chrome.runtime.sendMessage({ type: "APPLY_DETAIL_TAG_ORGANIZATION", mappings });
     if (!response?.ok) throw new Error(response?.message || "无法应用三级标签整理结果");
-    elements.organizeDetailStatus.textContent = `${response.message} · 输入 ${usage.promptTokens} / 输出 ${usage.completionTokens} tokens`;
+    elements.organizeDetailStatus.textContent = t("{message} · 输入 {input} / 输出 {output} tokens", { message: translateUiMessage(response.message), input: usage.promptTokens, output: usage.completionTokens });
     await refreshLibrary();
   } catch (error) {
     elements.organizeDetailStatus.textContent = error.message || "三级标签整理失败，正式标签库没有改变";
@@ -8197,7 +8206,7 @@ function wait(milliseconds, signal) {
 
 async function previewReanalysis() {
   elements.previewReanalyze.disabled = true;
-  elements.reanalyzePreview.textContent = "正在检查本机资料…";
+  elements.reanalyzePreview.textContent = t("正在检查本机资料…");
   try {
     const response = await chrome.runtime.sendMessage({ type: "PREVIEW_REANALYZE" });
     if (!response?.ok) throw new Error(response?.message || "无法检查资料");
@@ -8281,11 +8290,11 @@ function handleLibraryMaintenanceMessage(message) {
 function renderReanalysisPreview() {
   if (maintenanceJob?.total) {
     if (maintenanceJob.status === "completed" && !maintenanceJob.failed) {
-      elements.reanalyzePreview.textContent = "资料索引已完整";
+      elements.reanalyzePreview.textContent = t("资料索引已完整");
       return;
     }
     const status = ({ running: "补全中", paused: "已暂停", completed: "补全完成", canceled: "已取消" })[maintenanceJob.status] || maintenanceJob.status;
-    elements.reanalyzePreview.textContent = `${status} · 已处理 ${maintenanceJob.processed}/${maintenanceJob.total} · 成功 ${maintenanceJob.succeeded} · 失败 ${maintenanceJob.failed}`;
+    elements.reanalyzePreview.textContent = t("{status} · 已处理 {processed}/{total} · 成功 {succeeded} · 失败 {failed}", { status: translateUiMessage(status), processed: maintenanceJob.processed, total: maintenanceJob.total, succeeded: maintenanceJob.succeeded, failed: maintenanceJob.failed });
     return;
   }
   if (!reanalysisPreview) {
@@ -8310,15 +8319,23 @@ function updateLibrarySettingsSaveState() {
 }
 
 async function saveLibrarySettings() {
+  const libraryTitle = libraryTitleForStorage(
+    elements.libraryNameSetting.value,
+    elements.libraryNameSetting.dataset.storedValue,
+    currentLocale()
+  );
   const response = await perform(elements.saveLibrarySettings, {
     type: "UPDATE_SETTINGS",
     settings: {
-      libraryTitle: elements.libraryNameSetting.value,
+      libraryTitle,
       outputPath: elements.exportPathSetting.value
     }
   }, false);
   if (!response?.ok) return;
-  elements.libraryNameSetting.dataset.savedValue = elements.libraryNameSetting.value;
+  const displayedLibraryTitle = libraryTitleForLocale(response.settings.libraryTitle, currentLocale());
+  elements.libraryNameSetting.value = displayedLibraryTitle;
+  elements.libraryNameSetting.dataset.savedValue = displayedLibraryTitle;
+  elements.libraryNameSetting.dataset.storedValue = response.settings.libraryTitle || "";
   elements.exportPathSetting.dataset.savedValue = elements.exportPathSetting.value;
   updateLibrarySettingsSaveState();
 }
@@ -8447,12 +8464,12 @@ function renderTrashItems() {
     const restore = el("button", "icon-button button-secondary");
     restore.type = "button";
     restore.setAttribute("aria-label", `恢复：${preview.title}`);
-    restore.title = "恢复";
+    restore.title = t("恢复");
     restore.append(createUiIcon("refresh-cw"));
     const remove = el("button", "icon-button quiet-danger");
     remove.type = "button";
     remove.setAttribute("aria-label", `永久删除：${preview.title}`);
-    remove.title = "永久删除";
+    remove.title = t("永久删除");
     remove.append(createUiIcon("trash-2"));
     restore.addEventListener("click", () => restoreTrashItem(item, restore));
     remove.addEventListener("click", () => permanentlyDeleteTrashItem(item, remove));
@@ -8700,7 +8717,7 @@ async function renderCapturePermissionStatus() {
 }
 
 function renderCapturePermissionItem(statusElement, button, granted) {
-  statusElement.textContent = granted ? "已授权" : "未授权";
+  statusElement.textContent = t(granted ? "已授权" : "未授权");
   statusElement.classList.toggle("is-granted", granted);
   button.disabled = !granted;
 }
@@ -8712,7 +8729,7 @@ async function revokeCapturePermission(kind) {
     ? { origins: [...CONTINUOUS_CAPTURE_ORIGINS] }
     : { permissions: [...CLIPBOARD_READ_PERMISSIONS] };
   button.disabled = true;
-  elements.capturePermissionSettingsFeedback.textContent = "正在撤销权限…";
+  elements.capturePermissionSettingsFeedback.textContent = t("正在撤销权限…");
   elements.capturePermissionSettingsFeedback.classList.remove("error");
   try {
     const removed = await chrome.permissions.remove(request);
@@ -9027,6 +9044,22 @@ function contentLabel(id) {
   return node ? (node.customized ? node.name : t(node.name)) : t("待确认");
 }
 
+function facetDisplayName(item) {
+  return item?.names?.[currentLocale()] || item?.name || "";
+}
+
+function facetNodeDisplayPath(nodeId) {
+  const parts = [];
+  const visited = new Set();
+  let node = nodeById(nodeId);
+  while (node && !visited.has(node.id)) {
+    visited.add(node.id);
+    parts.unshift(facetDisplayName(node));
+    node = node.parentId ? nodeById(node.parentId) : null;
+  }
+  return parts.join(" / ");
+}
+
 function facetById(id) { return facetCatalog.facets.find((item) => item.id === id); }
 function nodeById(id) { return facetCatalog.nodes.find((item) => item.id === id); }
 
@@ -9103,7 +9136,7 @@ function renderAnalysisDiagnostics() {
   elements.analysisRuntimeVersion.textContent = `PromptDirector ${chrome.runtime.getManifest().version} / Analysis v${ANALYSIS_PROMPT_VERSION}`;
   elements.analysisDiagnosticEvents.replaceChildren();
   if (!analysisDiagnostics.length) {
-    elements.analysisDiagnosticEvents.append(rawTextEl("li", "analysis-diagnostics-empty", "尚无本次分析事件"));
+    elements.analysisDiagnosticEvents.append(rawTextEl("li", "analysis-diagnostics-empty", t("尚无本次分析事件")));
     return;
   }
   for (const event of analysisDiagnostics) {

@@ -47,29 +47,47 @@ export function attachProjectCombobox(input, options = {}) {
   let activeIndex = -1;
   const controller = new AbortController();
   const eventOptions = { signal: controller.signal };
-  const boundary = input.closest(".app-dialog-body, .import-dialog-body") || input.closest("dialog") || document.documentElement;
+  const scrollBoundary = input.closest(".app-dialog-body, .import-dialog-body") || input.closest("dialog") || document.documentElement;
+  const dialog = input.closest("dialog");
 
   function positionListbox() {
     if (listbox.hidden || !input.isConnected) return;
+    if (dialog && !dialog.open) return close();
     listbox.dataset.placement = "bottom";
     listbox.style.removeProperty("--project-combobox-available-height");
     const styles = getComputedStyle(listbox);
     const gap = Number.parseFloat(styles.getPropertyValue("--ui-popover-gap")) || 0;
-    const configuredMaxHeight = Number.parseFloat(styles.getPropertyValue("--ui-combobox-max-height"));
-    const contentHeight = Math.min(listbox.scrollHeight, configuredMaxHeight || listbox.scrollHeight);
-    const anchor = listbox.offsetParent instanceof HTMLElement ? listbox.offsetParent : input;
-    const inputBounds = anchor.getBoundingClientRect();
-    const boundaryBounds = boundary.getBoundingClientRect();
+    const viewportInset = Number.parseFloat(styles.getPropertyValue("--ui-popover-viewport-inset")) || 0;
+    const inputBounds = input.getBoundingClientRect();
+    const footer = dialog?.querySelector(":scope > footer, :scope > .app-dialog-form > footer");
+    const footerBounds = footer && !footer.hidden ? footer.getBoundingClientRect() : null;
+    const boundaryTop = viewportInset;
+    const boundaryBottom = Math.max(boundaryTop, Math.min(
+      window.innerHeight - viewportInset,
+      footerBounds && footerBounds.top > inputBounds.bottom ? footerBounds.top - gap : window.innerHeight - viewportInset
+    ));
+    const availableWidth = Math.max(1, window.innerWidth - viewportInset * 2);
+    const width = Math.min(inputBounds.width, availableWidth);
+    const left = Math.min(
+      Math.max(inputBounds.left, viewportInset),
+      window.innerWidth - viewportInset - width
+    );
+    listbox.style.left = `${left}px`;
+    listbox.style.width = `${width}px`;
     const placement = projectComboboxPlacement({
       inputTop: inputBounds.top,
       inputBottom: inputBounds.bottom,
-      boundaryTop: boundaryBounds.top,
-      boundaryBottom: boundaryBounds.bottom,
-      contentHeight,
+      boundaryTop,
+      boundaryBottom,
+      contentHeight: listbox.scrollHeight,
       gap
     });
     listbox.dataset.placement = placement.placement;
-    listbox.style.setProperty("--project-combobox-available-height", `${placement.maxHeight}px`);
+    listbox.style.setProperty("--project-combobox-available-height", `${Math.max(1, placement.maxHeight)}px`);
+    const listboxHeight = listbox.getBoundingClientRect().height;
+    listbox.style.top = `${placement.placement === "top"
+      ? inputBounds.top - gap - listboxHeight
+      : inputBounds.bottom + gap}px`;
   }
 
   function matching() {
@@ -83,7 +101,7 @@ export function attachProjectCombobox(input, options = {}) {
     listbox.replaceChildren(...matches.map((project, index) => {
       const option = document.createElement("button");
       option.type = "button";
-      option.className = "project-combobox-option";
+      option.className = "project-combobox-option ui-content-row";
       option.setAttribute("role", "option");
       option.setAttribute("aria-selected", String(index === activeIndex));
       option.dataset.value = project.value;
@@ -155,10 +173,10 @@ export function attachProjectCombobox(input, options = {}) {
   input.addEventListener("blur", () => queueMicrotask(() => {
     if (!listbox.contains(document.activeElement)) close();
   }), eventOptions);
-  boundary.addEventListener("scroll", positionListbox, { ...eventOptions, passive: true });
+  scrollBoundary.addEventListener("scroll", positionListbox, { ...eventOptions, passive: true });
   window.addEventListener("resize", positionListbox, { ...eventOptions, passive: true });
 
-  const dialog = input.closest("dialog");
+  dialog?.addEventListener("close", close, eventOptions);
   if (options.destroyOnDialogClose) dialog?.addEventListener("close", () => controller.abort(), { once: true });
 
   return {

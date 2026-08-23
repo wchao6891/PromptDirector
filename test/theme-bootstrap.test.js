@@ -24,6 +24,7 @@ test("theme bootstrap resolves a real first-paint background and color scheme be
   assert.match(bootstrap, /root\.dataset\.theme !== theme/);
   assert.match(bootstrap, /: "dark"/);
   assert.match(bootstrap, /"#0f1113"/);
+  assert.match(bootstrap, /"#e2e6e3"/);
   assert.match(bootstrap, /storedMotion === "none"[\s\S]*?"reduced"/);
 });
 

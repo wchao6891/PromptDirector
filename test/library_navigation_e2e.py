@@ -68,6 +68,15 @@ def main() -> None:
         expect(library.locator("#collection-filters .project-filter")).to_have_count(1)
         expect(library.locator("#collection-filters .project-filter-name")).to_have_text("导航验收项目")
         expect(library.locator("#collection-filters .project-filter-count")).to_have_text("1")
+        expect(library.locator("#clear-filters, #active-filter-badge, .sidebar-filter-tools")).to_have_count(0)
+        content_heading_top = library.locator(".filter-section").first.evaluate("node => node.getBoundingClientRect().top")
+        project_filter = library.locator("#collection-filters .project-filter")
+        project_filter.click()
+        expect(project_filter).to_have_attribute("aria-pressed", "true")
+        filtered_content_heading_top = library.locator(".filter-section").first.evaluate("node => node.getBoundingClientRect().top")
+        assert filtered_content_heading_top == content_heading_top, {"before": content_heading_top, "after": filtered_content_heading_top}
+        project_filter.click()
+        expect(project_filter).to_have_attribute("aria-pressed", "false")
         expect(library.locator("#project-sort")).to_have_count(0)
         expect(library.locator(".project-row.project-ordering")).to_have_count(0)
         library.locator("#manage-project-order").click()
@@ -108,19 +117,102 @@ def main() -> None:
             })"""
         )
         assert wall == {"gap": "2px", "cardRadius": "2px"}, wall
+        first_card = library.locator("#case-list > .case-card").first
+        hover_states = {}
+        for theme in ["dark", "light"]:
+            library.evaluate(
+                """theme => {
+                  document.documentElement.dataset.theme = theme;
+                  document.documentElement.dataset.resolvedTheme = theme;
+                }""",
+                theme,
+            )
+            before_hover = first_card.evaluate(
+                "node => { const rect = node.getBoundingClientRect(); return {left: rect.left, top: rect.top, width: rect.width, height: rect.height, scrollY}; }"
+            )
+            first_card.hover()
+            after_hover = first_card.evaluate(
+                """node => {
+                  const rect = node.getBoundingClientRect();
+                  const style = getComputedStyle(node);
+                  const overlay = getComputedStyle(node, '::after');
+                  return {left: rect.left, top: rect.top, width: rect.width, height: rect.height, scrollY, shadow: style.boxShadow, overlayBorder: overlay.borderTopWidth, overlayColor: overlay.borderTopColor};
+                }"""
+            )
+            assert all(abs(after_hover[key] - before_hover[key]) <= 1 for key in ["left", "top", "width", "height", "scrollY"]), {"theme": theme, "before": before_hover, "after": after_hover}
+            assert after_hover["shadow"] == "none", {"theme": theme, "after": after_hover}
+            assert after_hover["overlayBorder"] == "1px", {"theme": theme, "after": after_hover}
+            assert after_hover["overlayColor"] != "rgba(0, 0, 0, 0)", {"theme": theme, "after": after_hover}
+            hover_states[theme] = after_hover
+        library.evaluate(
+            """() => {
+              document.documentElement.dataset.theme = 'dark';
+              document.documentElement.dataset.resolvedTheme = 'dark';
+            }"""
+        )
+        first_card_top = library.locator("#case-list > .case-card").first.evaluate("node => node.getBoundingClientRect().top")
         library.locator("#select-cases").click()
         expect(library.locator("#result-count")).to_be_hidden()
         expect(library.locator("#gallery-view-controls")).to_be_hidden()
         expect(library.locator("#manage-project-order")).to_be_visible()
         expect(library.locator("#manage-project-order")).to_be_disabled()
         expect(library.locator("#share-count")).to_have_text("已选 0")
+        expect(library.locator("#selection-selected-actions")).to_be_hidden()
+        selection_first_card_top = library.locator("#case-list > .case-card").first.evaluate("node => node.getBoundingClientRect().top")
+        assert abs(selection_first_card_top - first_card_top) <= 1, {"before": first_card_top, "after": selection_first_card_top}
+        library.set_viewport_size({"width": 1658, "height": 900})
+        library.screenshot(path=str(screenshots / "promptdirector-selection-toolbar-empty.png"))
+        library.set_viewport_size({"width": 1440, "height": 900})
         library.locator("#selection-select-filtered").click()
         expect(library.locator("#selection-clear")).to_be_enabled()
         expect(library.locator("#share-count")).to_have_text("已选 2")
-        expect(library.locator("#selection-select-filtered")).to_have_text("全选当前（2）")
+        expect(library.locator("#selection-select-filtered")).to_be_hidden()
+        expect(library.locator("#selection-selected-actions")).to_be_visible()
+        expect(library.locator("#selection-label-menu")).to_be_visible()
+        expect(library.locator("#selection-project-menu")).to_be_visible()
+        expect(library.locator("#selection-more-menu")).to_be_visible()
+        library.locator("#case-list > .case-card").first.click()
+        expect(library.locator("#share-count")).to_have_text("已选 1")
+        library.locator("#selection-more-menu > summary").click()
+        expect(library.locator("#selection-combine")).to_be_disabled()
+        expect(library.locator("#selection-analyze")).to_be_enabled()
+        expect(library.locator("#selection-trash")).to_be_enabled()
+        library.locator("#selection-more-menu > summary").press("Escape")
+        library.locator("#case-list > .case-card").first.click()
+        expect(library.locator("#share-count")).to_have_text("已选 2")
+        label_menu = library.locator("#selection-label-menu")
+        label_menu.locator(":scope > summary").click()
+        expect(library.locator("#selection-label-input")).to_be_visible()
+        library.locator("#selection-label-input").press("Escape")
+        expect(label_menu).not_to_have_attribute("open", "")
+        expect(label_menu.locator(":scope > summary")).to_be_focused()
+        library.locator("#selection-project-menu > summary").click()
+        expect(library.locator("#selection-project-target")).to_be_visible()
+        library.locator("#selection-project-target").select_option("collection:navigation")
+        expect(library.locator("#selection-add-project")).to_be_enabled()
+        library.locator("#selection-project-menu > summary").press("Escape")
+        library.locator("#selection-more-menu > summary").click()
+        expect(library.locator("#selection-combine")).to_be_enabled()
+        expect(library.locator("#selection-analyze")).to_be_enabled()
+        expect(library.locator("#selection-trash")).to_be_enabled()
+        library.locator("#selection-more-menu > summary").press("Escape")
+        library.set_viewport_size({"width": 700, "height": 900})
+        compact_desktop = library.locator("#share-bar").evaluate(
+            "node => { const rect = node.getBoundingClientRect(); return {left: rect.left, right: rect.right, height: rect.height, viewport: innerWidth, overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth}; }"
+        )
+        assert compact_desktop["left"] >= 0 and compact_desktop["right"] <= compact_desktop["viewport"], compact_desktop
+        assert compact_desktop["height"] <= 34 and compact_desktop["overflow"] is False, compact_desktop
+        library.set_viewport_size({"width": 1658, "height": 900})
+        cancel_metrics = library.locator("#share-cancel").evaluate(
+            "node => { const rect = node.getBoundingClientRect(); const style = getComputedStyle(node); return {text: node.textContent, left: rect.left, right: rect.right, width: rect.width, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, flexShrink: style.flexShrink, paddingLeft: style.paddingLeft, paddingRight: style.paddingRight}; }"
+        )
+        assert cancel_metrics["scrollWidth"] <= cancel_metrics["clientWidth"], cancel_metrics
+        library.screenshot(path=str(screenshots / "promptdirector-selection-toolbar-active.png"))
+        library.set_viewport_size({"width": 1440, "height": 900})
         library.locator("#selection-clear").click()
-        expect(library.locator("#selection-clear")).to_be_disabled()
         expect(library.locator("#share-count")).to_have_text("已选 0")
+        expect(library.locator("#selection-selected-actions")).to_be_hidden()
+        expect(library.locator("#selection-select-filtered")).to_be_visible()
         expect(library.locator(".case-card.selected-for-share")).to_have_count(0)
         library.locator("#share-cancel").click()
         expect(library.locator("#manage-project-order")).to_be_enabled()
@@ -163,6 +255,23 @@ def main() -> None:
         )
         assert overflow is False, overflow_nodes
         library.screenshot(path=str(screenshots / "promptdirector-step2-library-mobile.png"), full_page=True)
+        library.evaluate("document.querySelector('#toggle-filters').click()")
+        expect(library.locator(".workspace")).to_have_class("workspace filters-collapsed")
+        library.locator("#select-cases").click()
+        expect(library.locator("#selection-selected-actions")).to_be_hidden()
+        mobile_empty_bar = library.locator("#share-bar").evaluate(
+            "node => { const rect = node.getBoundingClientRect(); return {left: rect.left, right: rect.right, bottom: rect.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight}; }"
+        )
+        assert mobile_empty_bar["left"] >= 0 and mobile_empty_bar["right"] <= mobile_empty_bar["viewportWidth"], mobile_empty_bar
+        assert mobile_empty_bar["bottom"] <= mobile_empty_bar["viewportHeight"], mobile_empty_bar
+        library.screenshot(path=str(screenshots / "promptdirector-selection-toolbar-mobile-empty.png"))
+        library.locator("#case-list > .case-card").first.click()
+        expect(library.locator("#selection-selected-actions")).to_be_visible()
+        expect(library.locator("#selection-select-filtered")).to_be_hidden()
+        mobile_overflow = library.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
+        assert mobile_overflow is False
+        library.screenshot(path=str(screenshots / "promptdirector-selection-toolbar-mobile-active.png"))
+        library.locator("#share-cancel").click()
 
         print({
             "workspace_items": 3,
@@ -171,7 +280,12 @@ def main() -> None:
             "mobile_drawer": drawer,
             "mobile_overflow": overflow,
             "wall": wall,
+            "hover_states": hover_states,
             "screenshots": [
+                str(screenshots / "promptdirector-selection-toolbar-empty.png"),
+                str(screenshots / "promptdirector-selection-toolbar-active.png"),
+                str(screenshots / "promptdirector-selection-toolbar-mobile-empty.png"),
+                str(screenshots / "promptdirector-selection-toolbar-mobile-active.png"),
                 str(screenshots / "promptdirector-step2-library-desktop.png"),
                 str(screenshots / "promptdirector-step2-library-mobile.png"),
             ],

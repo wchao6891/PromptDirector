@@ -51,6 +51,8 @@ SCRIPTS = [
     "material_management_regressions_e2e.py",
     "ui_regressions_e2e.py",
     "settings_visual_anchor_e2e.py",
+    "brand_i18n_e2e.py",
+    "english_interaction_states_e2e.py",
 ]
 
 

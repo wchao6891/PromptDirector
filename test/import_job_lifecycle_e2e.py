@@ -19,6 +19,23 @@ def wait_for_job(page, job_id: str, statuses: set[str], timeout_seconds: float =
     raise AssertionError(f"导入任务没有在期限内进入 {statuses}：{response}")
 
 
+def wait_for_local_palette(page, asset_id: str, timeout_seconds: float = 8) -> dict:
+    deadline = time.monotonic() + timeout_seconds
+    metadata = None
+    while time.monotonic() < deadline:
+        metadata = page.evaluate(
+            """async (assetId) => {
+              const store = await import(chrome.runtime.getURL('media-store.js'));
+              return store.getDerivedMetadata(assetId);
+            }""",
+            asset_id,
+        )
+        if metadata and metadata.get("palette", {}).get("colors"):
+            return metadata
+        page.wait_for_timeout(100)
+    raise AssertionError(f"导入图片没有自动生成本地色卡：{metadata}")
+
+
 def main() -> None:
     with extension_session("prompt-director-import-jobs-", viewport={"width": 1280, "height": 900}) as run:
         starter = run.open_page("collector.html")
@@ -27,6 +44,11 @@ def main() -> None:
         started = starter.evaluate(
             """async () => {
               const media = await import(chrome.runtime.getURL('media-store.js'));
+              const canvas = new OffscreenCanvas(64, 64);
+              const context = canvas.getContext('2d');
+              context.fillStyle = '#e24b32';
+              context.fillRect(0, 0, 64, 64);
+              const colorBlob = await canvas.convertToBlob({type: 'image/png'});
               const assets = [
                 {
                   id: 'staged:first', assetId: 'asset:first', name: 'first.txt',
@@ -37,10 +59,16 @@ def main() -> None:
                   id: 'staged:second', assetId: 'asset:second', name: 'second.md',
                   relativePath: 'notes/second.md', kind: 'document', mimeType: 'text/markdown',
                   byteSize: 11, contentText: 'Second note'
+                },
+                {
+                  id: 'staged:color', assetId: 'asset:color', name: 'color.png',
+                  relativePath: 'images/color.png', kind: 'image', mimeType: 'image/png',
+                  byteSize: colorBlob.size, width: 64, height: 64
                 }
               ];
               await media.saveMediaBlob('asset:first', new Blob(['First note'], {type: 'text/plain'}));
               await media.saveMediaBlob('asset:second', new Blob(['Second note'], {type: 'text/markdown'}));
+              await media.saveMediaBlob('asset:color', colorBlob);
               return chrome.runtime.sendMessage({
                 type: 'START_IMPORT_JOB',
                 stagedAssets: assets,
@@ -55,9 +83,12 @@ def main() -> None:
 
         observer = run.open_page("collector.html")
         completed = wait_for_job(observer, first_job_id, {"completed"})
-        assert [item["status"] for item in completed["items"]] == ["imported", "imported"], completed
+        assert [item["status"] for item in completed["items"]] == ["imported", "imported", "imported"], completed
         imported_ids = completed["createdEntryIds"]
-        assert len(imported_ids) == 2, completed
+        assert len(imported_ids) == 3, completed
+        palette = wait_for_local_palette(observer, "asset:color")
+        automatic_ai_job = observer.evaluate("() => chrome.storage.local.get('automaticVisionBatchJob').then(value => value.automaticVisionBatchJob || null)")
+        assert automatic_ai_job is None, automatic_ai_job
 
         undo = observer.evaluate(
             "(jobId) => chrome.runtime.sendMessage({type: 'UNDO_IMPORT_JOB', jobId})",
@@ -143,6 +174,8 @@ def main() -> None:
         print({
             "continuedAfterPageClose": True,
             "multiFileImported": len(imported_ids),
+            "automaticLocalPalette": palette["palette"]["colors"][0],
+            "automaticAiJob": automatic_ai_job,
             "canceledRemaining": len(canceled["job"]["items"]),
             "retriedFailedOnly": len(retry["job"]["items"]),
             "undoScopedToJob": True,

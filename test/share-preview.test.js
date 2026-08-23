@@ -47,7 +47,15 @@ test("share preview uses the current visual foundation and exposes the read-only
   assert.match(html, /<symbol id="icon-x"/);
   assert.match(html, /<use href="#icon-x">/);
   assert.match(html, /--visual-wall-gap:2px;--visual-card-radius:2px/);
+  assert.match(html, /\.case-card:hover,\.related-card:hover\{box-shadow:none\}/);
+  assert.match(html, /\.case-card::after,\.related-card::after\{[^}]*border:1px solid transparent/);
+  assert.match(html, /\.case-card:focus-visible::after,\.related-card:focus-visible::after\{[^}]*border-width:2px/);
+  assert.match(html, /\.fallback-cover\.audio\{background:linear-gradient\(160deg,var\(--ui-raised\),var\(--ui-surface\)\)\}/);
+  assert.match(html, /\.eyebrow,\.fallback-cover small,[^}]*\{color:var\(--ui-text\)\}/);
   assert.match(html, /设置 → 界面与资料库 → 导入分享包/);
+  assert.match(html, /data-zh="视觉创作灵感库" data-en="Visual Inspiration Library"/);
+  assert.match(html, /提示词导演，你的视觉创作私人灵感库。/);
+  assert.match(html, /class="app-footer"/);
   assert.match(html, /安装到 Chrome/);
   assert.match(html, /chromewebstore\.google\.com\/detail\/iahakaahijddcjjldidbclicedibgpjm/);
   assert.match(html, /查看源码/);
@@ -89,8 +97,17 @@ test("share preview can start in English dark mode without changing case text", 
   ], { libraryTitle: "私人项目" }, createDefaultTaxonomy(), createDefaultFacetCatalog(), { ...previewOptions, locale: "en", theme: "dark" });
   assert.match(html, /<html lang="en" data-locale="en" data-theme="dark">/);
   assert.match(html, /This is a read-only package that works offline/);
+  assert.match(html, />Visual Inspiration Library</);
+  assert.match(html, />PromptDirector, your private visual inspiration library\.</);
   assert.match(html, /用户标题/);
   assert.match(html, /用户提示词/);
+});
+
+test("English share preview resolves only system library titles", () => {
+  const systemHtml = renderSharePreviewHtml([], { libraryTitle: "视觉创作灵感库" }, createDefaultTaxonomy(), createDefaultFacetCatalog(), { ...previewOptions, locale: "en" });
+  const customHtml = renderSharePreviewHtml([], { libraryTitle: "我的导演项目" }, createDefaultTaxonomy(), createDefaultFacetCatalog(), { ...previewOptions, locale: "en" });
+  assert.match(systemHtml, /<h1>Visual Inspiration Library<\/h1>/);
+  assert.match(customHtml, /<h1>我的导演项目<\/h1>/);
 });
 
 test("share preview renders every portable media kind and its time notes", () => {

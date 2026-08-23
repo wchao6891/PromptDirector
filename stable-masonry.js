@@ -13,6 +13,7 @@ export function createStableMasonry(container, options = {}) {
   let anchorTimer = 0;
   let cardResizeFrame = 0;
   let resizeFrame = 0;
+  let widthCommitFrame = 0;
   let dependencyFrame = 0;
   let scrollFrame = 0;
   let viewportAnchor = null;
@@ -96,7 +97,10 @@ export function createStableMasonry(container, options = {}) {
   const scheduleReflow = () => {
     const width = container.clientWidth;
     if (!geometry || Math.abs(width - geometry.containerWidth) <= 1) return;
-    if (isScrollbarWidthChange(container, geometry, scrollContainer)) return;
+    if (isScrollbarWidthChange(container, geometry, scrollContainer)) {
+      scheduleCommittedWidthCheck();
+      return;
+    }
     if (!resizeGestureAnchor?.card?.isConnected) resizeGestureAnchor = null;
     // CSS responds before the resize event is delivered. Prefer the anchor captured
     // by the preceding scroll event so header wrapping cannot redefine the user's
@@ -136,11 +140,13 @@ export function createStableMasonry(container, options = {}) {
     if (anchorTimer) clearTimeout(anchorTimer);
     cancelCardResize();
     if (resizeFrame) cancelAnimationFrame(resizeFrame);
+    if (widthCommitFrame) cancelAnimationFrame(widthCommitFrame);
     if (dependencyFrame) cancelAnimationFrame(dependencyFrame);
     if (scrollFrame) cancelAnimationFrame(scrollFrame);
     anchorFrame = 0;
     anchorTimer = 0;
     resizeFrame = 0;
+    widthCommitFrame = 0;
     dependencyFrame = 0;
     scrollFrame = 0;
     cardObserver.disconnect();
@@ -151,7 +157,9 @@ export function createStableMasonry(container, options = {}) {
     scheduledResizeAnchor = null;
     resizeGestureAnchor = null;
     delete container.dataset.masonryAnchorEntryId;
-    container.style.height = "0px";
+    // Keep the committed height until the replacement layout is ready. Collapsing
+    // the wall here can temporarily remove the page scrollbar and make the next
+    // width measurement wider than the width that will actually contain the cards.
   }
 
   function append(cards) {
@@ -162,11 +170,16 @@ export function createStableMasonry(container, options = {}) {
     }
     flushCardResizes();
     const widthChanged = Math.abs(container.clientWidth - geometry.containerWidth) > 1;
-    if (widthChanged && cardMetadata.size && !isScrollbarWidthChange(container, geometry, scrollContainer)) reflowAll({ preserveAnchor: true });
-    else if (widthChanged) geometry = readGeometry(container, scrollContainer);
+    if (widthChanged && cardMetadata.size) {
+      if (isScrollbarWidthChange(container, geometry, scrollContainer)) scheduleCommittedWidthCheck();
+      else reflowAll({ preserveAnchor: true });
+    } else if (widthChanged) {
+      geometry = readGeometry(container, scrollContainer);
+    }
 
     for (const card of cards) placeCard(card);
     updateContainerHeight();
+    scheduleCommittedWidthCheck();
   }
 
   function destroy() {
@@ -174,6 +187,7 @@ export function createStableMasonry(container, options = {}) {
     if (anchorTimer) clearTimeout(anchorTimer);
     cancelCardResize();
     if (resizeFrame) cancelAnimationFrame(resizeFrame);
+    if (widthCommitFrame) cancelAnimationFrame(widthCommitFrame);
     if (dependencyFrame) cancelAnimationFrame(dependencyFrame);
     if (scrollFrame) cancelAnimationFrame(scrollFrame);
     cardObserver.disconnect();
@@ -223,7 +237,7 @@ export function createStableMasonry(container, options = {}) {
     cardObserver.observe(card);
   }
 
-  function reflowAll({ preserveAnchor = false, anchorOverride = null } = {}) {
+  function reflowAll({ preserveAnchor = false, anchorOverride = null, verifyCommittedWidth = true } = {}) {
     if (anchorFrame) cancelAnimationFrame(anchorFrame);
     if (anchorTimer) clearTimeout(anchorTimer);
     cancelCardResize();
@@ -237,6 +251,7 @@ export function createStableMasonry(container, options = {}) {
     columns = Array.from({ length: geometry.columnCount }, () => []);
     for (const card of cards) placeCard(card);
     updateContainerHeight();
+    if (verifyCommittedWidth) scheduleCommittedWidthCheck();
     restoreTrackedScrollAnchor(anchor);
     anchorFrame = requestAnimationFrame(() => {
       restoreTrackedScrollAnchor(anchor);
@@ -258,6 +273,16 @@ export function createStableMasonry(container, options = {}) {
     cardResizeFrame = 0;
     pendingCardResizeColumns.clear();
     pendingCardResizeAnchor = null;
+  }
+
+  function scheduleCommittedWidthCheck() {
+    if (!geometry || Math.abs(container.clientWidth - geometry.containerWidth) <= 1) return;
+    if (widthCommitFrame) cancelAnimationFrame(widthCommitFrame);
+    widthCommitFrame = requestAnimationFrame(() => {
+      widthCommitFrame = 0;
+      if (!geometry || Math.abs(container.clientWidth - geometry.containerWidth) <= 1) return;
+      reflowAll({ preserveAnchor: true, verifyCommittedWidth: false });
+    });
   }
 
   function flushCardResizes() {

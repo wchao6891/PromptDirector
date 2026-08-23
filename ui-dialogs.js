@@ -1,3 +1,5 @@
+import { t, translateUiMessage } from "./i18n.js";
+
 const DIALOG_ID = "promptdirector-app-dialog";
 
 export async function showAppDialog(options = {}) {
@@ -13,18 +15,18 @@ export async function showAppDialog(options = {}) {
   const heading = document.createElement("div");
   const title = document.createElement("h2");
   title.id = `${DIALOG_ID}-title`;
-  title.textContent = clean(options.title) || "确认操作";
+  title.textContent = uiText(options.title) || t("确认操作");
   heading.append(title);
   if (clean(options.description)) {
     const description = document.createElement("p");
-    description.textContent = clean(options.description);
+    description.textContent = uiText(options.description);
     heading.append(description);
   }
   const close = document.createElement("button");
   close.type = "button";
   close.className = "icon-button app-dialog-close";
-  close.setAttribute("aria-label", "关闭");
-  close.title = "关闭";
+  close.setAttribute("aria-label", t("关闭"));
+  close.title = t("关闭");
   close.textContent = "×";
   header.append(heading, close);
   const body = document.createElement("div");
@@ -52,11 +54,11 @@ export async function showAppDialog(options = {}) {
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "button-secondary";
-  cancel.textContent = clean(options.cancelLabel) || "取消";
+  cancel.textContent = uiText(options.cancelLabel) || t("取消");
   const confirm = document.createElement("button");
   confirm.type = "submit";
   confirm.className = options.danger ? "button-danger" : "";
-  confirm.textContent = clean(options.confirmLabel) || "确认";
+  confirm.textContent = uiText(options.confirmLabel) || t("确认");
   footer.append(cancel, confirm);
   form.append(header);
   if (controls.size || body.childElementCount) form.append(body);
@@ -82,7 +84,7 @@ export async function showAppDialog(options = {}) {
     const resetDismissConfirmation = () => {
       if (!dismissConfirmationArmed) return;
       dismissConfirmationArmed = false;
-      cancel.textContent = clean(options.cancelLabel) || "取消";
+      cancel.textContent = uiText(options.cancelLabel) || t("取消");
       if (status && !status.classList.contains("error")) status.textContent = "";
     };
     const dismiss = () => {
@@ -91,8 +93,8 @@ export async function showAppDialog(options = {}) {
       dismissConfirmationArmed = true;
       const statusLine = ensureStatus();
       statusLine.classList.remove("error");
-      statusLine.textContent = clean(options.dirtyDismissMessage) || "有未保存的更改，再次关闭或取消将放弃这些更改";
-      cancel.textContent = clean(options.discardLabel) || "确认放弃";
+      statusLine.textContent = uiText(options.dirtyDismissMessage) || t("有未保存的更改，再次关闭或取消将放弃这些更改");
+      cancel.textContent = uiText(options.discardLabel) || t("确认放弃");
     };
     close.addEventListener("click", dismiss);
     cancel.addEventListener("click", dismiss);
@@ -115,7 +117,7 @@ export async function showAppDialog(options = {}) {
       if (clean(options.pendingLabel)) {
         const statusLine = ensureStatus();
         statusLine.classList.remove("error");
-        statusLine.textContent = clean(options.pendingLabel);
+        statusLine.textContent = uiText(options.pendingLabel);
       }
       try {
         const result = typeof options.onSubmit === "function"
@@ -125,7 +127,7 @@ export async function showAppDialog(options = {}) {
         finish(result === undefined ? values : result);
       } catch (error) {
         const statusLine = ensureStatus();
-        statusLine.textContent = clean(error?.message) || "操作失败，请重试";
+        statusLine.textContent = uiText(error?.message) || t("操作失败，请重试");
         statusLine.classList.add("error");
       } finally {
         if (!settled) { confirm.disabled = false; cancel.disabled = false; close.disabled = false; }
@@ -152,7 +154,7 @@ export async function promptAppText(options = {}) {
   const id = clean(options.id) || "value";
   const result = await showAppDialog({
     ...options,
-    fields: [{ id, label: clean(options.label) || clean(options.title) || "内容", type: options.multiline ? "textarea" : clean(options.type) || "text", value: options.value ?? "", placeholder: options.placeholder, required: options.required !== false, autocomplete: options.autocomplete }]
+    fields: [{ id, label: uiText(options.label) || uiText(options.title) || t("内容"), type: options.multiline ? "textarea" : clean(options.type) || "text", value: options.value ?? "", placeholder: uiText(options.placeholder), required: options.required !== false, autocomplete: options.autocomplete }]
   });
   return result === null ? null : String(result[id] ?? "");
 }
@@ -164,7 +166,7 @@ function createField(field = {}) {
   wrapper.className = `app-dialog-field${field.type === "checkbox" ? " app-dialog-check" : ""}`;
   wrapper.dataset.fieldId = id;
   const label = document.createElement("span");
-  label.textContent = clean(field.label) || id;
+  label.textContent = uiText(field.label) || id;
   let input;
   if (field.type === "textarea") {
     input = document.createElement("textarea");
@@ -174,7 +176,7 @@ function createField(field = {}) {
     for (const item of Array.isArray(field.options) ? field.options : []) {
       const option = document.createElement("option");
       option.value = String(item?.value ?? "");
-      option.textContent = String(item?.label ?? item?.value ?? "");
+      option.textContent = uiText(item?.label ?? item?.value ?? "");
       option.selected = option.value === String(field.value ?? "");
       input.append(option);
     }
@@ -201,7 +203,7 @@ function createField(field = {}) {
   }
   if (field.type === "checkbox") input.checked = field.value === true;
   else if (field.type !== "select") input.value = String(field.value ?? "");
-  if (clean(field.placeholder)) input.placeholder = clean(field.placeholder);
+  if (clean(field.placeholder)) input.placeholder = uiText(field.placeholder);
   if (field.type !== "secret" && clean(field.autocomplete)) input.autocomplete = clean(field.autocomplete);
   if (field.required === true) input.required = true;
   if (clean(field.pattern)) input.pattern = clean(field.pattern);
@@ -211,7 +213,7 @@ function createField(field = {}) {
   else wrapper.append(label, input);
   if (clean(field.help)) {
     const help = document.createElement("small");
-    help.textContent = clean(field.help);
+    help.textContent = uiText(field.help);
     wrapper.append(help);
   }
   return { wrapper, input };
@@ -219,4 +221,8 @@ function createField(field = {}) {
 
 function clean(value) {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+}
+
+function uiText(value) {
+  return translateUiMessage(clean(value));
 }

@@ -43,7 +43,7 @@ test("developer analysis import remains supported without appearing in the norma
 
 test("detail panels and selected projects use the themed surface and product accent", () => {
   assert.match(css, /\.detail-primary > \.detail-body\s*\{[^}]*min-height:\s*100dvh[^}]*align-self:\s*stretch/);
-  assert.match(css, /\.project-filter\[aria-pressed="true"\]\s*\{[^}]*color:\s*var\(--accent-ink\)[^}]*background:\s*var\(--accent-soft\)[^}]*var\(--accent\)/);
+  assert.match(css, /\.project-filter\[aria-pressed="true"\]\s*\{[^}]*color:\s*var\(--accent-ink\)[^}]*background:\s*var\(--ui-project-active-surface\)[^}]*var\(--accent-emphasis\)/);
 });
 
 test("library refresh waits for detail rebuilding before returning control", () => {

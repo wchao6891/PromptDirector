@@ -5,6 +5,7 @@ import {
   cancelLibraryMaintenance,
   completeLibraryMaintenanceItem,
   createLibraryMaintenanceJob,
+  extendLibraryMaintenanceJob,
   libraryMaintenanceSummary,
   mergeLibraryMaintenanceProgress,
   nextLibraryMaintenanceItem,
@@ -62,4 +63,37 @@ test("background progress cannot overwrite a user pause or a replacement job", (
   });
   assert.equal(mergeLibraryMaintenanceProgress(replacement, progress).id, replacement.id);
   assert.equal(mergeLibraryMaintenanceProgress(replacement, progress).paletteCursor, 0);
+});
+
+test("automatic maintenance adds imported targets without repeating processed work or overriding pause", () => {
+  let job = createLibraryMaintenanceJob({
+    id: "maintenance:auto",
+    now: "2026-08-02T00:00:00.000Z",
+    classificationEntryIds: ["case-done", "case-pending"],
+    paletteAssetIds: ["asset-pending"]
+  });
+  job = completeLibraryMaintenanceItem(job, { ok: true });
+  job = pauseLibraryMaintenance(job);
+  const extended = extendLibraryMaintenanceJob(job, {
+    classificationEntryIds: ["case-done", "case-new"],
+    paletteAssetIds: ["asset-pending", "asset-new"]
+  }, { now: "2026-08-02T00:01:00.000Z" });
+
+  assert.equal(extended.status, "paused");
+  assert.deepEqual(extended.classificationEntryIds, ["case-done", "case-pending", "case-new"]);
+  assert.deepEqual(extended.paletteAssetIds, ["asset-pending", "asset-new"]);
+  assert.deepEqual(nextLibraryMaintenanceItem(resumeLibraryMaintenance(extended)), { kind: "classification", id: "case-pending" });
+});
+
+test("in-flight progress keeps targets appended by a later import", () => {
+  const running = createLibraryMaintenanceJob({
+    id: "maintenance:active",
+    paletteAssetIds: ["asset-running"]
+  });
+  const extended = extendLibraryMaintenanceJob(running, { paletteAssetIds: ["asset-imported"] });
+  const progress = completeLibraryMaintenanceItem(running, { ok: true });
+  const merged = mergeLibraryMaintenanceProgress(extended, progress);
+
+  assert.deepEqual(merged.paletteAssetIds, ["asset-running", "asset-imported"]);
+  assert.deepEqual(nextLibraryMaintenanceItem(merged), { kind: "palette", id: "asset-imported" });
 });

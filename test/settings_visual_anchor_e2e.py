@@ -75,8 +75,8 @@ def exercise_settings(page, viewport: dict) -> None:
 
     page.locator('[data-settings-tab="tasks"]').click()
     local_index = page.locator(".local-index-card")
-    expect(local_index).to_contain_text("补全资料索引")
-    expect(local_index).to_contain_text("全程在本机运行，不调用 AI")
+    expect(local_index).to_contain_text("资料索引自动补全")
+    expect(local_index).to_contain_text("会在本机自动补齐内容类型和图片色卡，不调用 AI")
     expect(local_index.locator("progress")).to_have_count(0)
     expect(local_index.locator("#apply-reanalyze")).to_be_hidden()
     page.locator("#preview-reanalyze").click()

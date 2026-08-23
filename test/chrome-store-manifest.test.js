@@ -5,11 +5,11 @@ import { validateChromeStoreManifest } from "../tools/chrome-store-manifest.mjs"
 
 const locales = {
   zh_CN: {
-    extensionName: { message: "提示词导演 - 视觉提示词灵感库" },
+    extensionName: { message: "PromptDirector" },
     extensionDescription: { message: "收藏网页画面与提示词。" }
   },
   en: {
-    extensionName: { message: "PromptDirector — Visual Creative Archive" },
+    extensionName: { message: "PromptDirector" },
     extensionDescription: { message: "Save web visuals with their prompts." }
   }
 };
@@ -37,7 +37,7 @@ test("localized short names cannot exceed Chrome's twelve-character limit", () =
     },
     locales: {
       ...locales,
-      en: { ...locales.en, extensionShortName: { message: "Visual Prompt Archive" } },
+      en: { ...locales.en, extensionShortName: { message: "Visual Inspiration Library" } },
       zh_CN: { ...locales.zh_CN, extensionShortName: { message: "提示词导演" } }
     }
   }), /short_name.*12/);

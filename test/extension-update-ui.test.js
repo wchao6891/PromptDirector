@@ -20,7 +20,7 @@ test("about settings expose status and state-specific update actions", () => {
   assert.match(about, /id="update-release-link"/);
   assert.match(source, /"应用更新并重启"/);
   assert.match(source, /"重新载入目录"/);
-  assert.match(about, /class="button-primary update-download-action"[^>]*hidden>下载新版本/);
+  assert.match(about, /class="button-primary update-download-action"[^>]*hidden[^>]*>下载新版本/);
   assert.match(css, /\.settings-update-actions/);
 });
 

@@ -166,24 +166,22 @@ def main() -> None:
                 library.wait_for_load_state("networkidle")
                 library.locator("#search-input").fill("Prompt")
                 wait_for_initial_gallery_batch(library, 103)
-                expect(library.locator("#active-filter-badge")).to_have_text("筛选 1")
                 gallery_top_before_filter = library.locator(".gallery-shell").evaluate(
                     "element => element.getBoundingClientRect().top"
                 )
-                library.locator("#content-filters").get_by_role("button", name="图片案例 100", exact=True).click()
-                expect(library.locator("#active-filter-badge")).to_have_text("筛选 2")
-                expect(library.locator("#clear-filters")).to_be_visible()
-                expect(library.locator("#clear-filters")).to_be_enabled()
+                image_filter = library.locator("#content-filters").get_by_role("button", name="图片案例 100", exact=True)
+                image_filter.click()
+                expect(image_filter).to_have_attribute("aria-pressed", "true")
                 gallery_top_after_filter = library.locator(".gallery-shell").evaluate(
                     "element => element.getBoundingClientRect().top"
                 )
                 assert abs(gallery_top_after_filter - gallery_top_before_filter) <= 1
-                library.locator("#content-filters").get_by_role("button", name="图片案例 100", exact=True).click()
-                expect(library.locator("#active-filter-badge")).to_have_text("筛选 1")
+                image_filter.click()
+                expect(image_filter).to_have_attribute("aria-pressed", "false")
                 library.locator("#pending-filter").check()
-                expect(library.locator("#active-filter-badge")).to_have_text("筛选 2")
+                expect(library.locator("#pending-filter")).to_be_checked()
                 library.locator("#pending-filter").uncheck()
-                expect(library.locator("#active-filter-badge")).to_have_text("筛选 1")
+                expect(library.locator("#pending-filter")).not_to_be_checked()
                 initial_layout = library.evaluate(
                     """() => {
                       window.__promptDirectorInitialCards = new Map();

@@ -88,15 +88,16 @@ def main() -> None:
                         pageWidth: document.documentElement.scrollWidth,
                         smart: {height: smart.height, top: smart.top, right: smart.right},
                         text: {height: text.height, top: text.top, right: text.right},
-                        backup: {height: backup.height, right: backup.right},
+                        backup: {height: backup.height, top: backup.top, right: backup.right},
                       };
                     }"""
                 )
                 assert normal_geometry["pageWidth"] == 390
-                assert normal_geometry["smart"]["height"] == 52
-                assert normal_geometry["text"]["height"] == 52
-                assert normal_geometry["smart"]["top"] == normal_geometry["text"]["top"]
+                assert normal_geometry["smart"]["height"] == 58
+                assert normal_geometry["text"]["height"] == 58
+                assert normal_geometry["text"]["top"] >= normal_geometry["smart"]["top"] + normal_geometry["smart"]["height"]
                 assert normal_geometry["backup"]["height"] == 30, normal_geometry
+                assert normal_geometry["backup"]["top"] >= normal_geometry["text"]["top"] + normal_geometry["text"]["height"]
                 assert max(normal_geometry[key]["right"] for key in ("smart", "text", "backup")) <= 390
                 collector.screenshot(path=str(screenshots / "promptdirector-step5-collector-normal.png"), full_page=True)
 

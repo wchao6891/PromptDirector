@@ -121,6 +121,7 @@ def main() -> None:
         expect(library.locator("#manage-project-order")).to_have_attribute("title", "结束案例选择后可排序项目")
         library.locator(".case-card").nth(0).click()
         library.locator(".case-card").nth(1).click()
+        library.locator("#selection-more-menu > summary").click()
         library.locator("#selection-combine").click()
         combine_dialog = library.locator("#promptdirector-app-dialog")
         expect(combine_dialog).to_be_visible()

@@ -32,6 +32,17 @@ test("generic facet operations remain testable without changing the fixed produc
   assert.deepEqual(result.state.facetCatalog.facets[0].aliases, ["视觉语言"]);
 });
 
+test("renaming a localized system tag makes the user name authoritative in every locale", () => {
+  const catalog = createDefaultFacetCatalog();
+  const facet = catalog.facets[0];
+  const node = catalog.nodes.find((item) => item.facetId === facet.id);
+  const state = { facetCatalog: catalog, entries: [] };
+  const renamedNode = applyFacetChange(state, previewFacetChange(state, {
+    type: "rename", nodeId: node.id, name: "我的标签"
+  })).state;
+  assert.equal(renamedNode.facetCatalog.nodes.find((item) => item.id === node.id).names, undefined);
+});
+
 test("archiving a dimension does not erase historical assignments", () => {
   let catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "情绪" });
   catalog = createFacet(catalog, { id: "facet:light", name: "灯光" });

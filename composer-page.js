@@ -454,20 +454,20 @@ function tempReferenceCard(reference) {
     preview.append(rawTextEl("span", "", tempReferenceTypeLabel(asset)));
   }
   const copy = el("span", "composer-temp-reference-copy");
-  copy.append(rawTextEl("small", "", reference.alias), rawTextEl("strong", "", reference.title || "未命名文件"));
+  copy.append(rawTextEl("small", "", reference.alias), rawTextEl("strong", "", reference.title || t("未命名文件")));
   insert.append(preview, copy);
   const actions = el("span", "composer-temp-reference-actions");
   const save = el("button", "icon-button");
   save.type = "button";
   save.disabled = Boolean(activeOperation);
-  save.title = "保存到案例库";
+  save.title = t("保存到案例库");
   save.setAttribute("aria-label", `保存到案例库：${reference.title}`);
   save.append(createUiIcon("save"));
   save.addEventListener("click", () => safely(() => saveTempReferenceAsCase(reference.entryId))());
   const remove = el("button", "icon-button");
   remove.type = "button";
   remove.disabled = Boolean(activeOperation);
-  remove.title = "移除临时附件";
+  remove.title = t("移除临时附件");
   remove.setAttribute("aria-label", `移除临时附件：${reference.title}`);
   remove.append(createUiIcon("x"));
   remove.addEventListener("click", () => safely(() => removeTempReference(reference.entryId))());
@@ -597,17 +597,17 @@ function renderAppliedSkills() {
     chip.append(rawTextEl("strong", "", `/${skill.callName}`));
     const up = rawTextEl("button", "", "↑");
     up.type = "button";
-    up.title = "提高 Skill 优先级";
+    up.title = t("提高 Skill 优先级");
     up.disabled = index === 0;
     up.addEventListener("click", () => safely(() => moveAppliedSkill(skill.skillId, -1))());
     const down = rawTextEl("button", "", "↓");
     down.type = "button";
-    down.title = "降低 Skill 优先级";
+    down.title = t("降低 Skill 优先级");
     down.disabled = index === skills.length - 1;
     down.addEventListener("click", () => safely(() => moveAppliedSkill(skill.skillId, 1))());
     const remove = rawTextEl("button", "", "×");
     remove.type = "button";
-    remove.title = `移除 /${skill.callName}`;
+    remove.title = t("移除 /{callName}", { callName: skill.callName });
     remove.addEventListener("click", () => safely(() => removeAppliedSkill(skill.skillId))());
     chip.append(up, down, remove);
     return chip;
@@ -654,7 +654,7 @@ function renderSlashSkillMenu() {
     button.dataset.skillId = skill.id;
     button.setAttribute("aria-selected", String(index === 0));
     const copy = el("span");
-    copy.append(rawTextEl("strong", "", `/${skill.callName}`), rawTextEl("small", "", skill.description || "创作 Skill"));
+    copy.append(rawTextEl("strong", "", `/${skill.callName}`), rawTextEl("small", "", skill.description || t("创作 Skill")));
     button.append(copy, rawTextEl("small", "", `v${skill.versions.findIndex((item) => item.id === skill.currentVersionId) + 1}`));
     button.addEventListener("mousedown", (event) => event.preventDefault());
     button.addEventListener("click", () => safely(() => selectSlashSkill(skill))());
@@ -730,6 +730,7 @@ function renderSessionRow(summary) {
     row.setAttribute("aria-current", String(summary.id === composerSession?.id));
     const load = document.createElement("button");
     load.type = "button";
+    load.className = "ui-content-row";
     const running = activeOperation?.kind === "compose" && activeOperation.sessionId === summary.id;
     load.append(rawTextEl("strong", "", summary.title));
     if (running) load.append(rawTextEl("small", "composer-session-running", operationLabel(activeOperation.phase)));
@@ -739,7 +740,7 @@ function renderSessionRow(summary) {
     trigger.setAttribute("aria-label", t("更多操作：{title}", { title: summary.title }));
     const panel = el("div", "composer-session-menu-panel");
     panel.setAttribute("role", "menu");
-    const remove = rawTextEl("button", "composer-session-delete", t("删除"));
+    const remove = rawTextEl("button", "composer-session-delete quiet-danger", t("删除"));
     remove.type = "button";
     remove.disabled = running;
     remove.setAttribute("role", "menuitem");
@@ -1016,7 +1017,7 @@ function showImageTempReferenceBlock() {
   const block = imageTempReferenceBlock(composerSession.referenceSnapshots, service);
   if (!block.blocked) return false;
   const serviceLabel = currentImageAnalysisServiceLabel();
-  elements.composerImageBlockerDescription.textContent = `本轮有 ${block.imageCount} 张尚未分析的参考图片，但 ${service.shortLabel} 只能读取文字。可切换到视觉创作服务；也可调用当前图片分析服务（${serviceLabel}），预计发起 ${block.imageCount} 次额外请求，费用由服务商按你的账号计费。`;
+  elements.composerImageBlockerDescription.textContent = t("本轮有 {count} 张尚未分析的参考图片，但 {service} 只能读取文字。可切换到视觉创作服务；也可调用当前图片分析服务（{analysisService}），预计发起 {count} 次额外请求，费用由服务商按你的账号计费。", { count: block.imageCount, service: service.shortLabel, analysisService: serviceLabel });
   elements.composerImageBlocker.showModal();
   return true;
 }
@@ -1056,7 +1057,7 @@ async function analyzeBlockedTempReferences() {
   }
   imageAnalysisPending = true;
   setImageBlockerPending(true);
-  elements.composerImageBlockerDescription.textContent = `正在通过当前图片分析服务处理 ${references.length} 张图片。完成前不会发送本轮消息，也不会更换创作模型。`;
+  elements.composerImageBlockerDescription.textContent = t("正在通过当前图片分析服务处理 {count} 张图片。完成前不会发送本轮消息，也不会更换创作模型。", { count: references.length });
   try {
     const response = await chrome.runtime.sendMessage({
       type: "ANALYZE_TEMP_REFERENCES",
@@ -1395,12 +1396,12 @@ function renderComposerAiProfile() {
   const catalog = composerServiceCatalog(composerAiSettings, composerVisionSettings);
   const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings);
   const reasoningAvailable = service.reasoning === true;
-  const name = service.shortLabel || service.label;
+  const name = translateUiMessage(service.shortLabel || service.label).replace("未选择模型", t("未选择模型"));
   elements.composerModelLabel.textContent = composerSession?.outputMode === "create_image"
-    ? `${name} · 生图`
-    : composerSession?.outputMode === "create_video" ? `${name} · 视频`
+    ? `${name} · ${t("生图")}`
+    : composerSession?.outputMode === "create_video" ? `${name} · ${t("视频")}`
     : reasoningAvailable && profile.thinking ? `${name} · ${t("思考")}` : name;
-  elements.composerModelLabel.title = service.label;
+  elements.composerModelLabel.title = translateUiMessage(service.label).replace("未选择模型", t("未选择模型"));
   const selected = (serviceId, model) => profile.serviceId === serviceId && (!model || profile.model === model);
   elements.composerModelFlash.setAttribute("aria-checked", String(selected("deepseek", "deepseek-v4-flash")));
   elements.composerModelPro.setAttribute("aria-checked", String(selected("deepseek", "deepseek-v4-pro")));
@@ -1410,14 +1411,16 @@ function renderComposerAiProfile() {
   const openai = catalog.find((item) => item.serviceId === "openai");
   const compatible = catalog.find((item) => item.serviceId === "compatible");
   const xai = catalog.find((item) => item.serviceId === "xai");
-  elements.composerModelOpenaiLabel.textContent = openai?.label || "OpenAI";
-  elements.composerModelCompatibleLabel.textContent = compatible?.label || "兼容视觉服务";
-  elements.composerModelXaiLabel.textContent = xai?.label || "xAI";
-  elements.composerModelOpenai.querySelector("small").textContent = openai?.configured ? "读取手选原图与对应提示词" : "未配置，前往分析设置";
-  elements.composerModelCompatible.querySelector("small").textContent = compatible?.configured ? "读取手选原图与对应提示词" : "未配置，前往分析设置";
+  elements.composerModelOpenaiLabel.textContent = translateUiMessage(openai?.label || "OpenAI").replace("未选择模型", t("未选择模型"));
+  elements.composerModelCompatibleLabel.textContent = translateUiMessage(compatible?.label || t("兼容视觉服务"))
+    .replace("兼容服务", t("兼容服务"))
+    .replace("未选择模型", t("未选择模型"));
+  elements.composerModelXaiLabel.textContent = translateUiMessage(xai?.label || "xAI").replace("未选择模型", t("未选择模型"));
+  elements.composerModelOpenai.querySelector("small").textContent = t(openai?.configured ? "读取手选原图与对应提示词" : "未配置，前往分析设置");
+  elements.composerModelCompatible.querySelector("small").textContent = t(compatible?.configured ? "读取手选原图与对应提示词" : "未配置，前往分析设置");
   elements.composerModelXai.querySelector("small").textContent = xai?.configured
-    ? "读取文字与手选原图，并按已配置能力创建图片或视频"
-    : "未配置，前往 AI 服务与任务分工";
+    ? t("读取文字与手选原图，并按已配置能力创建图片或视频")
+    : t("未配置，前往 AI 服务与任务分工");
   renderGenerationModelChoices(profile);
   elements.composerThinking.checked = reasoningAvailable && profile.thinking;
   elements.composerModelTrigger.disabled = Boolean(activeOperation);
@@ -1435,7 +1438,7 @@ function renderComposerAiProfile() {
   elements.composerCreateMediaLabel.textContent = t(videoTask ? "创建视频" : "创建图片");
   elements.composerCreateImage.checked = composerSession?.outputMode === (videoTask ? "create_video" : "create_image");
   elements.composerCreateImage.disabled = Boolean(activeOperation) || !mediaAvailability.available;
-  elements.composerCreateImageNote.textContent = mediaAvailability.message;
+  elements.composerCreateImageNote.textContent = translateUiMessage(mediaAvailability.message);
   elements.composerProductionReview.disabled = Boolean(activeOperation) || !["auto", "compose"].includes(composerSession?.routeMode);
   renderImageGenerationSettings();
 }
@@ -1467,7 +1470,7 @@ function renderGenerationModelChoices(selectedProfile) {
     button.addEventListener("click", () => safely(() => updateComposerAiProfile(candidate))());
     return button;
   }));
-  if (!choices.length) elements.composerModelDynamic.append(rawTextEl("p", "composer-model-empty", "没有已连接且支持当前生成任务的模型"));
+  if (!choices.length) elements.composerModelDynamic.append(rawTextEl("p", "composer-model-empty", t("没有已连接且支持当前生成任务的模型")));
 }
 
 function renderImageGenerationSettings() {
@@ -1545,7 +1548,7 @@ function renderGenerationParameterField(field, select, capability, key, selected
   const parameter = capability.parameters.find((item) => item.key === key);
   field.dataset.parameterKey = key;
   const label = field.querySelector("span");
-  if (label) label.textContent = t(parameter?.label || fallbackLabel);
+  if (label) label.textContent = translateUiMessage(parameter?.label || fallbackLabel);
   field.hidden = !parameter && !showAutomatic;
   const supportedOptions = parameter?.options?.length
     ? parameter.options
@@ -1558,7 +1561,7 @@ function renderGenerationParameterField(field, select, capability, key, selected
   select.replaceChildren(...options.map((item) => {
     const option = document.createElement("option");
     option.value = item.value;
-    option.textContent = t(item.label);
+    option.textContent = translateUiMessage(item.label);
     option.dataset.incompatible = String(item.incompatible === true);
     return option;
   }));
@@ -1851,7 +1854,7 @@ function renderReferencePicker() {
   elements.composerWorkspaceTitle.textContent = t("本次参考");
   elements.composerWorkspaceDescription.textContent = referencesMode
     ? t("只选择本次对话需要借鉴的案例。")
-    : "可同时应用多个 Skill；列表顺序就是本轮装配顺序。";
+    : t("可同时应用多个 Skill；列表顺序就是本轮装配顺序。");
   if (referencesMode) {
     renderProjectFilter();
     renderCasePicker();
@@ -1878,7 +1881,7 @@ function renderSkills() {
     const open = textEl("button", "button-secondary", "打开 Skill 中心");
     open.addEventListener("click", () => safely(openSkillCenter)());
     empty.append(
-      rawTextEl("p", "", "还没有已保存的创作 Skill。"),
+      rawTextEl("p", "", t("还没有已保存的创作 Skill。")),
       open
     );
     elements.composerProjectList.replaceChildren(empty);
@@ -1891,7 +1894,7 @@ function renderSkills() {
     const title = el("div", "");
     title.append(rawTextEl("h2", "ui-skill-card-title", skill.callName), rawTextEl("code", "", `/${skill.callName}`));
     header.append(title, rawTextEl("small", "", `v${skill.versions.findIndex((item) => item.id === skill.currentVersionId) + 1}`));
-    card.append(header, rawTextEl("p", "ui-skill-card-summary composer-project-state", skill.description || "暂无说明"));
+    card.append(header, rawTextEl("p", "ui-skill-card-summary composer-project-state", skill.description || t("暂无说明")));
     const actions = el("div", "ui-skill-card-actions");
     const edit = textEl("button", "button-secondary", "查看与编辑");
     edit.addEventListener("click", () => safely(() => openSkillCenter(skill.id))());
@@ -2134,7 +2137,7 @@ function renderReferenceSelection() {
   );
   elements.composerReferenceApply.disabled = limit.exceeded;
   if (limit.exceeded) {
-    elements.composerReferenceFeedback.textContent = `所选模型最多接收 ${limit.maximum} 张参考图；当前 ${limit.imageCount} 张。选择已保留，请减少后再应用。`;
+    elements.composerReferenceFeedback.textContent = t("所选模型最多接收 {maximum} 张参考图；当前 {count} 张。选择已保留，请减少后再应用。", { maximum: limit.maximum, count: limit.imageCount });
     elements.composerReferenceFeedback.classList.add("error");
   } else if (elements.composerReferenceFeedback.textContent.includes("最多接收")) {
     elements.composerReferenceFeedback.textContent = "";
@@ -2410,34 +2413,34 @@ function creativeOutputCard(run, output) {
   const primaryActions = el("div", "composer-result-primary-actions");
   const secondaryActions = el("div", "composer-result-secondary-actions");
   const saved = entries.some((entry) => entryMediaAssets(entry).some((asset) => asset.id === output.visual.id));
-  const save = textEl("button", saved ? "button-secondary" : "", t(saved ? "已保存到灵感库" : "保存到灵感库"));
+  const save = textEl("button", saved ? "button-secondary" : "", saved ? "已保存到灵感库" : "保存到灵感库");
   save.disabled = saved;
   save.addEventListener("click", () => safely(() => saveCreativeOutput(run.id, output.visual.id, save))());
-  const reroll = textEl("button", "button-secondary", t("再生成"));
+  const reroll = textEl("button", "button-secondary", "再生成");
   reroll.addEventListener("click", () => safely(() => rerollCreativeOutput(run, output))());
   primaryActions.append(save, reroll);
   if (!videoOutput) {
-    const reuse = textEl("button", "button-secondary", t("作为参考继续"));
+    const reuse = textEl("button", "button-secondary", "作为参考继续");
     reuse.addEventListener("click", () => safely(() => useCreativeOutputAsReference(run, output))());
     primaryActions.insertBefore(reuse, reroll);
     const editCapabilities = composerImageEditCapabilities(composerSession?.generationAiProfile, composerVisionSettings);
-    const edit = textEl("button", "button-secondary", t("编辑"));
+    const edit = textEl("button", "button-secondary", "编辑");
     edit.disabled = !editCapabilities.whole;
     edit.title = edit.disabled ? "请切换到已验证支持图片编辑的 OpenAI 或米醋服务" : "";
     edit.addEventListener("click", () => openCreativeImageWorkspace(run.id, output.visual.id, true));
     secondaryActions.append(edit);
   }
   if (!videoOutput && creativeExperimentSettings.enabled && !output.evaluation) {
-    const analyze = textEl("button", "button-secondary", t("分析对照"));
+    const analyze = textEl("button", "button-secondary", "分析对照");
     analyze.addEventListener("click", () => safely(() => analyzeCreativeOutput(run.id, output.visual.id, analyze))());
     secondaryActions.append(analyze);
   }
   if (!videoOutput && output.evaluation?.primaryDeviation) {
-    const revise = textEl("button", "", t("继续优化"));
+    const revise = textEl("button", "", "继续优化");
     revise.addEventListener("click", () => safely(() => continueFromCreativeOutput(run, output))());
     primaryActions.append(revise);
   }
-  const remove = textEl("button", "button-danger composer-result-delete", t("删除"));
+  const remove = textEl("button", "button-danger composer-result-delete", "删除");
   remove.title = t(videoOutput ? "删除这个生成视频" : "删除这张生成结果");
   remove.addEventListener("click", () => safely(() => deleteCreativeOutput(run.id, output.visual.id, remove))());
   secondaryActions.append(remove);
@@ -2468,8 +2471,8 @@ function creativeJudgmentEditor(run, output) {
   improve.value = output.judgment?.improve ?? "";
   const feedback = rawTextEl("span", "composer-result-judgment-feedback", judgmentFeedbackById.get(judgmentId) || "");
   const actions = el("div", "composer-result-judgment-actions");
-  const save = textEl("button", "", t(output.judgment ? "保存修改" : "保存判断"));
-  const clear = textEl("button", "button-secondary", t("清空"));
+  const save = textEl("button", "", output.judgment ? "保存修改" : "保存判断");
+  const clear = textEl("button", "button-secondary", "清空");
   clear.disabled = !output.judgment;
   const persist = async (judgment) => {
     save.disabled = true;

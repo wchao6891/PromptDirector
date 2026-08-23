@@ -164,11 +164,17 @@ def main() -> None:
                 assert tag_filter_ms < 250, f"6500-case tag category switch took {tag_filter_ms}ms"
                 style_category.click()
 
-                library.locator("#select-cases").click()
+                browse_wall = wall_geometry(library)
+                assert_wall_transition_stable(library, sample_wall_transition(library, "#select-cases"))
+                assert_wall_stable(library, browse_wall, wall_geometry(library))
                 assert library.locator("#result-count").is_hidden()
                 assert library.locator("#gallery-view-controls").is_hidden()
                 assert library.locator("#share-count").inner_text() == "已选 0"
                 assert library.locator("#selection-select-filtered").inner_text() == "全选当前（6500）"
+                assert_wall_transition_stable(library, sample_wall_transition(library, "#share-cancel"))
+                assert_wall_stable(library, browse_wall, wall_geometry(library))
+                assert_wall_transition_stable(library, sample_wall_transition(library, "#select-cases"))
+                assert_wall_stable(library, browse_wall, wall_geometry(library))
                 library.locator("#selection-select-filtered").click()
                 assert library.locator("#share-count").inner_text() == "已选 6500"
                 assert library.locator("#selection-clear").is_enabled()
@@ -207,8 +213,22 @@ def main() -> None:
                 library.locator("#selection-clear").click()
                 assert library.locator("#share-count").inner_text() == "已选 0"
                 library.locator("#share-cancel").click()
-
+                settle_layout(library)
+                post_resize_wall = wall_geometry(library)
                 assert_columns_fill_width(library)
+                library.locator("#select-cases").click()
+                settle_layout(library)
+                assert_wall_stable(library, post_resize_wall, wall_geometry(library))
+                library.locator("#share-cancel").click()
+                settle_layout(library)
+                assert_wall_stable(library, post_resize_wall, wall_geometry(library))
+
+                for width in (1666, 1440, 900, 640, 390):
+                    library.set_viewport_size({"width": width, "height": 900 if width > 390 else 844})
+                    settle_layout(library)
+                    assert_columns_fill_width(library)
+                library.set_viewport_size({"width": 1666, "height": 900})
+                settle_layout(library)
                 before_toggle = library.evaluate("document.querySelectorAll('.case-card').length")
                 library.locator("#toggle-filters").click()
                 library.wait_for_timeout(260)
@@ -275,16 +295,95 @@ def assert_columns_fill_width(page) -> None:
           const gap = parseFloat(styles.getPropertyValue('--masonry-gap'));
           const cards = [...container.querySelectorAll(':scope > .case-card')];
           const lefts = [...new Set(cards.map((card) => Math.round(card.getBoundingClientRect().left)))].sort((a, b) => a - b);
+          const left = Math.min(...cards.map((card) => card.getBoundingClientRect().left));
           const right = Math.max(...cards.map((card) => card.getBoundingClientRect().right));
           return {
             expected: Math.max(1, Math.floor((rect.width + gap) / (minimum + gap))),
             actual: lefts.length,
-            rightGap: Math.round(rect.right - right)
+            leftGap: rect.left - left,
+            rightGap: rect.right - right,
+            overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            outOfBounds: cards.some(card => {
+              const cardRect = card.getBoundingClientRect();
+              return cardRect.left < rect.left - 1 || cardRect.right > rect.right + 1;
+            })
           };
         }"""
     )
     assert geometry["actual"] == geometry["expected"], geometry
-    assert abs(geometry["rightGap"]) <= 2, geometry
+    assert abs(geometry["leftGap"]) <= 1 and abs(geometry["rightGap"]) <= 1, geometry
+    assert geometry["overflow"] is False and geometry["outOfBounds"] is False, geometry
+
+
+def settle_layout(page) -> None:
+    page.evaluate(
+        """() => new Promise(resolve => requestAnimationFrame(
+          () => requestAnimationFrame(() => resolve())
+        ))"""
+    )
+
+
+def sample_wall_transition(page, selector: str) -> list[dict]:
+    return page.evaluate(
+        """selector => new Promise(resolve => {
+          const capture = () => ({
+            scrollY,
+            cards: Object.fromEntries([...document.querySelectorAll('#case-list > .case-card')].map(card => {
+              const rect = card.getBoundingClientRect();
+              return [card.dataset.entryId, {left: rect.left, top: rect.top, width: rect.width}];
+            }))
+          });
+          const samples = [capture()];
+          document.querySelector(selector).click();
+          samples.push(capture());
+          requestAnimationFrame(() => {
+            samples.push(capture());
+            requestAnimationFrame(() => {
+              samples.push(capture());
+              resolve(samples);
+            });
+          });
+        })""",
+        selector,
+    )
+
+
+def assert_wall_transition_stable(page, samples: list[dict]) -> None:
+    reference = samples[0]
+    for current in samples[1:]:
+        assert abs(current["scrollY"] - reference["scrollY"]) <= 1, samples
+        shared = reference["cards"].keys() & current["cards"].keys()
+        assert shared, samples
+        drift = [
+            current["cards"][entry_id][key] - reference["cards"][entry_id][key]
+            for entry_id in shared
+            for key in ("left", "top", "width")
+        ]
+        assert max(abs(delta) for delta in drift) <= 1, samples
+    assert_columns_fill_width(page)
+
+
+def wall_geometry(page) -> dict:
+    return page.evaluate(
+        """() => Object.fromEntries([...document.querySelectorAll('#case-list > .case-card')].map(card => {
+          const rect = card.getBoundingClientRect();
+          return [card.dataset.entryId, {left: rect.left, top: rect.top, width: rect.width}];
+        }))"""
+    )
+
+
+def assert_wall_stable(page, reference: dict, current: dict) -> None:
+    shared = reference.keys() & current.keys()
+    assert shared, {"reference": reference, "current": current}
+    drift = {
+        entry_id: {
+            key: current[entry_id][key] - reference[entry_id][key]
+            for key in ("left", "top", "width")
+        }
+        for entry_id in shared
+    }
+    assert max(abs(delta) for values in drift.values() for delta in values.values()) <= 1, drift
+    assert_columns_fill_width(page)
 
 
 if __name__ == "__main__":

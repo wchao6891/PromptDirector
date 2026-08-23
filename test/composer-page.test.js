@@ -114,7 +114,7 @@ test("composer reference selection is visual while Skill management stays on its
   assert.match(generationSettings, /generationParameterKey\(capability, \["size", "aspectRatio"\]\)/);
   assert.match(generationSettings, /generationParameterKey\(capability, \["quality", "imageSize"\]\)/);
   assert.match(generationSettings, /field\.dataset\.parameterKey = key/);
-  assert.match(generationSettings, /label\.textContent = t\(parameter\?\.label \|\| fallbackLabel\)/);
+  assert.match(generationSettings, /label\.textContent = translateUiMessage\(parameter\?\.label \|\| fallbackLabel\)/);
   const updateGenerationParameters = composerJs.slice(
     composerJs.indexOf("async function updateImageGenerationParameters"),
     composerJs.indexOf("async function updateComposerPreferences")

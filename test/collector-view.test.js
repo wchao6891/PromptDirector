@@ -70,7 +70,7 @@ test("page capture replaces failed remote thumbnails with an explicit unavailabl
   assert.match(pageCaptureRenderer, /preview\.replaceChildren\(textNode\("span", t\("预览不可用"\)\)\)/);
   assert.match(pageCaptureRenderer, /pageCaptureMediaSourceLabel\(media\.sourceKind, media\.captureMethod\)/);
   const collectorHtml = await readFile(new URL("../collector.html", import.meta.url), "utf8");
-  assert.match(collectorHtml, /公开原图失败时，只会使用当前网页已有登录状态读取已确认主体内的相关媒体；不会读取或保存登录信息。/);
+  assert.match(collectorHtml, /id="page-capture-help"[^>]*>确认一个主体后即可保存/);
 });
 
 test("page capture uses the final save as media authorization and keeps uncertain media separate", async () => {
@@ -99,6 +99,7 @@ test("page capture uses the final save as media authorization and keeps uncertai
   assert.match(collectorHtml, /id="page-capture-save-text-only"/);
   assert.match(collectorHtml, /id="page-capture-media-viewer"/);
   assert.match(collectorHtml, /id="page-capture-media-stage"/);
+  assert.match(pageCaptureRenderer, /page-capture-preview-details/);
   assert.doesNotMatch(collectorHtml, /page-capture-select-text|page-capture-select-images/);
   assert.match(backgroundSource, /case "PREVIEW_PAGE_CAPTURE_REGION"/);
   assert.match(backgroundSource, /previewPageCaptureRegion/);
@@ -156,6 +157,16 @@ test("continuing an existing case keeps the target explicit at the final action"
 
   assert.equal(view.targetLabel, "正在补充《雪地漂移参考》");
   assert.equal(view.saveLabel, "保存到这个案例");
+});
+
+test("collector translates only built-in capture content types", async () => {
+  const [collectorSource, backgroundSource] = await Promise.all([
+    readFile(new URL("../collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../background.js", import.meta.url), "utf8")
+  ]);
+  assert.match(collectorSource, /item\.customized \? item\.name : t\(item\.name\)/);
+  assert.match(collectorSource, /partContentType\?\.customized \? partContentType\.name : t\(partContentType\?\.name \|\| "待确认"\)/);
+  assert.match(backgroundSource, /customized: item\.customized === true/);
 });
 
 test("the collector auto-reads only highlights and reserves clipboard access for the extract buttons", async () => {

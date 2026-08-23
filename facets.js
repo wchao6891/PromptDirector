@@ -135,6 +135,7 @@ export function applyFacetChange(state = {}, preview = {}) {
     const target = next.facetCatalog.facets.find((item) => item.id === change.facetId);
     target.aliases = uniqueNames([...target.aliases, target.name]);
     target.name = change.name;
+    delete target.names;
   } else if (change.type === "archive_facet") {
     next.facetCatalog.facets.find((item) => item.id === change.facetId).status = "archived";
   } else if (change.type === "rename") {
@@ -142,6 +143,7 @@ export function applyFacetChange(state = {}, preview = {}) {
     ensureUnique(next.facetCatalog, target.facetId, change.name, target.id);
     target.aliases = uniqueNames([...target.aliases, target.name]);
     target.name = change.name;
+    delete target.names;
   } else if (change.type === "archive") {
     const ids = facetDescendants(next.facetCatalog, change.nodeId);
     for (const item of next.facetCatalog.nodes) if (ids.has(item.id)) item.status = "archived";

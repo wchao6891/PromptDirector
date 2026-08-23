@@ -157,6 +157,7 @@ import {
   cancelLibraryMaintenance,
   completeLibraryMaintenanceItem,
   createLibraryMaintenanceJob,
+  extendLibraryMaintenanceJob,
   libraryMaintenanceSummary,
   mergeLibraryMaintenanceProgress,
   nextLibraryMaintenanceItem,
@@ -984,15 +985,16 @@ async function captureWorkspace() {
       text: part.text, title: part.sourceTitle, url: part.sourceUrl, visuals: part.visuals
     }, state.classificationRules, state.taxonomy);
     const id = classification?.pathIds?.[0] || "";
-    const name = state.taxonomy.nodes.find((item) => item.id === id)?.name || "待确认";
-    return [part.sourceUrl || "source:unknown", { id, name }];
+    const contentType = state.taxonomy.nodes.find((item) => item.id === id);
+    const name = contentType?.name || "待确认";
+    return [part.sourceUrl || "source:unknown", { id, name, customized: contentType?.customized === true }];
   }));
   return {
     ok: true,
     draft,
     targetEntry,
     suggestedContentTypeId: suggested?.pathIds?.[0] || "",
-    contentTypes: state.taxonomy.nodes.map((item) => ({ id: item.id, name: item.name })),
+    contentTypes: state.taxonomy.nodes.map((item) => ({ id: item.id, name: item.name, customized: item.customized === true })),
     collections: state.organizerState.collections.map((item) => ({ id: item.id, name: item.name })),
     partContentTypes,
     activeCreativeResult: state.activeCreativeResult,
@@ -2115,6 +2117,7 @@ async function createMediaCase(assetValue, posterValue, titleValue, textValue = 
     [STORAGE_KEYS.entries]: entries,
     [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id)
   });
+  await enqueueAutomaticLibraryMaintenance([entry]);
   await notifySaved(entries.length);
   if (assetValue?.kind === "image") await queueAutomaticVisionAnalysis([entry.id]);
   return { ok: true, message: "资料已保存", entry };
@@ -3479,6 +3482,7 @@ async function importStagedItem(job, item) {
     [STORAGE_KEYS.importJobs]: finished.state,
     [STORAGE_KEYS.importStaging]: removed.state
   });
+  await enqueueAutomaticLibraryMaintenance([entry]);
   await notifySaved(entries.length);
   await queueImportJobAnalysis(finished.job);
 }
@@ -5761,6 +5765,20 @@ async function startLibraryMaintenance() {
   };
 }
 
+async function enqueueAutomaticLibraryMaintenance(entriesValue) {
+  const [derivedMetadata, stored] = await Promise.all([
+    getAllDerivedMetadata(),
+    chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob)
+  ]);
+  const targets = libraryMaintenanceTargets(entriesValue, derivedMetadata);
+  if (!targets.classificationEntryIds.length && !targets.paletteAssetIds.length) return null;
+  const job = extendLibraryMaintenanceJob(stored[STORAGE_KEYS.libraryMaintenanceJob], targets);
+  await commitLocalChanges({ [STORAGE_KEYS.libraryMaintenanceJob]: job });
+  await ensureLibraryMaintenanceAlarm(job.status === "running");
+  if (job.status === "running") scheduleLibraryMaintenanceRunner();
+  return libraryMaintenanceSummary(job);
+}
+
 async function libraryMaintenanceStatus() {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
   return { ok: true, maintenanceJob: libraryMaintenanceSummary(stored[STORAGE_KEYS.libraryMaintenanceJob]) };
@@ -6366,6 +6384,10 @@ async function applyLibraryImport(state, message) {
     [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills)
   });
   const importedEntryIds = Object.values(result.entryIdMap);
+  if (importedEntryIds.length) {
+    const importedEntryIdSet = new Set(importedEntryIds);
+    await enqueueAutomaticLibraryMaintenance(result.state.entries.filter((entry) => importedEntryIdSet.has(entry.id)));
+  }
   if (importedEntryIds.length) await queueAutomaticVisionAnalysis(importedEntryIds);
   return {
     ok: true,
@@ -6413,6 +6435,10 @@ async function applyCuratedImport(state, message) {
     [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.state.creativeRuns ?? state.creativeRuns),
     [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills)
   });
+  if (result.importedEntryIds.length) {
+    const importedEntryIdSet = new Set(result.importedEntryIds);
+    await enqueueAutomaticLibraryMaintenance(result.state.entries.filter((entry) => importedEntryIdSet.has(entry.id)));
+  }
   if (result.importedEntryIds.length) await queueAutomaticVisionAnalysis(result.importedEntryIds);
   return curatedImportResponse(result);
 }

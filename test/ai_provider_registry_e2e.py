@@ -533,6 +533,10 @@ def main() -> None:
             "after": saved_preferences["aiTaskAssignments"],
         }
 
+        library.wait_for_function(
+            """() => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'imageAnalysis'})
+              .then(runtime => runtime.assignment?.evidence === 'manual_unverified')"""
+        )
         image_runtime = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'imageAnalysis'})")
         assert image_runtime["ok"] is True, image_runtime
         assert assignment_routes({"imageAnalysis": image_runtime["assignment"]})["imageAnalysis"] == {

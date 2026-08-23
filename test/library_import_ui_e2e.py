@@ -88,7 +88,13 @@ def main() -> None:
                         "order": 0,
                         "entryIds": [],
                         "visibility": "library",
-                    }],
+                    }] + [{
+                        "id": f"collection:fixture:{index}",
+                        "name": "用于验证完整换行显示的特别长项目名称" if index == 11 else f"Import Project {index:02d}",
+                        "order": index,
+                        "entryIds": [],
+                        "visibility": "library",
+                    } for index in range(1, 12)],
                 },
                 **ai_configuration_fixture(
                     providers={
@@ -156,18 +162,20 @@ def main() -> None:
             expect(library.locator("#import-auto-analyze")).to_be_checked()
             expect(library.locator("#import-project")).to_have_attribute("role", "combobox")
             library.locator("#import-project").click()
-            expect(library.locator(".project-combobox-option")).to_have_count(1)
+            expect(library.locator(".project-combobox-option")).to_have_count(12)
             import_project_menu = library.locator(".project-combobox-listbox").evaluate(
                 """node => {
                   const menu = node.getBoundingClientRect();
-                  const boundary = node.closest('.import-dialog-body').getBoundingClientRect();
-                  return {background: getComputedStyle(node).backgroundColor, visible: !node.hidden, top: menu.top, bottom: menu.bottom, boundaryTop: boundary.top, boundaryBottom: boundary.bottom};
+                  const footer = node.closest('dialog').querySelector(':scope > footer').getBoundingClientRect();
+                  return {background: getComputedStyle(node).backgroundColor, position: getComputedStyle(node).position, visible: !node.hidden, top: menu.top, bottom: menu.bottom, left: menu.left, right: menu.right, viewportWidth: innerWidth, viewportHeight: innerHeight, footerTop: footer.top, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight};
                 }"""
             )
             assert import_project_menu["visible"] is True
             assert import_project_menu["background"] not in {"rgb(255, 255, 255)", "rgba(0, 0, 0, 0)"}, import_project_menu
-            assert import_project_menu["top"] >= import_project_menu["boundaryTop"] - 1, import_project_menu
-            assert import_project_menu["bottom"] <= import_project_menu["boundaryBottom"] + 1, import_project_menu
+            assert import_project_menu["position"] == "fixed", import_project_menu
+            assert import_project_menu["top"] >= 11 and import_project_menu["bottom"] <= import_project_menu["footerTop"] + 1, import_project_menu
+            assert import_project_menu["left"] >= 11 and import_project_menu["right"] <= import_project_menu["viewportWidth"] - 11, import_project_menu
+            assert import_project_menu["clientHeight"] <= import_project_menu["scrollHeight"], import_project_menu
             library.locator("#import-project").press("Escape")
             expect(library.locator("#import-project")).to_have_attribute("aria-expanded", "false")
             library.locator("#import-project").fill("Import Review")

@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 export function normalizeTagValue(value) {
   return String(value ?? "").normalize("NFKC")
     .replace(/[\u0000-\u001f\u007f]/gu, "")
@@ -38,12 +40,12 @@ export function createTagEditor(options = {}) {
   const input = document.createElement("input");
   input.type = "text";
   input.autocomplete = "off";
-  input.placeholder = options.placeholder || "输入标签，按回车或逗号添加";
-  input.setAttribute("aria-label", options.inputLabel || "添加标签");
+  input.placeholder = options.placeholder || t("输入标签，按回车或逗号添加");
+  input.setAttribute("aria-label", options.inputLabel || t("添加标签"));
   const add = document.createElement("button");
   add.type = "button";
   add.className = "button-secondary";
-  add.textContent = options.addLabel || "添加";
+  add.textContent = options.addLabel || t("添加");
   row.append(input, add);
   root.append(chips, row);
 
@@ -61,7 +63,7 @@ export function createTagEditor(options = {}) {
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "×";
-      remove.setAttribute("aria-label", `删除标签：${value}`);
+      remove.setAttribute("aria-label", t("删除标签：{value}", { value }));
       remove.addEventListener("click", () => void applyValues(values.filter((item) => item !== value), remove));
       chip.append(text, remove);
       return chip;

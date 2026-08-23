@@ -7,7 +7,10 @@ import {
   buildEntry,
   calculateCropGeometry,
   findDuplicate,
+  libraryTitleForLocale,
+  libraryTitleForStorage,
   normalizeOutputPath,
+  normalizeSettings,
   normalizeSelection,
   renderLibraryJson,
   renderMarkdown
@@ -32,6 +35,24 @@ test("normalizeOutputPath keeps a safe relative markdown path", () => {
     normalizeOutputPath("提示词案例库/旧案例.md"),
     "提示词案例库/旧案例.zip"
   );
+});
+
+test("legacy default library names migrate without overwriting genuine custom names", () => {
+  assert.equal(normalizeSettings({ libraryTitle: "优秀提示词案例库" }).libraryTitle, "视觉创作灵感库");
+  assert.equal(normalizeSettings({ libraryTitle: "Visual Creative Archive" }, DEFAULT_SETTINGS_EN).libraryTitle, "Visual Inspiration Library");
+  assert.equal(normalizeSettings({ libraryTitle: "我的导演项目" }).libraryTitle, "我的导演项目");
+});
+
+test("system library titles follow the interface language without rewriting custom titles", () => {
+  assert.equal(libraryTitleForLocale("视觉创作灵感库", "en"), "Visual Inspiration Library");
+  assert.equal(libraryTitleForLocale("Visual Inspiration Library", "zh-CN"), "视觉创作灵感库");
+  assert.equal(libraryTitleForLocale("优秀提示词案例库", "en"), "Visual Inspiration Library");
+  assert.equal(libraryTitleForLocale("我的导演项目", "en"), "我的导演项目");
+});
+
+test("saving another library setting does not rewrite a localized system title", () => {
+  assert.equal(libraryTitleForStorage("Visual Inspiration Library", "视觉创作灵感库", "en"), "视觉创作灵感库");
+  assert.equal(libraryTitleForStorage("Director archive", "视觉创作灵感库", "en"), "Director archive");
 });
 
 test("renderMarkdown keeps source metadata and does not break on code fences", () => {
@@ -70,7 +91,7 @@ test("renderMarkdown keeps source metadata and does not break on code fences", (
     facets
   );
 
-  assert.match(markdown, /^# 我的视觉灵感库/m);
+  assert.match(markdown, /^# 视觉创作灵感库/m);
   assert.match(markdown, /共 1 条案例/);
   assert.match(markdown, /- 截图 1（主图）：!\[对应画面\]\(images\/entry-1.webp\)/);
   assert.ok(
@@ -115,10 +136,15 @@ test("English export localizes system headings but preserves creator content", (
     savedAt: "2026-07-19T10:00:00.000Z",
     classification: { pathIds: [CONTENT_IDS.promptImage], status: "confirmed" }
   }], DEFAULT_SETTINGS_EN, createDefaultTaxonomy(), createDefaultFacetCatalog(), { locale: "en" });
-  assert.match(markdown, /^# My Visual Archive/m);
+  assert.match(markdown, /^# Visual Inspiration Library/m);
   assert.match(markdown, /## Case 01 \| 用户标题/);
   assert.match(markdown, /- Content type: Image prompt/);
   assert.match(markdown, /### Original prompt[\s\S]*用户提示词/);
+});
+
+test("English export resolves a stored Chinese system library title", () => {
+  const markdown = renderMarkdown([], { ...DEFAULT_SETTINGS, libraryTitle: "视觉创作灵感库" }, undefined, undefined, { locale: "en" });
+  assert.match(markdown, /^# Visual Inspiration Library/m);
 });
 
 test("calculateCropGeometry maps CSS pixels to screenshot pixels and caps output width", () => {

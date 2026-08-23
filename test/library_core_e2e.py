@@ -51,8 +51,6 @@ def main() -> None:
         expect(library.locator(".case-card")).to_have_count(3)
         style_filter.get_by_role("button", name=re.compile(r"^渲染方式 3$")).click()
         expect(library.locator(".case-card")).to_have_count(3)
-        library.locator("#clear-filters").click()
-
         library.locator("#search-input").fill("单次渲染词")
         expect(library.locator(".case-card")).to_have_count(1)
         expect(library.locator(".case-card")).to_contain_text("推镜视频")

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from playwright.sync_api import expect
 
 from e2e_support import extension_session
@@ -55,6 +58,7 @@ def list_page(page: int) -> bytes:
 
 def main() -> None:
     with extension_session("prompt-director-page-capture-") as run:
+        screenshots = Path(tempfile.gettempdir())
         fixture_url = f"{FIXTURE_ORIGIN}/promptdirector-capture-fixture"
         def route_fixture(route) -> None:
             request_url = route.request.url
@@ -81,6 +85,7 @@ def main() -> None:
 
         run.context.route(f"{FIXTURE_ORIGIN}/**", route_fixture)
         collector = run.open_page("collector.html", wait_until="networkidle")
+        collector.set_viewport_size({"width": 390, "height": 844})
         run.seed_storage(collector, {
             "schemaVersion": 24,
             "entries": [],
@@ -94,9 +99,35 @@ def main() -> None:
         fixture.goto(fixture_url, wait_until="networkidle")
         fixture.bring_to_front()
 
+        capture_entry_boxes = collector.locator("#normal-start .capture-actions > button").evaluate_all(
+            "nodes => nodes.map(node => ({top: node.getBoundingClientRect().top, height: node.getBoundingClientRect().height}))"
+        )
+        assert len(capture_entry_boxes) == 3, capture_entry_boxes
+        assert all(item["height"] >= 58 for item in capture_entry_boxes), capture_entry_boxes
+        assert capture_entry_boxes[0]["top"] < capture_entry_boxes[1]["top"] < capture_entry_boxes[2]["top"], capture_entry_boxes
+        collector.screenshot(path=str(screenshots / "promptdirector-collector-entry-390.png"), full_page=True)
+        collector.evaluate("() => document.querySelector('#capture-permission-onboarding').showModal()")
+        permission_layout = collector.locator("#capture-permission-onboarding").evaluate(
+            "node => ({height: node.getBoundingClientRect().height, viewport: innerHeight, buttons: node.querySelectorAll('footer button').length})"
+        )
+        assert permission_layout["height"] <= permission_layout["viewport"] and permission_layout["buttons"] == 2, permission_layout
+        collector.screenshot(path=str(screenshots / "promptdirector-capture-permission-390.png"), full_page=True)
+        collector.evaluate("() => document.querySelector('#capture-permission-onboarding').close()")
+
         collector.evaluate("() => document.querySelector('#start-page-capture').click()")
         expect(collector.locator("#page-capture")).to_be_visible(timeout=8000)
+        expect(collector.locator("#preview-state")).to_be_hidden()
+        assert collector.locator("#page-capture > #capture-metadata").count() == 1
         expect(collector.locator(".page-capture-item")).to_have_count(2)
+        expect(collector.locator(".page-capture-preview-details").first).not_to_have_attribute("open", "")
+        scroll_owners = collector.evaluate(
+            """() => Object.fromEntries(['#page-capture-list', '#page-capture-media-review-list', '.page-capture-article'].map(selector => {
+              const node = document.querySelector(selector);
+              return [selector, node ? getComputedStyle(node).overflowY : 'missing'];
+            }))"""
+        )
+        assert all(value not in {"missing", "auto", "scroll"} for value in scroll_owners.values()), scroll_owners
+        collector.screenshot(path=str(screenshots / "promptdirector-page-capture-390.png"), full_page=True)
         media_labels = collector.locator(".page-capture-article-media").all_text_contents()
         media_sources = collector.locator(".page-capture-article-media img").evaluate_all("nodes => nodes.map(node => node.src)")
         assert len(media_labels) == 5, {"labels": media_labels, "sources": media_sources}
@@ -113,6 +144,7 @@ def main() -> None:
         assert collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries.length)") == 0
         expect(collector.locator("#page-capture-save")).to_be_disabled()
 
+        collector.locator(".page-capture-preview-details").first.locator(":scope > summary").click()
         collector.locator(".page-capture-article-media").first.click()
         expect(collector.locator("#page-capture-media-viewer")).to_be_visible()
         expect(collector.locator("#page-capture-media-stage img")).to_be_visible()
@@ -130,6 +162,7 @@ def main() -> None:
         expect(collector.locator(".page-capture-media-review-group")).to_contain_text("可能遗漏媒体（1）")
         expect(collector.locator("#page-capture-save")).to_have_text("保存案例 · 含 5 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
+        collector.locator(".page-capture-tools > summary").click()
         collector.locator("#page-capture-add-region").click()
         fixture.bring_to_front()
         expect(fixture.locator("#promptdirector-page-capture-region-editor")).to_be_visible(timeout=8000)
@@ -255,7 +288,7 @@ def main() -> None:
         assert {asset.get("originalWorkUrl") for asset in combined_saved[0]["mediaAssets"]} == {
             f"{FIXTURE_ORIGIN}/work/1", f"{FIXTURE_ORIGIN}/work/2", f"{FIXTURE_ORIGIN}/work/3"
         }, combined_saved[0]
-        print({"previewCandidates": 2, "mediaViewerItems": 5, "confirmedSubjects": 1, "savedWholeCaseMedia": 6, "savedLiveSelectionMedia": 0, "paginatedCases": 3, "combinedCases": 1, "clearedPageMarkers": 1})
+        print({"previewCandidates": 2, "mediaViewerItems": 5, "confirmedSubjects": 1, "savedWholeCaseMedia": 6, "savedLiveSelectionMedia": 0, "paginatedCases": 3, "combinedCases": 1, "clearedPageMarkers": 1, "permissionLayout": permission_layout, "scrollOwners": scroll_owners, "screenshots": [str(screenshots / "promptdirector-collector-entry-390.png"), str(screenshots / "promptdirector-capture-permission-390.png"), str(screenshots / "promptdirector-page-capture-390.png")]})
 
 
 if __name__ == "__main__":
