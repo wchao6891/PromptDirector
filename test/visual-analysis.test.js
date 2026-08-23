@@ -102,6 +102,24 @@ test("model box_2d uses yxyx order and converts once into the persisted V2 bbox"
   assert.equal(VISUAL_MODEL_RESPONSE_SCHEMA.properties.elements.items.properties.bbox, undefined);
 });
 
+test("known root field casing is normalized before strict visual validation", () => {
+  const response = completeModelResponse();
+  response.OCR = response.ocr;
+  delete response.ocr;
+  const result = normalizeVisualModelResponse(response, createDefaultFacetCatalog());
+  assert.equal(result.ocr[0].text, "PROMPT DIRECTOR");
+  assert.equal(Object.hasOwn(result, "OCR"), false);
+});
+
+test("root field casing conflicts and unknown fields remain rejected", () => {
+  const conflict = completeModelResponse();
+  conflict.OCR = conflict.ocr;
+  assert.throws(() => normalizeVisualModelResponse(conflict), /字段大小写冲突：ocr/);
+
+  const unknown = completeModelResponse({ audit: [] });
+  assert.throws(() => normalizeVisualModelResponse(unknown), /未允许字段：audit/);
+});
+
 test("invalid model boxes fail without clipping or rewriting the saved analysis", () => {
   const invalid = completeModelResponse();
   invalid.elements[0].box_2d = [150, 250, 140, 900];

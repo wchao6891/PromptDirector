@@ -10,7 +10,14 @@
   </head>
   <body>
     <header class="curated-header">
-      <h1 data-i18n="精选案例">精选案例</h1>
+      <div class="curated-title-group">
+        <img class="curated-brand-mark" src="assets/icons/icon-source.svg" alt="" />
+        <h1 data-i18n="精选案例">精选案例</h1>
+        <nav class="curated-sections ui-segmented" aria-label="精选内容" data-i18n-aria-label="精选内容">
+          <a class="ui-segmented-item" href="curated.html" aria-current="page" data-i18n="精选案例">精选案例</a>
+          <a class="ui-segmented-item" href="curated-skills.html" data-i18n="精选 Skill">精选 Skill</a>
+        </nav>
+      </div>
       <label class="curated-search">
         <span class="visually-hidden" data-i18n="搜索创作包或包内案例">搜索创作包或包内案例</span>
         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-search"></use></svg>

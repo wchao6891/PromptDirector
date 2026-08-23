@@ -7,10 +7,33 @@ import {
   collectSyncImageReferences,
   createRevisionSnapshot,
   mergeRevisionSnapshots,
+  markSyncMetaDirty,
+  normalizeSyncMeta,
   normalizeSyncSettings,
   syncErrorDetails,
   syncStateHasContent
 } from "../sync-model.js";
+
+test("sync metadata keeps a durable local pending flag separate from changed media ids", () => {
+  const value = normalizeSyncMeta({
+    logicalClock: 2,
+    localDirty: true,
+    dirtyAssetIds: ["asset:one", "asset:one", ""],
+    assetRefs: { "asset:one": { objectId: "a".repeat(64), contentType: "image/webp" } }
+  });
+
+  assert.equal(value.localDirty, true);
+  assert.deepEqual(value.dirtyAssetIds, ["asset:one"]);
+  assert.equal(value.assetRefs["asset:one"].objectId, "a".repeat(64));
+});
+
+test("business writes mark local pending state and only named media as needing rehash", () => {
+  const first = markSyncMetaDirty({}, []);
+  const second = markSyncMetaDirty(first, ["asset:one", "asset:one"]);
+
+  assert.equal(second.localDirty, true);
+  assert.deepEqual(second.dirtyAssetIds, ["asset:one"]);
+});
 
 test("merged image references are reused without reading and rewriting every local image", () => {
   const objectId = "a".repeat(64);
@@ -529,4 +552,14 @@ test("missing sync files become an actionable state instead of a persistent brow
     code: SYNC_ERROR_CODES.LOCATION_NOT_FOUND,
     message: "同步文件夹中的文件或目录不存在，请重新选择同步文件夹后再同步"
   });
+});
+
+test("damaged formal snapshots retain an actionable error code", () => {
+  const details = syncErrorDetails({
+    code: "sync_snapshot_corrupt",
+    message: "同步目录包含损坏的正式状态文件，本地资料未被修改"
+  });
+  assert.equal(details.code, "sync_snapshot_corrupt");
+  assert.match(details.message, /损坏/);
+  assert.equal(normalizeSyncSettings({ lastError: details.message, lastErrorCode: details.code }).lastErrorCode, "sync_snapshot_corrupt");
 });

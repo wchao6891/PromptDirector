@@ -79,6 +79,24 @@ test("deleting a skill returns package assets for transactional cleanup", () => 
   assert.equal(removed.skill.packageFiles[0].assetId, "skill-file:tool");
 });
 
+test("curated origin survives normalization and local version edits", () => {
+  const created = createSkill(createCreativeSkillsState(), "精选方法", {
+    curatedOrigin: {
+      catalogId: "composition@1.0.0",
+      skillId: "composition",
+      version: "1.0.0",
+      sha256: "a".repeat(64),
+      installedAt: "2026-08-23T00:00:00.000Z"
+    }
+  });
+  const updated = saveCreativeSkillVersion(created.state, created.skill.id, {
+    skillMarkdown: "# 本地修改\n\nKeep this local edit."
+  }, { versionId: "version:local", now: "2026-08-23T01:00:00.000Z" });
+  assert.equal(updated.skill.curatedOrigin.skillId, "composition");
+  assert.equal(updated.skill.curatedOrigin.version, "1.0.0");
+  assert.match(updated.skill.versions.at(-1).skillMarkdown, /本地修改/);
+});
+
 test("full-library imports preserve versions and remap conflicting Skill identities", () => {
   const local = createSkill(createCreativeSkillsState(), "国风视觉", { portableId: "guofeng-visual" });
   const external = createCreativeSkill(createCreativeSkillsState(), {

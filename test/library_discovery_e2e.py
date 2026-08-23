@@ -125,6 +125,7 @@ def main() -> None:
         )
         assert next_hit
         library.locator("#detail-next").click()
+        expect(library.locator("#detail-drawer")).not_to_have_attribute("data-entry-id", initial_entry_id)
         second_entry_id = library.locator("#detail-drawer").get_attribute("data-entry-id")
         assert second_entry_id != initial_entry_id
         library.locator("#detail-prev").click()

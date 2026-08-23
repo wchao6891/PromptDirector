@@ -70,13 +70,11 @@ import {
 import { createStableMasonry } from "./stable-masonry.js";
 import {
   DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE,
-  MICU_IMAGE_EDITS_ENDPOINT,
-  MICU_IMAGE_GENERATIONS_ENDPOINT,
-  MICU_RESPONSES_ENDPOINT,
   normalizeVisionSettings,
   blobToDataUrl,
   visionProtocolDescription
 } from "./vision.js";
+import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
 import { contactSheetPlan, renderContactSheetBatch, selectedSkillContentImages } from "./skill-contact-sheet.js";
 import {
   entryHasVisual,
@@ -114,6 +112,7 @@ import { createUiIcon } from "./ui-icons.js";
 import { confirmAppAction, promptAppText, showAppDialog } from "./ui-dialogs.js";
 import {
   AI_ASSIGNMENT_TASKS,
+  availableAiModelsForTask,
   availableAiProvidersForTask
 } from "./ai-provider-registry.js";
 import { buildSearchIndex, searchIndexedEntries } from "./search-index.js";
@@ -185,7 +184,7 @@ const elements = Object.fromEntries([
   "project-section", "manage-project-order", "selection-simple-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
-  "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
+  "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
   "vision-batch-dialog", "vision-batch-close", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze",
   "vision-batch-start", "vision-batch-pause", "vision-batch-resume", "vision-batch-retry", "vision-batch-cancel", "vision-batch-feedback",
   "library-drop-target", "import-dialog", "import-dialog-title", "import-close", "import-source", "import-choose-files", "import-last-job", "import-actions", "import-preparing", "import-confirmation", "import-supported-count", "import-skipped-count", "import-duplicate-count", "import-byte-size", "import-project", "import-project-hint", "import-auto-analyze", "import-label-editor", "import-file-list", "import-feedback", "import-job-panel", "import-job-title", "import-job-count", "import-job-progress", "import-job-feedback", "import-cancel", "import-retry", "import-undo", "import-view-project", "import-start"
@@ -314,6 +313,7 @@ const FEEDBACK_DURATION_MS = 3000;
 const ERROR_FEEDBACK_DURATION_MS = 8000;
 let syncStatus = {};
 let dataSafetyOperationActive = false;
+let dataSafetyOperationType = "";
 let visionBatchRunnerActive = false;
 const activeDetailMediaIdByEntry = new Map();
 let cancelVisionBatchAfterCurrent = false;
@@ -609,11 +609,10 @@ function bindEvents() {
   chrome.runtime.onMessage.addListener(handleVideoAnalysisProgress);
   elements.connectSyncFolder.addEventListener("click", chooseSyncFolder);
   elements.unlockSyncVault.addEventListener("click", () =>
-    runDataSafetyAction(elements.unlockSyncVault, { type: "UNLOCK_SYNC_VAULT", password: elements.syncPassword.value })
+    runDataSafetyAction(elements.unlockSyncVault, { type: "UNLOCK_SYNC_VAULT", password: elements.syncPassword.value }, false)
   );
-  elements.syncNow.addEventListener("click", () =>
-    runDataSafetyAction(elements.syncNow, { type: "SYNC_NOW" })
-  );
+  elements.syncNow.addEventListener("click", startManualSync);
+  elements.cancelSync.addEventListener("click", cancelManualSync);
   elements.createFolderBackup.addEventListener("click", createCompleteFolderBackup);
   elements.restoreFolderBackup.addEventListener("click", restoreCompleteFolderBackup);
   elements.importLibraryPackage.addEventListener("click", () => elements.libraryPackageFile.click());
@@ -3528,8 +3527,7 @@ async function openDetail(entryId, { preserveQueue = false, returnFocus = null }
   elements.detailDrawer.classList.add("open");
   elements.detailDrawer.setAttribute("aria-hidden", "false");
   elements.drawerBackdrop.hidden = false;
-  await renderDetail();
-  if (changedEntry) elements.detailContent.scrollTop = 0;
+  await renderDetail({ resetScroll: changedEntry });
   elements.detailClose.focus();
   return true;
 }
@@ -3574,14 +3572,13 @@ async function confirmPromptEditDiscard() {
   return true;
 }
 
-async function renderDetail() {
+async function renderDetail({ resetScroll = false } = {}) {
   const renderGeneration = ++detailRenderGeneration;
   const renderEntryId = currentDetailId;
   releaseDetailControllers();
   releaseDetailMediaUrls();
   const entry = logicalCases.find((item) => item.id === currentDetailId);
   if (!entry) return closeDetail();
-  elements.detailDrawer.dataset.entryId = entry.id;
   const visibleIndex = visibleEntries.findIndex((item) => item.id === entry.id);
   elements.detailPrev.disabled = visibleIndex <= 0;
   elements.detailNext.disabled = visibleIndex < 0 || visibleIndex >= visibleEntries.length - 1;
@@ -3599,7 +3596,9 @@ async function renderDetail() {
     await renderCompoundDetail(entry, content, body);
     if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
     content.append(body);
+    elements.detailDrawer.dataset.entryId = entry.id;
     elements.detailContent.replaceChildren(content);
+    if (resetScroll) elements.detailContent.scrollTop = 0;
     return;
   }
   const primary = el("div", "detail-primary");
@@ -3635,7 +3634,9 @@ async function renderDetail() {
   const discovery = createLocalDiscovery(entry);
   if (discovery) content.append(discovery.section);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
+  elements.detailDrawer.dataset.entryId = entry.id;
   elements.detailContent.replaceChildren(content);
+  if (resetScroll) elements.detailContent.scrollTop = 0;
   discovery?.mount();
 }
 
@@ -3654,6 +3655,7 @@ function createLocalDiscovery(entry) {
   let masonry = null;
   let mediaObserver = null;
   let loadObserver = null;
+  let paginationActivated = false;
 
   function createDiscoveryCard(item) {
     const button = el("button", "case-card local-discovery-item");
@@ -3688,11 +3690,11 @@ function createLocalDiscovery(entry) {
     for (const image of grid.querySelectorAll("img[data-visual-id]:not([src])")) mediaObserver.observe(image);
     renderedCount += next.length;
     sentinel.hidden = renderedCount >= ranked.length;
-    scheduleDiscoveryLoadCheck();
+    if (paginationActivated) scheduleDiscoveryLoadCheck();
   }
 
   function scheduleDiscoveryLoadCheck() {
-    if (loadFrame || renderedCount >= ranked.length) return;
+    if (!paginationActivated || loadFrame || renderedCount >= ranked.length) return;
     loadFrame = requestAnimationFrame(() => {
       loadFrame = 0;
       const bounds = elements.detailContent.getBoundingClientRect();
@@ -3700,11 +3702,18 @@ function createLocalDiscovery(entry) {
     });
   }
 
+  function activatePagination() {
+    if (elements.detailContent.scrollTop <= 1) return;
+    if (!paginationActivated) paginationActivated = true;
+    scheduleDiscoveryLoadCheck();
+  }
+
   function cleanup() {
     if (loadFrame) cancelAnimationFrame(loadFrame);
     loadFrame = 0;
     mediaObserver?.disconnect();
     loadObserver?.disconnect();
+    elements.detailContent.removeEventListener("scroll", activatePagination);
     masonry?.destroy();
     detailControllerCleanups.delete(cleanup);
   }
@@ -3722,18 +3731,18 @@ function createLocalDiscovery(entry) {
       }
     }, { root: elements.detailContent, rootMargin: "25% 0px" });
     loadObserver = new IntersectionObserver((records) => {
-      if (records.some((record) => record.isIntersecting)) renderNextDiscoveryBatch();
+      if (paginationActivated && records.some((record) => record.isIntersecting)) renderNextDiscoveryBatch();
     }, { root: elements.detailContent, rootMargin: "700px" });
     loadObserver.observe(sentinel);
     detailControllerCleanups.add(cleanup);
     renderNextDiscoveryBatch();
+    elements.detailContent.addEventListener("scroll", activatePagination, { passive: true });
   }
 
   return { mount, section };
 }
 
 async function renderCompoundDetail(entry, content, body) {
-  elements.detailDrawer.dataset.entryId = entry.id;
   if (entryHasMedia(entry)) content.append(await createDetailMediaGallery(entry, { immersive: true }));
   else content.append(textEl("div", "detail-placeholder", "这个复合案例没有媒体"));
   body.append(createDetailHeader(entry), createCompoundActions(entry), createCompoundOrganizer(entry));
@@ -7301,7 +7310,7 @@ async function openAiTaskAssignmentDialog(taskId) {
     providerConnectionReady(profile) && taskModelOptions(profile, taskId).length
   );
   if (!capable.length) {
-    showFeedback(t("尚无已连接且模型目录明确支持“{task}”的服务，请先连接服务并刷新模型", { task: t(task.label) }), true);
+    showFeedback(t("尚无已连接且可用于“{task}”的模型，请先连接服务并刷新模型目录", { task: t(task.label) }), true);
     return openAiProviderDialog();
   }
   const selectedProviderId = capable.some((profile) => profile.id === current.providerId)
@@ -7325,6 +7334,14 @@ async function openAiTaskAssignmentDialog(taskId) {
       localizeAiDialogClose(dialog);
       const provider = controls.get("providerId");
       const model = controls.get("model");
+      const modelField = model?.closest(".app-dialog-field");
+      const capabilityHelp = document.createElement("small");
+      capabilityHelp.className = "model-capability-help";
+      modelField?.append(capabilityHelp);
+      const syncCapabilityHelp = () => {
+        capabilityHelp.textContent = modelAssignmentHelp(aiProviderRegistry.providers?.[provider.value], taskId, model.value);
+        capabilityHelp.hidden = !capabilityHelp.textContent;
+      };
       provider?.addEventListener("change", () => {
         const options = modelOptions(provider.value);
         if (model instanceof HTMLSelectElement) {
@@ -7336,7 +7353,10 @@ async function openAiTaskAssignmentDialog(taskId) {
           }));
         }
         model.value = options[0]?.value || "";
+        syncCapabilityHelp();
       });
+      model?.addEventListener("change", syncCapabilityHelp);
+      syncCapabilityHelp();
     },
     onSubmit: async (values) => {
       if (!String(values.model ?? "").trim()) throw new Error(t("请选择或填写模型"));
@@ -7404,12 +7424,18 @@ async function openAiProviderDialog(initialProviderId = "") {
     );
     fields.push(...profile.capabilities.map((taskId) => {
       const catalogRequired = profile.catalogRequiredTasks?.includes(taskId) === true;
-      const options = discoveredModelOptions(profile, taskId, catalogRequired ? "" : profile.models?.[taskId]);
+      const assignedModel = aiTaskAssignments?.[taskId]?.providerId === profile.id
+        ? aiTaskAssignments[taskId].model
+        : "";
+      const configuredModel = profile.models?.[taskId]
+        || (profile.id === "custom-media" && taskId === "imageGeneration" ? profile.imageGeneration?.model : "")
+        || assignedModel;
+      const options = discoveredModelOptions(profile, taskId, catalogRequired ? "" : configuredModel);
       return {
         id: `provider_${key}_model_${taskId}`,
         label: t("{task}模型（高级）", { task: taskDisplayLabel(taskId) }),
         type: catalogRequired || options.length ? "select" : "text",
-        value: options.some((option) => option.value === profile.models?.[taskId]) ? profile.models[taskId] : "",
+        value: options.some((option) => option.value === configuredModel) ? configuredModel : "",
         options,
         advanced: true
       };
@@ -7470,11 +7496,19 @@ async function openAiProviderDialog(initialProviderId = "") {
       const micuPreset = dialog.querySelector('[data-provider-preset="micu-personal"]');
       micuPreset?.addEventListener("click", () => {
         const prefix = "provider_custom_media_";
-        controls.get(`${prefix}endpoint`).value = MICU_RESPONSES_ENDPOINT;
-        controls.get(`${prefix}protocol`).value = "responses";
-        controls.get(`${prefix}imageProtocol`).value = "images_generations";
-        controls.get(`${prefix}imageEndpoint`).value = MICU_IMAGE_GENERATIONS_ENDPOINT;
-        controls.get(`${prefix}imageEditsEndpoint`).value = MICU_IMAGE_EDITS_ENDPOINT;
+        const preset = MICU_COMPATIBLE_PROVIDER_PRESET;
+        const imagePreset = preset.imageGeneration;
+        controls.get(`${prefix}endpoint`).value = preset.endpoint;
+        controls.get(`${prefix}protocol`).value = preset.protocol;
+        controls.get(`${prefix}imageProtocol`).value = imagePreset.protocol;
+        controls.get(`${prefix}imageEndpoint`).value = imagePreset.endpoint;
+        controls.get(`${prefix}imageEditsEndpoint`).value = imagePreset.editsEndpoint;
+        const model = controls.get(`${prefix}model_imageGeneration`);
+        if (model instanceof HTMLSelectElement && ![...model.options].some((option) => option.value === imagePreset.defaultModel)) {
+          model.append(option(imagePreset.defaultModel, imagePreset.defaultModel));
+        }
+        if (model) model.value = imagePreset.defaultModel;
+        controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
         controls.get(`${prefix}apiKey`).focus();
       });
       const syncProviderFields = () => {
@@ -7487,8 +7521,28 @@ async function openAiProviderDialog(initialProviderId = "") {
         if (micuPreset) micuPreset.hidden = editor.value !== "custom-media";
         advanced.hidden = ![...advanced.querySelectorAll("[data-field-id]")].some((wrapper) => !wrapper.hidden);
       };
+      const syncModelCapabilityHelp = () => {
+        for (const profile of profiles) {
+          const key = keyFor(profile.id);
+          for (const taskId of profile.capabilities) {
+            const input = controls.get(`provider_${key}_model_${taskId}`);
+            if (!input) continue;
+            const wrapper = input.closest(".app-dialog-field");
+            let help = wrapper.querySelector(":scope > .model-capability-help");
+            if (!help) {
+              help = document.createElement("small");
+              help.className = "model-capability-help";
+              wrapper.append(help);
+              input.addEventListener("change", syncModelCapabilityHelp);
+            }
+            help.textContent = modelAssignmentHelp(profile, taskId, input.value);
+            help.hidden = !help.textContent;
+          }
+        }
+      };
       editor.addEventListener("change", syncProviderFields);
       syncProviderFields();
+      syncModelCapabilityHelp();
     },
     onSubmit: async (values) => {
       const registryUpdate = { providers: {} };
@@ -7619,17 +7673,25 @@ function applyAiConfigurationResponse(response) {
 }
 
 function discoveredModelOptions(profile, taskId, selectedValue = "") {
-  const options = (profile?.discoveredModels ?? [])
-    .filter((model) => model.status !== "unavailable" && model.tasks?.includes(taskId))
+  const options = availableAiModelsForTask(taskId, profile)
     .map((model) => ({
       value: model.id,
-      label: `${model.name || model.id} · ${t(model.confidence === "declared" ? "厂商声明" : model.confidence === "protocol_inferred" ? "协议确认" : "待验证")}${modelPriceLabel(model.pricing)}`
+      label: `${model.name || model.id}${modelPriceLabel(model.pricing)}`
     }));
   const selected = String(selectedValue ?? "").trim();
-  if (selected && !options.some((option) => option.value === selected)) {
-    options.unshift({ value: selected, label: t("{model}（手动声明，未验证）", { model: selected }) });
+  if (selected && !options.some((option) => option.value === selected)
+    && (!profile?.discovery?.discoveredAt || profile?.category === "custom")) {
+    options.unshift({ value: selected, label: t("{model}（模型目录尚未读取）", { model: selected }) });
   }
   return options;
+}
+
+function modelAssignmentHelp(profile, taskId, selectedValue) {
+  const selected = String(selectedValue ?? "").trim();
+  if (!selected) return "";
+  const model = availableAiModelsForTask(taskId, profile).find((item) => item.id === selected);
+  if (!model || ["declared", "protocol_inferred"].includes(model.assignmentEvidence)) return "";
+  return t("当前模型未声明这项能力；是否可用以真实执行结果为准");
 }
 
 function taskModelOptions(profile, taskId) {
@@ -8602,12 +8664,15 @@ async function renderDataSafetyStatus() {
   const missingLocation = syncStatus.lastErrorCode === SYNC_ERROR_CODES.LOCATION_NOT_FOUND;
   const needsFolder = missingLocation || !syncStatus.connected || syncStatus.permission !== "granted";
   const needsUnlock = !missingLocation && syncStatus.connected && syncStatus.permission === "granted" && !syncStatus.unlocked;
-  const canSync = !missingLocation && syncStatus.connected && syncStatus.permission === "granted" && syncStatus.unlocked;
+  const syncRunning = syncStatus.active === true || dataSafetyOperationType === "SYNC_NOW";
+  const canSync = !missingLocation && syncStatus.connected && syncStatus.permission === "granted" && syncStatus.unlocked && !syncRunning;
   elements.connectSyncFolder.hidden = !needsFolder;
   elements.connectSyncFolder.textContent = t(missingLocation ? "重新选择同步文件夹" : "连接同步文件夹");
   elements.unlockSyncVault.hidden = !needsUnlock;
   elements.syncNow.hidden = !canSync;
   elements.syncNow.disabled = !canSync;
+  elements.cancelSync.hidden = !syncRunning;
+  elements.cancelSync.disabled = syncStatus.cancelRequested === true;
   elements.dataSafetyPassword.hidden = !(needsFolder || needsUnlock);
   elements.disconnectSyncFolder.hidden = !syncStatus.connected;
   if (missingLocation) elements.syncSettings.open = true;
@@ -8687,7 +8752,7 @@ async function chooseSyncFolder() {
     await runDataSafetyAction(
       elements.connectSyncFolder,
       { type: "CONNECT_SYNC_FOLDER", password },
-      true,
+      false,
       { keepDisabled: true }
     );
   } catch (error) {
@@ -8697,20 +8762,50 @@ async function chooseSyncFolder() {
   }
 }
 
+async function startManualSync() {
+  if (dataSafetyOperationActive) {
+    showDataSafetyFeedback(t("当前操作仍在进行，请等待完成"), true);
+    return;
+  }
+  const description = syncStatus.localDirty
+    ? "本机有尚未同步的变化。开始后会读取同步文件夹、合并两端变化并写回结果；完成前可以停止。"
+    : "开始后会检查同步文件夹并合并两端变化；如果没有变化，不会写入快照或刷新案例库。完成前可以停止。";
+  const confirmed = await confirmAppAction({
+    title: "开始一次手动同步？",
+    description,
+    confirmLabel: "开始同步"
+  });
+  if (!confirmed) return;
+  await runDataSafetyAction(elements.syncNow, { type: "SYNC_NOW" }, "changed");
+}
+
+async function cancelManualSync() {
+  if (dataSafetyOperationType !== "SYNC_NOW" && syncStatus.active !== true) return;
+  elements.cancelSync.disabled = true;
+  showDataSafetyFeedback("正在停止同步；已提交的数据不会被回滚，尚未提交的本机资料不会改变…");
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "CANCEL_SYNC" });
+    if (!response?.ok) throw new Error(response?.message || "无法停止同步");
+  } catch (error) {
+    elements.cancelSync.disabled = false;
+    showDataSafetyFeedback(error.message || "无法停止同步", true);
+  }
+}
+
 async function runDataSafetyAction(button, message, refresh = true, options = {}) {
   if (dataSafetyOperationActive) {
     showDataSafetyFeedback(t("当前操作仍在进行，请等待完成"), true);
     return null;
   }
   const originalLabel = button.textContent;
-  setDataSafetyBusy(true);
+  setDataSafetyBusy(true, message.type);
   button.setAttribute("aria-busy", "true");
   if (message.type === "CONNECT_SYNC_FOLDER") {
     button.textContent = t("正在连接…");
-    showDataSafetyFeedback(t("正在加密并写入同步文件夹，大资料库首次同步可能需要几分钟"));
+    showDataSafetyFeedback("正在验证文件夹与密码，不会读取或合并资料…");
   } else if (message.type === "UNLOCK_SYNC_VAULT") {
     button.textContent = t("正在解锁…");
-    showDataSafetyFeedback(t("正在解锁并合并同步资料…"));
+    showDataSafetyFeedback("正在验证同步密码，不会读取或合并资料…");
   } else if (message.type === "SYNC_NOW") {
     button.textContent = t("正在同步…");
     showDataSafetyFeedback(t("正在同步本地与文件夹资料…"));
@@ -8724,7 +8819,8 @@ async function runDataSafetyAction(button, message, refresh = true, options = {}
     if (!response?.ok) throw new Error(response?.message || t("操作失败"));
     elements.syncPassword.value = "";
     showDataSafetyFeedback(response.message || t("操作完成"));
-    if (refresh) await refreshLibrary();
+    const shouldRefresh = refresh === true || (refresh === "changed" && response.libraryChanged === true);
+    if (shouldRefresh) await refreshLibrary();
     await renderDataSafetyStatus();
     return response;
   } catch (error) {
@@ -8739,8 +8835,9 @@ async function runDataSafetyAction(button, message, refresh = true, options = {}
   }
 }
 
-function setDataSafetyBusy(active) {
+function setDataSafetyBusy(active, operationType = "") {
   dataSafetyOperationActive = active;
+  dataSafetyOperationType = active ? operationType : "";
   elements.settingsClose.disabled = active;
   for (const button of [
     elements.importLibraryPackage,
@@ -8753,6 +8850,9 @@ function setDataSafetyBusy(active) {
   ]) {
     button.disabled = active;
   }
+  const syncRunning = active && operationType === "SYNC_NOW";
+  elements.cancelSync.hidden = !syncRunning;
+  elements.cancelSync.disabled = !syncRunning;
 }
 
 function handleDataSafetyProgress(message) {
@@ -8762,8 +8862,8 @@ function handleDataSafetyProgress(message) {
   const count = total ? ` ${Math.min(current, total)}/${total}` : "";
   const english = currentLocale() === "en";
   const labels = english
-    ? { encrypting: "Encrypting images", restoring: "Restoring new images", merging: "Merging library changes", saving: "Saving sync state" }
-    : { encrypting: "正在加密图片", restoring: "正在恢复新增图片", merging: "正在合并资料变更", saving: "正在保存同步状态" };
+    ? { reading: "Checking changes", uploading: "Preparing changed media", downloading: "Restoring changed media", merging: "Merging library changes", committing: "Saving sync result", canceling: "Stopping sync" }
+    : { reading: "正在检查变化", uploading: "正在准备变化的媒体", downloading: "正在恢复变化的媒体", merging: "正在合并资料变更", committing: "正在保存同步结果", canceling: "正在停止同步" };
   showDataSafetyFeedback(`${labels[message.phase] || (english ? "Syncing" : "正在同步")}${count}`);
 }
 
@@ -8779,7 +8879,11 @@ function syncStatusMessage(status) {
   if (status.lastErrorCode === SYNC_ERROR_CODES.LOCATION_NOT_FOUND) {
     return t("同步文件夹中的文件或目录不存在，请重新选择同步文件夹后再同步");
   }
+  if (status.active) return status.cancelRequested ? "正在停止本次同步…" : "正在执行一次手动同步…";
   if (status.lastError) return status.lastError;
+  if (status.state === "canceled") return "上次手动同步已停止，本机未提交的资料没有改变";
+  if (status.state === "up-to-date") return "已检查：两端没有变化，没有写入同步文件夹";
+  if (status.localDirty) return "本机有尚未同步的变化；只有点击并确认后才会同步";
   if (!status.lastSyncAt) return t("同步库已连接，尚未完成首次同步");
   const date = new Date(status.lastSyncAt);
   const formatted = Number.isNaN(date.getTime()) ? status.lastSyncAt : date.toLocaleString(currentLocale() === "en" ? "en" : "zh-CN");

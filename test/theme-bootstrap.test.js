@@ -8,6 +8,7 @@ const uiRuntime = await readFile(new URL("../i18n.js", import.meta.url), "utf8")
 const pages = [
   "library.html",
   "curated.html",
+  "curated-skills.html",
   "composer.html",
   "skills.html",
   "collector.html"

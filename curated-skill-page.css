@@ -1,0 +1,30 @@
+.curated-skill-app { width: 100%; max-width: 1540px; margin: 0 auto 48px; padding: 28px 20px; }
+.curated-skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); align-content: start; gap: 8px; }
+.curated-skill-card h2, .curated-skill-card p { margin: 0; }
+.curated-skill-card-actions { justify-content: flex-start; }
+.curated-skill-card-actions button:last-child { margin-left: auto; }
+.curated-skill-dialog { width: min(920px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-container-radius); padding: 0; color: var(--ui-text); background: var(--ui-surface); }
+.curated-skill-detail { padding: 24px; }
+.curated-skill-detail header { display: flex; align-items: start; justify-content: space-between; gap: 18px; padding-right: 42px; }
+.curated-skill-detail-copy { display: grid; max-width: 650px; gap: 7px; }
+.curated-skill-detail h1 { margin: 0; font-size: 24px; line-height: 1.3; }
+.curated-skill-detail p { margin: 0; color: var(--ui-muted); }
+.curated-skill-maintenance { margin-top: 18px; border-top: 1px solid var(--ui-border); padding-top: 12px; color: var(--ui-muted); font-size: var(--ui-meta-size); }
+.curated-skill-maintenance summary { width: max-content; cursor: pointer; color: var(--ui-text); font-weight: 750; }
+.curated-skill-maintenance-copy { display: flex; flex-wrap: wrap; gap: 6px 14px; padding-top: 10px; }
+.curated-skill-markdown { margin-top: 18px; border-top: 1px solid var(--ui-border); padding-top: 18px; }
+.curated-skill-empty { display: grid; min-height: 55dvh; align-content: center; justify-items: center; gap: 10px; padding: 32px 20px; color: var(--ui-muted); text-align: center; }
+.curated-skill-state-copy { display: grid; justify-items: center; gap: 8px; }
+.curated-skill-empty strong { color: var(--ui-text); font-size: var(--ui-section-title-size); }
+.curated-skill-empty p { max-width: 520px; margin: 0; }
+.curated-skill-app .curated-loading { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.curated-skill-app .curated-loading span { min-height: 152px; aspect-ratio: auto; }
+
+@media (max-width: 760px) {
+  .curated-skill-app { padding: 14px 10px 34px; }
+  .curated-skill-grid, .curated-skill-app .curated-loading { grid-template-columns: 1fr; }
+  .curated-skill-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .curated-skill-detail { padding: 18px 14px; }
+  .curated-skill-detail header { display: grid; padding-right: 38px; }
+  .curated-skill-detail header > button { justify-self: start; }
+}

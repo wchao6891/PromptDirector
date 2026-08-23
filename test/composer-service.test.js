@@ -885,9 +885,9 @@ test("Micu without selected images uses generations with explicit stable output 
 
 test("compatible reference edits use the recorded model limit before any paid request", async () => {
   const fourK = visualSettings();
-  fourK.vision.compatible.imageGeneration.model = "gpt-image-2-pro";
+  fourK.vision.compatible.imageGeneration.model = "gpt-image-2-openai";
   fourK.vision.compatible.imageGeneration.size = "3840x2160";
-  fourK.vision.providerProfiles["custom-media"].discoveredModels[0].id = "gpt-image-2-pro";
+  fourK.vision.providerProfiles["custom-media"].discoveredModels[0].id = "gpt-image-2-openai";
   await assert.rejects(() => executeComposerTurnWithService({
     session: referenceSession("compatible", "create_image"), userMessage: "", composerSettings: settings,
     route: "compose", instruction: "保持参考职责"
@@ -905,14 +905,24 @@ test("compatible reference edits use the recorded model limit before any paid re
   }, visualSettings(), images, { fetchImpl: async () => { throw new Error("不应调用"); } }), /最多读取 6 张参考图/);
 });
 
-test("image availability explains the missing Micu capability instead of exposing only a disabled switch", () => {
+test("image availability explains missing reference editing instead of exposing only a disabled switch", () => {
   const session = referenceSession("compatible", "text_prompt");
   const missingEdits = visualSettings();
   missingEdits.vision.compatible.imageGeneration.editsEndpoint = "";
   assert.match(composerImageAvailability(session.aiProfile, missingEdits.vision, session).message, /图片编辑接口/);
+});
+
+test("verified Micu sizes enable image generation without duplicated size settings", () => {
+  const session = referenceSession("compatible", "text_prompt");
   const missingSize = visualSettings();
   missingSize.vision.compatible.imageGeneration.sizes = [];
-  assert.match(composerImageAvailability(session.aiProfile, missingSize.vision, session).message, /服务支持的尺寸选项/);
+  const capability = composerServiceCapabilities(session.aiProfile, missingSize.vision).image;
+  assert.equal(capability.generate, true);
+  assert.equal(composerImageAvailability(session.aiProfile, missingSize.vision, session).available, true);
+  assert.deepEqual(capability.parameters.find((item) => item.key === "size").options.map((item) => item.value), [
+    "1024x1024", "1280x720", "720x1280", "1024x1536", "1536x1024",
+    "2048x2048", "2048x1152", "1152x2048"
+  ]);
 });
 
 test("image capability contracts expose only protocol-declared parameters", () => {
@@ -926,7 +936,8 @@ test("image capability contracts expose only protocol-declared parameters", () =
   const micu = composerServiceCapabilities({ serviceId: "compatible", model: "gpt-5.4-mini" }, values).image;
   assert.deepEqual(micu.parameters.map((item) => item.key), ["size"]);
   assert.deepEqual(micu.parameters[0].options.map((item) => item.value), [
-    "1024x1024", "1280x720", "1536x1024", "2048x2048", "2048x1152", "1152x2048"
+    "1024x1024", "1280x720", "720x1280", "1024x1536", "1536x1024",
+    "2048x2048", "2048x1152", "1152x2048"
   ]);
   assert.equal(micu.references.maxItems, 6);
   assert.equal(micu.references.source, "observed_error");
@@ -934,7 +945,7 @@ test("image capability contracts expose only protocol-declared parameters", () =
 
 test("verified Micu image models expose their official sizes without guessing for other compatible services", () => {
   const pro = visualSettings();
-  pro.vision.compatible.imageGeneration.model = "gpt-image-2-pro";
+  pro.vision.compatible.imageGeneration.model = "gpt-image-2-openai";
   const proSizes = composerServiceCapabilities({ serviceId: "compatible", model: "gpt-5.4-mini" }, pro.vision)
     .image.parameters.find((item) => item.key === "size").options.map((item) => item.value);
   assert.deepEqual(proSizes.slice(-2), ["3840x2160", "2160x3840"]);
@@ -948,6 +959,11 @@ test("verified Micu image models expose their official sizes without guessing fo
   const genericSizes = composerServiceCapabilities({ serviceId: "compatible", model: "vision-model" }, generic.vision)
     .image.parameters.find((item) => item.key === "size").options.map((item) => item.value);
   assert.deepEqual(genericSizes, ["1536x1024"]);
+
+  generic.vision.compatible.imageGeneration.sizes = [];
+  const blocked = composerServiceCapabilities({ serviceId: "compatible", model: "vision-model" }, generic.vision).image;
+  assert.equal(blocked.generate, false);
+  assert.match(composerImageAvailability({ serviceId: "compatible", model: "vision-model" }, generic.vision, referenceSession("compatible")).message, /服务支持的尺寸选项/);
 });
 
 test("unknown reference limits never become zero while explicit unsupported state blocks only conditioned images", () => {

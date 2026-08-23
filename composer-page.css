@@ -13,8 +13,11 @@
 .composer-new span:first-child { color: var(--accent); font-size: 19px; font-weight: 400; line-height: 1; }
 .composer-nav-section { min-height: 0; overflow: hidden; padding-top: 20px; }
 .composer-nav-heading { padding: 0 9px 8px; color: var(--muted); font-size: 11px; }
-.composer-session-list { display: grid; align-content: start; gap: 3px; max-height: 100%; overflow: auto; }
-.composer-session-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 9px; }
+.composer-session-list { display: grid; align-content: start; gap: 14px; max-height: 100%; overflow: auto; }
+.composer-session-group { display: grid; gap: 3px; min-width: 0; }
+.composer-session-group-label { margin: 0; padding: 0 9px 4px; color: var(--muted); font-size: 10px; font-weight: 800; }
+.composer-session-group-list { display: grid; gap: 3px; min-width: 0; }
+.composer-session-item { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; border-radius: 9px; }
 .composer-session-item:hover, .composer-session-item:focus-within { background: var(--selection-hover); }
 .composer-session-item[aria-current="true"] { background: var(--selection); box-shadow: inset 2px 0 var(--selection-indicator); }
 .composer-session-item > button:first-child { min-width: 0; border: 0; padding: 9px; color: var(--ink); background: transparent; text-align: left; }
@@ -22,9 +25,18 @@
 .composer-session-item strong, .composer-session-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-session-item strong { font-size: 12px; }
 .composer-session-item small { margin-top: 3px; color: var(--muted); font-size: 10px; }
-.composer-session-item .composer-session-remove { visibility: hidden; min-width: 30px; border: 0; padding: 6px; color: var(--muted); background: transparent; }
-.composer-session-item:hover .composer-session-remove, .composer-session-item:focus-within .composer-session-remove { visibility: visible; }
-.composer-session-item .composer-session-remove:hover:not(:disabled) { color: var(--danger); background: transparent; }
+.composer-session-menu { position: relative; margin-right: 4px; }
+.composer-session-menu > summary { display: grid; width: 28px; min-height: 28px; place-items: center; opacity: 0; border-radius: 6px; color: var(--muted); cursor: pointer; list-style: none; pointer-events: none; }
+.composer-session-menu > summary::-webkit-details-marker { display: none; }
+.composer-session-item:hover .composer-session-menu > summary,
+.composer-session-item:focus-within .composer-session-menu > summary,
+.composer-session-item[aria-current="true"] .composer-session-menu > summary,
+.composer-session-menu[open] > summary { opacity: 1; pointer-events: auto; }
+.composer-session-menu > summary:hover { color: var(--ink); background: var(--hover); }
+.composer-session-menu-panel { position: absolute; z-index: 18; top: calc(100% + 3px); right: 0; min-width: 112px; border: 1px solid var(--line); border-radius: 7px; padding: 4px; background: var(--card); box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 18%, transparent); }
+.composer-session-menu-panel button { width: 100%; min-height: 31px; border: 0; border-radius: 5px; padding: 5px 8px; color: var(--danger); background: transparent; text-align: left; font-size: 10px; }
+.composer-session-menu-panel button:hover:not(:disabled) { background: var(--hover); }
+.composer-session-menu-panel button:disabled { color: var(--muted); }
 .composer-session-running { color: var(--accent-ink) !important; }
 .composer-nav-footer { border-top: 1px solid var(--line); padding: 12px 7px 0; }
 .composer-nav-footer p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
@@ -228,11 +240,9 @@
 
 .composer-reference-workspace { position: fixed; z-index: 50; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; height: 100dvh; background: var(--paper); }
 .composer-reference-header { display: flex; min-height: 70px; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); padding: 12px clamp(18px, 3vw, 38px); background: var(--card); }
-.composer-reference-title { display: grid; grid-template-columns: auto auto; align-items: center; gap: 4px 16px; }
+.composer-reference-title { display: grid; width: max-content; max-width: 100%; grid-template-columns: max-content max-content; align-items: center; gap: 4px 16px; }
 .composer-reference-title > p { grid-column: 1 / -1; }
-.composer-reference-tabs { display: flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 6px; padding: 2px; }
-.composer-reference-tabs button { min-height: 28px; border: 0; border-radius: 4px; padding: 4px 10px; color: var(--muted); background: transparent; font-size: 11px; }
-.composer-reference-tabs button[aria-pressed="true"] { color: var(--ink); background: var(--selection); box-shadow: inset 0 0 0 1px var(--selection-edge); }
+.composer-reference-tabs { flex: none; }
 .composer-reference-header strong { font-size: 17px; }
 .composer-reference-header p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
 .composer-reference-body { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); min-height: 0; }
@@ -260,6 +270,11 @@
 .composer-project-card > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .composer-project-card button { min-height: 30px; padding: 5px 8px; font-size: 10px; }
 .composer-project-card .composer-project-active { border-color: var(--selection-edge); color: var(--ink); background: var(--selection); box-shadow: inset 2px 0 var(--selection-indicator); }
+.composer-skill-card > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.composer-skill-card > header > div { display: grid; gap: 2px; }
+.composer-skill-card code { color: var(--accent-ink); font-size: 12px; }
+.composer-skill-card small { color: var(--muted); font-size: 11px; }
+.composer-skill-card .composer-project-active { border-color: var(--selection-edge); color: var(--ink); background: var(--selection); box-shadow: inset 2px 0 var(--accent); }
 .composer-case-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); align-content: start; gap: 14px; }
 .composer-case-option { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
 .composer-case-option:hover { border-color: color-mix(in srgb, var(--ink) 25%, var(--line)); box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 10%, transparent); }

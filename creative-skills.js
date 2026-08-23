@@ -43,6 +43,7 @@ export function createCreativeSkill(stateValue, input = {}, options = {}) {
     currentVersionId: version.id,
     versions: [version],
     packageFiles: normalizePackageFiles(input.packageFiles),
+    ...(normalizeCuratedOrigin(input.curatedOrigin) ? { curatedOrigin: normalizeCuratedOrigin(input.curatedOrigin) } : {}),
     textModeConfirmed: input.textModeConfirmed === true,
     runtimeDependencies: normalizeStringList(input.runtimeDependencies),
     createdAt: now,
@@ -240,6 +241,7 @@ function normalizeCreativeSkill(value) {
     currentVersionId,
     versions,
     packageFiles: normalizePackageFiles(value?.packageFiles),
+    ...(normalizeCuratedOrigin(value?.curatedOrigin) ? { curatedOrigin: normalizeCuratedOrigin(value.curatedOrigin) } : {}),
     textModeConfirmed: value?.textModeConfirmed === true,
     runtimeDependencies: normalizeStringList(value?.runtimeDependencies),
     createdAt: cleanText(value?.createdAt) || versions[0].createdAt,
@@ -299,6 +301,26 @@ function normalizePackageFiles(values) {
     });
   }
   return result;
+}
+
+function normalizeCuratedOrigin(value) {
+  const catalogId = cleanText(value?.catalogId);
+  const skillId = cleanPortableId(value?.skillId);
+  const version = cleanText(value?.version);
+  const sha256 = String(value?.sha256 ?? "").toLocaleLowerCase("en-US");
+  if (!catalogId || !skillId || !version || !/^[a-f0-9]{64}$/.test(sha256)) return null;
+  return {
+    catalogId,
+    skillId,
+    version,
+    sha256,
+    installedAt: validIso(value?.installedAt) || new Date(0).toISOString()
+  };
+}
+
+function validIso(value) {
+  const text = cleanText(value);
+  return text && !Number.isNaN(Date.parse(text)) ? new Date(text).toISOString() : "";
 }
 
 function assertUniqueCallName(state, callName, exceptId = "") {

@@ -8,7 +8,7 @@ import {
 
 const TEXT_TASKS = new Set(["textTags", "skillExtraction", "creativePlanning"]);
 
-export const AI_RUNTIME_PROTOCOL_VERSION = 1;
+export const AI_RUNTIME_PROTOCOL_VERSION = 2;
 
 export function requireAiRuntimeProtocolVersion(value) {
   if (Number(value) !== AI_RUNTIME_PROTOCOL_VERSION) {
@@ -51,33 +51,46 @@ export function projectAiRuntime(configurationValue = {}) {
   const { registry, assignments, preferences } = configuration;
   const providers = registry.providers;
   const planning = settingsForTextAssignment(assignments.creativePlanning, providers, preferences, false);
-  const openai = providers.openai;
-  const compatible = providers["custom-media"];
   const imageAnalysis = assignments.imageAnalysis;
+  const imageAnalysisProfile = providers[imageAnalysis.providerId] ?? providers["custom-media"];
+  const imageAnalysisUsesOpenAi = imageAnalysis.providerId === "openai";
+  const openai = providers.openai;
+  const customMedia = providers["custom-media"];
   const vision = normalizeVisionSettings({
-    activeProvider: imageAnalysis.providerId === "custom-media" ? "compatible" : "openai",
+    activeProvider: imageAnalysisUsesOpenAi ? "openai" : "compatible",
     consent: true,
     autoAnalyzeImports: preferences.autoAnalyzeImports,
     instructionsByLocale: preferences.visionInstructionsByLocale,
     openai: {
-      model: assignments.imageAnalysis.providerId === "openai" ? assignments.imageAnalysis.model : "",
+      model: imageAnalysisUsesOpenAi
+        ? assignments.imageAnalysis.model
+        : openai?.models?.imageAnalysis || openai?.models?.imageGeneration || "",
       apiKey: usableKey(openai),
       videoGeneration: {
-        ...(openai?.videoGeneration ?? {}),
+        ...(providers.openai?.videoGeneration ?? {}),
         model: assignments.videoGeneration.providerId === "openai" ? assignments.videoGeneration.model : ""
       }
     },
     compatible: {
-      protocol: compatible?.protocol,
-      endpoint: compatible?.endpoint,
-      model: assignments.imageAnalysis.providerId === "custom-media" ? assignments.imageAnalysis.model : "",
-      apiKey: usableKey(compatible),
+      protocol: imageAnalysisProfile?.protocol === "responses" ? "responses" : "chat_completions",
+      structuredOutput: imageAnalysisProfile?.structuredOutput,
+      endpoint: clean(imageAnalysis?.providerId) ? chatEndpoint(imageAnalysisProfile) : "",
+      model: !imageAnalysisUsesOpenAi ? assignments.imageAnalysis.model : "",
+      apiKey: !imageAnalysisUsesOpenAi ? usableKey(imageAnalysisProfile) : "",
       imageGeneration: {
-        ...(compatible?.imageGeneration ?? {}),
-        model: assignments.imageGeneration.providerId === "custom-media" ? assignments.imageGeneration.model : "",
-        apiKey: usableKey(compatible, true, "imageGeneration")
+        ...(customMedia?.imageGeneration ?? {}),
+        model: assignments.imageGeneration.providerId === "custom-media"
+          ? assignments.imageGeneration.model
+          : customMedia?.models?.imageGeneration || customMedia?.imageGeneration?.model || "",
+        apiKey: usableKey(customMedia, true, "imageGeneration")
       }
-    }
+    },
+    nativeProvider: imageAnalysis.providerId === "gemini" ? {
+      id: "gemini",
+      endpoint: imageAnalysisProfile.endpoint,
+      apiKey: imageAnalysisProfile.apiKey,
+      model: imageAnalysis.model
+    } : null
   });
   if (!clean(imageAnalysis?.providerId)) {
     vision.activeProvider = "compatible";
@@ -86,20 +99,21 @@ export function projectAiRuntime(configurationValue = {}) {
     vision.compatible.model = "";
   }
   const xai = providers.xai;
+  const xaiRuntime = {
+    apiKey: usableKey(xai),
+    textModel: assignments.creativePlanning.providerId === "xai" ? assignments.creativePlanning.model : "",
+    imageModel: assignments.imageGeneration.providerId === "xai"
+      ? assignments.imageGeneration.model
+      : assignments.imageAnalysis.providerId === "xai" ? assignments.imageAnalysis.model : "",
+    videoModel: assignments.videoGeneration.providerId === "xai" ? assignments.videoGeneration.model : "",
+    mediaConsent: xai?.consent === true
+  };
   return {
     aiSettings: planning,
     visionSettings: {
       ...vision,
       providerProfiles: providers,
-      xai: {
-        apiKey: usableKey(xai),
-        textModel: assignments.creativePlanning.providerId === "xai" ? assignments.creativePlanning.model : "",
-        imageModel: assignments.imageGeneration.providerId === "xai"
-          ? assignments.imageGeneration.model
-          : assignments.imageAnalysis.providerId === "xai" ? assignments.imageAnalysis.model : "",
-        videoModel: assignments.videoGeneration.providerId === "xai" ? assignments.videoGeneration.model : "",
-        mediaConsent: xai?.consent === true
-      }
+      xai: xaiRuntime
     },
     aiServiceProfiles: {
       gemini: {
@@ -168,6 +182,7 @@ export function resolveVisionTaskSettings(taskId, configurationValue = {}, optio
     },
     compatible: {
       protocol: profile.protocol === "responses" ? "responses" : "chat_completions",
+      structuredOutput: profile.structuredOutput,
       endpoint,
       model: resolved.model,
       apiKey: openai ? "" : profile.apiKey,

@@ -55,7 +55,7 @@ export function createAiProviderModule(options = {}) {
       discoveredAt: new Date().toISOString(),
       models: mergeModels(discovery.models, configuredModels(profile).map((model) => ({
         ...model,
-        status: discovery.models?.length && !discovery.models.some((item) => item.id === model.id) && !profile.id.startsWith("custom")
+        status: Array.isArray(discovery.models) && !discovery.models.some((item) => item.id === model.id) && !profile.id.startsWith("custom")
           ? "unavailable"
           : model.status
       }))),
@@ -111,12 +111,20 @@ async function discoverIdentityModels(fetchImpl, profile, cache) {
   const response = await modelRequest(fetchImpl, url, profile, cache);
   if (response.notModified) return response;
   const list = requiredArrayFrom(response.payload, `${profile.id} 返回了当前版本尚未适配的模型列表结构`, "data", "models");
-  const preset = getAiProviderPreset(profile.id);
-  const protocolDeclared = preset?.discovery?.adapter === "identity" && preset.category !== "custom";
-  const confidence = protocolDeclared ? "protocol_inferred" : "manual_unverified";
-  const tasks = protocolDeclared ? TEXT_TASKS : [];
   return {
-    models: list.map((item) => modelDescriptor(item, { confidence, tasks, source: "provider_models" })),
+    models: list.map((item) => {
+      const architecture = item?.architecture && typeof item.architecture === "object" ? item.architecture : item;
+      const inputModalities = normalizeModalities(architecture.input_modalities ?? architecture.inputModalities);
+      const outputModalities = normalizeModalities(architecture.output_modalities ?? architecture.outputModalities);
+      const hasDeclaredModalities = inputModalities.length > 0 && outputModalities.length > 0;
+      return modelDescriptor(item, {
+        confidence: hasDeclaredModalities ? "declared" : "manual_unverified",
+        tasks: hasDeclaredModalities ? tasksFromModalities(inputModalities, outputModalities) : [],
+        inputModalities,
+        outputModalities,
+        source: "provider_models"
+      });
+    }),
     cache: response.cache,
     source: "provider_models"
   };

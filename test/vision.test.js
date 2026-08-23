@@ -334,6 +334,83 @@ test("compatible request uses Chat Completions image messages and refuses redire
   assert.equal(body.max_tokens, 12000);
 });
 
+test("compatible json_object vision requests keep image input and local full-schema validation", async () => {
+  let body;
+  const input = {
+    imageDataUrl: "data:image/png;base64,AAAA",
+    catalog: createDefaultFacetCatalog(),
+    locale: "zh-CN",
+    settings: {
+      activeProvider: "compatible", consent: true,
+      compatible: {
+        protocol: "chat_completions",
+        structuredOutput: "json_object",
+        endpoint: "https://api.deepseek.com/chat/completions",
+        apiKey: "secret",
+        model: "opaque-account-model"
+      }
+    }
+  };
+  const success = await analyzeImageWithVision(input, async (_url, options) => {
+    body = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({
+        model: "opaque-account-model",
+        choices: [{ message: { content: JSON.stringify(completeVisionResult("一张完整分析。")) } }]
+      })
+    };
+  });
+
+  assert.deepEqual(body.response_format, { type: "json_object" });
+  assert.equal(body.messages[0].content.some((item) => item.type === "image_url"), true);
+  const instruction = body.messages[0].content.find((item) => item.type === "text").text;
+  assert.match(instruction, /JSON property names are case-sensitive/);
+  assert.match(instruction, /"ocr":\{"type":"array"/);
+  assert.equal(success.description, "一张完整分析。");
+
+  await assert.rejects(() => analyzeImageWithVision(input, async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: JSON.stringify({ description: "不完整" }) } }] })
+  })), /画布信息|缺少|必须/);
+});
+
+test("compatible empty vision results expose finish reasons without retrying or falling back", async () => {
+  const input = {
+    imageDataUrl: "data:image/png;base64,AAAA",
+    catalog: createDefaultFacetCatalog(),
+    settings: {
+      activeProvider: "compatible", consent: true,
+      compatible: {
+        protocol: "chat_completions",
+        structuredOutput: "json_object",
+        endpoint: "http://localhost:1234/v1/chat/completions",
+        model: "fixture-model"
+      }
+    }
+  };
+  const cases = [
+    ["length", /输出达到长度上限/],
+    ["content_filter", /内容过滤/],
+    ["insufficient_system_resource", /资源暂时不足/],
+    ["stop", /返回了空的 JSON 内容/],
+    [undefined, /响应缺少可用内容/]
+  ];
+  let calls = 0;
+  for (const [finishReason, expected] of cases) {
+    await assert.rejects(() => analyzeImageWithVision(input, async () => {
+      calls += 1;
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ finish_reason: finishReason, message: { content: "" } }]
+        })
+      };
+    }), expected);
+  }
+  assert.equal(calls, cases.length);
+});
+
 test("compatible Responses request sends the OpenAI image shape and parses structured output", async () => {
   let captured;
   const result = await analyzeImageWithVision({

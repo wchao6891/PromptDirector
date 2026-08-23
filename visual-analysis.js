@@ -24,6 +24,7 @@ const ROOT_FIELDS = new Set([
   "description", "canvas", "elements", "dimensions", "ocr", "reconstructionPrompt",
   "limitations", "completeness", "tags"
 ]);
+const ROOT_FIELDS_BY_CASE = new Map([...ROOT_FIELDS].map((field) => [field.toLocaleLowerCase("en-US"), field]));
 
 const BBOX_SCHEMA = Object.freeze({
   type: "object",
@@ -193,17 +194,30 @@ export function normalizeVisualModelResponse(value, catalogValue) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("视觉模型返回格式不正确，本次没有写入");
   }
-  const tagDiagnostics = partitionModelTags(value.tags, catalogValue);
+  const source = normalizeKnownRootFieldCasing(value);
+  const tagDiagnostics = partitionModelTags(source.tags, catalogValue);
   const converted = {
-    ...value,
-    elements: (Array.isArray(value.elements) ? value.elements : []).map((item) => convertModelBox(item)),
-    ocr: (Array.isArray(value.ocr) ? value.ocr : []).map((item) => convertModelBox(item)),
+    ...source,
+    elements: (Array.isArray(source.elements) ? source.elements : []).map((item) => convertModelBox(item)),
+    ocr: (Array.isArray(source.ocr) ? source.ocr : []).map((item) => convertModelBox(item)),
     tags: tagDiagnostics.accepted
   };
   return {
     ...normalizeVisualAnalysisV2(converted, catalogValue),
     tagDiagnostics: { rejectedCount: tagDiagnostics.rejectedCount }
   };
+}
+
+function normalizeKnownRootFieldCasing(value) {
+  const normalized = {};
+  for (const [field, fieldValue] of Object.entries(value)) {
+    const canonical = ROOT_FIELDS_BY_CASE.get(field.toLocaleLowerCase("en-US")) || field;
+    if (Object.hasOwn(normalized, canonical)) {
+      throw new Error(`视觉分析字段大小写冲突：${canonical}`);
+    }
+    normalized[canonical] = fieldValue;
+  }
+  return normalized;
 }
 
 export function normalizeVisualAnalysisV2(value, catalogValue) {

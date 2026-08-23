@@ -166,8 +166,7 @@ import {
   retryLibraryMaintenanceFailures
 } from "./library-maintenance.js";
 import {
-  commitMetadataThenDeleteImages,
-  replaceImagesWithRollback
+  commitMetadataThenDeleteImages
 } from "./image-transaction.js";
 import { createEntrySaveUndo, normalizeLastSaveUndo, restoreScreenshotSaveEntry } from "./save-history.js";
 import {
@@ -262,6 +261,7 @@ import {
 import { PAGE_CAPTURE_LIMITS, PAGE_CAPTURE_QUALITY_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { publicAiServiceProfiles } from "./ai-service-profiles.js";
 import {
+  availableAiModelsForTask,
   availableAiProvidersForTask,
   mergeAiProviderRegistry,
   normalizeAiTaskAssignments,
@@ -319,24 +319,16 @@ import {
 } from "./creative-runs.js";
 import { mergeCreativeExperimentPackage } from "./creative-experiment-package.js";
 import {
-  attachSyncImageReferences,
-  collectSyncImageReferences,
-  createRevisionSnapshot,
-  mergeRevisionSnapshots,
+  markSyncMetaDirty,
+  normalizeSyncMeta,
   normalizeSyncSettings,
-  syncErrorDetails,
-  syncStateHasContent,
-  SYNC_SNAPSHOT_FORMAT,
-  SYNC_SNAPSHOT_VERSION
+  syncErrorDetails
 } from "./sync-model.js";
 import {
   createOrUnlockSyncVault,
-  listSyncSnapshots,
-  openSyncVaultWithKey,
-  readSyncObject,
-  writeSyncObject,
-  writeSyncSnapshot
+  openSyncVaultWithKey
 } from "./sync-vault.js";
+import { createManualSyncController } from "./manual-sync.js";
 import {
   clearSyncPrivateState,
   getSyncCryptoKey,
@@ -406,7 +398,6 @@ const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 let writeQueue = Promise.resolve();
 let captureWriteQueue = Promise.resolve();
-let automaticSyncScheduled = false;
 let creatingOffscreenDocument = null;
 let visionAnalysisInFlight = false;
 const aiProviderModule = createAiProviderModule();
@@ -425,9 +416,20 @@ const VIDEO_ANALYSIS_ADAPTERS = Object.freeze({
   openrouter: analyzeVideoWithOpenRouter
 });
 let activePageCapture = null;
-let syncInFlight = null;
 let syncApplyInProgress = false;
-let syncIdleTimer = null;
+const manualSyncController = createManualSyncController({
+  readState,
+  readMeta: async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
+    return stored[STORAGE_KEYS.syncMeta];
+  },
+  readMedia: getMediaBlob,
+  writeMedia: saveMediaBlob,
+  deleteMedia: deleteMediaBlob,
+  commit: commitManualSyncResult,
+  onProgress: notifySyncProgress,
+  onStatus: notifySyncProgress
+});
 let maintenanceRunnerActive = false;
 let maintenanceRunnerTimer = 0;
 let automaticVisionRunnerActive = false;
@@ -454,7 +456,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
 
   const state = await readState();
-  await commitLocalChanges({ [STORAGE_KEYS.settings]: state.settings });
+  await commitLocalChanges({ [STORAGE_KEYS.settings]: state.settings }, { markSyncDirty: false });
   await migrateLegacyScreenshots(state.entries);
 });
 
@@ -538,17 +540,24 @@ function openCreativeResultSidePanel(message, sender) {
 async function handleMessage(message, interaction = {}) {
   switch (message?.type) {
     case "GET_STATE": {
-      const stateRead = enqueue(async () => ({ ok: true, ...publicLibraryState(await readState()) }));
-      scheduleAutomaticSync();
-      return stateRead;
+      return enqueue(async () => ({ ok: true, ...publicLibraryState(await readState()) }));
     }
     case "GET_FOLDER_BACKUP_STATE":
       return enqueue(async () => ({ ok: true, ...folderBackupState(await readState()) }));
     case "GET_CAPTURE_WORKSPACE":
-      scheduleAutomaticSync();
       return enqueueCapture(async () => captureWorkspace());
     case "GET_DATA_SAFETY_STATUS":
       return enqueue(async () => dataSafetyStatus(await readState()));
+    case "GET_SYNC_RUN_STATUS":
+      return Promise.resolve({ ok: true, syncStatus: manualSyncController.status() });
+    case "CANCEL_SYNC": {
+      const cancelRequested = manualSyncController.cancel();
+      return Promise.resolve({
+        ok: true,
+        cancelRequested,
+        message: cancelRequested ? "正在停止本次同步" : "当前没有正在运行的同步"
+      });
+    }
     case "GET_EXTENSION_UPDATE_STATUS":
       return extensionUpdateLifecycle.getStatus()
         .then((status) => ({ ok: true, status }));
@@ -566,7 +575,7 @@ async function handleMessage(message, interaction = {}) {
     case "UNLOCK_SYNC_VAULT":
       return enqueue(async () => unlockSyncVault(message.password));
     case "SYNC_NOW":
-      return enqueue(async () => synchronizeNow("manual"));
+      return enqueue(async () => performManualSynchronization((input) => manualSyncController.start(input)));
     case "DISCONNECT_SYNC_FOLDER":
       return enqueue(async () => disconnectSyncFolder());
     case "UPDATE_CAPTURE_DRAFT":
@@ -2506,7 +2515,10 @@ async function undoLastSave() {
   }
   const entries = state.entries.map((item) => item.id === updated.id ? updated : item);
   try {
-    await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+    await commitLocalChanges(
+      { [STORAGE_KEYS.entries]: entries },
+      { dirtyAssetIds: [current.id] }
+    );
   } catch (error) {
     if (replacedScreenshot) await saveScreenshotBlob(current.id, replacedScreenshot).catch(() => undefined);
     if (restoredScreenshot) {
@@ -2798,7 +2810,7 @@ async function readState() {
   const locale = resolveLocale(uiPreferences, chrome.i18n.getUILanguage());
   const composerSessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   if (JSON.stringify(stored[STORAGE_KEYS.composerSessions] ?? []) !== JSON.stringify(composerSessions)) {
-    await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: composerSessions });
+    await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: composerSessions }, { markSyncDirty: false });
   }
   const creativeRuns = normalizeCreativeRuns(stored[STORAGE_KEYS.creativeRuns]);
   const creativeJobs = normalizeCreativeJobsState(stored[STORAGE_KEYS.creativeJobs]);
@@ -2825,7 +2837,7 @@ async function readState() {
       [STORAGE_KEYS.creativeJobs]: creativeJobs,
       [STORAGE_KEYS.creativeExperimentSettings]: creativeExperimentSettings,
       [STORAGE_KEYS.activeCreativeResult]: activeCreativeResult
-    });
+    }, { markSyncDirty: false });
   }
   const storedBatchJob = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   const textBatchSummary = storedBatchJob?.kind === "text_tags"
@@ -4419,7 +4431,13 @@ async function discoverAiProviderModels(providerIdValue, force = false) {
   if (!profile.endpoint || !profile.apiKey) throw new Error(`${profile.label} 需要先保存接口地址和 API Key`);
   let result;
   try {
-    result = await aiProviderModule.discoverModels(profile, {
+    result = await aiProviderModule.discoverModels({
+      ...profile,
+      models: {
+        ...profile.models,
+        ...assignedModelsForProvider(configuration.assignments, providerId)
+      }
+    }, {
       etag: force ? "" : profile.discovery?.etag
     });
   } catch (error) {
@@ -4459,6 +4477,12 @@ async function discoverAiProviderModels(providerIdValue, force = false) {
     await persistAiConfiguration(next);
     return aiConfigurationResponse(next, `${profile.label} 已发现 ${result.models.length} 个模型`);
   });
+}
+
+function assignedModelsForProvider(assignments = {}, providerId = "") {
+  return Object.fromEntries(Object.entries(assignments).flatMap(([taskId, assignment]) =>
+    assignment?.providerId === providerId && assignment.model ? [[taskId, assignment.model]] : []
+  ));
 }
 
 function sameProviderConnection(current, requested) {
@@ -4549,9 +4573,7 @@ function aiTaskProviderOptions(taskId, configuration) {
     const profile = configuration.registry.providers[provider.id];
     const models = [...new Set([
       profile?.models?.[taskId],
-      ...(profile?.discoveredModels ?? [])
-        .filter((model) => model.status !== "unavailable" && model.tasks.includes(taskId))
-        .map((model) => model.id)
+      ...availableAiModelsForTask(taskId, profile).map((model) => model.id)
     ].filter(Boolean))];
     return { id: provider.id, label: provider.label, models };
   });
@@ -4582,7 +4604,12 @@ function aiTaskRuntimeDescriptor(taskId, configuration) {
 
 async function getComposerAiRuntime() {
   const configuration = await loadAiConfiguration();
-  return { ok: true, aiRuntimeProtocolVersion: AI_RUNTIME_PROTOCOL_VERSION, ...projectAiRuntime(configuration) };
+  const runtime = projectAiRuntime(configuration);
+  return {
+    ok: true,
+    aiRuntimeProtocolVersion: AI_RUNTIME_PROTOCOL_VERSION,
+    ...runtime
+  };
 }
 
 function canonicalAiTaskId(value) {
@@ -6102,11 +6129,17 @@ function storagePayload(state) {
   };
 }
 
-async function commitLocalChanges(update) {
-  await chrome.storage.local.set(update);
-  if (!syncApplyInProgress && Object.keys(update).some((key) => SYNCED_STORAGE_KEYS.has(key))) {
-    scheduleIdleSync();
+async function commitLocalChanges(update, options = {}) {
+  const payload = { ...update };
+  const changesSyncedContent = Object.keys(payload).some((key) => SYNCED_STORAGE_KEYS.has(key));
+  if (!syncApplyInProgress && options.markSyncDirty !== false && changesSyncedContent) {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
+    payload[STORAGE_KEYS.syncMeta] = markSyncMetaDirty(
+      stored[STORAGE_KEYS.syncMeta],
+      options.dirtyAssetIds
+    );
   }
+  await chrome.storage.local.set(payload);
 }
 
 async function persistDomainState(state, undo, historyOptions) {
@@ -6458,22 +6491,6 @@ async function createArchiveUrl(state, sharing = false) {
   return result;
 }
 
-function scheduleIdleSync() {
-  clearTimeout(syncIdleTimer);
-  syncIdleTimer = setTimeout(() => {
-    syncIdleTimer = null;
-    enqueue(() => synchronizeNow("idle")).catch(() => undefined);
-  }, 1_500);
-}
-
-function scheduleAutomaticSync() {
-  if (automaticSyncScheduled) return;
-  automaticSyncScheduled = true;
-  enqueue(() => synchronizeNow("open"))
-    .catch(() => undefined)
-    .finally(() => { automaticSyncScheduled = false; });
-}
-
 async function connectSyncFolder(password) {
   const directory = await getSyncDirectoryHandle();
   if (!directory) throw new Error("请先选择同步文件夹");
@@ -6489,12 +6506,10 @@ async function connectSyncFolder(password) {
   });
   await saveSyncCryptoKey(vault.key);
   await commitLocalChanges({ [STORAGE_KEYS.syncSettings]: settings });
-  const result = await synchronizeWithVault(vault, settings, "connect");
   return {
-    ...result,
-    message: result.restored
-      ? `同步库已连接，并恢复 ${result.entryCount} 个案例`
-      : `同步库已连接，${result.entryCount} 个案例已安全同步`
+    ok: true,
+    connected: true,
+    message: "同步文件夹已连接，尚未读取或合并资料；需要时请点击“立即同步”"
   };
 }
 
@@ -6517,24 +6532,18 @@ async function unlockSyncVault(password) {
   });
   await saveSyncCryptoKey(vault.key);
   await commitLocalChanges({ [STORAGE_KEYS.syncSettings]: settings });
-  const result = await synchronizeWithVault(vault, settings, "unlock");
-  return { ...result, message: "同步库已解锁并完成同步" };
+  return {
+    ok: true,
+    unlocked: true,
+    message: "同步库已解锁，尚未读取或合并资料；需要时请点击“立即同步”"
+  };
 }
 
-async function synchronizeNow(reason = "manual") {
-  if (syncInFlight) return syncInFlight;
-  syncInFlight = performSynchronization(reason).finally(() => {
-    syncInFlight = null;
-  });
-  return syncInFlight;
-}
-
-async function performSynchronization(reason) {
+async function performManualSynchronization(start) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
   const settings = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
   if (!settings.enabled) {
-    if (reason === "manual") throw new Error("请先在“数据与同步”中选择同步文件夹");
-    return { ok: false, skipped: true };
+    throw new Error("请先在“数据与同步”中选择同步文件夹");
   }
   const directory = await getSyncDirectoryHandle();
   if (!directory) throw await recordSyncError(settings, "同步文件夹需要重新选择");
@@ -6544,156 +6553,59 @@ async function performSynchronization(reason) {
   if (!key) throw await recordSyncError(settings, "同步库已锁定，请输入密码解锁");
   try {
     const vault = await openSyncVaultWithKey(directory, key, settings.vaultId);
-    return await synchronizeWithVault(vault, settings, reason);
+    const result = await start({ vault, settings });
+    if (result.canceled) {
+      return {
+        ...result,
+        ok: true,
+        libraryChanged: false,
+        message: "本次同步已停止，本机未提交的资料没有改变"
+      };
+    }
+    if (result.upToDate) {
+      return {
+        ...result,
+        ok: true,
+        libraryChanged: false,
+        message: "两端没有变化，没有写入同步文件夹"
+      };
+    }
+    return {
+      ...result,
+      ok: true,
+      libraryChanged: result.effects?.localBusinessChanged === true,
+      message: syncResultMessage(result)
+    };
   } catch (error) {
     throw await recordSyncError(settings, error);
   }
 }
 
-async function synchronizeWithVault(vault, settingsValue, reason) {
-  const settings = normalizeSyncSettings(settingsValue);
-  const current = await readState();
-  const metaStored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
-  const meta = normalizeSyncMeta(metaStored[STORAGE_KEYS.syncMeta]);
-  const remoteSnapshots = await listSyncSnapshots(vault);
-  const localPrepared = await prepareStateForSync(current, vault, (progress) => notifySyncProgress(progress));
-  const localImageRefs = collectSyncImageReferences(localPrepared);
-  const localClock = Math.max(
-    meta.logicalClock,
-    ...remoteSnapshots.map((snapshot) => Number(snapshot.logicalClock) || 0)
-  ) + 1;
-  const baseSnapshot = {
-    format: SYNC_SNAPSHOT_FORMAT,
-    version: SYNC_SNAPSHOT_VERSION,
-    records: meta.records
-  };
-  const localSnapshot = await createRevisionSnapshot(localPrepared, {
-    deviceId: settings.deviceId,
-    logicalClock: localClock,
-    baseSnapshot
-  });
-  const merged = mergeRevisionSnapshots([...remoteSnapshots, localSnapshot]);
-  if (syncStateHasContent(current) && !syncStateHasContent(merged.state)) {
-    throw new Error("同步结果异常为空，本地资料未被修改");
+async function commitManualSyncResult({ state, settings, meta, trackingOnly }) {
+  syncApplyInProgress = true;
+  try {
+    const update = {
+      [STORAGE_KEYS.syncSettings]: normalizeSyncSettings(settings),
+      [STORAGE_KEYS.syncMeta]: normalizeSyncMeta(meta)
+    };
+    if (!trackingOnly) {
+      Object.assign(update, synchronizedStatePayload(await readState(), state));
+    }
+    await commitLocalChanges(update);
+  } finally {
+    syncApplyInProgress = false;
   }
-
-  notifySyncProgress({ phase: "merging" });
-  const finalPrepared = attachSyncImageReferences(merged.state, merged.imageRefs);
-  const finalSnapshot = await createRevisionSnapshot(finalPrepared, {
-    deviceId: settings.deviceId,
-    logicalClock: localClock + 1,
-    baseSnapshot: {
-      format: SYNC_SNAPSHOT_FORMAT,
-      version: SYNC_SNAPSHOT_VERSION,
-      records: merged.records
-    }
-  });
-  const lastSyncAt = new Date().toISOString();
-  const nextSettings = normalizeSyncSettings({
-    ...settings,
-    enabled: true,
-    vaultId: vault.header.vaultId,
-    lastSyncAt,
-    lastError: "",
-    lastErrorCode: ""
-  });
-  await replaceImagesWithRollback({
-    replacements: syncedImageReplacements(
-      vault,
-      merged.imageRefs,
-      localImageRefs,
-      (progress) => notifySyncProgress(progress)
-    ),
-    readImage: getMediaBlob,
-    writeImage: saveMediaBlob,
-    deleteImage: deleteMediaBlob,
-    commitMetadata: async () => {
-      notifySyncProgress({ phase: "saving" });
-      await writeSyncSnapshot(vault, finalSnapshot, { retentionCount: settings.retentionCount });
-      syncApplyInProgress = true;
-      try {
-        await commitLocalChanges({
-          ...synchronizedStatePayload(current, merged.state),
-          [STORAGE_KEYS.syncSettings]: nextSettings,
-          [STORAGE_KEYS.syncMeta]: {
-            logicalClock: localClock + 1,
-            records: finalSnapshot.records
-          }
-        });
-      } finally {
-        syncApplyInProgress = false;
-      }
-    }
-  });
-  return {
-    ok: true,
-    reason,
-    restored: !current.entries.length && Boolean(merged.state.entries?.length),
-    entryCount: merged.state.entries?.length ?? 0,
-    imageCount: Object.keys(merged.imageRefs).length,
-    mediaCount: Object.keys(merged.imageRefs).length,
-    conflictCount: merged.conflicts.length,
-    lastSyncAt
-  };
 }
 
-async function prepareStateForSync(state, vault, onProgress = () => undefined) {
-  const prepared = structuredClone({
-    entries: state.entries,
-    trashState: normalizeTrashState(state.trashState),
-    compoundCases: state.compoundCases,
-    organizerState: state.organizerState,
-    taxonomy: state.taxonomy,
-    facetCatalog: state.facetCatalog,
-    classificationRules: state.classificationRules,
-    settings: { libraryTitle: state.settings?.libraryTitle },
-    composerSettings: state.composerSettings,
-    composerSessions: state.composerSessions,
-    creativeExperimentSettings: state.creativeExperimentSettings,
-    creativeRuns: state.creativeRuns,
-    creativeSkills: state.creativeSkills
-  });
-  const seenVisualIds = new Set();
-  const visuals = [
-    ...prepared.entries.flatMap((entry) => entry.mediaAssets ?? entry.visuals ?? []),
-    ...prepared.trashState.items.flatMap((item) => {
-      if (item.kind === "entry") return item.snapshot?.mediaAssets ?? item.snapshot?.visuals ?? [];
-      if (item.kind === "media") return item.snapshot?.mediaAssets ?? item.snapshot?.visuals ?? [];
-      return [];
-    }),
-    ...prepared.creativeRuns.flatMap((run) => run.outputs.map((output) => output.visual)),
-    ...(prepared.creativeSkills?.items ?? []).flatMap((skill) => skill.packageFiles ?? []),
-    ...prepared.composerSessions.flatMap((session) => (session.referenceSnapshots ?? [])
-      .filter((reference) => reference.sourceType === "temporary")
-      .flatMap((reference) => reference.assetRefs ?? []))
-  ].filter((visual) => {
-    const assetId = visual?.id ?? visual?.assetId;
-    if (!assetId || seenVisualIds.has(assetId)) return false;
-    seenVisualIds.add(assetId);
-    return true;
-  });
-  for (const [index, visual] of visuals.entries()) {
-    if (index % 5 === 0) onProgress({ phase: "encrypting", current: index, total: visuals.length });
-    if (visual.storageMode === "reference") continue;
-    const blob = await getMediaBlob(visual.id ?? visual.assetId);
-    if (!blob) continue;
-    visual.syncObjectId = await writeSyncObject(vault, blob);
-    visual.syncContentType = blob.type;
-  }
-  onProgress({ phase: "encrypting", current: visuals.length, total: visuals.length });
-  return prepared;
-}
-
-async function* syncedImageReplacements(vault, imageRefs, localImageRefs = {}, onProgress = () => undefined) {
-  const pending = Object.entries(imageRefs).filter(([visualId, reference]) =>
-    localImageRefs?.[visualId]?.objectId !== reference?.objectId
-  );
-  for (const [index, [visualId, reference]] of pending.entries()) {
-    if (index % 5 === 0) onProgress({ phase: "restoring", current: index, total: pending.length });
-    const blob = await readSyncObject(vault, reference.objectId);
-    yield { id: visualId, blob };
-  }
-  onProgress({ phase: "restoring", current: pending.length, total: pending.length });
+function syncResultMessage(result = {}) {
+  const summary = result.changeSummary ?? {};
+  const changes = [
+    summary.added ? `新增 ${summary.added} 项` : "",
+    summary.updated ? `更新 ${summary.updated} 项` : "",
+    summary.deleted ? `删除 ${summary.deleted} 项` : "",
+    summary.conflicts ? `保留 ${summary.conflicts} 个冲突副本` : ""
+  ].filter(Boolean).join("，");
+  return changes ? `手动同步完成：${changes}` : "手动同步完成";
 }
 
 function notifySyncProgress(progress = {}) {
@@ -6769,6 +6681,9 @@ async function dataSafetyStatus(state) {
 
 async function publicSyncStatus(settingsValue) {
   const settings = normalizeSyncSettings(settingsValue);
+  const metaStored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
+  const meta = normalizeSyncMeta(metaStored[STORAGE_KEYS.syncMeta]);
+  const run = manualSyncController.status();
   const directory = await getSyncDirectoryHandle().catch(() => null);
   const permission = directory ? await directoryPermission(directory) : "missing";
   const unlocked = Boolean(await getSyncCryptoKey().catch(() => null));
@@ -6780,7 +6695,10 @@ async function publicSyncStatus(settingsValue) {
     needsAuthorization: settings.enabled && permission !== "granted",
     lastSyncAt: settings.lastSyncAt,
     lastError: settings.lastError,
-    lastErrorCode: settings.lastErrorCode
+    lastErrorCode: settings.lastErrorCode,
+    localDirty: meta.localDirty,
+    dirtyAssetCount: meta.dirtyAssetIds.length,
+    ...run
   };
 }
 
@@ -6813,13 +6731,6 @@ async function recordSyncError(settings, failure) {
     syncApplyInProgress = false;
   }
   return error;
-}
-
-function normalizeSyncMeta(value = {}) {
-  return {
-    logicalClock: Math.max(0, Math.floor(Number(value.logicalClock) || 0)),
-    records: value.records && typeof value.records === "object" ? structuredClone(value.records) : {}
-  };
 }
 
 async function migrateLegacyScreenshots(entries) {

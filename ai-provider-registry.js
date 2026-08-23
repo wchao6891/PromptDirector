@@ -15,6 +15,11 @@ const CUSTOM_PROVIDER_LABELS = Object.freeze({
   "custom-media": "自定义兼容服务（图片与生成）"
 });
 
+const ASSIGNMENT_EVIDENCE = new Set(["declared", "protocol_inferred", "manual_unverified"]);
+const MANUAL_ASSIGNMENT_TASKS = new Set([
+  "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
+]);
+
 export function normalizeAiProviderRegistry(value = {}) {
   const source = value?.providers && typeof value.providers === "object" ? value.providers : {};
   const providers = {};
@@ -31,11 +36,19 @@ export function normalizeAiProviderRegistry(value = {}) {
   return { version: 4, providers };
 }
 
-export function normalizeAiTaskAssignments(value = {}) {
+export function normalizeAiTaskAssignments(value = {}, registryValue = {}) {
   return Object.fromEntries(AI_ASSIGNMENT_TASKS.map((task) => {
     const candidate = value?.[task.id];
     const source = candidate && typeof candidate === "object" ? candidate : {};
-    return [task.id, { providerId: clean(source.providerId), model: clean(source.model) }];
+    const assignment = { providerId: clean(source.providerId), model: clean(source.model) };
+    const profile = registryValue?.providers?.[assignment.providerId];
+    const discovered = profile?.discoveredModels?.find((model) => model.id === assignment.model);
+    const inferredEvidence = discovered ? modelAssignmentEvidence(task.id, discovered, profile) : "";
+    const evidence = ASSIGNMENT_EVIDENCE.has(source.evidence)
+      ? source.evidence
+      : inferredEvidence === "manual_unverified" ? inferredEvidence : "";
+    if (evidence) assignment.evidence = evidence;
+    return [task.id, assignment];
   }));
 }
 
@@ -49,6 +62,7 @@ export function publicAiProviderRegistry(value = {}) {
       category: profile.category,
       endpoint: profile.endpoint,
       protocol: profile.protocol,
+      structuredOutput: profile.structuredOutput,
       models: structuredClone(profile.models),
       capabilities: [...profile.capabilities],
       catalogRequiredTasks: [...profile.catalogRequiredTasks],
@@ -70,19 +84,75 @@ export function availableAiProvidersForTask(taskId, value = {}) {
   ).map((profile) => ({ id: profile.id, label: profile.label, model: profile.models[taskId] }));
 }
 
+export function availableAiModelsForTask(taskId, profileValue = {}) {
+  requireTask(taskId);
+  const profile = provider(clean(profileValue?.id), profileValue);
+  if (!profile.capabilities.includes(taskId)) return [];
+  const available = profile.discoveredModels.flatMap((model) => {
+    if (model.status === "unavailable") return [];
+    const assignmentEvidence = modelAssignmentEvidence(taskId, model, profile);
+    return assignmentEvidence ? [{ ...structuredClone(model), assignmentEvidence }] : [];
+  });
+  const configuredModel = taskId === "imageGeneration"
+    ? clean(profile.models.imageGeneration) || clean(profile.imageGeneration?.model)
+    : taskId === "videoGeneration"
+      ? clean(profile.models.videoGeneration) || clean(profile.videoGeneration?.model)
+      : clean(profile.models[taskId]);
+  if (!available.length && !profile.discovery.discoveredAt && configuredModel) {
+    return [{
+      id: configuredModel,
+      name: configuredModel,
+      status: "available",
+      confidence: "manual_unverified",
+      tasks: [],
+      inputModalities: [],
+      outputModalities: [],
+      assignmentEvidence: "manual_unverified"
+    }];
+  }
+  return available;
+}
+
+export function createAiTaskAssignment(taskId, providerIdValue, modelValue, registryValue = {}) {
+  requireTask(taskId);
+  const registry = normalizeAiProviderRegistry(registryValue);
+  const providerId = clean(providerIdValue);
+  const model = clean(modelValue);
+  const profile = registry.providers[providerId];
+  if (!profile) throw new Error("所选 AI 服务不存在");
+  const taskLabel = taskName(taskId);
+  if (!profile.capabilities.includes(taskId)) throw new Error(`${profile.label} 的协议不支持${taskLabel}`);
+  if (!model) throw new Error(`${taskLabel}尚未选择模型`);
+  const discovered = profile.discoveredModels.find((item) => item.id === model);
+  if (!discovered) {
+    const configured = availableAiModelsForTask(taskId, profile).some((item) => item.id === model);
+    if (configured) return { providerId, model, evidence: "manual_unverified" };
+    throw new Error(`${profile.label} 的当前模型目录中没有该模型`);
+  }
+  if (discovered.status === "unavailable") throw new Error(`${profile.label} 中已选模型已下架或当前账号不可用，请重新选择`);
+  const evidence = modelAssignmentEvidence(taskId, discovered, profile);
+  if (!evidence) throw new Error(`${profile.label} 模型目录声明该模型不支持${taskLabel}`);
+  return { providerId, model, evidence };
+}
+
 export function resolveAiProviderAssignment(taskId, registryValue = {}, assignmentsValue = {}) {
-  if (!AI_ASSIGNMENT_TASKS.some((task) => task.id === taskId)) throw new Error("未知 AI 任务");
+  requireTask(taskId);
   const registry = normalizeAiProviderRegistry(registryValue);
   const raw = assignmentsValue?.[taskId] ?? {};
   const providerId = clean(raw.providerId);
   if (!providerId) throw new Error(`${AI_ASSIGNMENT_TASKS.find((task) => task.id === taskId)?.label || taskId}尚未分配 AI 服务`);
   const profile = registry.providers[providerId];
   if (!profile) throw new Error("所选 AI 服务不存在");
-  const taskLabel = AI_ASSIGNMENT_TASKS.find((task) => task.id === taskId)?.label || taskId;
-  if (!profile.capabilities.includes(taskId)) throw new Error(`${profile.label} 不支持${taskLabel}`);
+  const taskLabel = taskName(taskId);
+  if (!profile.capabilities.includes(taskId)) throw new Error(`${profile.label} 的协议不支持${taskLabel}`);
   const model = clean(raw.model);
   const discovered = profile.discoveredModels.find((item) => item.id === model);
+  if (!discovered && profile.discovery.discoveredAt) {
+    throw new Error(`${profile.label} 的当前模型目录中没有该模型，请重新选择`);
+  }
   if (discovered?.status === "unavailable") throw new Error(`${profile.label} 中已选模型已下架或当前账号不可用，请重新选择`);
+  const evidence = discovered ? modelAssignmentEvidence(taskId, discovered, profile) : "manual_unverified";
+  if (discovered && !evidence) throw new Error(`${profile.label} 模型目录声明该模型不支持${taskLabel}`);
   if (!providerConfiguredForTask(profile, taskId, model) || !model) throw new Error(`${profile.label} 尚未完成${taskLabel}配置`);
   return { taskId, providerId, provider: profile.label, model };
 }
@@ -134,6 +204,7 @@ function provider(id, value = {}) {
     category: preset?.category ?? "custom",
     endpoint: clean(value?.endpoint) || preset?.endpoint || "",
     protocol: clean(value?.protocol) || preset?.protocol || "native",
+    structuredOutput: normalizeStructuredOutput(preset?.structuredOutput ?? value?.structuredOutput),
     apiKey: clean(value?.apiKey),
     credentialConfigured: Object.hasOwn(value ?? {}, "apiKey")
       ? Boolean(clean(value?.apiKey) || isLoopback(value?.endpoint))
@@ -207,7 +278,7 @@ function providerConfiguredForTask(profile, taskId, selectedModel = "") {
     : profile.apiKey;
   const configuredModel = clean(selectedModel) || profile.models[taskId];
   const discoveredCandidate = profile.discoveredModels.some((item) =>
-    item.status !== "unavailable" && item.tasks.includes(taskId)
+    item.status !== "unavailable" && Boolean(modelAssignmentEvidence(taskId, item, profile))
   );
   const discovered = profile.discoveredModels.find((item) => item.id === configuredModel);
   const catalogRequired = profile.catalogRequiredTasks.includes(taskId);
@@ -217,12 +288,41 @@ function providerConfiguredForTask(profile, taskId, selectedModel = "") {
   return Boolean(
     (catalogRequired
       ? clean(selectedModel)
-        ? discovered?.status !== "unavailable" && discovered?.tasks.includes(taskId)
+        ? discovered?.status !== "unavailable" && Boolean(modelAssignmentEvidence(taskId, discovered, profile))
         : discoveredCandidate
-      : configuredModel || discoveredCandidate)
+      : (configuredModel && (!discovered || Boolean(modelAssignmentEvidence(taskId, discovered, profile)))) || discoveredCandidate)
     && discovered?.status !== "unavailable"
     && (key || savedCredential || isLoopback(endpoint))
   );
+}
+
+function modelAssignmentEvidence(taskId, model = {}, profile = null) {
+  if ((model.tasks ?? []).includes(taskId)) {
+    return ASSIGNMENT_EVIDENCE.has(model.confidence) ? model.confidence : "declared";
+  }
+  if (model.confidence === "manual_unverified"
+    && (model.inputModalities ?? []).length === 0 && (model.outputModalities ?? []).length === 0) {
+    if (MANUAL_ASSIGNMENT_TASKS.has(taskId)) return "manual_unverified";
+    const configuredGenerationModel = taskId === "imageGeneration"
+      ? clean(profile?.models?.imageGeneration) || clean(profile?.imageGeneration?.model)
+      : taskId === "videoGeneration" ? clean(profile?.models?.videoGeneration) || clean(profile?.videoGeneration?.model) : "";
+    if (!profile?.discovery?.discoveredAt && configuredGenerationModel === clean(model.id)) {
+      return "manual_unverified";
+    }
+  }
+  return "";
+}
+
+function normalizeStructuredOutput(value) {
+  return value === "json_object" ? "json_object" : "json_schema";
+}
+
+function taskName(taskId) {
+  return AI_ASSIGNMENT_TASKS.find((task) => task.id === taskId)?.label || taskId;
+}
+
+function requireTask(taskId) {
+  if (!AI_ASSIGNMENT_TASKS.some((task) => task.id === taskId)) throw new Error("未知 AI 任务");
 }
 
 function requiresDedicatedImageCredential(profile = {}) {

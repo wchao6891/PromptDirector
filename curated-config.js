@@ -10,6 +10,12 @@ export const CURATED_PUBLIC_SITE_URL =
 export const CURATED_SUBMISSION_URL =
   "https://github.com/wchao6891/PromptDirector-Curated/issues/new?template=curated-submission.yml";
 
+export const CURATED_SKILL_CATALOG_URL =
+  "https://wchao6891.github.io/PromptDirector-Curated/skills-catalog.json";
+
+export const CURATED_SKILL_SUBMISSION_URL =
+  "https://github.com/wchao6891/PromptDirector-Curated/issues/new?template=curated-skill-submission.yml";
+
 export const CURATED_PERMISSION_ORIGINS = Object.freeze([
   "https://wchao6891.github.io/*",
   "https://github.com/*",

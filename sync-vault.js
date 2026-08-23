@@ -13,6 +13,7 @@ import {
   SYNC_SNAPSHOT_FORMAT,
   SYNC_SNAPSHOT_VERSION
 } from "./sync-model.js";
+import { assetFormatsForMimeType } from "./asset-formats.js";
 
 export const SYNC_DIRECTORY_NAME = "PromptDirector-Sync";
 const HEADER_FILENAME = "vault.json";
@@ -60,26 +61,39 @@ export async function openSyncVaultWithKey(rootDirectory, key, expectedVaultId =
   return { rootDirectory, directory, header, key };
 }
 
-export async function listSyncSnapshots(vault) {
+export async function listSyncSnapshots(vault, options = {}) {
   validateVault(vault);
-  const devices = await vault.directory.getDirectoryHandle("devices", { create: true });
+  throwIfAborted(options.signal);
+  const devices = await vault.directory.getDirectoryHandle("devices");
   const snapshots = [];
   let encryptedFileCount = 0;
+  const corruptFiles = [];
   for await (const device of devices.values()) {
+    throwIfAborted(options.signal);
     if (device.kind !== "directory") continue;
     for await (const fileHandle of device.values()) {
+      throwIfAborted(options.signal);
       if (fileHandle.kind !== "file" || !fileHandle.name.endsWith(".pds")) continue;
       encryptedFileCount += 1;
       try {
         const encrypted = await readJsonHandle(fileHandle);
+        throwIfAborted(options.signal);
         const snapshot = await decryptVaultValue(encrypted, vault.key);
         if (snapshot?.format !== SYNC_SNAPSHOT_FORMAT || snapshot.version !== SYNC_SNAPSHOT_VERSION) {
           throw new Error("状态版本无效");
         }
         snapshots.push(snapshot);
-      } catch {
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        corruptFiles.push(`${device.name}/${fileHandle.name}`);
       }
     }
+  }
+  if (corruptFiles.length) {
+    const error = new Error(`同步目录包含损坏的正式状态文件：${corruptFiles.join("、")}；本地资料未被修改`);
+    error.code = "sync_snapshot_corrupt";
+    error.corruptFiles = corruptFiles;
+    throw error;
   }
   if (encryptedFileCount && !snapshots.length) {
     throw new Error("同步目录中没有可读取的健康版本，本地资料未被修改");
@@ -92,6 +106,7 @@ export async function listSyncSnapshots(vault) {
 
 export async function writeSyncSnapshot(vault, snapshot, options = {}) {
   validateVault(vault);
+  throwIfAborted(options.signal);
   if (snapshot?.format !== SYNC_SNAPSHOT_FORMAT || snapshot.version !== SYNC_SNAPSHOT_VERSION) {
     throw new Error("待写入的同步状态无效");
   }
@@ -99,6 +114,7 @@ export async function writeSyncSnapshot(vault, snapshot, options = {}) {
   const deviceName = safeFilename(snapshot.deviceId);
   const device = await devices.getDirectoryHandle(deviceName, { create: true });
   const encrypted = await encryptVaultValue(snapshot, vault.key);
+  throwIfAborted(options.signal);
   const filename = `${String(snapshot.logicalClock).padStart(12, "0")}-${safeFilename(snapshot.snapshotId)}.pds`;
   await writeJsonAtomic(device, filename, encrypted);
   await pruneDeviceVersions(device, Math.max(1, Number(options.retentionCount) || DEFAULT_SYNC_RETENTION));
@@ -108,12 +124,15 @@ export async function writeSyncSnapshot(vault, snapshot, options = {}) {
 export async function writeSyncObject(vault, blob, options = {}) {
   validateVault(vault);
   validateSyncMedia(blob);
+  throwIfAborted(options.signal);
   const objects = await vault.directory.getDirectoryHandle("objects", { create: true });
   const chunkBytes = Math.max(1, Number(options.chunkBytes) || DEFAULT_OBJECT_CHUNK_BYTES);
   const chunks = [];
   for (let offset = 0, index = 0; offset < blob.size; offset += chunkBytes, index += 1) {
+    throwIfAborted(options.signal);
     const chunk = blob.slice(offset, Math.min(blob.size, offset + chunkBytes), "application/octet-stream");
     const chunkId = await sha256Hex(chunk);
+    throwIfAborted(options.signal);
     const filename = `${chunkId}.pdc`;
     if (!await hasFile(objects, filename)) {
       await writeJsonAtomic(objects, filename, await encryptVaultBlob(chunk, vault.key));
@@ -123,6 +142,7 @@ export async function writeSyncObject(vault, blob, options = {}) {
   }
   const manifest = { format: "prompt-director-sync-object", version: 2, contentType: blob.type, byteSize: blob.size, chunks };
   const objectId = await sha256Hex(JSON.stringify(manifest));
+  throwIfAborted(options.signal);
   const filename = `${objectId}.pdm`;
   if (!await hasFile(objects, filename)) {
     await writeJsonAtomic(objects, filename, await encryptVaultValue(manifest, vault.key));
@@ -130,12 +150,14 @@ export async function writeSyncObject(vault, blob, options = {}) {
   return objectId;
 }
 
-export async function readSyncObject(vault, objectId) {
+export async function readSyncObject(vault, objectId, options = {}) {
   validateVault(vault);
+  throwIfAborted(options.signal);
   if (!/^[a-f0-9]{64}$/.test(String(objectId ?? ""))) throw new Error("同步媒体编号无效");
   const objects = await vault.directory.getDirectoryHandle("objects", { create: true });
   try {
     const manifest = await decryptVaultValue(await readJsonFile(objects, `${objectId}.pdm`), vault.key);
+    throwIfAborted(options.signal);
     if (manifest?.format !== "prompt-director-sync-object" || manifest.version !== 2 || !Array.isArray(manifest.chunks)) {
       throw new Error("同步媒体清单无效");
     }
@@ -144,8 +166,10 @@ export async function readSyncObject(vault, objectId) {
     const chunks = [];
     let byteSize = 0;
     for (const chunk of manifest.chunks) {
+      throwIfAborted(options.signal);
       if (!/^[a-f0-9]{64}$/.test(String(chunk?.id ?? ""))) throw new Error("同步媒体分块编号无效");
       const blob = await decryptVaultBlob(await readJsonFile(objects, `${chunk.id}.pdc`), vault.key);
+      throwIfAborted(options.signal);
       if (blob.size !== chunk.byteSize || await sha256Hex(blob) !== chunk.id) throw new Error("同步媒体分块已损坏");
       chunks.push(blob);
       byteSize += blob.size;
@@ -164,8 +188,8 @@ export async function readSyncObject(vault, objectId) {
 
 function validateSyncMedia(blob) {
   if (!(blob instanceof Blob) || !blob.size) throw new Error("同步媒体无效");
-  if (!(blob.type.startsWith("image/") || blob.type.startsWith("video/") ||
-    ["application/pdf", "text/plain", "text/markdown", "text/html"].includes(blob.type))) {
+  const type = String(blob.type || "application/octet-stream").toLocaleLowerCase("en-US");
+  if (type !== "application/octet-stream" && !assetFormatsForMimeType(type).length) {
     throw new Error("同步对象不是受支持的媒体");
   }
 }
@@ -242,4 +266,14 @@ function validateVault(value) {
 
 function isNotFound(error) {
   return error?.name === "NotFoundError";
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  if (typeof signal.throwIfAborted === "function") signal.throwIfAborted();
+  throw new DOMException("同步已取消", "AbortError");
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError";
 }

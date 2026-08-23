@@ -118,7 +118,7 @@ test("Skill details keep creation primary and place refine and export in one Mor
   assert.match(skillsHtml, /id="skill-detail-more"/);
   assert.match(skillsHtml, /id="skill-export"/);
   assert.match(skillsSource, /function exportSkill/);
-  assert.match(skillsSource, /exportGeneratedSkillPackage/);
+  assert.match(skillsSource, /exportStoredSkillPackage/);
   assert.match(skillsSource, /elements\.skillSearch\.hidden = !listView/);
   assert.match(skillsSource, /elements\.skillImport\.hidden = !listView/);
   assert.match(skillsSource, /elements\.skillCreate\.hidden = !listView/);
@@ -126,4 +126,14 @@ test("Skill details keep creation primary and place refine and export in one Mor
   assert.match(skillsHtml, /id="skill-detail-edit"/);
   assert.match(skillsHtml, /id="skill-detail-refine"/);
   assert.doesNotMatch(skillsHtml, /PORTABLE CREATIVE METHODS|CREATIVE SKILL|IMPORT SKILL|VERSIONS/);
+});
+
+test("model options stay concise and put capability uncertainty below the selected field once", () => {
+  const optionsSource = source.slice(source.indexOf("function discoveredModelOptions"), source.indexOf("function taskModelOptions"));
+  assert.doesNotMatch(optionsSource, /厂商声明|协议确认|由你分配|首次执行时验证/);
+  assert.match(optionsSource, /model\.name \|\| model\.id/);
+  assert.match(optionsSource, /modelPriceLabel\(model\.pricing\)/);
+  assert.match(source, /function modelAssignmentHelp/);
+  assert.match(source, /model-capability-help/);
+  assert.match(source, /当前模型未声明这项能力；是否可用以真实执行结果为准/);
 });

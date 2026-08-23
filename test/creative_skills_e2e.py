@@ -95,7 +95,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         session.context.route("https://api.deepseek.com/**", mock_deepseek)
         skills = session.open_page("skills.html")
         runtime = skills.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'skillExtraction'})")
-        assert runtime["aiRuntimeProtocolVersion"] == 1
+        assert runtime["aiRuntimeProtocolVersion"] == 2
         assert runtime["runtimeDescriptor"]["providerLabel"] == "DeepSeek"
         assert runtime["runtimeDescriptor"]["model"] == "deepseek-v4-flash"
         overridden = skills.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'skillExtraction', assignment: {providerId: 'xai', model: 'grok-skill'}})")
@@ -314,26 +314,29 @@ Run `scripts/helper.py` before applying the composition guidance.
         composer.locator("#composer-reference-open").click()
         composer.locator("#composer-reference-tab-skills").click()
         expect(composer.locator("#composer-projects-panel")).to_be_visible()
-        expect(composer.locator(".composer-project-card")).to_have_count(2)
+        expect(composer.locator(".composer-skill-card")).to_have_count(2)
         composer.screenshot(path="/tmp/promptdirector-composer-skills-after.png")
         skill_workspace_layout = composer.evaluate("""() => {
           const body = document.querySelector('.composer-reference-body').getBoundingClientRect();
           const panel = document.querySelector('#composer-projects-panel').getBoundingClientRect();
           const descriptions = [...document.querySelectorAll('.composer-project-state')];
-          const cards = [...document.querySelectorAll('.composer-project-card')];
+          const cards = [...document.querySelectorAll('.composer-skill-card')];
+          const tabs = document.querySelector('.composer-reference-tabs').getBoundingClientRect();
           return {
             mode: document.querySelector('#composer-reference-workspace').dataset.mode,
             panelRatio: panel.width / body.width,
             descriptionClamp: descriptions.map((item) => getComputedStyle(item).webkitLineClamp),
             maxCardHeight: Math.max(...cards.map((item) => item.getBoundingClientRect().height)),
+            tabsWidth: tabs.width,
             pageWidth: document.documentElement.scrollWidth,
             viewportWidth: innerWidth
           };
         }""")
         assert skill_workspace_layout["mode"] == "skills", skill_workspace_layout
         assert skill_workspace_layout["panelRatio"] >= 0.75, skill_workspace_layout
-        assert set(skill_workspace_layout["descriptionClamp"]) == {"3"}, skill_workspace_layout
-        assert skill_workspace_layout["maxCardHeight"] < 240, skill_workspace_layout
+        assert set(skill_workspace_layout["descriptionClamp"]) == {"2"}, skill_workspace_layout
+        assert skill_workspace_layout["maxCardHeight"] < 220, skill_workspace_layout
+        assert skill_workspace_layout["tabsWidth"] < 180, skill_workspace_layout
         assert skill_workspace_layout["pageWidth"] <= skill_workspace_layout["viewportWidth"], skill_workspace_layout
         composer.locator("#composer-reference-close").click()
         composer.locator("#composer-instruction").fill("/external")

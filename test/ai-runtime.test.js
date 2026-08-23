@@ -12,10 +12,10 @@ import {
 } from "../ai-runtime.js";
 
 test("Composer and background share one AI runtime protocol version", () => {
-  assert.equal(AI_RUNTIME_PROTOCOL_VERSION, 1);
-  assert.equal(requireAiRuntimeProtocolVersion(1), true);
+  assert.equal(AI_RUNTIME_PROTOCOL_VERSION, 2);
+  assert.equal(requireAiRuntimeProtocolVersion(2), true);
   assert.throws(() => requireAiRuntimeProtocolVersion(undefined), /扩展后台不是同一版本/);
-  assert.throws(() => requireAiRuntimeProtocolVersion(0), /没有发起付费请求/);
+  assert.throws(() => requireAiRuntimeProtocolVersion(1), /没有发起付费请求/);
 });
 
 const storedConfiguration = {
@@ -80,6 +80,78 @@ test("runtime projections are derived views and task resolvers keep credentials 
   const vision = resolveVisionTaskSettings("imageAnalysis", configuration);
   assert.equal(vision.openai.apiKey, "openai-key");
   assert.equal(vision.openai.model, "openai-vision");
+});
+
+test("DeepSeek image analysis projects the selected account model through its compatible vision protocol", () => {
+  const configuration = aiConfigurationFromStorage({
+    aiProviderRegistry: { providers: {
+      deepseek: {
+        apiKey: "deepseek-key",
+        consent: true,
+        models: { imageAnalysis: "opaque-account-model" },
+        discoveredModels: [{
+          id: "opaque-account-model", status: "available", confidence: "manual_unverified",
+          source: "provider_models", tasks: []
+        }]
+      }
+    } },
+    aiTaskAssignments: {
+      imageAnalysis: {
+        providerId: "deepseek", model: "opaque-account-model", evidence: "manual_unverified"
+      }
+    }
+  });
+
+  const vision = resolveVisionTaskSettings("imageAnalysis", configuration);
+  assert.equal(vision.activeProvider, "compatible");
+  assert.equal(vision.compatible.endpoint, "https://api.deepseek.com/chat/completions");
+  assert.equal(vision.compatible.model, "opaque-account-model");
+  assert.equal(vision.compatible.apiKey, "deepseek-key");
+  assert.equal(vision.compatible.structuredOutput, "json_object");
+
+  const projected = projectAiRuntime(configuration).visionSettings;
+  assert.equal(projected.activeProvider, "compatible");
+  assert.equal(projected.compatible.endpoint, "https://api.deepseek.com/chat/completions");
+  assert.equal(projected.compatible.model, "opaque-account-model");
+  assert.equal(projected.compatible.structuredOutput, "json_object");
+});
+
+test("changing the image-analysis assignment does not erase generation services", () => {
+  const configuration = aiConfigurationFromStorage({
+    aiProviderRegistry: { providers: {
+      deepseek: {
+        apiKey: "deepseek-key", consent: true,
+        models: { imageAnalysis: "deepseek-vision" }
+      },
+      openai: {
+        apiKey: "openai-key", consent: true,
+        models: { imageAnalysis: "openai-vision", imageGeneration: "openai-image" }
+      },
+      "custom-media": {
+        endpoint: "https://media.example/v1/chat/completions",
+        apiKey: "compatible-key", consent: true,
+        models: { imageAnalysis: "compatible-vision", imageGeneration: "compatible-image" },
+        imageGeneration: {
+          protocol: "images_generations",
+          endpoint: "https://media.example/v1/images/generations",
+          apiKey: "compatible-image-key",
+          model: "compatible-image"
+        }
+      }
+    } },
+    aiTaskAssignments: {
+      imageAnalysis: { providerId: "deepseek", model: "deepseek-vision" },
+      imageGeneration: { providerId: "custom-media", model: "compatible-image" }
+    }
+  });
+
+  const runtime = projectAiRuntime(configuration);
+  assert.equal(runtime.visionSettings.compatible.model, "deepseek-vision");
+  assert.equal(runtime.visionSettings.openai.apiKey, "openai-key");
+  assert.equal(runtime.visionSettings.openai.model, "openai-vision");
+  assert.equal(runtime.visionSettings.compatible.apiKey, "deepseek-key");
+  assert.equal(runtime.visionSettings.compatible.imageGeneration.apiKey, "compatible-image-key");
+  assert.equal(runtime.visionSettings.compatible.imageGeneration.model, "compatible-image");
 });
 
 test("new-install runtime previews remain unassigned instead of inventing providers or models", () => {

@@ -18,6 +18,9 @@ test("shared visual foundation owns the locked dark theme and control scale", ()
   assert.match(foundation, /--ui-control-radius:\s*4px/);
   assert.match(foundation, /--ui-container-radius:\s*6px/);
   assert.match(foundation, /button:active:not\(:disabled\)\s*\{\s*transform:\s*none/);
+  assert.match(foundation, /button,\s*\.button-primary,\s*\.button-secondary\s*\{/);
+  assert.match(foundation, /display:\s*inline-flex/);
+  assert.match(foundation, /text-decoration:\s*none/);
 });
 
 test("page styles keep domain layout without redefining shared theme roles", async () => {

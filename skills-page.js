@@ -7,10 +7,15 @@ import {
 } from "./creative-skills.js";
 import {
   buildProvenanceMarkdown,
-  exportGeneratedSkillPackage,
+  exportStoredSkillPackage,
   parseSkillArchive,
   parseSkillFiles
 } from "./creative-skill-package.js";
+import {
+  buildCuratedSkillSnapshot,
+  buildCuratedSkillSubmissionArchive
+} from "./curated-skill-package.js";
+import { CURATED_SKILL_SUBMISSION_URL } from "./curated-config.js";
 import {
   analyzeCreativeSkillVisualBatch,
   anonymousSkillSources,
@@ -55,14 +60,17 @@ import { bindTransientMenus } from "./transient-menu.js";
 await initializeUi();
 bindTransientMenus(document, ".skill-detail-more, .skill-project-picker");
 
+const CURATED_SKILL_PUBLISHER_STORAGE_KEY = "curatedSkillPublisher";
+
 const elements = Object.fromEntries([
   "skill-search", "skill-import", "skill-create", "skill-context-back", "skill-zip-file", "skill-folder-files", "skill-library", "skill-summary", "skill-feedback", "skill-list", "skill-empty", "skill-empty-create",
-  "skill-detail", "skill-detail-title", "skill-detail-call-name", "skill-detail-feedback", "skill-detail-description", "skill-detail-version", "skill-detail-source", "skill-detail-updated", "skill-detail-markdown", "skill-detail-edit", "skill-detail-more", "skill-detail-refine", "skill-export",
+  "skill-detail", "skill-detail-title", "skill-detail-call-name", "skill-detail-feedback", "skill-detail-description", "skill-detail-version", "skill-detail-source", "skill-detail-updated", "skill-detail-markdown", "skill-detail-edit", "skill-detail-more", "skill-detail-refine", "skill-export", "skill-submit-curated",
   "skill-workspace", "skill-workspace-kicker", "skill-workspace-title", "skill-delete", "skill-builder", "skill-source-sidebar", "skill-source-step", "skill-target-step", "skill-selected-count", "skill-project-picker", "skill-project-label", "skill-project-filter", "skill-case-search", "skill-clear-selection", "skill-visible-select", "skill-selection-summary", "skill-case-scroll", "skill-case-grid", "skill-case-load-more",
   "skill-run-evidence-step", "skill-run-evidence-count", "skill-run-evidence-list",
   "skill-goal", "skill-use-vision", "skill-vision-toggle-note", "skill-vision-preview", "skill-advanced", "skill-text-provider-menu", "skill-vision-provider-menu", "skill-text-instruction", "skill-vision-instruction", "skill-restore-instructions", "skill-request-preview", "skill-generate", "skill-retry-vision", "skill-run-panel", "skill-generation-status", "skill-run-elapsed", "skill-stop-run", "skill-run-progress", "skill-run-stages", "skill-run-log", "skill-generation-feedback", "skill-draft-step", "skill-draft-editor", "skill-version-label", "skill-call-name", "skill-description", "skill-markdown", "skill-save", "skill-test", "skill-save-status", "skill-versions-step", "skill-version-list",
   "skill-source-inspector-backdrop", "skill-source-inspector", "skill-source-inspector-title", "skill-source-inspector-close", "skill-source-select-all", "skill-source-clear", "skill-source-text-option", "skill-source-include-text", "skill-source-asset-list", "skill-source-cancel", "skill-source-apply",
-  "skill-import-dialog", "skill-import-close", "skill-import-zip", "skill-import-folder"
+  "skill-import-dialog", "skill-import-close", "skill-import-zip", "skill-import-folder",
+  "skill-submission-dialog", "skill-submission-close", "skill-submission-author", "skill-submission-author-error", "skill-submission-summary", "skill-submission-summary-error", "skill-submission-rights", "skill-submission-rights-error", "skill-submission-refresh", "skill-submission-open", "skill-submission-feedback", "skill-submission-findings", "skill-submission-preview"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
 let entries = [];
@@ -89,6 +97,7 @@ let runtimeOverrides = { text: null, vision: null };
 let skillRuntimeSettings = null;
 let activeSkillRun = null;
 let visionPreferenceTouched = false;
+let curatedSubmissionSnapshot = null;
 
 bindEvents();
 await refreshState();
@@ -102,12 +111,21 @@ function bindEvents() {
   elements.skillDetailEdit.addEventListener("click", () => navigateTo("editor", activeSkillId));
   elements.skillDetailRefine.addEventListener("click", () => navigateTo("refine", activeSkillId));
   elements.skillExport.addEventListener("click", () => safely(exportSkill)());
+  elements.skillSubmitCurated.addEventListener("click", () => runCuratedSubmissionAction(openCuratedSubmission));
   elements.skillImport.addEventListener("click", () => elements.skillImportDialog.showModal());
   elements.skillImportClose.addEventListener("click", () => elements.skillImportDialog.close());
   elements.skillImportZip.addEventListener("click", () => elements.skillZipFile.click());
   elements.skillImportFolder.addEventListener("click", () => elements.skillFolderFiles.click());
   elements.skillZipFile.addEventListener("change", () => safely(importZip)());
   elements.skillFolderFiles.addEventListener("change", () => safely(importFolder)());
+  elements.skillSubmissionClose.addEventListener("click", () => elements.skillSubmissionDialog.close());
+  elements.skillSubmissionRefresh.addEventListener("click", () => runCuratedSubmissionAction(refreshCuratedSubmission));
+  elements.skillSubmissionOpen.addEventListener("click", () => runCuratedSubmissionAction(downloadCuratedSubmission));
+  for (const field of [
+    elements.skillSubmissionAuthor,
+    elements.skillSubmissionSummary,
+    elements.skillSubmissionRights
+  ]) field.addEventListener("input", invalidateCuratedSubmission);
   elements.skillCaseSearch.addEventListener("input", () => renderCases({ reset: true }));
   elements.skillClearSelection.addEventListener("click", clearAllSourceSelections);
   elements.skillVisibleSelect.addEventListener("click", toggleVisibleCases);
@@ -1026,16 +1044,18 @@ async function testSkill() {
 
 async function exportSkill() {
   const skill = activeSkill();
-  const version = currentCreativeSkillVersion(skill);
-  if (!skill || !version) return;
-  const archive = await exportGeneratedSkillPackage({
-    portableId: skill.portableId,
-    description: skill.description,
-    skillMarkdown: version.skillMarkdown,
-    references: version.references,
-    provenanceMarkdown: version.provenanceMarkdown
+  if (!skill) return;
+  const archive = await exportStoredSkillPackage(skill, { readFile: getMediaBlob });
+  await downloadBlob(archive, {
+    filename: `PromptDirector-Skill-${skill.portableId}.zip`,
+    saveAs: false,
+    failureMessage: t("Skill 导出失败")
   });
-  const url = URL.createObjectURL(archive);
+  setFeedback(elements.skillDetailFeedback, t("Skill 已导出"));
+}
+
+async function downloadBlob(blob, options = {}) {
+  const url = URL.createObjectURL(blob);
   let downloadId = 0;
   let finishDownload;
   const completed = new Promise((resolve) => { finishDownload = resolve; });
@@ -1047,17 +1067,114 @@ async function exportSkill() {
   try {
     downloadId = await chrome.downloads.download({
       url,
-      filename: `PromptDirector-Skill-${skill.portableId}.zip`,
+      filename: options.filename,
       conflictAction: "uniquify",
-      saveAs: false
+      saveAs: options.saveAs === true
     });
     const [record] = await chrome.downloads.search({ id: downloadId });
     const state = ["complete", "interrupted"].includes(record?.state) ? record.state : await completed;
-    if (state !== "complete") throw new Error(t("Skill 导出失败"));
-    setFeedback(elements.skillDetailFeedback, t("Skill 已导出"));
+    if (state !== "complete") throw new Error(options.failureMessage || t("下载失败"));
+    return downloadId;
   } finally {
     chrome.downloads.onChanged.removeListener(onChanged);
     URL.revokeObjectURL(url);
+  }
+}
+
+function invalidateCuratedSubmission() {
+  curatedSubmissionSnapshot = null;
+  elements.skillSubmissionOpen.disabled = true;
+  clearCuratedSubmissionErrors();
+}
+
+async function openCuratedSubmission() {
+  const skill = activeSkill();
+  if (!skill) return;
+  const stored = await chrome.storage.local.get(CURATED_SKILL_PUBLISHER_STORAGE_KEY);
+  curatedSubmissionSnapshot = null;
+  elements.skillSubmissionAuthor.value = String(stored[CURATED_SKILL_PUBLISHER_STORAGE_KEY] ?? "");
+  elements.skillSubmissionSummary.value = skill.description;
+  elements.skillSubmissionRights.checked = false;
+  clearCuratedSubmissionErrors();
+  elements.skillSubmissionPreview.replaceChildren();
+  elements.skillSubmissionFindings.hidden = true;
+  elements.skillSubmissionOpen.disabled = true;
+  setFeedback(elements.skillSubmissionFeedback, "填写署名并确认开放使用后，生成可逐字核对的公开快照。");
+  elements.skillSubmissionDialog.showModal();
+}
+
+async function refreshCuratedSubmission() {
+  const skill = activeSkill();
+  if (!skill) return;
+  if (!validateCuratedSubmissionFields()) return;
+  const snapshot = await buildCuratedSkillSnapshot(skill, {
+    author: elements.skillSubmissionAuthor.value,
+    summary: elements.skillSubmissionSummary.value,
+    rightsConfirmed: elements.skillSubmissionRights.checked
+  });
+  await chrome.storage.local.set({ [CURATED_SKILL_PUBLISHER_STORAGE_KEY]: elements.skillSubmissionAuthor.value.trim() });
+  curatedSubmissionSnapshot = snapshot;
+  elements.skillSubmissionPreview.replaceChildren(...snapshot.preview.map((file) => {
+    const detail = document.createElement("details");
+    detail.open = true;
+    detail.append(textEl("summary", `${file.path} · ${file.byteSize} bytes`), textEl("pre", file.text));
+    return detail;
+  }));
+  const list = elements.skillSubmissionFindings.querySelector("ul");
+  list.replaceChildren(...snapshot.findings.map((finding) => textEl("li", `${finding.path}：${finding.message}（${finding.excerpt}）`)));
+  elements.skillSubmissionFindings.hidden = snapshot.findings.length === 0;
+  elements.skillSubmissionOpen.disabled = snapshot.findings.length > 0;
+  setFeedback(elements.skillSubmissionFeedback, snapshot.findings.length
+    ? "发现可能的隐私风险。快照没有被改写，请修改本地 Skill 后重新检查。"
+    : `已生成 ${snapshot.preview.length} 个纯文本文件；请逐一核对全文。`, snapshot.findings.length > 0);
+}
+
+async function downloadCuratedSubmission() {
+  if (!curatedSubmissionSnapshot) throw new Error("请先生成并检查公开快照");
+  const archive = await buildCuratedSkillSubmissionArchive(curatedSubmissionSnapshot);
+  await downloadBlob(archive, {
+    filename: `PromptDirector-Skill-Submission-${curatedSubmissionSnapshot.manifest.skillId}.zip`,
+    saveAs: true,
+    failureMessage: "精选 Skill 投稿包下载失败"
+  });
+  await chrome.tabs.create({ url: CURATED_SKILL_SUBMISSION_URL });
+  setFeedback(elements.skillSubmissionFeedback, "投稿包已下载，并已打开 GitHub 投稿页。请手动上传、核对并提交；不会自动发布。 ");
+}
+
+function clearCuratedSubmissionErrors() {
+  for (const [field, error] of [
+    [elements.skillSubmissionAuthor, elements.skillSubmissionAuthorError],
+    [elements.skillSubmissionSummary, elements.skillSubmissionSummaryError],
+    [elements.skillSubmissionRights, elements.skillSubmissionRightsError]
+  ]) {
+    field.removeAttribute("aria-invalid");
+    error.hidden = true;
+    error.textContent = "";
+  }
+}
+
+function validateCuratedSubmissionFields() {
+  clearCuratedSubmissionErrors();
+  const invalid = [];
+  if (!elements.skillSubmissionAuthor.value.trim()) invalid.push([elements.skillSubmissionAuthor, elements.skillSubmissionAuthorError, "请填写公开署名"]);
+  if (!elements.skillSubmissionSummary.value.trim()) invalid.push([elements.skillSubmissionSummary, elements.skillSubmissionSummaryError, "请填写公开摘要"]);
+  if (!elements.skillSubmissionRights.checked) invalid.push([elements.skillSubmissionRights, elements.skillSubmissionRightsError, "请确认开放使用范围"]);
+  for (const [field, error, message] of invalid) {
+    field.setAttribute("aria-invalid", "true");
+    error.textContent = message;
+    error.hidden = false;
+  }
+  if (!invalid.length) return true;
+  invalid[0][0].focus();
+  setFeedback(elements.skillSubmissionFeedback, "请先完成标出的公开信息。", true);
+  return false;
+}
+
+async function runCuratedSubmissionAction(action) {
+  try {
+    await action();
+  } catch (error) {
+    setFeedback(elements.skillSubmissionFeedback, error.message || "精选 Skill 投稿操作失败", true);
   }
 }
 

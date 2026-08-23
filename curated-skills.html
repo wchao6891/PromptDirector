@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" data-i18n-title="精选 Skill">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>精选 Skill</title>
+    <script src="theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="ui-foundation.css" />
+    <link rel="stylesheet" href="curated.css" />
+    <link rel="stylesheet" href="curated-skill-page.css" />
+  </head>
+  <body>
+    <header class="curated-header">
+      <div class="curated-title-group">
+        <img class="curated-brand-mark" src="assets/icons/icon-source.svg" alt="" />
+        <h1 data-i18n="精选 Skill">精选 Skill</h1>
+        <nav class="curated-sections ui-segmented" aria-label="精选内容" data-i18n-aria-label="精选内容">
+          <a class="ui-segmented-item" href="curated.html" data-i18n="精选案例">精选案例</a>
+          <a class="ui-segmented-item" href="curated-skills.html" aria-current="page" data-i18n="精选 Skill">精选 Skill</a>
+        </nav>
+      </div>
+      <label class="curated-search"><span class="visually-hidden" data-i18n="搜索精选 Skill">搜索精选 Skill</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-search"></use></svg><input id="skill-search" type="search" placeholder="搜索 Skill 或用途" data-i18n-placeholder="搜索 Skill 或用途" autocomplete="off" /></label>
+      <div class="curated-header-actions"><button id="return-library" class="button-secondary page-back-action" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span data-i18n="返回案例库">返回案例库</span></button></div>
+    </header>
+    <div id="skill-status-bar" class="curated-status-bar" hidden><span id="skill-status" role="status" aria-live="polite"></span><button id="retry-catalog" class="button-secondary" type="button" data-i18n="重试">重试</button></div>
+    <main id="skill-app" class="curated-skill-app" aria-live="polite"><section class="curated-loading" aria-label="正在加载精选 Skill" data-i18n-aria-label="正在加载精选 Skill"><span></span><span></span><span></span><span></span></section></main>
+    <dialog id="skill-detail-dialog" class="curated-skill-dialog" aria-label="精选 Skill 详情" data-i18n-aria-label="精选 Skill 详情"><button id="skill-detail-close" class="icon-button detail-close" type="button" aria-label="关闭详情" data-i18n-aria-label="关闭详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-x"></use></svg></button><div id="skill-detail-content"></div></dialog>
+    <div id="skill-toast" class="curated-toast" role="status" hidden></div>
+    <script type="module" src="curated-skill-page.js"></script>
+  </body>
+</html>

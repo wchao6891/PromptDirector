@@ -8,27 +8,23 @@ test("the collector live-refreshes on draft storage changes", async () => {
   assert.match(source, /changes\.captureDraft/);
 });
 
-test("capture workspace first paint does not await automatic synchronization", async () => {
+test("opening the capture workspace never starts synchronization", async () => {
   const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
   const start = source.indexOf('case "GET_CAPTURE_WORKSPACE"');
   const end = source.indexOf('case "GET_DATA_SAFETY_STATUS"', start);
   const branch = source.slice(start, end);
-  assert.doesNotMatch(branch, /await scheduleAutomaticSync/);
-  assert.match(branch, /scheduleAutomaticSync\(\)/);
+  assert.match(branch, /return enqueueCapture\(async \(\) => captureWorkspace\(\)\)/);
+  assert.doesNotMatch(branch, /scheduleAutomaticSync|scheduleIdleSync|synchronizeNow|manualSyncController|SYNC_NOW/);
 });
 
-test("library state is read before automatic sync enters the shared write queue", async () => {
+test("reading library state never starts synchronization", async () => {
   const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
   const start = source.indexOf('case "GET_STATE"');
   const end = source.indexOf('case "GET_CAPTURE_WORKSPACE"', start);
   const branch = source.slice(start, end);
-  assert.ok(branch.indexOf("const stateRead = enqueue") < branch.indexOf("scheduleAutomaticSync()"));
-  const scheduler = source.slice(
-    source.indexOf("function scheduleAutomaticSync"),
-    source.indexOf("async function connectSyncFolder")
-  );
-  assert.match(scheduler, /automaticSyncScheduled/);
-  assert.match(scheduler, /enqueue\(\(\) => synchronizeNow\("open"\)\)/);
+  assert.match(branch, /return enqueue\(async \(\) => \(\{ ok: true,/);
+  assert.doesNotMatch(branch, /scheduleAutomaticSync|scheduleIdleSync|synchronizeNow|manualSyncController|SYNC_NOW/);
+  assert.doesNotMatch(source, /function scheduleAutomaticSync|function scheduleIdleSync/);
 });
 
 test("draft edits and save share one lightweight queue so the last capture cannot miss the commit", async () => {
@@ -61,4 +57,12 @@ test("a text-bearing captured post is classified from its text instead of its vi
   const save = source.slice(start, end);
   assert.match(save, /candidate\.sourceFacts\.pageType === "post" && base\.text/);
   assert.match(save, /classificationMediaAssets/);
+});
+
+test("restoring an overwritten screenshot marks that existing media id dirty", async () => {
+  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const start = source.indexOf("async function undoLastSave()");
+  const end = source.indexOf("async function deleteEntry", start);
+  const undo = source.slice(start, end);
+  assert.match(undo, /dirtyAssetIds:\s*\[current\.id\]/);
 });

@@ -21,18 +21,19 @@ test("whole-library portable ZIP backup is removed while selected-case sharing r
   assert.doesNotMatch(exporter, /exportState\s*=\s*sharing\s*\?/);
 });
 
-test("connecting a sync folder replaces stale status before the full library is encrypted", async () => {
+test("connecting a sync folder immediately states that it only verifies access", async () => {
   const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
   const actionBody = library.slice(
     library.indexOf("async function runDataSafetyAction"),
     library.indexOf("function showDataSafetyFeedback")
   );
   const sendIndex = actionBody.indexOf("await chrome.runtime.sendMessage(message)");
-  const pendingIndex = actionBody.indexOf('showDataSafetyFeedback(t("正在加密并写入同步文件夹');
+  const pendingIndex = actionBody.indexOf('showDataSafetyFeedback("正在验证文件夹与密码，不会读取或合并资料…")');
 
   assert.ok(pendingIndex >= 0, "连接同步时必须立即替换旧的备份或授权提示");
-  assert.ok(pendingIndex < sendIndex, "大资料库开始加密前必须先显示连接状态");
+  assert.ok(pendingIndex < sendIndex, "验证文件夹前必须先显示准确状态");
   assert.match(actionBody, /button\.textContent\s*=\s*t\("正在连接…"\)/);
+  assert.doesNotMatch(actionBody, /正在加密并写入同步文件夹|正在解锁并合并同步资料/);
 });
 
 test("a missing sync location shows a localized recovery action instead of the browser error", async () => {

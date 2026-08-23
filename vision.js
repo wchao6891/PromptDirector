@@ -6,17 +6,18 @@ import {
   normalizeVisualModelResponse,
   visualModelResponseSchema
 } from "./visual-analysis.js";
+import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
 
 export const VISION_ANALYSIS_VERSION = VISUAL_ANALYSIS_VERSION;
 export const DEFAULT_VISION_MODEL = "gpt-5-mini";
 export const OPENAI_RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
 export const OPENAI_VIDEOS_ENDPOINT = "https://api.openai.com/v1/videos";
-export const MICU_RESPONSES_ENDPOINT = "https://www.micuapi.ai/v1/responses";
-export const MICU_DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
-export const MICU_IMAGE_GENERATIONS_ENDPOINT = "https://www.micuapi.ai/v1/images/generations";
-export const MICU_IMAGE_EDITS_ENDPOINT = "https://www.micuapi.ai/v1/images/edits";
-export const MICU_DEFAULT_IMAGE_MODEL = "gpt-image-2";
-export const MICU_DEFAULT_IMAGE_SIZE = "1536x1024";
+export const MICU_RESPONSES_ENDPOINT = MICU_COMPATIBLE_PROVIDER_PRESET.endpoint;
+export const MICU_DEFAULT_CHAT_MODEL = MICU_COMPATIBLE_PROVIDER_PRESET.defaultChatModel;
+export const MICU_IMAGE_GENERATIONS_ENDPOINT = MICU_COMPATIBLE_PROVIDER_PRESET.imageGeneration.endpoint;
+export const MICU_IMAGE_EDITS_ENDPOINT = MICU_COMPATIBLE_PROVIDER_PRESET.imageGeneration.editsEndpoint;
+export const MICU_DEFAULT_IMAGE_MODEL = MICU_COMPATIBLE_PROVIDER_PRESET.imageGeneration.defaultModel;
+export const MICU_DEFAULT_IMAGE_SIZE = MICU_COMPATIBLE_PROVIDER_PRESET.imageGeneration.defaultSize;
 export const MICU_IMAGE_RESULT_PERMISSION = "https://oss.filenest.top/*";
 export const MAX_VISION_TAGS = 6;
 export const VISION_MAX_OUTPUT_TOKENS = 12000;
@@ -114,6 +115,7 @@ function normalizeCompatibleSettings(value = {}) {
   }
   return {
     protocol: value?.protocol === "responses" ? "responses" : "chat_completions",
+    structuredOutput: value?.structuredOutput === "json_object" ? "json_object" : "json_schema",
     endpoint,
     model: String(value?.model ?? "").trim(),
     apiKey,
@@ -190,6 +192,7 @@ export function mergeVisionSettings(currentValue = {}, incomingValue = {}) {
     },
     compatible: {
       protocol: incoming.compatible?.protocol ?? current.compatible.protocol,
+      structuredOutput: incoming.compatible?.structuredOutput ?? current.compatible.structuredOutput,
       endpoint: nextEndpoint,
       model: incoming.compatible?.model ?? current.compatible.model,
       apiKey: compatibleApiKey,
@@ -224,6 +227,7 @@ export function publicVisionSettings(value = {}) {
     },
     compatible: {
       protocol: settings.compatible.protocol,
+      structuredOutput: settings.compatible.structuredOutput,
       model: settings.compatible.model,
       configured: Boolean(settings.compatible.endpoint && settings.compatible.model &&
         (settings.compatible.apiKey || isLoopbackEndpoint(settings.compatible.endpoint))),
@@ -381,6 +385,7 @@ export async function visionAnalysisProfileFingerprint(settingsValue = {}, local
     locale,
     provider: settings.activeProvider,
     protocol: provider.protocol || "responses",
+    structuredOutput: provider.structuredOutput || "json_schema",
     model: provider.model,
     maxOutputTokens: settings.maxOutputTokens,
     instructions: settings.instructionsByLocale[locale]
@@ -434,27 +439,40 @@ async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl,
   }
   const schema = options.schema ?? VISUAL_MODEL_RESPONSE_SCHEMA;
   const schemaName = options.schemaName ?? "vision_analysis_box_2d_v1";
+  const structuredInstruction = settings.compatible.structuredOutput === "json_object"
+    ? `${instruction}\nJSON property names are case-sensitive. Return exactly one object matching this JSON Schema: ${JSON.stringify(schema)}`
+    : instruction;
   const body = {
     model: settings.compatible.model,
     max_tokens: positiveTokenBudget(options.maxOutputTokens) || settings.maxOutputTokens,
-    response_format: {
-      type: "json_schema",
-      json_schema: { name: schemaName, strict: true, schema }
-    },
+    response_format: settings.compatible.structuredOutput === "json_object"
+      ? { type: "json_object" }
+      : { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } },
     messages: [{
       role: "user",
       content: [
-        { type: "text", text: instruction },
+        { type: "text", text: structuredInstruction },
         { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } }
       ]
     }]
   };
   const payload = await requestJson(url, settings.compatible.apiKey, body, fetchImpl);
-  const content = payload?.choices?.[0]?.message?.content;
+  const choice = payload?.choices?.[0];
+  const content = choice?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
-    throw new Error(options.emptyResultMessage || "兼容服务没有返回可用的画面描述");
+    throw new Error(compatibleEmptyResultMessage(choice?.finish_reason, options.emptyResultMessage));
   }
   return { content, model: String(payload.model ?? settings.compatible.model), usage: normalizeCompatibleUsage(payload.usage) };
+}
+
+function compatibleEmptyResultMessage(finishReason, fallback = "") {
+  const reason = String(finishReason ?? "").trim();
+  const prefix = String(fallback ?? "").trim();
+  if (reason === "length") return prefix ? `${prefix}：输出达到长度上限` : "兼容服务输出达到长度上限，JSON 可能被截断，本次没有写入";
+  if (reason === "content_filter") return prefix ? `${prefix}：内容过滤` : "兼容服务因内容过滤未返回分析结果，本次没有写入";
+  if (reason === "insufficient_system_resource") return prefix ? `${prefix}：资源暂时不足` : "兼容服务资源暂时不足，未返回分析结果，请手动重试";
+  if (reason === "stop") return prefix ? `${prefix}：返回了空的 JSON 内容` : "兼容服务返回了空的 JSON 内容，本次没有写入，请手动重试";
+  return prefix || "兼容服务响应缺少可用内容，本次没有写入";
 }
 
 async function requestGeminiVision(provider, imageDataUrl, instruction, fetchImpl, options = {}) {

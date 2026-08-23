@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   AI_ASSIGNMENT_TASKS,
+  availableAiModelsForTask,
   availableAiProvidersForTask,
+  createAiTaskAssignment,
   mergeAiProviderRegistry,
   normalizeAiProviderRegistry,
   normalizeAiTaskAssignments,
@@ -60,9 +62,103 @@ test("provider presets are the single model-free source for official and aggrega
   ), true);
   assert.equal(Object.hasOwn(getAiProviderPreset("kimi"), "models"), false);
   assert.equal(getAiProviderPreset("gemini").capabilities.includes("imageGeneration"), true);
+  assert.equal(getAiProviderPreset("deepseek").capabilities.includes("imageAnalysis"), true);
+  assert.equal(getAiProviderPreset("deepseek").structuredOutput, "json_object");
   assert.deepEqual(getAiProviderPreset("gemini").catalogRequiredTasks, ["imageGeneration"]);
   assert.equal(getAiProviderPreset("openrouter").category, "aggregator");
   assert.equal(getAiProviderPreset("missing"), null);
+});
+
+test("task model candidates separate declared catalog capability from explicit manual assignment", () => {
+  const registry = normalizeAiProviderRegistry({ providers: {
+    deepseek: {
+      apiKey: "deepseek-secret",
+      consent: true,
+      discoveredModels: [
+        { id: "opaque-account-model", confidence: "manual_unverified", source: "provider_models", tasks: [] },
+        {
+          id: "declared-vision", confidence: "declared", source: "provider_models",
+          tasks: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"],
+          inputModalities: ["text", "image"], outputModalities: ["text"]
+        },
+        {
+          id: "declared-text", confidence: "declared", source: "provider_models",
+          tasks: ["textTags", "skillExtraction", "creativePlanning"],
+          inputModalities: ["text"], outputModalities: ["text"]
+        }
+      ]
+    },
+    openai: {
+      apiKey: "openai-secret",
+      discoveredModels: [{
+        id: "task-neutral-account-model", confidence: "manual_unverified",
+        source: "provider_models", tasks: []
+      }]
+    }
+  } });
+
+  assert.deepEqual(availableAiModelsForTask("imageAnalysis", registry.providers.deepseek).map((model) => ({
+    id: model.id, evidence: model.assignmentEvidence
+  })), [
+    { id: "opaque-account-model", evidence: "manual_unverified" },
+    { id: "declared-vision", evidence: "declared" }
+  ]);
+  assert.deepEqual(createAiTaskAssignment(
+    "imageAnalysis", "deepseek", "opaque-account-model", registry
+  ), {
+    providerId: "deepseek",
+    model: "opaque-account-model",
+    evidence: "manual_unverified"
+  });
+  assert.deepEqual(normalizeAiTaskAssignments({
+    imageAnalysis: { providerId: "deepseek", model: "opaque-account-model" }
+  }, registry).imageAnalysis, {
+    providerId: "deepseek",
+    model: "opaque-account-model",
+    evidence: "manual_unverified"
+  });
+  assert.throws(() => createAiTaskAssignment(
+    "imageAnalysis", "deepseek", "declared-text", registry
+  ), /目录声明.*不支持图片分析/);
+  assert.deepEqual(availableAiModelsForTask("imageGeneration", registry.providers.openai), []);
+});
+
+test("a manually assigned catalog-visible DeepSeek model resolves for image analysis and disappears safely", () => {
+  const source = {
+    providers: {
+      deepseek: {
+        apiKey: "deepseek-secret",
+        consent: true,
+        models: { imageAnalysis: "opaque-account-model" },
+        discoveredModels: [{
+          id: "opaque-account-model", status: "available", confidence: "manual_unverified",
+          source: "provider_models", tasks: []
+        }]
+      }
+    }
+  };
+  const registry = normalizeAiProviderRegistry(source);
+  const assignments = normalizeAiTaskAssignments({
+    imageAnalysis: {
+      providerId: "deepseek", model: "opaque-account-model", evidence: "manual_unverified"
+    }
+  });
+
+  assert.deepEqual(availableAiProvidersForTask("imageAnalysis", registry).map((item) => item.id), ["deepseek"]);
+  assert.deepEqual(resolveAiProviderAssignment("imageAnalysis", registry, assignments), {
+    taskId: "imageAnalysis", providerId: "deepseek", provider: "DeepSeek", model: "opaque-account-model"
+  });
+
+  source.providers.deepseek.discoveredModels[0].status = "unavailable";
+  assert.throws(() => resolveAiProviderAssignment(
+    "imageAnalysis", normalizeAiProviderRegistry(source), assignments
+  ), /已下架|不可用/);
+
+  source.providers.deepseek.discoveredModels = [];
+  source.providers.deepseek.discovery = { discoveredAt: "2026-08-23T00:00:00.000Z" };
+  assert.throws(() => resolveAiProviderAssignment(
+    "imageAnalysis", normalizeAiProviderRegistry(source), assignments
+  ), /当前模型目录中没有/);
 });
 
 test("registry v4 exposes provider categories and leaves all new-install tasks unassigned", () => {
@@ -202,6 +298,32 @@ test("a disappeared selected model is blocked instead of silently replaced", () 
   }];
   assert.throws(() => resolveAiProviderAssignment("videoGeneration", registry, assignments), /已下架|不可用/);
   assert.equal(assignments.videoGeneration.model, "openai-video");
+});
+
+test("an explicitly configured generation model remains assignable until a successful catalog refresh", () => {
+  const registry = normalizeAiProviderRegistry({ providers: {
+    openai: {
+      apiKey: "openai-key",
+      consent: true,
+      models: { imageGeneration: "openai-account-image-model" }
+    }
+  } });
+  const profile = registry.providers.openai;
+  assert.deepEqual(
+    availableAiModelsForTask("imageGeneration", profile).map((model) => model.id),
+    ["openai-account-image-model"]
+  );
+  assert.equal(
+    createAiTaskAssignment("imageGeneration", "openai", "openai-account-image-model", registry).model,
+    "openai-account-image-model"
+  );
+
+  profile.discovery.discoveredAt = "2026-08-23T00:00:00.000Z";
+  assert.deepEqual(availableAiModelsForTask("imageGeneration", profile), []);
+  assert.throws(
+    () => createAiTaskAssignment("imageGeneration", "openai", "openai-account-image-model", registry),
+    /当前模型目录中没有/
+  );
 });
 
 test("custom media keeps its configured image tasks after registry normalization", () => {

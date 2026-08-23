@@ -22,7 +22,7 @@
 
     <main class="skills-main">
       <section id="skill-library" class="skill-library">
-        <div class="skills-heading"><div><h1 data-i18n="创作 Skill 中心">创作 Skill 中心</h1><p id="skill-summary"></p></div><div class="skills-heading-actions"><button id="skill-import" class="button-secondary" type="button" data-i18n="导入">导入</button><button id="skill-create" type="button" data-i18n="新建 Skill">新建 Skill</button></div></div>
+        <div class="skills-heading"><div><h1 data-i18n="创作 Skill 中心">创作 Skill 中心</h1><p id="skill-summary"></p></div><div class="skills-heading-actions"><a class="button-secondary" href="curated-skills.html">精选 Skill</a><button id="skill-import" class="button-secondary" type="button" data-i18n="导入">导入</button><button id="skill-create" type="button" data-i18n="新建 Skill">新建 Skill</button></div></div>
         <p id="skill-feedback" class="skill-feedback" role="status"></p>
         <div id="skill-list" class="skill-grid"></div>
         <div id="skill-empty" class="skill-empty" hidden><strong data-i18n="还没有创作 Skill">还没有创作 Skill</strong><p data-i18n="从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。">从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。</p><button id="skill-empty-create" type="button" data-i18n="创建第一份 Skill">创建第一份 Skill</button></div>
@@ -39,6 +39,7 @@
               <div class="skill-detail-more-panel">
                 <button id="skill-detail-refine" class="button-secondary" type="button" data-i18n="用证据改进 Skill">用证据改进 Skill</button>
                 <button id="skill-export" class="button-secondary" type="button" data-i18n="导出 Skill">导出 Skill</button>
+                <button id="skill-submit-curated" class="button-secondary" type="button" data-i18n="投稿到精选 Skill">投稿到精选 Skill</button>
               </div>
             </details>
           </div>
@@ -142,6 +143,21 @@
       <header><h2 data-i18n="导入外部 Skill">导入外部 Skill</h2><button id="skill-import-close" class="icon-button" type="button" aria-label="关闭" data-i18n-aria-label="关闭" title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
       <p data-i18n="完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。">完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。</p>
       <div><button id="skill-import-zip" type="button" data-i18n="选择 ZIP">选择 ZIP</button><button id="skill-import-folder" class="button-secondary" type="button" data-i18n="选择目录">选择目录</button></div>
+    </dialog>
+    <dialog id="skill-submission-dialog" class="skill-submission-dialog">
+      <header><div><small>公开投稿</small><h2>投稿到精选 Skill</h2></div><button id="skill-submission-close" class="icon-button" type="button" aria-label="关闭" title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
+      <p>投稿与普通导出相互独立。这里只生成可公开审核的纯文本快照，不包含脚本、二进制文件或默认的私人来源记录。</p>
+      <div class="skill-submission-fields">
+        <label><span>公开署名</span><input id="skill-submission-author" autocomplete="name" aria-describedby="skill-submission-author-error" /><small id="skill-submission-author-error" class="skill-submission-field-error" hidden></small></label>
+        <label class="skill-submission-summary"><span>公开摘要</span><textarea id="skill-submission-summary" rows="3" aria-describedby="skill-submission-summary-error"></textarea><small id="skill-submission-summary-error" class="skill-submission-field-error" hidden></small></label>
+        <label class="skill-submission-rights"><input id="skill-submission-rights" type="checkbox" aria-describedby="skill-submission-rights-error" /><span>允许其他用户在保留署名的前提下保存、使用和修改。</span></label>
+        <small id="skill-submission-rights-error" class="skill-submission-field-error skill-submission-rights-error" hidden></small>
+        <details class="skill-submission-license-details"><summary>了解公开使用规则</summary><p>投稿采用 CC BY 4.0：其他用户必须保留你的公开署名，并可保存、使用和修改这份 Skill。</p></details>
+      </div>
+      <div class="skill-submission-actions"><button id="skill-submission-refresh" class="button-secondary" type="button">生成并检查公开快照</button><button id="skill-submission-open" type="button" disabled>下载投稿包并打开 GitHub</button></div>
+      <p id="skill-submission-feedback" class="skill-feedback" role="status"></p>
+      <section id="skill-submission-findings" class="skill-submission-findings" hidden><h3>需要先处理的隐私风险</h3><ul></ul></section>
+      <section class="skill-submission-preview-shell"><h3>最终投稿文件与全文</h3><div id="skill-submission-preview" class="skill-submission-preview"></div></section>
     </dialog>
     <script type="module" src="skills-page.js"></script>
   </body>

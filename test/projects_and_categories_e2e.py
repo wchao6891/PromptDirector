@@ -79,11 +79,14 @@ def main() -> None:
             ? Promise.resolve({ok: false, message: '模拟项目排序保存失败'})
             : window.__originalProjectSendMessage.call(chrome.runtime, message, ...rest);
         }""")
-        failed_source = library.locator(".project-row", has_text="辅助项目").bounding_box()
-        failed_target = library.locator(".project-row", has_text="项目与分类验收").bounding_box()
+        failed_row = library.locator(".project-row", has_text="辅助项目")
+        failed_target_row = library.locator(".project-row", has_text="项目与分类验收")
+        expect(failed_row).to_be_visible()
+        expect(failed_target_row).to_be_visible()
+        failed_source = failed_row.bounding_box()
+        failed_target = failed_target_row.bounding_box()
         assert failed_source and failed_target
         failed_x = failed_source["x"] + failed_source["width"] / 2
-        failed_row = library.locator(".project-row", has_text="辅助项目")
         failed_row.dispatch_event("pointerdown", {"pointerId": 72, "pointerType": "mouse", "button": 0, "clientX": failed_x, "clientY": failed_source["y"] + failed_source["height"] / 2})
         failed_row.dispatch_event("pointermove", {"pointerId": 72, "pointerType": "mouse", "button": -1, "clientX": failed_x, "clientY": failed_target["y"] + failed_target["height"] - 2})
         failed_row.dispatch_event("pointerup", {"pointerId": 72, "pointerType": "mouse", "button": 0, "clientX": failed_x, "clientY": failed_target["y"] + failed_target["height"] - 2})

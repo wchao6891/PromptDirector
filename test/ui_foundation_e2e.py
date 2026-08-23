@@ -5,7 +5,7 @@ from playwright.sync_api import expect
 from e2e_support import extension_session
 
 
-PAGES = ["library.html", "composer.html", "skills.html", "curated.html", "collector.html"]
+PAGES = ["library.html", "composer.html", "skills.html", "curated.html", "curated-skills.html", "collector.html"]
 
 
 def main() -> None:

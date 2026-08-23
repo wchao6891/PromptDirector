@@ -78,6 +78,34 @@ export async function exportGeneratedSkillPackage(input = {}) {
   return createZipBlob([...files].map(([name, data]) => ({ name, data })));
 }
 
+export async function exportStoredSkillPackage(skillValue = {}, options = {}) {
+  const packageFiles = Array.isArray(skillValue.packageFiles) ? skillValue.packageFiles : [];
+  if (!packageFiles.length) {
+    const versions = Array.isArray(skillValue.versions) ? skillValue.versions : [];
+    const version = versions.find((item) => item.id === skillValue.currentVersionId) ?? versions.at(-1) ?? {};
+    return exportGeneratedSkillPackage({
+      portableId: skillValue.portableId,
+      description: skillValue.description,
+      skillMarkdown: version.skillMarkdown,
+      references: version.references,
+      provenanceMarkdown: version.provenanceMarkdown
+    });
+  }
+  if (typeof options.readFile !== "function") throw new Error("Skill 导出缺少文件读取器");
+  const files = [];
+  for (const file of packageFiles) {
+    const path = normalizePackagePath(file?.path);
+    if (!path || path !== file?.path) throw new Error("Skill 包含不安全的文件路径");
+    const blob = await options.readFile(file.assetId);
+    if (!(blob instanceof Blob)) throw new Error(`Skill 包文件缺失：${path}`);
+    if (Number(file.byteSize) > 0 && Number(file.byteSize) !== blob.size) {
+      throw new Error(`Skill 包文件大小不一致：${path}`);
+    }
+    files.push({ name: path, data: blob });
+  }
+  return createZipBlob(files);
+}
+
 export async function parseSkillArchive(archive, limitsValue = {}) {
   const files = await readZipBlob(archive, skillPackageLimits(limitsValue));
   return parseSkillFiles(files, limitsValue);

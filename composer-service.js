@@ -18,6 +18,10 @@ import { normalizeVisionSettings, OPENAI_RESPONSES_ENDPOINT, OPENAI_VIDEOS_ENDPO
 import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia } from "./bounded-media.js";
 import { createAiProviderModule } from "./ai-provider-module.js";
+import {
+  compatibleImageSizesFor,
+  compatibleProviderPresetForEndpoint
+} from "./compatible-provider-presets.js";
 
 const REQUEST_TIMEOUT_MS = 120_000;
 const IMAGE_REQUEST_TIMEOUT_MS = 240_000;
@@ -37,28 +41,6 @@ const RESPONSES_IMAGE_QUALITIES = Object.freeze([
   { value: "medium", label: "中" },
   { value: "high", label: "高" }
 ]);
-// Verified provider capability: https://docs.micuapi.ai/tools#micu-image-mcp
-const MICU_IMAGE_SIZES = Object.freeze({
-  "gpt-image-2": Object.freeze([
-    "1024x1024",
-    "1280x720",
-    "1536x1024",
-    "2048x2048",
-    "2048x1152",
-    "1152x2048"
-  ]),
-  "gpt-image-2-pro": Object.freeze([
-    "1024x1024",
-    "1280x720",
-    "1536x1024",
-    "2048x2048",
-    "2048x1152",
-    "1152x2048",
-    "3840x2160",
-    "2160x3840"
-  ])
-});
-
 export class ComposerServiceError extends Error {
   constructor(message, status = 0, options = {}) {
     super(message, options);
@@ -254,15 +236,14 @@ export function composerServiceCapabilities(profileValue, visionSettingsValue = 
   }
   const image = provider.imageGeneration;
   const referenceCapability = compatibleImageReferenceCapability(visionSettingsValue, image.model);
-  const providerLabel = serviceLabelForEndpoint(provider.endpoint);
-  const supportedSizes = compatibleImageSizes(providerLabel, image);
+  const supportedSizes = compatibleImageSizesFor(provider.endpoint, image);
   const sizeOptions = supportedSizes.map(imageSizeOption);
   const qualityOptions = image.qualities.map((quality) => ({ value: quality, label: quality }));
   return {
     serviceId: "compatible",
     model: image.model || profile.model || provider.model,
     image: {
-      generate: configured && !compatibleImageConfigurationIssue(image),
+      generate: configured && !compatibleImageConfigurationIssue(image, supportedSizes),
       references: {
         supported: referenceCapability.supported ?? Boolean(image.editsEndpoint),
         maxItems: referenceCapability.maxItems,
@@ -390,7 +371,7 @@ export function composerImageAvailability(profileValue, visionSettingsValue = {}
       ? imageParameterAvailability(profileValue, visionSettingsValue, session, `由 ${service.shortLabel} 直接生成并保存到本轮结果`)
       : { available: false, message: "创建图片还缺少兼容服务的接口、模型或 API Key" };
   }
-  const issue = compatibleImageConfigurationIssue(image);
+  const issue = compatibleImageConfigurationIssue(image, compatibleImageSizesFor(settings.compatible.endpoint, image));
   if (issue) return { available: false, message: issue };
   const count = referenceImageCount(session);
   const micu = service.shortLabel === "米醋";
@@ -1472,7 +1453,7 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
           editsEndpoint: image.editsEndpoint,
           apiKey: image.apiKey,
           model: image.model,
-          sizes: structuredClone(image.sizes),
+          sizes: compatibleImageSizesFor(provider.endpoint, image),
           qualities: structuredClone(image.qualities),
           referenceImages: compatibleImageReferenceCapability(visionSettingsValue, image.model)
         }
@@ -1636,14 +1617,6 @@ function imageSizeOption(value) {
   };
 }
 
-function compatibleImageSizes(providerLabel, image = {}) {
-  if (providerLabel === "米醋" && image.protocol === "images_generations") {
-    const verified = MICU_IMAGE_SIZES[String(image.model ?? "").trim()];
-    if (verified) return [...verified];
-  }
-  return Array.isArray(image.sizes) ? [...image.sizes] : [];
-}
-
 function greatestCommonDivisor(left, right) {
   let a = Math.max(1, Math.trunc(Math.abs(left)));
   let b = Math.max(1, Math.trunc(Math.abs(right)));
@@ -1654,15 +1627,15 @@ function greatestCommonDivisor(left, right) {
 function compatibleImageConfigured(provider) {
   const image = provider.imageGeneration;
   if (image.protocol === "responses_tool") return compatibleConfigured({ consent: true, compatible: provider });
-  return !compatibleImageConfigurationIssue(image);
+  return !compatibleImageConfigurationIssue(image, compatibleImageSizesFor(provider.endpoint, image));
 }
 
-function compatibleImageConfigurationIssue(image = {}) {
+function compatibleImageConfigurationIssue(image = {}, supportedSizes = image.sizes) {
   if (image.protocol !== "images_generations") return "当前服务没有配置可用的生图协议";
   if (!image.endpoint) return "创建图片还缺少生图接口";
   if (!image.apiKey && !isLoopback(image.endpoint)) return "创建图片还缺少生图 API Key";
   if (!image.model) return "创建图片还缺少生图模型";
-  if (!image.parametersOptional && (!Array.isArray(image.sizes) || !image.sizes.length)) return "创建图片还缺少服务支持的尺寸选项";
+  if (!image.parametersOptional && (!Array.isArray(supportedSizes) || !supportedSizes.length)) return "创建图片还缺少服务支持的尺寸选项";
   return "";
 }
 
@@ -1678,8 +1651,7 @@ function normalizeXaiComposerSettings(value = {}) {
 
 function compatibleReasoningSupported(provider = {}) {
   if (provider.protocol !== "responses") return false;
-  try { return new URL(provider.endpoint).hostname.toLocaleLowerCase("en-US").endsWith("micuapi.ai"); }
-  catch { return false; }
+  return Boolean(compatibleProviderPresetForEndpoint(provider.endpoint));
 }
 
 function referenceImageCount(session) {
@@ -1799,8 +1771,7 @@ async function requestOpenAiFile(service, url, method, body, options) {
 }
 
 function serviceLabelForEndpoint(value) {
-  try { return new URL(value).hostname.endsWith("micuapi.ai") ? "米醋" : "兼容服务"; }
-  catch { return "兼容服务"; }
+  return compatibleProviderPresetForEndpoint(value)?.label || "兼容服务";
 }
 
 function isLoopback(value) {

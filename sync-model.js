@@ -6,7 +6,8 @@ export const SYNC_SNAPSHOT_FORMAT = "prompt-director-sync-state";
 export const SYNC_SNAPSHOT_VERSION = 1;
 export const DEFAULT_SYNC_RETENTION = 10;
 export const SYNC_ERROR_CODES = Object.freeze({
-  LOCATION_NOT_FOUND: "location_not_found"
+  LOCATION_NOT_FOUND: "location_not_found",
+  SNAPSHOT_CORRUPT: "sync_snapshot_corrupt"
 });
 
 const SYNC_LOCATION_NOT_FOUND_MESSAGE = "同步文件夹中的文件或目录不存在，请重新选择同步文件夹后再同步";
@@ -37,7 +38,7 @@ export function normalizeSyncSettings(value = {}) {
   const deviceId = cleanId(value.deviceId) || `device:${crypto.randomUUID()}`;
   const storedError = syncErrorDetails(value.lastError);
   const storedCode = cleanText(value.lastErrorCode);
-  const lastErrorCode = storedCode === SYNC_ERROR_CODES.LOCATION_NOT_FOUND
+  const lastErrorCode = Object.values(SYNC_ERROR_CODES).includes(storedCode)
     ? storedCode
     : storedError.code;
   return {
@@ -53,10 +54,44 @@ export function normalizeSyncSettings(value = {}) {
   };
 }
 
+export function normalizeSyncMeta(value = {}) {
+  const assetRefs = {};
+  for (const [assetId, reference] of Object.entries(value?.assetRefs ?? {})) {
+    if (!cleanId(assetId) || !validSyncObjectId(reference?.objectId)) continue;
+    assetRefs[cleanId(assetId)] = {
+      objectId: reference.objectId,
+      contentType: cleanText(reference.contentType) || "application/octet-stream"
+    };
+  }
+  return {
+    logicalClock: Math.max(0, Math.floor(Number(value?.logicalClock) || 0)),
+    records: value?.records && typeof value.records === "object" ? structuredClone(value.records) : {},
+    assetRefs,
+    localDirty: value?.localDirty === true,
+    dirtyAssetIds: [...new Set((Array.isArray(value?.dirtyAssetIds) ? value.dirtyAssetIds : [])
+      .map(cleanId).filter(Boolean))]
+  };
+}
+
+export function markSyncMetaDirty(value = {}, assetIds = []) {
+  const meta = normalizeSyncMeta(value);
+  return {
+    ...meta,
+    localDirty: true,
+    dirtyAssetIds: [...new Set([
+      ...meta.dirtyAssetIds,
+      ...(Array.isArray(assetIds) ? assetIds : [assetIds]).map(cleanId).filter(Boolean)
+    ])]
+  };
+}
+
 export function syncErrorDetails(value) {
   const objectValue = value && typeof value === "object" ? value : null;
   const name = cleanText(objectValue?.name);
   const message = cleanText(objectValue?.message ?? value);
+  if (objectValue?.code === SYNC_ERROR_CODES.SNAPSHOT_CORRUPT) {
+    return { code: SYNC_ERROR_CODES.SNAPSHOT_CORRUPT, message: message || "同步目录包含损坏的正式状态文件，本地资料未被修改" };
+  }
   if (name === "NotFoundError" || LEGACY_LOCATION_NOT_FOUND_PATTERN.test(message)) {
     return {
       code: SYNC_ERROR_CODES.LOCATION_NOT_FOUND,
@@ -77,6 +112,68 @@ export function collectSyncImageReferences(stateValue = {}) {
     };
   }
   return references;
+}
+
+export function collectSyncAssets(stateValue = {}) {
+  const assets = [];
+  const seen = new Set();
+  for (const asset of stateStoredAssets(stateValue)) {
+    const id = storedAssetId(asset);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    assets.push({
+      id,
+      storageMode: cleanText(asset?.storageMode) || "managed",
+      contentType: cleanText(asset?.syncContentType) || cleanText(asset?.mimeType) || "application/octet-stream",
+      objectId: validSyncObjectId(asset?.syncObjectId) ? asset.syncObjectId : ""
+    });
+  }
+  return assets;
+}
+
+export function syncObjectReferencesFromRecords(records = {}) {
+  if (!records || typeof records !== "object") return {};
+  const restoredState = restoreState(records);
+  return {
+    ...collectSyncImageReferences(restoredState.state),
+    ...restoredState.imageRefs
+  };
+}
+
+export function sameRevisionRecords(left = {}, right = {}) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) return false;
+  return leftKeys.every((key) => {
+    const before = left[key];
+    const after = right[key];
+    return before?.revisionId === after?.revisionId &&
+      cleanText(before?.deletedAt) === cleanText(after?.deletedAt) &&
+      before?.fingerprint === after?.fingerprint;
+  });
+}
+
+export function summarizeRevisionChanges(beforeRecords = {}, afterRecords = {}, conflicts = []) {
+  const summary = { added: 0, updated: 0, deleted: 0, conflicts: conflicts.length, byEntity: {} };
+  const keys = new Set([...Object.keys(beforeRecords ?? {}), ...Object.keys(afterRecords ?? {})]);
+  for (const key of keys) {
+    const before = beforeRecords?.[key];
+    const after = afterRecords?.[key];
+    if (before?.revisionId === after?.revisionId) continue;
+    const entityType = splitKey(key)[0] || "unknown";
+    const bucket = summary.byEntity[entityType] ??= { added: 0, updated: 0, deleted: 0 };
+    if ((!before || before.deletedAt) && after && !after.deletedAt) {
+      summary.added += 1;
+      bucket.added += 1;
+    } else if (before && !before.deletedAt && (!after || after.deletedAt)) {
+      summary.deleted += 1;
+      bucket.deleted += 1;
+    } else {
+      summary.updated += 1;
+      bucket.updated += 1;
+    }
+  }
+  return summary;
 }
 
 export function attachSyncImageReferences(stateValue = {}, references = {}) {

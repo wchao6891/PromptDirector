@@ -7,6 +7,7 @@ import {
   buildSkillMarkdown,
   detectSkillDependencies,
   exportGeneratedSkillPackage,
+  exportStoredSkillPackage,
   parseSkillArchive,
   parseSkillFiles,
   parseSkillMarkdown
@@ -47,6 +48,28 @@ test("external packages retain every file but expose only safe Markdown referenc
   assert.deepEqual(parsed.references.map((item) => item.path), ["references/guide.md"]);
   assert.equal(parsed.requiresTextModeConfirmation, true);
   assert.deepEqual(parsed.dependencies, ["scripts"]);
+});
+
+test("ordinary export preserves every stored external package byte and path", async () => {
+  const blobs = new Map([
+    ["skill-file:markdown", new Blob(["---\nname: exact-copy\ndescription: Exact.\n---\n\n# Method\n"])],
+    ["skill-file:script", new Blob(["print('unchanged')\n"], { type: "text/x-python" })],
+    ["skill-file:asset", new Blob([new Uint8Array([0, 255, 1, 254])], { type: "application/octet-stream" })]
+  ]);
+  const archive = await exportStoredSkillPackage({
+    portableId: "exact-copy",
+    packageFiles: [
+      { path: "vendor/SKILL.md", assetId: "skill-file:markdown", byteSize: blobs.get("skill-file:markdown").size },
+      { path: "vendor/scripts/tool.py", assetId: "skill-file:script", byteSize: blobs.get("skill-file:script").size },
+      { path: "vendor/assets/sample.bin", assetId: "skill-file:asset", byteSize: 0 }
+    ]
+  }, { readFile: (assetId) => blobs.get(assetId) });
+  const parsed = await parseSkillArchive(archive);
+  assert.deepEqual([...parsed.files.keys()], ["vendor/SKILL.md", "vendor/scripts/tool.py", "vendor/assets/sample.bin"]);
+  assert.deepEqual(
+    new Uint8Array(await parsed.files.get("vendor/assets/sample.bin").arrayBuffer()),
+    new Uint8Array([0, 255, 1, 254])
+  );
 });
 
 test("package validation rejects traversal, duplicate SKILL.md, and damaged ZIP", async () => {

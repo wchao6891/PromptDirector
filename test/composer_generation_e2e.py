@@ -525,7 +525,13 @@ def main() -> None:
         CreativeServiceHandler.release_image.clear()
         composer.locator("#composer-options summary").click()
         expect(composer.locator("#composer-create-image")).to_be_enabled()
+        expect(composer.locator("#composer-generation-settings")).to_be_visible()
+        expect(composer.locator("#composer-image-size-field")).to_be_visible()
+        composer.locator("#composer-image-size").select_option("1536x1024")
+        expect(composer.locator("#composer-image-size")).to_have_value("1536x1024")
+        assert current_session(composer)["generationParameters"]["size"] == "1536x1024"
         composer.locator("#composer-create-image").check()
+        expect(composer.locator("#composer-image-size")).to_have_value("1536x1024")
         composer.locator("#composer-options summary").click()
         expect(composer.locator("#composer-model-label")).to_have_text("OpenAI · 生图")
         composer.locator("#composer-model-trigger").click()
@@ -535,8 +541,8 @@ def main() -> None:
         expect(composer.locator("#composer-generation-settings")).to_be_visible()
         expect(composer.locator("#composer-generation-settings-title")).to_have_text("本轮图片参数")
         expect(composer.locator("#composer-image-size-field")).to_be_visible()
-        expect(composer.locator("#composer-image-size")).to_have_value("auto")
-        expect(composer.locator('#composer-image-size option[data-incompatible="true"]')).to_have_text("auto（当前模型不支持，请重选）")
+        expect(composer.locator("#composer-image-size")).to_have_value("1536x1024")
+        expect(composer.locator('#composer-image-size option[data-incompatible="true"]')).to_have_text("1536x1024（当前模型不支持，请重选）")
         expect(composer.locator("#composer-generation-parameter-note")).to_contain_text("不受当前服务支持")
         expect(composer.locator("#composer-image-size")).to_be_enabled()
         supported_size = composer.locator("#composer-image-size").evaluate(
@@ -552,6 +558,10 @@ def main() -> None:
         composer.locator("#composer-action").click()
         try:
             expect(composer.locator(".composer-session-running")).to_be_visible()
+            running_row = composer.locator(".composer-session-item:has(.composer-session-running)")
+            running_row.hover()
+            running_row.locator(".composer-session-menu > summary").click()
+            expect(running_row.get_by_role("menuitem", name="删除", exact=True)).to_be_disabled()
         except AssertionError:
             diagnostic = composer.evaluate(
                 """async () => ({
@@ -622,6 +632,8 @@ def main() -> None:
         ]) == 2
         assert local_requests[2]["content_type"].startswith("multipart/form-data; boundary=")
         assert local_requests[2]["body"].count(b'name="image[]"') == 2
+        assert b'name="model"' in local_requests[2]["body"] and b"local-image-test" in local_requests[2]["body"]
+        assert b'name="size"' in local_requests[2]["body"] and supported_size.encode() in local_requests[2]["body"]
         creative_runs = composer.evaluate("() => chrome.storage.local.get('creativeRuns').then(value => value.creativeRuns)")
         assert len(creative_runs) == 1
         assert len(creative_runs[0]["outputs"]) == 1

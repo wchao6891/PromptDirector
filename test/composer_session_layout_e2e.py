@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from playwright.sync_api import expect
+
 from e2e_support import extension_session
 
 
 def session_value(index: int) -> dict:
-    timestamp = (datetime(2026, 8, 6, tzinfo=timezone.utc) + timedelta(minutes=index)).isoformat()
+    day_offsets = [0, 1, 3, 10]
+    timestamp = (datetime.now(timezone.utc) - timedelta(days=day_offsets[index % len(day_offsets)], minutes=index)).isoformat()
     return {
         "id": f"layout-session-{index}",
-        "title": f"布局对话 {index:02d}",
+        "title": f"布局对话 {index:02d}" + (" · 这是一个用于验证单行省略效果的特别长会话标题" if index == 0 else ""),
         "targetType": "image",
         "updatedAt": timestamp,
         "messages": [{
@@ -66,6 +69,19 @@ def main() -> None:
         setup = run.open_page("collector.html")
         run.seed_storage(setup, {"schemaVersion": 24, "composerSessions": sessions})
         composer = run.open_page("composer.html?session=layout-session-0", wait_until="networkidle")
+
+        expect(composer.locator(".composer-session-group-label")).to_have_text(["今天", "昨天", "近 7 天", "更早"])
+        long_title = composer.locator('.composer-session-item[data-session-id="layout-session-0"] strong')
+        assert long_title.evaluate("node => node.scrollWidth > node.clientWidth")
+        menu = composer.locator('.composer-session-item[data-session-id="layout-session-1"] .composer-session-menu')
+        menu.locator("xpath=..").hover()
+        menu.locator("summary").click()
+        expect(menu.get_by_role("menuitem", name="删除", exact=True)).to_be_visible()
+        menu.get_by_role("menuitem", name="删除", exact=True).click()
+        delete_dialog = composer.locator("#promptdirector-app-dialog")
+        expect(delete_dialog).to_contain_text("删除这段对话？")
+        delete_dialog.get_by_role("button", name="取消", exact=True).click()
+        expect(delete_dialog).to_have_count(0)
 
         desktop_first = geometry(composer)
         for index in range(1, 30):

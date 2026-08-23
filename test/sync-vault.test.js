@@ -46,7 +46,7 @@ test("large video objects are chunked deduplicated and reject one damaged chunk"
   await assert.rejects(() => readSyncObject(vault, objectId), /JSON|损坏|解密|Unexpected/);
 });
 
-test("damaged and incomplete state files are skipped when a healthy state exists", async () => {
+test("a damaged formal state blocks silent success while an incomplete atomic file is ignored", async () => {
   const root = new MemoryDirectory("root");
   const vault = await createOrUnlockSyncVault(root, "password-123");
   const snapshot = await createRevisionSnapshot({ entries: [] }, { deviceId: "device:a", logicalClock: 1 });
@@ -59,9 +59,43 @@ test("damaged and incomplete state files are skipped when a healthy state exists
   await writeText(device, "999-broken.pds", "{broken");
   await writeText(device, "1000-unfinished.partial", "incomplete");
 
+  await assert.rejects(
+    () => listSyncSnapshots(vault),
+    (error) => error?.code === "sync_snapshot_corrupt" && /999-broken\.pds/.test(error.message)
+  );
+
+  device.entries.delete("999-broken.pds");
   const snapshots = await listSyncSnapshots(vault);
   assert.equal(snapshots.length, 1);
   assert.equal(snapshots[0].snapshotId, snapshot.snapshotId);
+});
+
+test("vault object operations honor cancellation before publishing a manifest", async () => {
+  const root = new MemoryDirectory("root");
+  const vault = await createOrUnlockSyncVault(root, "password-123");
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    () => writeSyncObject(vault, new Blob(["audio"], { type: "audio/mpeg" }), { signal: controller.signal }),
+    (error) => error?.name === "AbortError"
+  );
+  const objects = await root.getDirectoryHandle("PromptDirector-Sync").then((directory) => directory.getDirectoryHandle("objects"));
+  assert.equal(objects.entries.size, 0);
+});
+
+test("encrypted sync keeps supported audio and inert external Skill files", async () => {
+  const root = new MemoryDirectory("root");
+  const vault = await createOrUnlockSyncVault(root, "password-123");
+  for (const blob of [
+    new Blob(["audio"], { type: "audio/mpeg" }),
+    new Blob(["binary asset"], { type: "application/octet-stream" })
+  ]) {
+    const objectId = await writeSyncObject(vault, blob);
+    const restored = await readSyncObject(vault, objectId);
+    assert.equal(await restored.text(), await blob.text());
+    assert.equal(restored.type, blob.type);
+  }
 });
 
 test("a second profile can unlock the same folder but a wrong password cannot read it", async () => {

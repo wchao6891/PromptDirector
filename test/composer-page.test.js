@@ -79,7 +79,7 @@ test("composer reference selection is visual while Skill management stays on its
   assert.doesNotMatch(composerJs, /extractProjectMethod/);
   assert.match(skillsJs, /extractCreativeSkillDraft/);
   assert.match(skillsJs, /parseSkillArchive/);
-  assert.match(skillsJs, /exportGeneratedSkillPackage|skillDetailExport/);
+  assert.match(skillsJs, /exportStoredSkillPackage|skillDetailExport/);
   assert.match(composerJs, /findCreativeSkillsBySlashQuery/);
   assert.match(composerJs, /createAppliedSkillSnapshot/);
   assert.match(composerJs, /replaceComposerSessionUrl\(response\.session\.id\)/);

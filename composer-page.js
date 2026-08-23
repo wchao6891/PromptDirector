@@ -83,7 +83,7 @@ import {
 
 await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".composer-options");
+bindTransientMenus(document, ".composer-options, .composer-session-menu");
 
 const elements = Object.fromEntries([
   "composer-shell", "composer-nav", "composer-nav-open", "composer-nav-close", "composer-new", "composer-session-list",
@@ -705,26 +705,63 @@ function renderSessions() {
   const current = sessionSummaryFromCurrent();
   if (current) summaries.set(current.id, current);
   const ordered = [...summaries.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-  elements.composerSessionList.replaceChildren(...ordered.map((summary) => {
+  const groups = [
+    { id: "today", label: "今天", items: [] },
+    { id: "yesterday", label: "昨天", items: [] },
+    { id: "recent", label: "近 7 天", items: [] },
+    { id: "older", label: "更早", items: [] }
+  ];
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  for (const summary of ordered) byId.get(sessionDateGroup(summary.updatedAt)).items.push(summary);
+  elements.composerSessionList.replaceChildren(...groups.filter((group) => group.items.length).map((group) => {
+    const section = el("section", "composer-session-group");
+    section.dataset.sessionGroup = group.id;
+    section.append(rawTextEl("h3", "composer-session-group-label", t(group.label)));
+    const list = el("div", "composer-session-group-list");
+    list.append(...group.items.map(renderSessionRow));
+    section.append(list);
+    return section;
+  }));
+}
+
+function renderSessionRow(summary) {
     const row = el("div", "composer-session-item");
+    row.dataset.sessionId = summary.id;
     row.setAttribute("aria-current", String(summary.id === composerSession?.id));
     const load = document.createElement("button");
     load.type = "button";
     const running = activeOperation?.kind === "compose" && activeOperation.sessionId === summary.id;
-    const meta = running ? operationLabel(activeOperation.phase) : relativeTime(summary.updatedAt);
-    load.append(rawTextEl("strong", "", summary.title), rawTextEl("small", running ? "composer-session-running" : "", meta));
+    load.append(rawTextEl("strong", "", summary.title));
+    if (running) load.append(rawTextEl("small", "composer-session-running", operationLabel(activeOperation.phase)));
     load.addEventListener("click", safely(() => loadComposerSession(summary.id)));
-    const remove = rawTextEl("button", "composer-session-remove", "×");
+    const menu = el("details", "composer-session-menu");
+    const trigger = rawTextEl("summary", "", "…");
+    trigger.setAttribute("aria-label", t("更多操作：{title}", { title: summary.title }));
+    const panel = el("div", "composer-session-menu-panel");
+    panel.setAttribute("role", "menu");
+    const remove = rawTextEl("button", "composer-session-delete", t("删除"));
     remove.type = "button";
     remove.disabled = running;
-    remove.setAttribute("aria-label", translateUiMessage(`删除对话：${summary.title}`));
+    remove.setAttribute("role", "menuitem");
     remove.addEventListener("click", (event) => {
       event.stopPropagation();
+      menu.open = false;
       safely(() => deleteSession(summary.id))();
     });
-    row.append(load, remove);
+    panel.append(remove);
+    menu.append(trigger, panel);
+    row.append(load, menu);
     return row;
-  }));
+}
+
+function sessionDateGroup(value, now = new Date()) {
+  const updatedAt = new Date(value);
+  if (Number.isNaN(updatedAt.getTime())) return "older";
+  const localDay = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000;
+  const elapsedDays = localDay(now) - localDay(updatedAt);
+  if (elapsedDays <= 0) return "today";
+  if (elapsedDays === 1) return "yesterday";
+  return elapsedDays <= 6 ? "recent" : "older";
 }
 
 function renderTimeline() {
@@ -978,14 +1015,34 @@ function showImageTempReferenceBlock() {
   const service = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
   const block = imageTempReferenceBlock(composerSession.referenceSnapshots, service);
   if (!block.blocked) return false;
-  const provider = composerVisionSettings.activeProvider === "compatible"
-    ? composerVisionSettings.compatible
-    : composerVisionSettings.openai;
-  const providerLabel = composerVisionSettings.activeProvider === "compatible" ? "兼容图片服务" : "OpenAI";
-  const serviceLabel = provider.model ? `${providerLabel} · ${provider.model}` : `${providerLabel} · 未配置模型`;
+  const serviceLabel = currentImageAnalysisServiceLabel();
   elements.composerImageBlockerDescription.textContent = `本轮有 ${block.imageCount} 张尚未分析的参考图片，但 ${service.shortLabel} 只能读取文字。可切换到视觉创作服务；也可调用当前图片分析服务（${serviceLabel}），预计发起 ${block.imageCount} 次额外请求，费用由服务商按你的账号计费。`;
   elements.composerImageBlocker.showModal();
   return true;
+}
+
+function currentImageAnalysisServiceLabel() {
+  const assignment = composerAiTaskAssignments?.imageAnalysis ?? {};
+  const profiles = composerVisionSettings.providerProfiles ?? {};
+  const providerId = String(assignment.providerId ?? "").trim();
+  const profile = providerId ? profiles[providerId] ?? null : null;
+  const assignedModel = String(assignment.model ?? "").trim();
+  if (providerId) {
+    const providerLabel = profile?.label
+      || (providerId === "openai" ? "OpenAI" : providerId === "custom-media" ? "兼容图片服务" : providerId);
+    const model = assignedModel
+      || String(profile?.models?.imageAnalysis ?? "").trim()
+      || (providerId === "openai" ? String(composerVisionSettings.openai?.model ?? "").trim() : "")
+      || (providerId === "custom-media" ? String(composerVisionSettings.compatible?.model ?? "").trim() : "");
+    return model ? `${providerLabel} · ${model}` : `${providerLabel} · 未配置模型`;
+  }
+  const fallbackProvider = composerVisionSettings.activeProvider === "openai"
+    ? { label: "OpenAI", model: composerVisionSettings.openai?.model }
+    : { label: "兼容图片服务", model: composerVisionSettings.compatible?.model };
+  const fallbackModel = String(fallbackProvider.model ?? "").trim();
+  return fallbackModel
+    ? `${fallbackProvider.label} · ${fallbackModel}`
+    : `${fallbackProvider.label} · 未配置模型`;
 }
 
 async function analyzeBlockedTempReferences() {
@@ -1414,11 +1471,13 @@ function renderGenerationModelChoices(selectedProfile) {
 }
 
 function renderImageGenerationSettings() {
-  const videoTask = composerSession?.outputMode === "create_video";
-  const generationProfile = normalizeComposerAiProfile(composerSession?.generationAiProfile);
+  const videoTask = composerSession?.targetType === "video";
+  const generationProfile = generationRouteProfile(videoTask);
   const capability = composerServiceCapabilities(generationProfile, composerVisionSettings)[videoTask ? "video" : "image"];
-  const visible = ["create_image", "create_video"].includes(composerSession?.outputMode)
-    && Boolean(capability?.generate);
+  const hasImageSize = capability?.parameters?.some((parameter) => ["size", "aspectRatio", "imageSize"].includes(parameter.key));
+  const visible = videoTask
+    ? composerSession?.outputMode === "create_video" && Boolean(capability?.generate)
+    : Boolean(capability?.generate && hasImageSize);
   elements.composerGenerationSettings.hidden = !visible;
   if (!visible) return;
   elements.composerGenerationSettingsTitle.textContent = t(videoTask ? "本轮视频参数" : "本轮图片参数");
@@ -1447,7 +1506,8 @@ function renderImageGenerationSettings() {
       fallbackLabel: "质量"
     });
     const referenceMode = imageReferenceModeAvailability(composerSession.referenceSnapshots);
-    elements.composerImageReferenceModeField.hidden = !composerSession.referenceSnapshots.some((item) => item.imageRefs?.length);
+    elements.composerImageReferenceModeField.hidden = composerSession.outputMode !== "create_image"
+      || !composerSession.referenceSnapshots.some((item) => item.imageRefs?.length);
     elements.composerImageReferenceMode.value = composerSession.imageReferenceMode;
     elements.composerImageReferenceMode.disabled = Boolean(activeOperation) || !referenceMode.canDisableImages;
   }
@@ -1455,6 +1515,9 @@ function renderImageGenerationSettings() {
     ...state.issues,
     ...(!videoTask && !imageReferenceModeAvailability(composerSession.referenceSnapshots).canDisableImages
       ? [`还有 ${imageReferenceModeAvailability(composerSession.referenceSnapshots).missingAssetIds.length} 张参考图既没有案例提示词，也没有有效分析文字，暂时必须带原图`]
+      : []),
+    ...(!videoTask && composerSession.referenceSnapshots.some((item) => item.imageRefs?.length)
+      ? [t("参考图画幅无需与输出画幅一致。")]
       : []),
     ...(state.ignored.length ? [`当前服务不会发送：${state.ignored.join("、")}`] : [])
   ];
@@ -1592,8 +1655,9 @@ function composerProfileForAssignment(assignment, fallback) {
 }
 
 async function updateImageGenerationParameters() {
-  if (!composerSession || activeOperation || !["create_image", "create_video"].includes(composerSession.outputMode)) return;
-  const videoTask = composerSession.outputMode === "create_video";
+  if (!composerSession || activeOperation) return;
+  const videoTask = composerSession.targetType === "video";
+  if (videoTask && composerSession.outputMode !== "create_video") return;
   const generationParameters = videoTask
     ? {
         ...composerSession.generationParameters,
@@ -1822,11 +1886,13 @@ function renderSkills() {
   }
   const applied = new Set(composerSession.appliedSkills.map((item) => item.skillId));
   const cards = skills.map((skill) => {
-    const card = el("article", "composer-project-card");
+    const card = el("article", "ui-skill-card composer-skill-card");
     const header = el("header", "");
-    header.append(rawTextEl("strong", "", `/${skill.callName}`), rawTextEl("small", "", `v${skill.versions.findIndex((item) => item.id === skill.currentVersionId) + 1}`));
-    card.append(header, rawTextEl("p", "composer-project-state", skill.description || "暂无说明"));
-    const actions = el("div", "");
+    const title = el("div", "");
+    title.append(rawTextEl("h2", "ui-skill-card-title", skill.callName), rawTextEl("code", "", `/${skill.callName}`));
+    header.append(title, rawTextEl("small", "", `v${skill.versions.findIndex((item) => item.id === skill.currentVersionId) + 1}`));
+    card.append(header, rawTextEl("p", "ui-skill-card-summary composer-project-state", skill.description || "暂无说明"));
+    const actions = el("div", "ui-skill-card-actions");
     const edit = textEl("button", "button-secondary", "查看与编辑");
     edit.addEventListener("click", () => safely(() => openSkillCenter(skill.id))());
     const apply = textEl("button", applied.has(skill.id) ? "composer-project-active" : "", applied.has(skill.id) ? "已应用" : "应用 Skill");
@@ -2815,10 +2881,10 @@ function operationLabel(phase) {
   const profile = generationPhase ? session?.generationAiProfile : session?.aiProfile;
   const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings).shortLabel;
   return ({
-    planning: `${service} 正在规划`,
+    planning: t("{service} 正在规划", { service }),
     streaming: routeOperationLabel(activeOperation?.executionRoute || activeOperation?.session?.currentRoute),
-    stopping: `正在停止 ${service}`
-  })[phase] || `${service} 正在处理`;
+    stopping: t("正在停止 {service}", { service })
+  })[phase] || t("{service} 正在处理", { service });
 }
 
 function routeOperationLabel(route) {
@@ -2827,10 +2893,12 @@ function routeOperationLabel(route) {
     ? session?.generationAiProfile
     : session?.aiProfile;
   const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings).shortLabel;
-  if (route === "analyze_materials") return `${service} 正在分析资料`;
-  if (route === "chat") return `${service} 正在回答`;
-  if (activeOperation?.session?.outputMode === "create_video") return `${service} 正在创建视频`;
-  return activeOperation?.session?.outputMode === "create_image" ? `${service} 正在创建图片` : `${service} 正在生成`;
+  if (route === "analyze_materials") return t("{service} 正在分析资料", { service });
+  if (route === "chat") return t("{service} 正在回答", { service });
+  if (activeOperation?.session?.outputMode === "create_video") return t("{service} 正在创建视频", { service });
+  return activeOperation?.session?.outputMode === "create_image"
+    ? t("{service} 正在创建图片", { service })
+    : t("{service} 正在生成", { service });
 }
 
 function referenceAliasButton(reference) {

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-const pageScripts = ["library.js", "composer-page.js", "skills-page.js", "collector.js", "curated-page.js"];
+const pageScripts = ["library.js", "composer-page.js", "skills-page.js", "collector.js", "curated-page.js", "curated-skill-page.js"];
 
 test("ordinary product pages use the shared branded dialog instead of browser prompts", async () => {
   for (const filename of pageScripts) {
@@ -59,7 +59,7 @@ test("the selected toolbar mark has one lime SVG master and matching manifest PN
     48: "assets/icons/icon-48.png",
     128: "assets/icons/icon-128.png"
   });
-  const pages = await Promise.all(["library.html", "collector.html", "composer.html", "skills.html"]
+  const pages = await Promise.all(["library.html", "collector.html", "composer.html", "skills.html", "curated-skills.html"]
     .map((name) => readFile(new URL(`../${name}`, import.meta.url), "utf8")));
   for (const page of pages) assert.match(page, /assets\/icons\/icon-source\.svg/);
   const { stdout } = await execFileAsync(process.execPath, ["tools/build-brand-icons.mjs", "--check"], {

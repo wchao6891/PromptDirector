@@ -13,7 +13,7 @@ test("manifest locale catalogs expose the same message keys", async () => {
 });
 
 test("every static HTML i18n marker has an English translation", async () => {
-  for (const path of ["../collector.html", "../library.html", "../composer.html", "../skills.html", "../curated.html"]) {
+  for (const path of ["../collector.html", "../library.html", "../composer.html", "../skills.html", "../curated.html", "../curated-skills.html"]) {
     const html = await readFile(new URL(path, import.meta.url), "utf8");
     const keys = [...html.matchAll(/data-i18n(?:-placeholder|-aria-label|-title)?="([^"]+)"/g)].map((match) => match[1]);
     const missing = [...new Set(keys.filter((key) => !hasEnglishTranslation(key)))];

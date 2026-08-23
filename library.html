@@ -284,11 +284,13 @@
               <summary data-i18n="跨设备同步">跨设备同步</summary>
               <div class="sync-settings-body">
                 <p class="data-safety-note" data-i18n="同一台电脑可选择普通本地文件夹；跨设备请选择已登录的 iCloud Drive、Dropbox 或 OneDrive 文件夹。两端选择同一个父文件夹并使用相同密码。插件会在其中创建 PromptDirector-Sync，请勿手动修改。">同一台电脑可选择普通本地文件夹；跨设备请选择已登录的 iCloud Drive、Dropbox 或 OneDrive 文件夹。两端选择同一个父文件夹并使用相同密码。插件会在其中创建 PromptDirector-Sync，请勿手动修改。</p>
+                <p class="data-safety-note">连接和解锁只验证文件夹与密码，不会读取、合并或上传资料。只有你再次确认“立即同步”后，才会执行一次同步。</p>
                 <label id="data-safety-password" class="data-safety-password"><span data-i18n="同步密码">同步密码</span><input id="sync-password" type="password" minlength="8" autocomplete="off" placeholder="至少 8 个字符" data-i18n-placeholder="至少 8 个字符" /></label>
                 <div class="data-safety-secondary-actions">
                   <button id="connect-sync-folder" type="button" data-i18n="连接同步文件夹">连接同步文件夹</button>
                   <button id="unlock-sync-vault" type="button" data-i18n="解锁同步库">解锁同步库</button>
                   <button id="sync-now" type="button" data-i18n="立即同步">立即同步</button>
+                  <button id="cancel-sync" class="button-secondary" type="button" hidden>停止同步</button>
                   <button id="disconnect-sync-folder" class="quiet-danger" type="button" data-i18n="断开同步">断开同步</button>
                 </div>
               </div>

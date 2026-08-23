@@ -17,7 +17,8 @@ export const AI_PROVIDER_PRESETS = Object.freeze([
     endpoint: "https://api.deepseek.com/chat/completions",
     protocol: "chat_completions",
     discovery: { adapter: "identity" },
-    capabilities: TEXT_CAPABILITIES
+    capabilities: [...TEXT_CAPABILITIES, "imageAnalysis"],
+    structuredOutput: "json_object"
   }),
   preset({
     id: "openai",

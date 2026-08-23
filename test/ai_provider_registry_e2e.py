@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 
 from playwright.sync_api import expect
 
-from e2e_support import extension_session
+from e2e_support import base_entry, extension_session
 
 
 TASK_IDS = {
@@ -16,6 +17,261 @@ TASK_IDS = {
     "imageGeneration",
     "videoGeneration",
 }
+
+PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+DIMENSIONS = ["subject", "scene", "action", "style", "camera", "light", "mood", "sound", "output", "workflow"]
+
+
+def assignment_routes(assignments: dict) -> dict:
+    return {
+        task_id: {
+            "providerId": value.get("providerId", ""),
+            "model": value.get("model", ""),
+        }
+        for task_id, value in assignments.items()
+    }
+
+
+def complete_visual_analysis() -> dict:
+    return {
+        "description": "中央主体位于深色背景中。",
+        "canvas": {
+            "width": 1,
+            "height": 1,
+            "aspectRatio": "1:1",
+            "orientation": "square",
+            "dominantColors": [{"hex": "#101820", "coveragePercent": 70, "source": "estimated"}],
+        },
+        "elements": [{
+            "id": "subject-1",
+            "label": "中央主体",
+            "category": "subject",
+            "box_2d": [150, 250, 850, 750],
+            "coveragePercent": 35,
+            "depthLayer": "foreground",
+            "occludes": [],
+            "occludedBy": [],
+            "relationships": ["位于画面中央"],
+            "visualAttributes": ["清晰轮廓"],
+        }],
+        "dimensions": [{
+            "id": dimension,
+            "applicable": dimension != "sound",
+            "facts": [] if dimension == "sound" else [f"{dimension} 可见事实"],
+            "measurements": [],
+        } for dimension in DIMENSIONS],
+        "OCR": [],
+        "reconstructionPrompt": "深色背景中的中央主体，保持清晰轮廓和居中构图。",
+        "limitations": ["无法确认画外信息"],
+        "completeness": {"checkedRegions": ["四角", "主体", "背景", "文字"], "omittedVisibleElements": []},
+        "tags": [],
+    }
+
+
+def assert_deepseek_dynamic_image_analysis() -> None:
+    catalog = {"visible": True}
+    vision_requests: list[dict] = []
+    openai_paid_requests: list[str] = []
+    model_id = "opaque-account-model-2026"
+
+    def mock_deepseek(route) -> None:
+        if route.request.method == "GET" and route.request.url == "https://api.deepseek.com/models":
+            models = [{"id": model_id}] if catalog["visible"] else []
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"data": models}),
+            )
+            return
+        if route.request.method == "POST" and route.request.url == "https://api.deepseek.com/chat/completions":
+            payload = route.request.post_data_json
+            vision_requests.append(payload)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "model": model_id,
+                    "choices": [{"message": {"content": json.dumps(complete_visual_analysis(), ensure_ascii=False)}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+                }, ensure_ascii=False),
+            )
+            return
+        route.fulfill(status=500, content_type="application/json", body='{"error":{"message":"unexpected DeepSeek request"}}')
+
+    def block_openai(route) -> None:
+        if route.request.method == "GET" and route.request.url == "https://api.openai.com/v1/models":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"data":[{"id":"declared-openai-vision","input_modalities":["text","image"],"output_modalities":["text"]}]}',
+            )
+            return
+        openai_paid_requests.append(route.request.url)
+        route.fulfill(status=500, content_type="application/json", body='{"error":{"message":"unexpected fallback"}}')
+
+    entry = base_entry(
+        "deepseek-dynamic-vision",
+        "动态模型图片分析",
+        "只用于本地浏览器验收。",
+        "content:prompt:image",
+    )
+    entry["mediaAssets"] = [{
+        "id": "deepseek-dynamic-image",
+        "kind": "image",
+        "usage": "content",
+        "storageMode": "managed",
+        "mimeType": "image/png",
+        "width": 1,
+        "height": 1,
+        "byteSize": 68,
+    }]
+    entry["primaryMediaId"] = "deepseek-dynamic-image"
+
+    with extension_session("prompt-director-deepseek-vision-", viewport={"width": 1280, "height": 900}) as run:
+        run.context.route("https://api.deepseek.com/**", mock_deepseek)
+        run.context.route("https://api.openai.com/**", block_openai)
+        setup = run.open_page("collector.html")
+        run.seed_storage(setup, {
+            "schemaVersion": 24,
+            "entries": [entry],
+            "uiPreferences": {"locale": "zh-CN", "theme": "system", "motion": "system"},
+            "aiProviderRegistry": {
+                "version": 4,
+                "providers": {
+                    "deepseek": {"apiKey": "deepseek-e2e-key", "consent": True},
+                    "openai": {
+                        "apiKey": "openai-e2e-key",
+                        "consent": True,
+                        "models": {"imageAnalysis": "declared-openai-vision"},
+                        "discoveredModels": [{
+                            "id": "declared-openai-vision",
+                            "name": "OpenAI 对照模型",
+                            "status": "available",
+                            "confidence": "declared",
+                            "source": "fixture",
+                            "tasks": ["imageAnalysis"],
+                            "inputModalities": ["text", "image"],
+                            "outputModalities": ["text"],
+                        }],
+                    },
+                },
+            },
+            "aiTaskAssignments": {},
+        })
+        setup.evaluate(
+            f"""async () => {{
+              const {{saveMediaBlob}} = await import(chrome.runtime.getURL('media-store.js'));
+              const bytes = Uint8Array.from(atob('{PNG}'), value => value.charCodeAt(0));
+              await saveMediaBlob('deepseek-dynamic-image', new Blob([bytes], {{type: 'image/png'}}), {{checkCapacity: false}});
+            }}"""
+        )
+
+        library = run.open_page("library.html", wait_until="networkidle")
+        library.wait_for_timeout(1_000)
+        library_state = library.locator("body").get_attribute("data-library-state")
+        assert library_state == "ready", {
+            "libraryState": library_state,
+            "pageErrors": run.page_errors,
+            "loadingText": library.locator("#library-loading").text_content(),
+        }
+        library.locator("#open-settings").click()
+        library.locator('[data-settings-tab="ai"]').click()
+        library.locator('[data-ai-routing-tab="providers"]').click()
+        deepseek_row = library.locator('[data-provider-id="deepseek"]')
+        deepseek_row.get_by_role("button", name="刷新模型").click()
+        expect(library.locator("#feedback")).to_contain_text("DeepSeek 已发现 1 个模型")
+        expect(deepseek_row).to_contain_text("模型目录已读取 · 1 个模型")
+
+        library.locator('[data-ai-routing-tab="tasks"]').click()
+        image_task = library.locator("#ai-assignment-list .ai-assignment-row", has_text="图片分析")
+        image_task.get_by_role("button", name="配置").click()
+        dialog = library.locator("#promptdirector-app-dialog")
+        provider_select = dialog.locator('[data-field-id="providerId"] select')
+        model_select = dialog.locator('[data-field-id="model"] select')
+        provider_select.select_option("deepseek")
+        expect(model_select).to_have_value(model_id)
+        expect(model_select.locator("option")).to_have_text(model_id)
+        expect(dialog.locator(".model-capability-help")).to_have_count(1)
+        expect(dialog.locator(".model-capability-help")).to_have_text("当前模型未声明这项能力；是否可用以真实执行结果为准")
+        expect(dialog).not_to_contain_text("实验")
+        dialog.get_by_role("button", name="保存任务默认").click()
+        expect(dialog).to_be_hidden()
+        expect(image_task).to_contain_text(f"DeepSeek · {model_id}")
+
+        stored_assignment = library.evaluate(
+            "() => chrome.storage.local.get('aiTaskAssignments').then(value => value.aiTaskAssignments.imageAnalysis)"
+        )
+        assert stored_assignment == {
+            "providerId": "deepseek",
+            "model": model_id,
+            "evidence": "manual_unverified",
+        }, stored_assignment
+        runtime = library.evaluate(
+            "() => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'imageAnalysis'})"
+        )
+        assert runtime["assignment"] == stored_assignment, runtime
+        assert runtime["visionSettings"]["compatible"]["structuredOutput"] == "json_object", runtime
+        assert runtime["runtimeDescriptor"]["capabilities"]["image"] is None, runtime
+
+        analyzed = library.evaluate(
+            """async () => chrome.runtime.sendMessage({
+              type: 'ANALYZE_ENTRY_IMAGE',
+              entryId: 'deepseek-dynamic-vision',
+              visualId: 'deepseek-dynamic-image',
+              outputLocale: 'zh-CN'
+            })"""
+        )
+        assert analyzed["ok"] is True, analyzed
+        assert len(vision_requests) == 1, vision_requests
+        request = vision_requests[0]
+        assert request["model"] == model_id, request
+        assert request["response_format"] == {"type": "json_object"}, request
+        content = request["messages"][0]["content"]
+        assert [item["type"] for item in content] == ["text", "image_url"], content
+        assert "JSON property names are case-sensitive" in content[0]["text"], content[0]
+        assert '\"ocr\":{\"type\":\"array\"' in content[0]["text"], content[0]
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,"), content
+        assert not openai_paid_requests, openai_paid_requests
+
+        catalog["visible"] = False
+        library.locator('[data-ai-routing-tab="providers"]').click()
+        deepseek_row.get_by_role("button", name="刷新模型").click()
+        expect(deepseek_row).to_contain_text("1 个下架或当前不可用")
+        library.locator('[data-ai-routing-tab="tasks"]').click()
+        expect(image_task).to_contain_text(f"DeepSeek · {model_id}")
+        expect(image_task).to_contain_text("已下架或当前不可用")
+
+        disappeared = library.evaluate(
+            """async () => {
+              try {
+                return await chrome.runtime.sendMessage({
+                  type: 'ANALYZE_ENTRY_IMAGE',
+                  entryId: 'deepseek-dynamic-vision',
+                  visualId: 'deepseek-dynamic-image',
+                  outputLocale: 'zh-CN'
+                });
+              } catch (error) {
+                return {ok: false, rejected: true, message: error.message};
+              }
+            }"""
+        )
+        assert disappeared["ok"] is False, disappeared
+        assert "已下架" in disappeared["message"] or "不可用" in disappeared["message"], disappeared
+        assert len(vision_requests) == 1, vision_requests
+        assert not openai_paid_requests, openai_paid_requests
+        final_state = library.evaluate(
+            "() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])"
+        )
+        assert final_state["aiTaskAssignments"]["imageAnalysis"] == stored_assignment, final_state
+        assert final_state["aiProviderRegistry"]["providers"]["deepseek"]["discoveredModels"][0]["status"] == "unavailable", final_state
+
+        print({
+            "manualDeepSeekImageAssignment": True,
+            "requestFormat": "image_url+json_object",
+            "disappearedModelBlocked": True,
+            "silentFallbackRequests": len(openai_paid_requests),
+            "realPaidRequests": 0,
+        })
 
 
 def open_ai_settings(run):
@@ -103,7 +359,9 @@ def assert_english_ai_settings() -> None:
         library.locator("#ai-assignment-list .ai-assignment-row").first.get_by_role("button", name="Configure").click()
         dialog = library.locator("#promptdirector-app-dialog")
         expect(dialog).not_to_contain_text(chinese, use_inner_text=True)
-        expect(library.locator("#feedback")).to_contain_text("No connected service has a catalog model explicitly supporting Text tags")
+        expect(library.locator("#feedback")).to_contain_text(
+            "No connected model can be assigned to Text tags. Connect a service and refresh its model catalog first."
+        )
         dialog.locator(".app-dialog-close").click()
 
         library.locator('[data-ai-routing-tab="providers"]').click()
@@ -120,6 +378,7 @@ def assert_english_ai_settings() -> None:
 def main() -> None:
     assert_new_install_defaults()
     assert_english_ai_settings()
+    assert_deepseek_dynamic_image_analysis()
     with extension_session("prompt-director-ai-registry-", viewport={"width": 1280, "height": 900}) as run:
         model_authorizations: list[str] = []
         gemini_model_requests: list[dict[str, str]] = []
@@ -251,21 +510,35 @@ def main() -> None:
         assignments_before_rules = library.evaluate("() => chrome.storage.local.get('aiTaskAssignments').then(value => value.aiTaskAssignments)")
         library.locator("#analysis-instructions-zh").fill("只保存统一 Registry 的文字分析规则")
         library.locator("#ai-settings-form").get_by_role("button", name="保存分析规则").click()
-        expect(library.locator("#feedback")).to_contain_text("分析规则已保存")
+        library.wait_for_function(
+            """expected => chrome.storage.local.get('aiPreferences').then(value =>
+              value.aiPreferences?.textInstructionsByLocale?.['zh-CN'] === expected)""",
+            arg="只保存统一 Registry 的文字分析规则",
+        )
         library.locator('[data-analysis-kind="vision"]').click()
         expect(library.locator("#vision-instructions-zh")).to_be_visible()
         expect(library.locator("#vision-settings-status")).to_contain_text("规则保存在本机")
         library.locator("#vision-instructions-zh").fill("只保存统一 Registry 的图片分析规则")
         library.locator("#vision-settings-form").get_by_role("button", name="保存分析规则").click()
-        expect(library.locator("#feedback")).to_contain_text("分析规则已保存")
+        library.wait_for_function(
+            """expected => chrome.storage.local.get('aiPreferences').then(value =>
+              value.aiPreferences?.visionInstructionsByLocale?.['zh-CN'] === expected)""",
+            arg="只保存统一 Registry 的图片分析规则",
+        )
         saved_preferences = library.evaluate("() => chrome.storage.local.get(['aiPreferences', 'aiTaskAssignments'])")
         assert saved_preferences["aiPreferences"]["textInstructionsByLocale"]["zh-CN"] == "只保存统一 Registry 的文字分析规则"
         assert saved_preferences["aiPreferences"]["visionInstructionsByLocale"]["zh-CN"] == "只保存统一 Registry 的图片分析规则"
-        assert saved_preferences["aiTaskAssignments"] == assignments_before_rules
+        assert assignment_routes(saved_preferences["aiTaskAssignments"]) == assignment_routes(assignments_before_rules), {
+            "before": assignments_before_rules,
+            "after": saved_preferences["aiTaskAssignments"],
+        }
 
         image_runtime = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'imageAnalysis'})")
         assert image_runtime["ok"] is True, image_runtime
-        assert image_runtime["assignment"] == {"providerId": "custom-media", "model": "gpt-5.6-terra"}, image_runtime
+        assert assignment_routes({"imageAnalysis": image_runtime["assignment"]})["imageAnalysis"] == {
+            "providerId": "custom-media", "model": "gpt-5.6-terra"
+        }, image_runtime
+        assert image_runtime["assignment"]["evidence"] == "manual_unverified", image_runtime
 
         library.locator("#open-ai-routing").click()
         dialog = library.locator("#promptdirector-app-dialog")
@@ -322,6 +595,12 @@ def main() -> None:
         expect(image_endpoint).to_be_visible()
         expect(image_endpoint).to_have_value("https://www.micuapi.ai/v1/images/generations")
         expect(dialog.locator("#promptdirector-app-dialog-provider_custom_media_imageEditsEndpoint")).to_have_value("https://www.micuapi.ai/v1/images/edits")
+        image_model = dialog.locator("#promptdirector-app-dialog-provider_custom_media_model_imageGeneration")
+        expect(image_model).to_be_visible()
+        expect(image_model).to_have_value("gpt-image-2")
+        expect(dialog.locator("#promptdirector-app-dialog-provider_custom_media_imageSizes")).to_have_value(
+            "1024x1024, 1280x720, 720x1280, 1024x1536, 1536x1024, 2048x2048, 2048x1152, 1152x2048"
+        )
         assert image_key.bounding_box()["y"] < image_endpoint.bounding_box()["y"], "生图 Key 必须位于高级接口字段之前"
         expect(dialog).to_contain_text("能力声明，不是本轮输出值")
         assignments_before_save = library.evaluate("() => chrome.storage.local.get('aiTaskAssignments').then(value => value.aiTaskAssignments)")
@@ -338,7 +617,7 @@ def main() -> None:
         custom_media = saved_keys["aiProviderRegistry"]["providers"]["custom-media"]
         assert custom_media["apiKey"] == "replacement-analysis-secret"
         assert custom_media["imageGeneration"]["apiKey"] == "replacement-image-secret"
-        assert saved_keys["aiTaskAssignments"] == assignments_before_save
+        assert assignment_routes(saved_keys["aiTaskAssignments"]) == assignment_routes(assignments_before_save)
 
         library.locator('[data-provider-id="openai"]').get_by_role("button", name="编辑配置").click()
         openai_dialog = library.locator("#promptdirector-app-dialog")
@@ -355,18 +634,23 @@ def main() -> None:
         expect(openai_dialog).to_be_hidden()
         openai_saved = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
         assert openai_saved["aiProviderRegistry"]["providers"]["openai"]["models"]["imageGeneration"] == "openai-account-image-model"
-        assert openai_saved["aiTaskAssignments"] == openai_assignments_before_save
+        assert openai_saved["aiProviderRegistry"]["providers"]["openai"]["discovery"]["discoveredAt"]
+        openai_catalog = {
+            model["id"]: model["status"]
+            for model in openai_saved["aiProviderRegistry"]["providers"]["openai"]["discoveredModels"]
+        }
+        assert openai_catalog == {
+            "gpt-text-catalog-only": "available",
+            "openai-account-image-model": "unavailable",
+        }, openai_catalog
+        assert assignment_routes(openai_saved["aiTaskAssignments"]) == assignment_routes(openai_assignments_before_save)
 
         library.locator('[data-ai-routing-tab="tasks"]').click()
         generation_task = library.locator("#ai-assignment-list .ai-assignment-row", has_text="图片生成")
         generation_task.get_by_role("button", name="更换").click()
         generation_dialog = library.locator("#promptdirector-app-dialog")
-        generation_dialog.locator('[data-field-id="providerId"] select').select_option("openai")
-        expect(generation_dialog.locator('[data-field-id="model"] select')).to_have_value("openai-account-image-model")
-        expect(generation_dialog.locator('[data-field-id="model"]')).to_contain_text("手动声明，未验证")
-        generation_dialog.locator(".app-dialog-close").click()
-        expect(generation_dialog).to_be_visible()
-        expect(generation_dialog.locator(".app-dialog-status")).to_contain_text("未保存的更改")
+        expect(generation_dialog.locator('[data-field-id="providerId"] option[value="openai"]')).to_have_count(0)
+        expect(generation_dialog).not_to_contain_text("openai-account-image-model")
         generation_dialog.locator(".app-dialog-close").click()
         expect(generation_dialog).to_be_hidden()
 
@@ -382,7 +666,7 @@ def main() -> None:
         stored = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
         assert stored["aiProviderRegistry"]["providers"]["deepseek"]["apiKey"] == "deepseek-secret"
         assert set(stored["aiTaskAssignments"].keys()) == TASK_IDS
-        assert stored["aiTaskAssignments"] == assignments_before_save
+        assert assignment_routes(stored["aiTaskAssignments"]) == assignment_routes(assignments_before_save)
 
         assignments_before_nano = stored["aiTaskAssignments"]
         library.locator('[data-ai-routing-tab="providers"]').click()
@@ -423,11 +707,11 @@ def main() -> None:
         assert nano_saved["aiTaskAssignments"]["imageGeneration"] == {
             "providerId": "gemini", "model": "gemini-3.1-flash-image"
         }
-        assert {
+        assert assignment_routes({
             task: value for task, value in nano_saved["aiTaskAssignments"].items() if task != "imageGeneration"
-        } == {
+        }) == assignment_routes({
             task: value for task, value in assignments_before_nano.items() if task != "imageGeneration"
-        }
+        })
         public_state = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert "gemini-secret" not in str(public_state)
 

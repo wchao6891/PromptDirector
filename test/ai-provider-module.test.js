@@ -20,7 +20,7 @@ function jsonResponse(payload, status = 200, headers = {}) {
   });
 }
 
-test("DeepSeek discovery treats identity-only models as text protocol capability, never guessed media capability", async () => {
+test("DeepSeek identity-only discovery keeps models task-neutral and never guesses capability from names", async () => {
   const calls = [];
   const module = createAiProviderModule({ fetchImpl: async (url, options) => {
     calls.push({ url, options });
@@ -34,10 +34,37 @@ test("DeepSeek discovery treats identity-only models as text protocol capability
   });
   assert.equal(calls[0].url, "https://api.deepseek.com/models");
   assert.equal(result.models.length, 2);
-  assert.equal(result.models[0].confidence, "protocol_inferred");
-  assert.deepEqual(result.models[0].tasks, ["textTags", "skillExtraction", "creativePlanning"]);
+  assert.equal(result.models[0].confidence, "manual_unverified");
+  assert.deepEqual(result.models[0].tasks, []);
   assert.equal(result.models[1].tasks.includes("videoGeneration"), false);
   assert.equal(result.cache.etag, '"models-v1"');
+});
+
+test("identity discovery automatically classifies standard declared modalities without using model names", async () => {
+  const module = createAiProviderModule({ fetchImpl: async () => jsonResponse({ data: [
+    {
+      id: "opaque-account-model",
+      input_modalities: ["text", "image"],
+      output_modalities: ["text"]
+    },
+    {
+      id: "looks-like-vision-but-declared-text-only",
+      input_modalities: ["text"],
+      output_modalities: ["text"]
+    }
+  ] }) });
+  const result = await module.discoverModels({
+    id: "deepseek",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    apiKey: "secret",
+    protocol: "chat_completions"
+  });
+
+  assert.equal(result.models[0].confidence, "declared");
+  assert.deepEqual(result.models[0].tasks, [
+    "textTags", "skillExtraction", "creativePlanning", "imageAnalysis"
+  ]);
+  assert.equal(result.models[1].tasks.includes("imageAnalysis"), false);
 });
 
 test("Kimi discovery uses its declared catalog fields without inventing generation capabilities", async () => {
@@ -172,6 +199,21 @@ test("discovery failure stays visible and does not erase the last in-memory cata
   await module.discoverModels(profile);
   await assert.rejects(() => module.discoverModels(profile), /catalog temporarily unavailable/);
   assert.equal(module.describeCapabilities("deepseek", "available-model").id, "available-model");
+});
+
+test("a configured model missing from a successful empty catalog is marked unavailable", async () => {
+  const module = createAiProviderModule({ fetchImpl: async () => jsonResponse({ data: [] }) });
+  const result = await module.discoverModels({
+    id: "deepseek",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    apiKey: "secret",
+    protocol: "chat_completions",
+    models: { imageAnalysis: "previously-visible-model" }
+  });
+
+  assert.equal(result.models.length, 1);
+  assert.equal(result.models[0].id, "previously-visible-model");
+  assert.equal(result.models[0].status, "unavailable");
 });
 
 test("xAI discovery combines language, image, and video model endpoints using declared modalities", async () => {
