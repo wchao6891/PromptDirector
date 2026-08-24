@@ -1,7 +1,13 @@
 import { normalizeFacetCatalog, uniqueNames } from "./facets.js";
 import { normalizeSettings } from "./lib.js";
 import { SCHEMA_VERSION, mergeTaxonomies, normalizeTaxonomy } from "./taxonomy.js";
-import { createDefaultOrganizerState, mergeOrganizerState, normalizeOrganizerState } from "./organizer.js";
+import {
+  collectionEntryIds,
+  collectionSubtreeIds,
+  createDefaultOrganizerState,
+  mergeOrganizerState,
+  normalizeOrganizerState
+} from "./organizer.js";
 import { normalizeComposerSessions, normalizeComposerSettings } from "./composer.js";
 import { normalizeCreativeExperimentSettings, normalizeCreativeRuns } from "./creative-runs.js";
 import { mergeCreativeSkillsState, normalizeCreativeSkillsState } from "./creative-skills.js";
@@ -44,6 +50,9 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
   }
   if (value.entries.length > limits.maxEntries) {
     throw new Error(`案例数量超过 ${limits.maxEntries} 条上限`);
+  }
+  if (Array.isArray(value.organizerState?.collections) && value.organizerState.collections.length > limits.maxCollections) {
+    throw new Error(`项目数量超过 ${limits.maxCollections} 个上限`);
   }
   const data = structuredClone(value);
   data.settings = normalizeSettings(data.settings);
@@ -262,17 +271,21 @@ export function selectProjectPackage(state = {}, collectionId) {
   const organizer = normalizeOrganizerState(state.organizerState, (state.entries ?? []).map((entry) => entry.id));
   const collection = organizer.collections.find((item) => item.id === clean(collectionId));
   if (!collection) throw new Error("项目不存在");
-  if (!collection.entryIds.length) throw new Error("这个项目还没有可分享的案例");
+  const subtreeIds = collectionSubtreeIds(organizer, collection.id);
+  if (!collectionEntryIds(organizer, collection.id, { subtree: true }).length) throw new Error("这个项目及其子项目还没有可分享的案例");
   const exportedEntryIds = projectPackageEntryIds(state, collection.id);
   const selected = selectLibraryPackage(state, exportedEntryIds);
+  const selectedEntryIds = new Set(selected.entries.map((entry) => entry.id));
   selected.organizerState = normalizeOrganizerState({
     version: organizer.version,
-    collections: [{
-      id: collection.id,
-      name: collection.name,
-      order: 0,
-      entryIds: exportedEntryIds
-    }]
+    collections: organizer.collections
+      .filter((item) => subtreeIds.includes(item.id))
+      .map((item) => ({
+        ...structuredClone(item),
+        parentId: item.id === collection.id ? null : item.parentId,
+        order: item.id === collection.id ? 0 : item.order,
+        entryIds: item.entryIds.filter((entryId) => selectedEntryIds.has(entryId))
+      }))
   }, selected.entries.map((entry) => entry.id));
   return selected;
 }
@@ -283,7 +296,7 @@ export function projectPackageEntryIds(state = {}, collectionId) {
   const organizer = normalizeOrganizerState(state.organizerState, [...validEntryIds]);
   const collection = organizer.collections.find((item) => item.id === clean(collectionId));
   if (!collection) throw new Error("项目不存在");
-  const selectedIds = [...collection.entryIds];
+  const selectedIds = collectionEntryIds(organizer, collection.id, { subtree: true });
   const selectedSet = new Set(selectedIds);
   for (const compound of normalizeCompoundCases(state.compoundCases, entries)) {
     if (!compound.memberEntryIds.some((entryId) => selectedSet.has(entryId))) continue;

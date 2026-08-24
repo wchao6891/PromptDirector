@@ -1,5 +1,6 @@
 import { selectLibraryPackage, selectProjectPackage } from "./library-package.js";
 import { normalizeEntryMedia } from "./media.js";
+import { createDefaultOrganizerState } from "./organizer.js";
 
 export const CURATED_SUBMISSION_FORMAT = "prompt-director-curated-submission";
 export const CURATED_SUBMISSION_VERSION = 1;
@@ -30,7 +31,7 @@ export function prepareCuratedSubmissionState(stateValue = {}, selection = {}) {
       taxonomy,
       facetCatalog: { version: 2, revision: 1, facets: [], nodes: [] },
       classificationRules: [],
-      organizerState: { version: 4, collections: [], projectMethods: {} },
+      organizerState: createDefaultOrganizerState(),
       compoundCases: []
     }
   };

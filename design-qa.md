@@ -89,7 +89,7 @@ The focused comparison confirms that the batch bar no longer looks like a second
 - Spacing and layout rhythm: entering selection mode preserves the first card at the same vertical coordinate; the automated measurement was `114 px` before and after. Desktop actions stay on one 34 px row. The 390 px toolbar floats at the bottom without changing document width.
 - Colors and visual tokens: existing dark/light surfaces, restrained borders, lime primary action, danger action, and focus ring are reused. No new palette or gradient was introduced.
 - Image and icon fidelity: existing local UI sprite icons are reused. Selection circles were normalized to 24 px with one restrained edge and the existing lime checked state; no replacement image assets were required.
-- Copy and content: zero-selection copy is reduced to `已选 0`, `全选当前（数量）`, and `取消`. Selected-only actions are grouped under `加标签`, `加入项目`, `分享`, and `更多` while all prior capabilities remain available.
+- Copy and content: zero-selection copy is reduced to `已选 0`, `全选当前（数量）`, and `取消`. Selected-only actions are grouped under `加标签`, `项目（加入 / 移出）`, `分享`, and `更多` while all prior capabilities remain available.
 
 ### Findings
 

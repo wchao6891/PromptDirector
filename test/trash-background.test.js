@@ -27,6 +27,7 @@ test("all user-facing case, media, and project deletion routes move metadata to 
   assert.doesNotMatch(mediaDeletion, /deleteMediaBlob|deleteScreenshotBlob/);
   const projectDeletion = functionBlock("deleteCollectionWithEntries", "moveEntryBatchToTrash");
   assert.match(projectDeletion, /moveCollectionWithEntriesToTrash/);
+  assert.match(projectDeletion, /collectionEntryIds\(organizerState, collection\.id, \{ subtree: true \}\)/);
   assert.doesNotMatch(projectDeletion, /deleteMediaBlob|deleteScreenshotBlob/);
 });
 
@@ -41,14 +42,15 @@ test("trash restore and irreversible cleanup have separate explicit message cont
   assert.match(cleanup, /永久删除/);
 });
 
-test("free-label and project batch actions are wired with additive and move modes", () => {
+test("free-label and project batch actions are wired with add, remove, and move modes", () => {
   for (const type of ["UPDATE_ENTRY_CUSTOM_LABELS", "BATCH_ADD_CUSTOM_LABELS", "BATCH_SET_PROJECT"]) {
     assert.match(background, new RegExp(`case "${type}"`));
   }
   const labels = functionBlock("updateEntryCustomLabels", "batchAddCustomLabels");
   assert.match(labels, /customLabels/);
   const projects = functionBlock("batchSetProject", "updateOrganizer");
-  assert.match(projects, /message\.mode === "move"/);
+  assert.match(projects, /\["remove", "move"\]\.includes\(message\.mode\)/);
+  assert.match(projects, /mode !== "remove"/);
   assert.match(projects, /removeEntriesFromOrganizer/);
   assert.match(projects, /setEntriesCollection/);
 });

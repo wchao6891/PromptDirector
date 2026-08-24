@@ -68,6 +68,33 @@ test("canonical video media references survive sync snapshots without reverting 
   });
 });
 
+test("legacy flat sync snapshots migrate projects to roots", async () => {
+  const legacyState = state([], [{ id: "collection:legacy", name: "Legacy", order: 0, entryIds: [] }]);
+  const snapshot = await createRevisionSnapshot(legacyState, { deviceId: "legacy-device", logicalClock: 4 });
+  snapshot.version = 1;
+  delete snapshot.records["collection:collection%3Alegacy"].payload.parentId;
+
+  const merged = mergeRevisionSnapshots([snapshot]);
+  assert.equal(merged.state.organizerState.collections[0].parentId, null);
+});
+
+test("a later legacy flat snapshot cannot flatten a tree-aware project record", async () => {
+  const treeState = state([], [
+    { id: "collection:root", name: "Root", parentId: null, order: 0, entryIds: [] },
+    { id: "collection:child", name: "Child", parentId: "collection:root", order: 0, entryIds: [] }
+  ]);
+  const legacyState = state([], [
+    { id: "collection:child", name: "Child", order: 0, entryIds: [] }
+  ]);
+  const tree = await createRevisionSnapshot(treeState, { deviceId: "tree-device", logicalClock: 5 });
+  const legacy = await createRevisionSnapshot(legacyState, { deviceId: "legacy-device", logicalClock: 99 });
+  legacy.version = 1;
+  delete legacy.records["collection:collection%3Achild"].payload.parentId;
+
+  const merged = mergeRevisionSnapshots([tree, legacy]);
+  assert.equal(merged.state.organizerState.collections.find((item) => item.id === "collection:child").parentId, "collection:root");
+});
+
 test("external Skill package files keep encrypted object references through sync", async () => {
   const objectId = "c".repeat(64);
   const source = state();
@@ -144,7 +171,7 @@ test("trashed entries sync as trash records without becoming active entries", as
   const snapshot = await createRevisionSnapshot(source, { deviceId: "device-a", logicalClock: 1 });
   const merged = mergeRevisionSnapshots([snapshot]);
 
-  assert.equal(snapshot.version, 1);
+  assert.equal(snapshot.version, 2);
   assert.equal(merged.state.entries.length, 0);
   assert.equal(merged.state.trashState.items.length, 1);
   assert.equal(merged.state.trashState.items[0].snapshot.id, "case:one");

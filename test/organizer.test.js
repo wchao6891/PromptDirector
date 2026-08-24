@@ -13,6 +13,12 @@ import {
   replaceCollectionEntries,
   renameCollection,
   isEntryVisibleInLibrary,
+  collectionEntryIds,
+  collectionPathLabel,
+  collectionSelectorLabel,
+  collectionSubtreeEntryIdsById,
+  collectionSubtreeIds,
+  moveCollection,
   setCollectionVisibility,
   setEntriesCollection
 } from "../organizer.js";
@@ -29,7 +35,7 @@ test("organizer drops obsolete saved searches and only keeps explicit projects",
     savedViews: [{ id: "view:old", name: "视频参考", query: "type:video" }],
     collections: [{ id: "collection:a", name: "项目 A", entryIds: [] }]
   });
-  assert.equal(normalized.version, 6);
+  assert.equal(normalized.version, 7);
   assert.deepEqual(Object.keys(normalized), ["version", "collections"]);
 });
 
@@ -91,6 +97,7 @@ test("project and entries deletion is planned atomically and removes shared proj
   assert.deepEqual(result.organizerState.collections, [{
     id: "collection:keep",
     name: "保留项目",
+    parentId: null,
     order: 0,
     entryIds: ["three"],
     visibility: COLLECTION_VISIBILITY.library
@@ -171,4 +178,77 @@ test("organizer upgrade permanently discards legacy project methods", () => {
     }]
   }, ["one"]);
   assert.equal(Object.hasOwn(normalized.collections[0], "projectMethods"), false);
+});
+
+test("legacy flat projects migrate to roots without changing membership or order", () => {
+  const normalized = normalizeOrganizerState({
+    version: 6,
+    collections: [
+      { id: "collection:a", name: "A", order: 1, entryIds: ["one"] },
+      { id: "collection:b", name: "B", order: 0, entryIds: ["one", "two"] }
+    ]
+  });
+  assert.deepEqual(normalized.collections.map(({ id, parentId, order, entryIds }) => ({ id, parentId, order, entryIds })), [
+    { id: "collection:b", parentId: null, order: 0, entryIds: ["one", "two"] },
+    { id: "collection:a", parentId: null, order: 1, entryIds: ["one"] }
+  ]);
+});
+
+test("projects move across parents and reject cycles", () => {
+  const state = normalizeOrganizerState({ collections: [
+    { id: "root", name: "根", order: 0, entryIds: ["one"] },
+    { id: "peer", name: "同级", order: 1, entryIds: [] },
+    { id: "child", name: "子项目", parentId: "root", order: 0, entryIds: ["two"] }
+  ] });
+  const moved = moveCollection(state, "peer", "root", 0);
+  assert.deepEqual(moved.collections.map(({ id, parentId, order }) => ({ id, parentId, order })), [
+    { id: "root", parentId: null, order: 0 },
+    { id: "peer", parentId: "root", order: 0 },
+    { id: "child", parentId: "root", order: 1 }
+  ]);
+  assert.throws(() => moveCollection(moved, "root", "child", 0), /自身或其子项目/);
+});
+
+test("tree helpers preserve paths and deduplicate subtree cases", () => {
+  const state = { collections: [
+    { id: "root", name: "根", entryIds: ["one"] },
+    { id: "child", name: "素材", parentId: "root", entryIds: ["one", "two"] }
+  ] };
+  assert.deepEqual(collectionSubtreeIds(state, "root"), ["root", "child"]);
+  assert.deepEqual(collectionEntryIds(state, "root", { subtree: true }), ["one", "two"]);
+  assert.equal(collectionPathLabel(state, "child"), "根 / 素材");
+  assert.deepEqual(collectionSubtreeEntryIdsById(state).get("root"), ["one", "two"]);
+});
+
+test("project selector labels distinguish literal separators from nested paths", () => {
+  const state = { collections: [
+    { id: "literal", name: "A › B", entryIds: [] },
+    { id: "root", name: "A", entryIds: [] },
+    { id: "child", name: "B", parentId: "root", entryIds: [] }
+  ] };
+  assert.equal(collectionSelectorLabel(state, "literal"), "A ›› B");
+  assert.equal(collectionSelectorLabel(state, "child"), "A › B");
+});
+
+test("deep project trees normalize and traverse without recursive stack overflow", () => {
+  const collections = Array.from({ length: 6000 }, (_, index) => ({
+    id: `project:${index}`,
+    name: `P${index}`,
+    parentId: index ? `project:${index - 1}` : null,
+    entryIds: index === 5999 ? ["case:deep"] : []
+  }));
+  const state = normalizeOrganizerState({ collections });
+  assert.equal(state.collections.length, 6000);
+  assert.equal(collectionSubtreeIds(state, "project:0").length, 6000);
+  assert.deepEqual(collectionEntryIds(state, "project:0", { subtree: true }), ["case:deep"]);
+});
+
+test("project names are unique only among siblings", () => {
+  let state = createCollection({}, "根 A").state;
+  state = createCollection(state, "根 B").state;
+  const [rootA, rootB] = state.collections;
+  state = createCollection(state, "素材", rootA.id).state;
+  state = createCollection(state, "素材", rootB.id).state;
+  assert.equal(state.collections.filter((item) => item.name === "素材").length, 2);
+  assert.throws(() => createCollection(state, "素材", rootA.id), /已经存在/);
 });

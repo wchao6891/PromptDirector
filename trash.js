@@ -1,4 +1,9 @@
-import { normalizeOrganizerState, removeEntriesFromOrganizer } from "./organizer.js";
+import {
+  collectionEntryIds,
+  collectionSubtreeIds,
+  normalizeOrganizerState,
+  removeEntriesFromOrganizer
+} from "./organizer.js";
 import { normalizeEntryMedia, removeEntryMedia } from "./media.js";
 import { normalizeCompoundCases, removeEntriesFromCompoundCases } from "./compound-cases.js";
 
@@ -80,20 +85,22 @@ export function moveCollectionWithEntriesToTrash(contextValue = {}, collectionId
   const collection = organizerState.collections.find((item) => item.id === collectionId);
   if (!collection) throw new Error("项目不存在");
 
-  const entriesMoved = moveEntriesToTrash({ ...contextValue, organizerState }, collection.entryIds, options);
+  const subtreeCollectionIds = collectionSubtreeIds(organizerState, collection.id);
+  const subtreeEntryIds = collectionEntryIds(organizerState, collection.id, { subtree: true });
+  const entriesMoved = moveEntriesToTrash({ ...contextValue, organizerState }, subtreeEntryIds, options);
   const collectionMoved = moveCollectionsToTrash({
     ...contextValue,
     trashState: entriesMoved.trashState,
     organizerState
-  }, [collection.id], options);
+  }, subtreeCollectionIds, options);
   return {
     ...contextValue,
     trashState: collectionMoved.trashState,
     entries: entriesMoved.entries,
-    organizerState: removeEntriesFromOrganizer(collectionMoved.organizerState, collection.entryIds),
+    organizerState: removeEntriesFromOrganizer(collectionMoved.organizerState, subtreeEntryIds),
     ...(Array.isArray(contextValue.compoundCases) ? { compoundCases: entriesMoved.compoundCases } : {}),
     movedItemIds: [...entriesMoved.movedItemIds, ...collectionMoved.movedItemIds],
-    movedEntryIds: collection.entryIds.filter((id) => entries.some((entry) => clean(entry?.id) === id)),
+    movedEntryIds: subtreeEntryIds.filter((id) => entries.some((entry) => clean(entry?.id) === id)),
     collection: structuredClone(collection)
   };
 }
@@ -102,7 +109,8 @@ export function moveCollectionsToTrash(contextValue = {}, collectionIds = [], op
   const deletedAt = operationTime(options.deletedAt);
   const organizerState = normalizeOrganizerState(contextValue.organizerState);
   const trashState = normalizeTrashState(contextValue.trashState);
-  const requested = new Set(uniqueIds(collectionIds));
+  const requestedRoots = uniqueIds(collectionIds);
+  const requested = new Set(requestedRoots.flatMap((id) => collectionSubtreeIds(organizerState, id)));
   const existingTrashIds = new Set(trashState.items.map((item) => item.id));
   const moved = organizerState.collections.flatMap((collection) => {
     const trashId = trashItemId("collection", collection.id);
@@ -194,6 +202,7 @@ export function restoreTrashItems(contextValue = {}, itemIds = [], options = {})
   let organizerState = structuredClone(normalizeOrganizerState(contextValue.organizerState));
   const restored = new Set();
   const unresolved = [];
+  const warnings = [];
   const kindOrder = { collection: 0, entry: 1, media: 2 };
   const candidates = trashState.items
     .filter((item) => requested.has(item.id))
@@ -203,12 +212,19 @@ export function restoreTrashItems(contextValue = {}, itemIds = [], options = {})
     ...candidates.filter((item) => item.kind === "entry").map((item) => item.targetId)
   ]);
 
-  for (const item of candidates) {
+  const collectionRestore = restoreCollectionItems(
+    candidates.filter((item) => item.kind === "collection"),
+    organizerState,
+    restorableEntryIds
+  );
+  organizerState = collectionRestore.organizerState;
+  collectionRestore.restoredItemIds.forEach((id) => restored.add(id));
+  unresolved.push(...collectionRestore.unresolved);
+  warnings.push(...collectionRestore.warnings);
+
+  for (const item of candidates.filter((candidate) => candidate.kind !== "collection")) {
     let result;
-    if (item.kind === "collection") {
-      result = restoreCollectionItem(item, organizerState, restorableEntryIds);
-      if (result.ok) organizerState = result.organizerState;
-    } else if (item.kind === "entry") {
+    if (item.kind === "entry") {
       result = restoreEntryItem(item, entries, organizerState, options.collectionReplacements);
       if (result.ok) organizerState = result.organizerState;
     } else {
@@ -231,7 +247,8 @@ export function restoreTrashItems(contextValue = {}, itemIds = [], options = {})
     organizerState,
     ...(Array.isArray(contextValue.compoundCases) ? { compoundCases } : {}),
     restoredItemIds: trashState.items.filter((item) => restored.has(item.id)).map((item) => item.id),
-    unresolved
+    unresolved,
+    warnings
   };
 }
 
@@ -272,27 +289,51 @@ export function emptyTrash(stateValue = {}, options = {}) {
   return takeTrashItems(state, state.items.map((item) => item.id), options);
 }
 
-function restoreCollectionItem(item, organizerState, restorableEntryIds) {
-  const normalized = normalizeOrganizerState({ collections: [item.snapshot] }).collections[0];
-  if (!normalized || normalized.id !== item.targetId) {
-    return unresolvedIssue("项目快照无效");
+function restoreCollectionItems(items, organizerState, restorableEntryIds) {
+  const unresolved = [];
+  const warnings = [];
+  const accepted = [];
+  const existingById = new Map(organizerState.collections.map((collection) => [collection.id, collection]));
+  for (const item of items) {
+    const snapshot = serializableObject(item.snapshot);
+    if (clean(snapshot.id) !== item.targetId || !clean(snapshot.name)) {
+      unresolved.push({ itemId: item.id, kind: item.kind, targetId: item.targetId, reason: "项目快照无效" });
+      continue;
+    }
+    const existing = existingById.get(item.targetId);
+    if (existing) {
+      const normalizedSnapshot = normalizeOrganizerState({
+        ...organizerState,
+        collections: [...organizerState.collections.filter((collection) => collection.id !== item.targetId), snapshot]
+      }).collections.find((collection) => collection.id === item.targetId);
+      if (jsonEqual(existing, normalizedSnapshot)) accepted.push({ item, snapshot: null });
+      else unresolved.push({ itemId: item.id, kind: item.kind, targetId: item.targetId, reason: "当前资料库存在同编号但内容不同的项目" });
+      continue;
+    }
+    const missingEntryIds = uniqueIds(snapshot.entryIds).filter((entryId) => !restorableEntryIds.has(entryId));
+    if (missingEntryIds.length) {
+      unresolved.push({ itemId: item.id, kind: item.kind, targetId: item.targetId, reason: "项目成员案例不存在", missingEntryIds });
+      continue;
+    }
+    accepted.push({ item, snapshot });
   }
-  const existing = organizerState.collections.find((collection) => collection.id === item.targetId);
-  if (existing) {
-    return jsonEqual(existing, normalized)
-      ? { ok: true, organizerState }
-      : unresolvedIssue("当前资料库存在同编号但内容不同的项目");
-  }
-  const missingEntryIds = normalized.entryIds.filter((entryId) => !restorableEntryIds.has(entryId));
-  if (missingEntryIds.length) {
-    return unresolvedIssue("项目成员案例不存在", { missingEntryIds });
+  const availableIds = new Set([...existingById.keys(), ...accepted.map(({ item }) => item.targetId)]);
+  for (const acceptedItem of accepted) {
+    if (!acceptedItem.snapshot) continue;
+    const originalParentId = clean(acceptedItem.snapshot.parentId);
+    if (originalParentId && !availableIds.has(originalParentId)) {
+      acceptedItem.snapshot.parentId = null;
+      warnings.push({ itemId: acceptedItem.item.id, reason: "原父项目不存在，已恢复到根级", missingParentId: originalParentId });
+    }
   }
   return {
-    ok: true,
     organizerState: normalizeOrganizerState({
       ...organizerState,
-      collections: [...organizerState.collections, normalized]
-    })
+      collections: [...organizerState.collections, ...accepted.map(({ snapshot }) => snapshot).filter(Boolean)]
+    }),
+    restoredItemIds: accepted.map(({ item }) => item.id),
+    unresolved,
+    warnings
   };
 }
 

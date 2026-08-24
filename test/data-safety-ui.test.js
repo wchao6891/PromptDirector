@@ -86,7 +86,7 @@ test("share-package import preserves local configuration and accepts historical 
   assert.match(action, /APPLY_LIBRARY_IMPORT/);
   assert.equal((action.match(/preserveLibraryConfiguration:\s*true/g) ?? []).length, 2);
   assert.match(parser, /isSupportedLibraryPackageVersion\(value\.version\)/);
-  assert.match(format, /SUPPORTED_LIBRARY_PACKAGE_VERSIONS\s*=\s*Object\.freeze\(\[1, 2, 3, 4\]\)/);
+  assert.match(format, /SUPPORTED_LIBRARY_PACKAGE_VERSIONS\s*=\s*Object\.freeze\(\[1, 2, 3, 4, 5\]\)/);
 });
 
 test("data safety cannot be dismissed accidentally while a storage operation is running", async () => {

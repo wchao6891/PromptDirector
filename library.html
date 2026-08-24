@@ -51,8 +51,9 @@
           <button id="open-skills" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-wand-sparkles"></use></svg><span data-i18n="创作 Skill">创作 Skill</span></button>
         </nav>
         <section id="project-section" class="project-section">
-          <div class="filter-heading"><strong data-i18n="项目">项目</strong><span><button id="create-collection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-plus"></use></svg><span data-i18n="新建">新建</span></button><button id="manage-project-order" class="icon-button" type="button" aria-label="管理项目顺序" title="管理项目顺序" data-i18n-aria-label="管理项目顺序" data-i18n-title="管理项目顺序"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg></button></span></div>
-          <div id="collection-filters" class="project-list" role="list"></div>
+          <div class="filter-heading"><strong data-i18n="项目">项目</strong><span><button id="create-collection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-plus"></use></svg><span data-i18n="新建">新建</span></button><button id="manage-project-order" class="icon-button" type="button" aria-label="管理项目结构" title="管理项目结构" data-i18n-aria-label="管理项目结构" data-i18n-title="管理项目结构"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg></button></span></div>
+          <div id="project-root-drop" class="project-root-drop" hidden data-i18n="移到根级">移到根级</div>
+          <div id="collection-filters" class="project-list" role="tree" aria-label="项目树" data-i18n-aria-label="项目树"></div>
           <p id="project-order-status" class="sr-only" role="status" aria-live="polite"></p>
         </section>
         <section class="sidebar-trash-section">
@@ -92,11 +93,15 @@
                   </div>
                 </details>
                 <details id="selection-project-menu" class="selection-menu">
-                  <summary aria-label="加入项目" data-i18n-aria-label="加入项目"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-folder"></use></svg><span class="selection-action-label" data-i18n="加入项目">加入项目</span></summary>
+                  <summary aria-label="项目" data-i18n-aria-label="项目"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-folder"></use></svg><span class="selection-action-label" data-i18n="项目">项目</span></summary>
                   <div class="project-menu-panel selection-menu-panel selection-project-panel">
-                    <label><span data-i18n="选择目标项目">选择目标项目</span><select id="selection-project-target" aria-label="选择目标项目" data-i18n-aria-label="选择目标项目"><option value="" data-i18n="加入项目…">加入项目…</option></select></label>
-                    <button id="selection-add-project" class="project-menu-primary" type="button" disabled data-i18n="加入">加入</button>
-                    <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目">新建项目</button>
+                    <label><span data-i18n="选择目标项目">选择目标项目</span><select id="selection-project-target" aria-label="选择目标项目" data-i18n-aria-label="选择目标项目"><option value="" data-i18n="选择项目…">选择项目…</option></select></label>
+                    <div class="selection-project-actions">
+                      <button id="selection-add-project" class="project-menu-primary" type="button" disabled data-i18n="加入项目">加入项目</button>
+                      <button id="selection-remove-project" class="button-secondary" type="button" disabled data-i18n="移出项目">移出项目</button>
+                    </div>
+                    <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目并加入">新建项目并加入</button>
+                    <small data-i18n="新建时，所选项目作为父项目；不选则创建在根级。">新建时，所选项目作为父项目；不选则创建在根级。</small>
                   </div>
                 </details>
                 <button id="share-export" type="button" disabled data-i18n="分享">分享</button>
@@ -123,6 +128,7 @@
           </div>
         </div>
         <p id="feedback" class="ui-feedback-toast" role="status" aria-live="polite"></p>
+        <section id="project-folder-list" class="project-folder-list" aria-label="子项目" data-i18n-aria-label="子项目"></section>
         <section id="case-list" class="masonry" aria-live="polite"></section>
         <div id="load-sentinel" class="load-sentinel" aria-hidden="true"></div>
         <button id="load-more" class="button-secondary load-more" type="button" hidden></button>

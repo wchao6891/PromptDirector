@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 28;
 
 export const CONTENT_TYPE_VISIBILITY = Object.freeze({
   library: "library",

@@ -65,7 +65,7 @@ test("free-tag batch payload expands compounds and normalizes optional labels", 
   assert.deepEqual(withoutLabels.customLabels, []);
 });
 
-test("project batch payload requires explicit add or move semantics", () => {
+test("project batch payload requires explicit add, remove, or move semantics", () => {
   const added = buildLibraryBatchPayload(["entry:a"], [], {
     type: LIBRARY_BATCH_ACTIONS.setProject,
     collectionId: " collection:campaign ",
@@ -76,6 +76,11 @@ test("project batch payload requires explicit add or move semantics", () => {
     collectionId: "collection:archive",
     mode: "move"
   });
+  const removed = buildLibraryBatchPayload(["entry:a"], [], {
+    type: LIBRARY_BATCH_ACTIONS.setProject,
+    collectionId: "collection:campaign",
+    mode: "remove"
+  });
 
   assert.deepEqual(added, {
     type: "BATCH_SET_PROJECT",
@@ -84,12 +89,13 @@ test("project batch payload requires explicit add or move semantics", () => {
     mode: "add"
   });
   assert.equal(moved.mode, "move");
+  assert.equal(removed.mode, "remove");
   assert.throws(
     () => buildLibraryBatchPayload(["entry:a"], [], {
       type: LIBRARY_BATCH_ACTIONS.setProject,
       collectionId: "collection:campaign"
     }),
-    /明确选择添加或移动/
+    /明确选择加入、移出或移动/
   );
 });
 

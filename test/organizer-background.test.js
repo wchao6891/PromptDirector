@@ -12,10 +12,11 @@ function functionBlock(name, nextName) {
   return background.slice(start, end);
 }
 
-test("background exposes explicit project reorder without rebuilding member lists", () => {
-  assert.match(background, /case "REORDER_COLLECTIONS":\s*case "REPLACE_COLLECTION_ENTRIES"/);
+test("background exposes tree moves without rebuilding member lists", () => {
+  assert.match(background, /case "REORDER_COLLECTIONS":\s*case "MOVE_COLLECTION":\s*case "REPLACE_COLLECTION_ENTRIES"/);
   const update = functionBlock("updateOrganizer", "decideAnalysisCandidate");
   assert.match(update, /reorderCollections\(organizerState, message\.collectionIds\)/);
+  assert.match(update, /moveCollection\(organizerState, message\.collectionId, message\.parentId, message\.index\)/);
   assert.match(update, /replaceCollectionEntries\(organizerState, message\.collectionId, entryIds\)/);
   assert.match(update, /changedProjectEntryIds\(beforeOrganizer, organizerState\)/);
 });

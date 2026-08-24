@@ -249,15 +249,55 @@ test("moving a project to trash leaves its member cases active", () => {
     kind: "collection",
     targetId: "collection:a",
     deletedAt: "2026-08-22T02:00:00.000Z",
-    snapshot: {
-      id: "collection:a",
-      name: "项目 A",
-      order: 0,
+      snapshot: {
+        id: "collection:a",
+        name: "项目 A",
+        parentId: null,
+        order: 0,
       entryIds: ["one", "two"],
       visibility: "library"
     },
     relationships: {}
   });
+});
+
+test("moving and restoring a project subtree preserves parents and sibling order atomically", () => {
+  const context = {
+    trashState: {},
+    entries: [{ id: "root-case" }, { id: "child-case" }],
+    organizerState: {
+      version: 7,
+      collections: [
+        { id: "collection:root", name: "Root", parentId: null, order: 0, entryIds: ["root-case"] },
+        { id: "collection:first", name: "First", parentId: "collection:root", order: 0, entryIds: ["child-case"] },
+        { id: "collection:second", name: "Second", parentId: "collection:root", order: 1, entryIds: [] }
+      ]
+    }
+  };
+  const moved = moveCollectionsToTrash(context, ["collection:root"], { deletedAt: "2026-08-24T00:00:00Z" });
+  assert.deepEqual(moved.organizerState.collections, []);
+  assert.deepEqual(moved.trashState.items.map((item) => item.targetId), ["collection:root", "collection:first", "collection:second"]);
+
+  const restored = restoreTrashItems(moved, moved.movedItemIds);
+  assert.deepEqual(restored.organizerState.collections.map((item) => ({ id: item.id, parentId: item.parentId, order: item.order })), [
+    { id: "collection:root", parentId: null, order: 0 },
+    { id: "collection:first", parentId: "collection:root", order: 0 },
+    { id: "collection:second", parentId: "collection:root", order: 1 }
+  ]);
+  assert.deepEqual(restored.warnings, []);
+});
+
+test("restoring a child without its missing parent moves it to root and reports the fallback", () => {
+  const moved = moveCollectionsToTrash({
+    trashState: {},
+    organizerState: { collections: [
+      { id: "collection:root", name: "Root", parentId: null, order: 0, entryIds: [] },
+      { id: "collection:child", name: "Child", parentId: "collection:root", order: 0, entryIds: [] }
+    ] }
+  }, ["collection:root"], { deletedAt: "2026-08-24T00:00:00Z" });
+  const restored = restoreTrashItems(moved, ["trash:collection:collection:child"]);
+  assert.equal(restored.organizerState.collections[0].parentId, null);
+  assert.match(restored.warnings[0].reason, /恢复到根级/);
 });
 
 test("moving a case to trash keeps its labels and exact project memberships without ghost references", () => {

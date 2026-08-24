@@ -37,3 +37,18 @@ test("background keeps service profiles for job execution but stops publishing o
   assert.match(source, /aiServiceProfiles: publicAiServiceProfiles/);
   assert.doesNotMatch(source, /aiTaskRoutes:/);
 });
+
+test("persisted batch recovery wakes the runner while runner exceptions wait for the alarm", () => {
+  const recovery = source.slice(
+    source.indexOf("async function recoverDeepSeekBatch"),
+    source.indexOf("async function undoDeepSeekBatch")
+  );
+  assert.match(recovery, /ensureAnalysisBatchAlarm\(true\)/);
+  assert.match(recovery, /scheduleAnalysisBatchRunner\(\)/);
+
+  const runner = source.slice(
+    source.indexOf("async function runPersistedAnalysisBatch"),
+    source.indexOf("async function runPersistedTextBatchSlice")
+  );
+  assert.match(runner, /catch \(error\)[\s\S]*ensureAnalysisBatchAlarm\(stillRunning\)[\s\S]*continueRunning = false/);
+});

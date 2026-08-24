@@ -1,10 +1,13 @@
 export function projectComboboxOptions(projectsValue, queryValue = "") {
   const query = normalize(queryValue).toLocaleLowerCase();
   return (Array.isArray(projectsValue) ? projectsValue : [])
-    .map((project) => ({
-      value: normalize(project?.name ?? project?.value),
-      label: normalize(project?.name ?? project?.label ?? project?.value)
-    }))
+    .map((project) => {
+      const label = normalize(project?.pathLabel ?? project?.name ?? project?.label ?? project?.value);
+      return {
+        value: normalize(project?.id ?? project?.value ?? label),
+        label
+      };
+    })
     .filter((project) => project.value && project.label)
     .filter((project, index, projects) => projects.findIndex((item) => item.value.toLocaleLowerCase() === project.value.toLocaleLowerCase()) === index)
     .filter((project) => !query || project.label.toLocaleLowerCase().includes(query));
@@ -107,7 +110,7 @@ export function attachProjectCombobox(input, options = {}) {
       option.dataset.value = project.value;
       option.textContent = project.label;
       option.addEventListener("pointerdown", (event) => event.preventDefault(), eventOptions);
-      option.addEventListener("click", () => select(project.value), eventOptions);
+      option.addEventListener("click", () => select(project), eventOptions);
       return option;
     }));
     const visible = open && matches.length > 0;
@@ -129,8 +132,10 @@ export function attachProjectCombobox(input, options = {}) {
     activeIndex = -1;
   }
 
-  function select(value) {
-    input.value = value;
+  function select(project) {
+    if (!project) return;
+    input.value = project.label;
+    input.dataset.projectId = project.value;
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
     close();
@@ -150,6 +155,8 @@ export function attachProjectCombobox(input, options = {}) {
   input.addEventListener("focus", () => render(true), eventOptions);
   input.addEventListener("click", () => render(true), eventOptions);
   input.addEventListener("input", () => {
+    const selected = projectComboboxOptions(projects).find((project) => project.value === input.dataset.projectId);
+    if (!selected || normalize(input.value) !== selected.label) delete input.dataset.projectId;
     activeIndex = -1;
     render(true);
   }, eventOptions);
@@ -161,7 +168,7 @@ export function attachProjectCombobox(input, options = {}) {
     }
     if (event.key === "Enter" && !listbox.hidden && activeIndex >= 0) {
       event.preventDefault();
-      select(matching()[activeIndex]?.value || input.value);
+      select(matching()[activeIndex]);
       return;
     }
     if (event.key === "Escape" && !listbox.hidden) {
@@ -183,7 +190,20 @@ export function attachProjectCombobox(input, options = {}) {
     element: listbox,
     setProjects(nextProjects) {
       projects = Array.isArray(nextProjects) ? nextProjects : [];
+      if (!projectComboboxOptions(projects).some((project) => project.value === input.dataset.projectId)) {
+        delete input.dataset.projectId;
+      }
       if (!listbox.hidden) render(true);
+    },
+    setSelected(projectId) {
+      const selected = projectComboboxOptions(projects).find((project) => project.value === normalize(projectId));
+      if (!selected) {
+        delete input.dataset.projectId;
+        return false;
+      }
+      input.value = selected.label;
+      input.dataset.projectId = selected.value;
+      return true;
     },
     close,
     destroy() {
@@ -194,6 +214,7 @@ export function attachProjectCombobox(input, options = {}) {
       input.removeAttribute("aria-expanded");
       input.removeAttribute("aria-controls");
       input.removeAttribute("aria-activedescendant");
+      delete input.dataset.projectId;
     }
   };
 }

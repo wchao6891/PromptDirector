@@ -1,7 +1,7 @@
 import { CLASSIFIER_VERSION, classifyContent, classifyImportedMedia } from "./classifier.js";
 import { createDefaultFacetCatalog, normalizeFacetCatalog, uniqueNames } from "./facets.js";
 import { CONTENT_IDS, SCHEMA_VERSION, isValidContentPath, normalizeTaxonomy } from "./taxonomy.js";
-import { normalizeOrganizerState } from "./organizer.js";
+import { ORGANIZER_VERSION, normalizeOrganizerState } from "./organizer.js";
 import { sortAnalysisBreakdown } from "./analysis-candidates.js";
 import { normalizeEntryVisuals } from "./visuals.js";
 import { normalizeCompoundCases } from "./compound-cases.js";
@@ -58,7 +58,7 @@ export function migrateLibraryState(stored = {}) {
 
 export function needsMigration(stored = {}) {
   return stored.schemaVersion !== SCHEMA_VERSION || !stored.taxonomy || !stored.facetCatalog ||
-    !stored.organizerState || !stored.trashState || !Array.isArray(stored.compoundCases) ||
+    !stored.organizerState || stored.organizerState.version !== ORGANIZER_VERSION || !stored.trashState || !Array.isArray(stored.compoundCases) ||
     !isFixedTagTree(stored.facetCatalog) ||
     (stored.entries ?? []).some((entry) => entry.schemaVersion !== SCHEMA_VERSION);
 }

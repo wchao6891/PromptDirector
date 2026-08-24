@@ -185,6 +185,23 @@ test("each curated package version uses deterministic local ids so updates never
   assert.equal(first.entries[0].primaryVisualId, first.entries[0].visuals[0].id);
 });
 
+test("curated package namespacing remaps project parents together with project ids", () => {
+  const prepared = prepareCuratedPackageVersion({
+    entries: [{ id: "original", mediaAssets: [] }],
+    organizerState: {
+      collections: [
+        { id: "root", name: "根项目", parentId: null, order: 0, entryIds: [] },
+        { id: "child", name: "子项目", parentId: "root", order: 0, entryIds: ["original"] }
+      ]
+    }
+  }, catalogItem());
+  const [root, child] = prepared.organizerState.collections;
+
+  assert.equal(root.parentId, null);
+  assert.equal(child.parentId, root.id);
+  assert.equal(child.entryIds[0], prepared.entries[0].id);
+});
+
 test("legacy version-scoped curated ids resolve to the same stable source identity", () => {
   const legacy = {
     id: "curated:cinematic-foundations:1.0.0:entry:original",
@@ -251,6 +268,27 @@ test("theme saves select a deterministic batch while preserving its collection",
 
   assert.deepEqual(selected.entries.map((entry) => entry.title), ["案例一", "案例二"]);
   assert.deepEqual(selected.organizerState.collections[0].entryIds, selected.entries.map((entry) => entry.id));
+});
+
+test("theme saves retain empty project ancestors needed by selected child cases", () => {
+  const prepared = prepareCuratedPackageVersion({
+    entries: [
+      { id: "one", title: "案例一", mediaAssets: [], primaryMediaId: "" },
+      { id: "two", title: "案例二", mediaAssets: [], primaryMediaId: "" }
+    ],
+    organizerState: {
+      collections: [
+        { id: "root", name: "主题", parentId: null, order: 0, entryIds: [] },
+        { id: "child", name: "子主题", parentId: "root", order: 0, entryIds: ["one", "two"] }
+      ]
+    }
+  }, catalogItem());
+  const selected = prepareCuratedEntriesPackage(prepared, [prepared.entries[0].id]);
+  const [root, child] = selected.organizerState.collections;
+
+  assert.equal(root.entryIds.length, 0);
+  assert.equal(child.parentId, root.id);
+  assert.deepEqual(child.entryIds, [selected.entries[0].id]);
 });
 
 test("a curated package must match the reviewed catalog counts", () => {

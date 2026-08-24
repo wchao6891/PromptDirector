@@ -139,7 +139,7 @@ test("the library includes a local quick-note entry that does not invoke AI", ()
   const quickNote = source.slice(source.indexOf("async function createQuickNote"), source.indexOf("async function prepareLocalMedia"));
   assert.match(quickNote, /CREATE_QUICK_NOTE/);
   assert.match(quickNote, /caseCreationOrganizationFields\(\)/);
-  assert.match(quickNote, /caseCreationOrganization\(projectName, customLabels\)/);
+  assert.match(quickNote, /caseCreationOrganization\(projectName, customLabels, projectInput\?\.dataset\.projectId\)/);
   assert.doesNotMatch(quickNote, /ANALY|DeepSeek|OpenAI/);
 });
 
@@ -147,9 +147,9 @@ test("new video references and quick notes accept an existing or new project plu
   const video = source.slice(source.indexOf("async function addVideoReference"), source.indexOf("async function fetchVideoReferencePoster"));
   const note = source.slice(source.indexOf("async function createQuickNote"), source.indexOf("async function prepareLocalMedia"));
   assert.match(video, /caseCreationOrganizationFields\(\)/);
-  assert.match(video, /caseCreationOrganization\(\s*projectName,\s*customLabels\s*\)/);
+  assert.match(video, /caseCreationOrganization\(\s*projectName,\s*customLabels,\s*projectInput\?\.dataset\.projectId\s*\)/);
   assert.match(video, /CREATE_MEDIA_REFERENCE[\s\S]*?\.\.\.organization/);
-  assert.match(note, /CREATE_QUICK_NOTE[\s\S]*?\.\.\.caseCreationOrganization\(projectName, customLabels\)/);
+  assert.match(note, /CREATE_QUICK_NOTE[\s\S]*?\.\.\.caseCreationOrganization\(projectName, customLabels, projectInput\?\.dataset\.projectId\)/);
   assert.match(note, /label:\s*"添加标签"/);
   assert.match(note, /newCollectionName:\s*projectName/);
   assert.match(note, /collectionId:\s*existing\.id/);

@@ -72,6 +72,7 @@ import { renderMarkdownDocument } from "./markdown-renderer.js";
 import { assertImageDimensions } from "./resource-limits.js";
 import { blobToDataUrl, normalizeVisionSettings } from "./vision.js";
 import { CONTENT_ROLES, contentRoleForEntry } from "./taxonomy.js";
+import { collectionEntryIds, collectionSelectorLabelsById } from "./organizer.js";
 import { createUiIcon, setUiIcon } from "./ui-icons.js";
 import {
   bindUiPreferenceReload,
@@ -117,6 +118,7 @@ let composerSearchIndex = [];
 let composerDocumentTextByEntryId = new Map();
 let reuseRetrievedSourcesNextTurn = false;
 let creativeStateRefreshRevision = 0;
+let initialProjectFilterId = "";
 
 const imageWorkspace = createComposerImageWorkspace({
   translate: t,
@@ -346,6 +348,10 @@ async function initializeComposer() {
   elements.composerDiagnosticExport.hidden = response.uiPreferences?.analysisDiagnostics !== true;
 
   const params = new URLSearchParams(location.search);
+  const requestedProjectId = params.get("project");
+  if ((organizerState.collections ?? []).some((item) => item.id === requestedProjectId)) {
+    initialProjectFilterId = requestedProjectId;
+  }
   const sessionId = params.get("session");
   const requestedSkillId = params.get("skill");
   const requestedType = ["image", "video"].includes(params.get("type")) ? params.get("type") : "";
@@ -1863,8 +1869,9 @@ function renderReferencePicker() {
 }
 
 function renderProjectFilter() {
-  const selected = elements.composerReferenceProjectFilter.value;
-  const options = [["", t("全部项目")], ...(organizerState.collections ?? []).map((item) => [item.id, item.name])];
+  const selected = elements.composerReferenceProjectFilter.value || initialProjectFilterId;
+  const selectorLabelsByProject = collectionSelectorLabelsById(organizerState);
+  const options = [["", t("全部项目")], ...(organizerState.collections ?? []).map((item) => [item.id, selectorLabelsByProject.get(item.id)])];
   elements.composerReferenceProjectFilter.replaceChildren(...options.map(([value, label]) => {
     const option = document.createElement("option");
     option.value = value;
@@ -1872,6 +1879,7 @@ function renderProjectFilter() {
     return option;
   }));
   elements.composerReferenceProjectFilter.value = options.some(([value]) => value === selected) ? selected : "";
+  initialProjectFilterId = "";
 }
 
 function renderSkills() {
@@ -1912,7 +1920,7 @@ function renderCasePicker() {
   const query = elements.composerReferenceSearch.value.trim().toLocaleLowerCase();
   const projectId = elements.composerReferenceProjectFilter.value;
   const projectIds = projectId
-    ? new Set((organizerState.collections ?? []).find((item) => item.id === projectId)?.entryIds ?? [])
+    ? new Set(collectionEntryIds(organizerState, projectId, { subtree: true }))
     : null;
   const targetType = composerSession?.targetType === "video" ? "video" : "image";
   const eligible = entries.filter((entry) => isComposerEligibleEntry(entry, targetType)).filter((entry) => {

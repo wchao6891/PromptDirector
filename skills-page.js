@@ -56,6 +56,7 @@ import {
   deriveNavigationSnapshot
 } from "./navigation-state.js";
 import { bindTransientMenus } from "./transient-menu.js";
+import { collectionEntryIds, collectionSelectorLabelsById } from "./organizer.js";
 
 await initializeUi();
 bindTransientMenus(document, ".skill-detail-more, .skill-project-picker");
@@ -411,7 +412,11 @@ function renderRunEvidence(view = activeView) {
 }
 
 function renderProjectControls() {
-  const options = [["", t("全部项目")], ...organizerState.collections.map((project) => [project.id, project.name])];
+  const selectorLabelsByProject = collectionSelectorLabelsById(organizerState);
+  const options = [["", t("全部项目")], ...organizerState.collections.map((project) => [
+    project.id,
+    selectorLabelsByProject.get(project.id)
+  ])];
   if (!options.some(([value]) => value === selectedProjectId)) selectedProjectId = "";
   elements.skillProjectLabel.textContent = options.find(([value]) => value === selectedProjectId)?.[1] || t("全部项目");
   elements.skillProjectFilter.replaceChildren(...options.map(([value, name]) => {
@@ -432,7 +437,7 @@ function renderProjectControls() {
 function renderCases(options = {}) {
   releaseThumbnails();
   const projectId = selectedProjectId;
-  const members = projectId ? new Set(organizerState.collections.find((item) => item.id === projectId)?.entryIds ?? []) : null;
+  const members = projectId ? new Set(collectionEntryIds(organizerState, projectId, { subtree: true })) : null;
   const visible = filterSkillSourceEntries(entries, {
     projectEntryIds: members,
     query: elements.skillCaseSearch.value

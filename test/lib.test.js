@@ -215,7 +215,7 @@ test("library JSON is machine-readable and references screenshots without base64
   const parsed = JSON.parse(json);
 
   assert.equal(parsed.format, "prompt-case-library");
-  assert.equal(parsed.version, 4);
+  assert.equal(parsed.version, 5);
   assert.equal(parsed.schemaVersion, SCHEMA_VERSION);
   assert.equal(parsed.entries[0].visuals[0].screenshotPath, "images/case-1/visual-1.webp");
   assert.equal(json.includes("base64,"), false);

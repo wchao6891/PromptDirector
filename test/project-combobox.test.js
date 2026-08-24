@@ -24,6 +24,16 @@ test("project combobox filters case-insensitively and removes duplicate or empty
   ]);
 });
 
+test("project combobox keeps project identity separate from duplicate display paths", () => {
+  assert.deepEqual(projectComboboxOptions([
+    { id: "project:literal", pathLabel: "A › B" },
+    { id: "project:nested", pathLabel: "A › B" }
+  ]), [
+    { value: "project:literal", label: "A › B" },
+    { value: "project:nested", label: "A › B" }
+  ]);
+});
+
 test("project combobox opens toward the side that can contain its options", () => {
   assert.deepEqual(projectComboboxPlacement({
     inputTop: 420,

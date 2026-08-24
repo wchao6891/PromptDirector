@@ -54,6 +54,7 @@ export const PORTABLE_LIBRARY_LIMITS = Object.freeze({
   maxFileBytes: 16 * MEBIBYTE,
   maxLibraryJsonBytes: 16 * MEBIBYTE,
   maxEntries: 5000,
+  maxCollections: 5000,
   maxImageBytes: 16 * MEBIBYTE,
   maxImagePixels: 40_000_000,
   maxVideoBytes: 128 * MEBIBYTE

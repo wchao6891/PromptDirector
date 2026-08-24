@@ -65,6 +65,12 @@ test("parseLibraryPackage validates the portable library format and referenced s
   assert.throws(() => parseLibraryPackage({ ...data, version: "3" }, new Map()), /不是受支持/);
 });
 
+test("parseLibraryPackage rejects project trees beyond the portable package safety limit", () => {
+  const data = packageData([entry("one")], catalog());
+  data.organizerState.collections.push({ id: "collection:extra", name: "额外项目", entryIds: [] });
+  assert.throws(() => parseLibraryPackage(data, new Map(), { maxCollections: 1 }), /项目数量超过 1 个上限/);
+});
+
 test("legacy v1 and v2 share packages preserve multiple visuals and their primary relationship", () => {
   const data = packageData([], catalog());
   data.version = 2;
@@ -545,6 +551,28 @@ test("project packages include every project member and only that project relati
   assert.equal(received.state.organizerState.collections[0].createdAt, "2026-08-22T09:00:00.000Z");
 });
 
+test("project packages preserve a selected project subtree and deduplicate its cases", () => {
+  const source = packageData([entry("root-case"), entry("child-case"), entry("shared"), entry("outside")], catalog());
+  source.organizerState = {
+    version: 7,
+    collections: [
+      { id: "collection:root", name: "Campaign", parentId: null, order: 0, entryIds: ["root-case", "shared"] },
+      { id: "collection:child", name: "References", parentId: "collection:root", order: 0, entryIds: ["child-case", "shared"] },
+      { id: "collection:outside", name: "Outside", parentId: null, order: 1, entryIds: ["outside"] }
+    ]
+  };
+
+  const selected = selectProjectPackage(source, "collection:root");
+
+  assert.deepEqual(selected.entries.map((item) => item.id), ["root-case", "child-case", "shared"]);
+  assert.deepEqual(selected.organizerState.collections.map((item) => ({ id: item.id, parentId: item.parentId })), [
+    { id: "collection:root", parentId: null },
+    { id: "collection:child", parentId: "collection:root" }
+  ]);
+  assert.deepEqual(selected.organizerState.collections[0].entryIds, ["root-case", "shared"]);
+  assert.deepEqual(selected.organizerState.collections[1].entryIds, ["child-case", "shared"]);
+});
+
 test("project packages keep a visible compound complete in the exported project", () => {
   const source = packageData([entry("one"), entry("two"), entry("outside")], catalog());
   source.compoundCases = [{
@@ -559,7 +587,7 @@ test("project packages keep a visible compound complete in the exported project"
   assert.deepEqual(projectPackageEntryIds(source, "collection:project"), ["one", "two"]);
   const selected = selectProjectPackage(source, "collection:project");
   assert.deepEqual(selected.entries.map((item) => item.id), ["one", "two"]);
-  assert.deepEqual(selected.organizerState.collections[0].entryIds, ["one", "two"]);
+  assert.deepEqual(selected.organizerState.collections[0].entryIds, ["one"]);
   assert.deepEqual(selected.compoundCases[0].memberEntryIds, ["one", "two"]);
 });
 

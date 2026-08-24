@@ -216,6 +216,16 @@ def main() -> None:
         expect(library.locator(".case-card.selected-for-share")).to_have_count(0)
         library.locator("#share-cancel").click()
         expect(library.locator("#manage-project-order")).to_be_enabled()
+        library.locator("#select-cases").click()
+        library.locator("#selection-select-filtered").click()
+        library.locator("#selection-project-menu > summary").click()
+        library.locator("#selection-project-target").select_option("collection:navigation")
+        expect(library.locator("#selection-remove-project")).to_be_enabled()
+        library.locator("#selection-remove-project").click()
+        expect(library.locator("#feedback")).to_contain_text("已将 1 个案例移出项目，1 个原本不在该项目")
+        expect(library.locator("#case-list > .case-card")).to_have_count(2)
+        project_members = library.evaluate("async () => (await chrome.storage.local.get('organizerState')).organizerState.collections[0].entryIds")
+        assert project_members == [], project_members
         library.locator("#filter-sidebar").evaluate("node => { node.scrollTop = 0; }")
         library.screenshot(path=str(screenshots / "promptdirector-step2-library-desktop.png"), full_page=True)
 

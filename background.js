@@ -184,6 +184,9 @@ import { mergeCuratedLibraryPackage } from "./curated-import.js";
 import { prepareCuratedSubmissionState } from "./curated-submission.js";
 import {
   createCollection,
+  collectionPathLabel,
+  collectionSelectorLabelsById,
+  moveCollection,
   normalizeOrganizerState,
   removeEntriesFromOrganizer,
   reorderCollections,
@@ -892,6 +895,7 @@ async function handleMessage(message, interaction = {}) {
     case "RENAME_COLLECTION":
     case "DELETE_COLLECTION":
     case "REORDER_COLLECTIONS":
+    case "MOVE_COLLECTION":
     case "REPLACE_COLLECTION_ENTRIES":
     case "SET_COLLECTION_VISIBILITY":
       return enqueue(async () => updateOrganizer(message));
@@ -1018,13 +1022,18 @@ async function captureWorkspace() {
     const name = contentType?.name || "待确认";
     return [part.sourceUrl || "source:unknown", { id, name, customized: contentType?.customized === true }];
   }));
+  const selectorLabelsByProject = collectionSelectorLabelsById(state.organizerState);
   return {
     ok: true,
     draft,
     targetEntry,
     suggestedContentTypeId: suggested?.pathIds?.[0] || "",
     contentTypes: state.taxonomy.nodes.map((item) => ({ id: item.id, name: item.name, customized: item.customized === true })),
-    collections: state.organizerState.collections.map((item) => ({ id: item.id, name: item.name })),
+    collections: state.organizerState.collections.map((item) => ({
+      id: item.id,
+      name: selectorLabelsByProject.get(item.id),
+      parentId: item.parentId
+    })),
     partContentTypes,
     activeCreativeResult: state.activeCreativeResult,
     activeCreativePrompt: activeCreativePromptSummary(state.activeCreativeResult, state.composerSessions),
@@ -2574,7 +2583,9 @@ async function deleteCollectionWithEntries(message) {
   const collection = organizerState.collections.find((item) => item.id === String(message.collectionId ?? "").trim());
   if (!collection) throw new Error("项目不存在");
   if (String(message.confirmationName ?? "").trim() !== collection.name) throw new Error("项目名称不匹配，未执行删除");
-  if (!collection.entryIds.length) throw new Error("这个项目没有可删除的案例");
+  if (!collectionEntryIds(organizerState, collection.id, { subtree: true }).length) {
+    throw new Error("这个项目及其子项目没有可删除的案例");
+  }
   const moved = moveCollectionWithEntriesToTrash({
     entries: state.entries,
     trashState: state.trashState,
@@ -2663,11 +2674,13 @@ async function restoreSelectedTrashItems(message = {}) {
     [STORAGE_KEYS.compoundCases]: restored.compoundCases
   });
   const unresolvedMessage = restored.unresolved.length ? `；另有 ${restored.unresolved.length} 项因关系冲突未恢复` : "";
+  const warningMessage = restored.warnings?.length ? `；${restored.warnings[0].reason}` : "";
   return {
     ok: true,
-    message: `已恢复 ${restored.restoredItemIds.length} 项${unresolvedMessage}`,
+    message: `已恢复 ${restored.restoredItemIds.length} 项${unresolvedMessage}${warningMessage}`,
     restoredItemIds: restored.restoredItemIds,
     unresolved: restored.unresolved,
+    warnings: restored.warnings ?? [],
     ...publicDomainState({ ...state, ...restored })
   };
 }
@@ -5086,17 +5099,34 @@ async function batchAddCustomLabels(message) {
 async function batchSetProject(message) {
   const state = await readState();
   const validIds = new Set(state.entries.map((entry) => entry.id));
-  const entryIds = uniqueNames(message.entryIds).filter((entryId) => validIds.has(entryId));
-  if (!entryIds.length) return { ok: false, message: "没有找到可加入项目的案例" };
-  const mode = message.mode === "move" ? "move" : "add";
+  const requestedEntryIds = uniqueNames(message.entryIds);
+  const entryIds = requestedEntryIds.filter((entryId) => validIds.has(entryId));
+  if (!entryIds.length) return { ok: false, message: "案例不存在，未更新项目关系" };
+  const missingCount = requestedEntryIds.length - entryIds.length;
+  const mode = ["remove", "move"].includes(message.mode) ? message.mode : "add";
   let organizerState = normalizeOrganizerState(state.organizerState, [...validIds]);
   if (!organizerState.collections.some((collection) => collection.id === String(message.collectionId ?? "").trim())) {
     return { ok: false, message: "项目不存在" };
   }
   const beforeOrganizer = organizerState;
   if (mode === "move") organizerState = removeEntriesFromOrganizer(organizerState, entryIds);
-  organizerState = setEntriesCollection(organizerState, message.collectionId, entryIds, true);
+  organizerState = setEntriesCollection(organizerState, message.collectionId, entryIds, mode !== "remove");
   const changedEntryIds = changedProjectEntryIds(beforeOrganizer, organizerState);
+  const updatedCount = changedEntryIds.length;
+  const skippedCount = Math.max(0, requestedEntryIds.length - updatedCount);
+  const unchangedCount = Math.max(0, entryIds.length - updatedCount);
+  if (!updatedCount) {
+    return {
+      ok: true,
+      message: `${mode === "remove" ? "所选案例原本不在这个项目中" : "所选案例已经在这个项目中"}${missingCount ? `；${missingCount} 个案例不存在` : ""}`,
+      updatedCount,
+      skippedCount,
+      unchangedCount,
+      missingCount,
+      entries: state.entries,
+      organizerState: beforeOrganizer
+    };
+  }
   const entries = touchEntries(state.entries, changedEntryIds);
   await commitLocalChanges({
     ...(changedEntryIds.length ? { [STORAGE_KEYS.entries]: entries } : {}),
@@ -5104,8 +5134,15 @@ async function batchSetProject(message) {
   });
   return {
     ok: true,
-    message: mode === "move" ? `已将 ${entryIds.length} 个案例移动到项目` : `已将 ${entryIds.length} 个案例加入项目`,
-    updatedCount: entryIds.length,
+    message: mode === "move"
+      ? `已将 ${updatedCount} 个案例移动到项目`
+      : mode === "remove"
+        ? `已将 ${updatedCount} 个案例移出项目${unchangedCount ? `，${unchangedCount} 个原本不在该项目` : ""}${missingCount ? `；${missingCount} 个案例不存在` : ""}`
+        : `已将 ${updatedCount} 个案例加入项目${unchangedCount ? `，${unchangedCount} 个已经在该项目` : ""}${missingCount ? `；${missingCount} 个案例不存在` : ""}`,
+    updatedCount,
+    skippedCount,
+    unchangedCount,
+    missingCount,
     entries,
     organizerState
   };
@@ -5118,7 +5155,7 @@ async function updateOrganizer(message) {
   let trashState = normalizeTrashState(state.trashState);
   let created = null;
   if (message.type === "CREATE_COLLECTION") {
-    const result = createCollection(organizerState, message.name);
+    const result = createCollection(organizerState, message.name, message.parentId);
     organizerState = result.state;
     created = result.item;
   } else if (message.type === "RENAME_COLLECTION") {
@@ -5130,6 +5167,8 @@ async function updateOrganizer(message) {
     trashState = moved.trashState;
   } else if (message.type === "REORDER_COLLECTIONS") {
     organizerState = reorderCollections(organizerState, message.collectionIds);
+  } else if (message.type === "MOVE_COLLECTION") {
+    organizerState = moveCollection(organizerState, message.collectionId, message.parentId, message.index);
   } else if (message.type === "REPLACE_COLLECTION_ENTRIES") {
     const validIds = new Set(state.entries.map((entry) => entry.id));
     const entryIds = (Array.isArray(message.entryIds) ? message.entryIds : []).filter((id) => validIds.has(id));
@@ -5153,6 +5192,7 @@ function organizerMessage(type) {
     RENAME_COLLECTION: "项目名称已保存",
     DELETE_COLLECTION: "项目已移入回收站，案例仍保留在资料库",
     REORDER_COLLECTIONS: "项目顺序已保存",
+    MOVE_COLLECTION: "项目结构已保存",
     REPLACE_COLLECTION_ENTRIES: "项目案例已更新",
     SET_COLLECTION_VISIBILITY: "项目显示范围已更新"
   })[type] || "项目已更新";
@@ -5542,6 +5582,10 @@ async function recoverDeepSeekBatch() {
   }
   const recovered = recoverInterruptedAnalysisBatch(job);
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: recovered });
+  if (recovered.status === "running") {
+    await ensureAnalysisBatchAlarm(true);
+    scheduleAnalysisBatchRunner();
+  }
   return { ok: true, message: "已从上次中断处继续", analysisBatchJob: analysisBatchSummary(recovered) };
 }
 
@@ -5734,8 +5778,9 @@ async function runPersistedAnalysisBatch() {
   } catch (error) {
     console.error("PromptDirector persisted analysis batch failed", error);
     const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob).catch(() => ({}));
-    continueRunning = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob])?.status === "running";
-    await ensureAnalysisBatchAlarm(continueRunning);
+    const stillRunning = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob])?.status === "running";
+    await ensureAnalysisBatchAlarm(stillRunning);
+    continueRunning = false;
   } finally {
     analysisBatchRunnerActive = false;
     if (continueRunning) scheduleAnalysisBatchRunner();

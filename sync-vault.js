@@ -11,7 +11,8 @@ import {
 import {
   DEFAULT_SYNC_RETENTION,
   SYNC_SNAPSHOT_FORMAT,
-  SYNC_SNAPSHOT_VERSION
+  SYNC_SNAPSHOT_VERSION,
+  isSupportedSyncSnapshotVersion
 } from "./sync-model.js";
 import { assetFormatsForMimeType } from "./asset-formats.js";
 
@@ -79,7 +80,7 @@ export async function listSyncSnapshots(vault, options = {}) {
         const encrypted = await readJsonHandle(fileHandle);
         throwIfAborted(options.signal);
         const snapshot = await decryptVaultValue(encrypted, vault.key);
-        if (snapshot?.format !== SYNC_SNAPSHOT_FORMAT || snapshot.version !== SYNC_SNAPSHOT_VERSION) {
+        if (snapshot?.format !== SYNC_SNAPSHOT_FORMAT || !isSupportedSyncSnapshotVersion(snapshot.version)) {
           throw new Error("状态版本无效");
         }
         snapshots.push(snapshot);

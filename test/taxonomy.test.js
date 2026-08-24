@@ -164,7 +164,7 @@ test("older editable vocabulary migrates to schema 12 with an empty project orga
   assert.equal(migrated.state.facetCatalog.facets.length, 10);
   assert.deepEqual(migrated.state.entries[0].facetAssignments, []);
   assert.deepEqual(migrated.state.entries[0].customLabels, ["私人风格"]);
-  assert.deepEqual(migrated.state.organizerState, { version: 6, collections: [] });
+  assert.deepEqual(migrated.state.organizerState, { version: 7, collections: [] });
 });
 
 test("schema 9 migration removes old DeepSeek review noise while preserving confirmed and image analysis data", () => {

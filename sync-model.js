@@ -3,7 +3,8 @@ import { SCHEMA_VERSION, createDefaultTaxonomy, normalizeTaxonomy } from "./taxo
 import { createDefaultTrashState } from "./trash.js";
 
 export const SYNC_SNAPSHOT_FORMAT = "prompt-director-sync-state";
-export const SYNC_SNAPSHOT_VERSION = 1;
+export const SYNC_SNAPSHOT_VERSION = 2;
+export const SUPPORTED_SYNC_SNAPSHOT_VERSIONS = Object.freeze([1, 2]);
 export const DEFAULT_SYNC_RETENTION = 10;
 export const SYNC_ERROR_CODES = Object.freeze({
   LOCATION_NOT_FOUND: "location_not_found",
@@ -232,7 +233,7 @@ export async function createRevisionSnapshot(stateValue = {}, options = {}) {
 }
 
 export function mergeRevisionSnapshots(values = []) {
-  const snapshots = (Array.isArray(values) ? values : []).filter(validSnapshot);
+  const snapshots = (Array.isArray(values) ? values : []).filter(validSnapshot).map(upgradeSyncSnapshot);
   if (!snapshots.length) {
     return { state: emptyState(), records: {}, conflicts: [], imageRefs: {} };
   }
@@ -773,8 +774,27 @@ function uniqueRevisions(values) {
 
 function validSnapshot(value) {
   return value?.format === SYNC_SNAPSHOT_FORMAT &&
-    value.version === SYNC_SNAPSHOT_VERSION &&
+    isSupportedSyncSnapshotVersion(value.version) &&
     value.records && typeof value.records === "object";
+}
+
+export function isSupportedSyncSnapshotVersion(value) {
+  return Number.isInteger(value) && SUPPORTED_SYNC_SNAPSHOT_VERSIONS.includes(value);
+}
+
+function upgradeSyncSnapshot(value) {
+  if (value.version !== 1) return value;
+  const snapshot = structuredClone(value);
+  snapshot.version = SYNC_SNAPSHOT_VERSION;
+  for (const [key, record] of Object.entries(snapshot.records ?? {})) {
+    if (!key.startsWith("collection:") || !record?.payload) continue;
+    record.payload.parentId = null;
+    // Legacy flat devices may continue writing after a tree exists. Keeping their
+    // collection clock at the migration baseline prevents a flat snapshot from
+    // winning a concurrent conflict over a newer tree-aware collection record.
+    record.logicalClock = 0;
+  }
+  return snapshot;
 }
 
 function validRecord(key, value) {
@@ -789,7 +809,7 @@ function emptyState() {
     entries: [],
     taxonomy: { version: SCHEMA_VERSION, revision: 1, nodes: [] },
     compoundCases: [],
-    organizerState: { version: 4, collections: [] },
+    organizerState: { version: 7, collections: [] },
     composerSessions: [],
     creativeRuns: [],
     creativeSkills: { version: 1, items: [] },

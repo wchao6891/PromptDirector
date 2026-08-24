@@ -121,7 +121,17 @@ import {
 import { ensureYouTubePlaybackPermission, youtubePlaybackError } from "./media-playback.js";
 import { createPdfPreview, createPdfViewer, extractPdfSearchText } from "./document-viewer.js";
 import { markdownPlainText, renderMarkdownDocument } from "./markdown-renderer.js";
-import { COLLECTION_VISIBILITY, isEntryVisibleInLibrary } from "./organizer.js";
+import {
+  COLLECTION_VISIBILITY,
+  collectionEntryIds,
+  collectionPath,
+  collectionPathLabel,
+  collectionPathLabelsById,
+  collectionSelectorLabelsById,
+  collectionSubtreeEntryIdsById,
+  collectionSubtreeIds,
+  isEntryVisibleInLibrary
+} from "./organizer.js";
 import { promptForEntryImage, visualAnalysisPromptReplacement } from "./image-prompt.js";
 import {
   CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY,
@@ -149,7 +159,7 @@ import {
   serializeLibraryReturnSnapshot
 } from "./navigation-state.js";
 import { CURATED_SUBMISSION_URL } from "./curated-config.js";
-import { moveProjectLogicalCase, sortLibraryCases, sortProjects } from "./library-view.js";
+import { moveProjectLogicalCase, sortLibraryCases } from "./library-view.js";
 import { createTagEditor, normalizeTagValue } from "./tag-editor.js";
 import { attachProjectCombobox } from "./project-combobox.js";
 import { SIDEBAR_WIDTH_LIMITS, normalizeSidebarWidth } from "./preferences.js";
@@ -160,7 +170,7 @@ bindTransientMenus(document, ".package-menu, .project-menu, .detail-analysis-men
 const libraryWindowId = (await chrome.windows.getCurrent()).id;
 
 const elements = Object.fromEntries([
-  "about-version", "add-folder", "add-media", "add-video-reference", "ai-settings-form", "ai-settings-status", "ai-routing-summary", "ai-provider-list", "ai-assignment-list", "open-ai-routing", "analysis-instructions-en", "analysis-instructions-zh", "analysis-protocol", "apply-reanalyze", "case-list", "cancel-library-maintenance",
+  "about-version", "add-folder", "add-media", "add-video-reference", "ai-settings-form", "ai-settings-status", "ai-routing-summary", "ai-provider-list", "ai-assignment-list", "open-ai-routing", "analysis-instructions-en", "analysis-instructions-zh", "analysis-protocol", "apply-reanalyze", "case-list", "project-folder-list", "cancel-library-maintenance",
   "content-filters", "content-type-count", "content-type-name", "content-type-replacement", "content-type-replacement-field", "content-type-role", "content-type-role-help",
   "content-type-list", "content-type-editor", "content-type-editor-title", "content-type-delete-transfer", "content-type-delete-message",
   "add-content-type", "cancel-content-type-edit", "cancel-delete-content-type", "confirm-delete-content-type", "save-content-type",
@@ -177,8 +187,8 @@ const elements = Object.fromEntries([
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library",
   "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
-  "project-section", "manage-project-order", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
+  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
+  "project-section", "project-root-drop", "manage-project-order", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
   "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
@@ -256,6 +266,8 @@ let caseOrderManagementActive = false;
 let projectOrderManagementActive = false;
 let projectOrderSaving = false;
 let projectDragState = null;
+const expandedProjectIds = new Set();
+let selectionProjectTargetTouched = false;
 let selectedFacets = new Map();
 let activeManagerTab = "content-types";
 let selectedVocabularyFacet = "";
@@ -334,6 +346,14 @@ const importTagEditor = createTagEditor({
 });
 elements.importLabelEditor.replaceChildren(importTagEditor.element);
 const importProjectCombobox = attachProjectCombobox(elements.importProject, { projects: [] });
+
+function projectComboboxCollections() {
+  const labelsById = collectionSelectorLabelsById(organizerState);
+  return organizerState.collections.map((collection) => ({
+    ...collection,
+    pathLabel: labelsById.get(collection.id)
+  }));
+}
 
 const mobileLayout = matchMedia("(max-width: 640px)");
 if (mobileLayout.matches) workspace.classList.add("filters-collapsed");
@@ -641,7 +661,7 @@ function bindEvents() {
   elements.libraryNameSetting.addEventListener("input", updateLibrarySettingsSaveState);
   elements.exportPathSetting.addEventListener("input", updateLibrarySettingsSaveState);
   elements.selectCases.addEventListener("click", enterSelectMode);
-  elements.startCompose.addEventListener("click", openComposerPage);
+  elements.startCompose.addEventListener("click", () => openComposerPage(selectedCollectionId));
   elements.shareCancel.addEventListener("click", exitSelectionMode);
   elements.shareExport.addEventListener("click", completeSelection);
   elements.shareDialogClose.addEventListener("click", closeShareDialog);
@@ -666,10 +686,14 @@ function bindEvents() {
   });
   elements.selectionAddLabels.addEventListener("click", addLabelsToSelection);
   elements.selectionAddProject.addEventListener("click", addSelectionToProject);
+  elements.selectionRemoveProject.addEventListener("click", removeSelectionFromProject);
   elements.selectionNewProject.addEventListener("click", createProjectFromSelection);
   elements.selectionAnalyze.addEventListener("click", analyzeSelectedCases);
   elements.selectionTrash.addEventListener("click", moveSelectionToTrash);
-  elements.selectionProjectTarget.addEventListener("change", updateSelectionBar);
+  elements.selectionProjectTarget.addEventListener("change", () => {
+    selectionProjectTargetTouched = true;
+    updateSelectionBar();
+  });
   elements.openTrash.addEventListener("click", openTrashDialog);
   elements.trashClose.addEventListener("click", () => elements.trashDialog.close());
   elements.trashRestoreAll.addEventListener("click", restoreAllTrashItems);
@@ -989,7 +1013,9 @@ function renderGallery() {
     : logicalCases.filter((entry) => (entry.memberEntryIds ?? [entry.id])
       .some((entryId) => isEntryVisibleInLibrary(organizerState, entryId)));
   const projectEntryIds = selectedCollectionId && selectionMode !== "project"
-    ? new Set(organizerState.collections.find((item) => item.id === selectedCollectionId)?.entryIds ?? [])
+    ? new Set(selectionMode === "vision"
+      ? collectionEntryIds(organizerState, selectedCollectionId, { subtree: true })
+      : organizerState.collections.find((item) => item.id === selectedCollectionId)?.entryIds ?? [])
     : null;
   let galleryEntries = projectEntryIds
     ? modeEntries.filter((entry) => entry.memberEntryIds
@@ -1050,6 +1076,7 @@ function renderGalleryResults({ refreshNavigation }) {
   const project = selectedCollectionId
     ? organizerState.collections.find((item) => item.id === selectedCollectionId)
     : null;
+  const childProjects = project ? projectChildren(project.id) : [];
   visibleEntries = sortLibraryCases(visibleEntries, {
     mode: caseSortMode,
     projectEntryIds: project?.entryIds ?? []
@@ -1057,6 +1084,7 @@ function renderGalleryResults({ refreshNavigation }) {
   renderedCount = 0;
   imageObserver.disconnect();
   reconcileInitialCaseCards();
+  renderProjectFolderCards(childProjects);
   if (refreshNavigation) {
     renderProjectFilters();
     elements.workspaceLibrary.setAttribute("aria-current", selectedCollectionId ? "false" : "page");
@@ -1076,12 +1104,43 @@ function renderGalleryResults({ refreshNavigation }) {
     loadObserver.observe(elements.loadSentinel);
     scheduleLoadCheck(generation);
   });
-  elements.emptyState.hidden = visibleEntries.length > 0;
+  elements.emptyState.hidden = visibleEntries.length > 0 || childProjects.length > 0;
   elements.emptyLibrary.hidden = logicalCases.length > 0;
   elements.emptyFilter.hidden = logicalCases.length === 0;
   renderEmptyFilter();
-  elements.resultCount.textContent = translateUiMessage(`${visibleEntries.length} 个案例`);
+  elements.libraryTitle.textContent = project?.name || libraryTitleForLocale(settings.libraryTitle, currentLocale());
+  elements.resultCount.textContent = project
+    ? `${visibleEntries.length} 个直接案例 · ${childProjects.length} 个子项目`
+    : translateUiMessage(`${visibleEntries.length} 个案例`);
   elements.pendingCount.textContent = String(pendingCount);
+}
+
+function renderProjectFolderCards(childProjects) {
+  if (!elements.projectFolderList) return;
+  const cards = childProjects.map((collection) => {
+    const button = el("button", "project-folder-card");
+    button.type = "button";
+    button.dataset.collectionId = collection.id;
+    button.setAttribute("aria-label", `进入子项目 ${collection.name}`);
+    const directCases = collection.entryIds.length;
+    const nestedProjects = collectionSubtreeIds(organizerState, collection.id).length - 1;
+    const copy = el("span", "project-folder-copy");
+    copy.append(
+      rawTextEl("span", "project-folder-name", collection.name),
+      rawTextEl("span", "project-folder-meta", `${directCases} 个直接案例${nestedProjects ? ` · ${nestedProjects} 个下级项目` : ""}`)
+    );
+    button.append(createUiIcon("folder"), copy, createUiIcon("chevron-right"));
+    button.lastElementChild.classList.add("project-folder-arrow");
+    button.addEventListener("click", () => {
+      selectedCollectionId = collection.id;
+      expandedProjectIds.add(collection.parentId);
+      caseOrderManagementActive = false;
+      renderGallery();
+      window.scrollTo({ top: 0, behavior: uiPreferences.motion === "reduced" ? "auto" : "smooth" });
+    });
+    return button;
+  });
+  elements.projectFolderList.replaceChildren(...cards);
 }
 
 function projectManualOrderAvailable() {
@@ -1525,24 +1584,63 @@ async function extractAndCachePdfText(assetId, blob, derived) {
 
 function renderProjectFilters() {
   const fragment = document.createDocumentFragment();
-  const collections = sortProjects(organizerState.collections, "manual");
+  const subtreeEntryIdsByProject = collectionSubtreeEntryIdsById(organizerState);
+  const pathLabelsByProject = collectionPathLabelsById(organizerState);
+  const childrenByParent = indexProjectChildren();
   const projectOrderingUnavailable = Boolean(selectionMode);
   elements.manageProjectOrder.hidden = false;
   elements.manageProjectOrder.disabled = projectOrderingUnavailable;
   const managementLabel = projectOrderingUnavailable
-    ? "结束案例选择后可排序项目"
-    : projectOrderManagementActive ? "完成项目排序" : "管理项目顺序";
+    ? "结束案例选择后可管理项目结构"
+    : projectOrderManagementActive ? "完成项目结构管理" : "管理项目结构";
   elements.manageProjectOrder.setAttribute("aria-label", managementLabel);
   elements.manageProjectOrder.title = managementLabel;
   elements.manageProjectOrder.replaceChildren(createUiIcon(projectOrderManagementActive ? "circle-check-big" : "sliders-horizontal"));
-  for (const [projectIndex, collection] of collections.entries()) {
+  elements.projectRootDrop.hidden = !projectOrderManagementActive;
+  if (selectedCollectionId) {
+    for (const ancestor of collectionPath(organizerState, selectedCollectionId).slice(0, -1)) expandedProjectIds.add(ancestor.id);
+  }
+  const visibleCollections = [];
+  const pendingCollections = [...(childrenByParent.get(null) ?? [])]
+    .reverse()
+    .map((collection) => ({ collection, depth: 0 }));
+  while (pendingCollections.length) {
+    const current = pendingCollections.pop();
+    visibleCollections.push(current);
+    if (!expandedProjectIds.has(current.collection.id)) continue;
+    const children = childrenByParent.get(current.collection.id) ?? [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      pendingCollections.push({ collection: children[index], depth: current.depth + 1 });
+    }
+  }
+  for (const [projectIndex, { collection, depth }] of visibleCollections.entries()) {
+    const children = childrenByParent.get(collection.id) ?? [];
+    const siblings = childrenByParent.get(collection.parentId) ?? [];
     const row = el("div", "project-row");
     row.dataset.collectionId = collection.id;
-    row.setAttribute("role", "listitem");
+    row.style.setProperty("--project-depth", String(depth));
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("aria-level", String(depth + 1));
+    row.setAttribute("aria-setsize", String(siblings.length));
+    row.setAttribute("aria-posinset", String(siblings.findIndex((item) => item.id === collection.id) + 1));
+    if (children.length) row.setAttribute("aria-expanded", String(expandedProjectIds.has(collection.id)));
     row.classList.toggle("project-ordering", projectOrderManagementActive);
     row.tabIndex = projectOrderManagementActive ? 0 : -1;
-    row.setAttribute("aria-label", projectOrderManagementActive ? `拖动排序：${collection.name}，当前位置 ${projectIndex + 1}` : collection.name);
-    const logicalCount = new Set(collection.entryIds.map((id) => logicalIdByEntryId.get(id)).filter(Boolean)).size;
+    row.setAttribute("aria-label", projectOrderManagementActive ? `移动项目：${pathLabelsByProject.get(collection.id)}，树中位置 ${projectIndex + 1}` : collection.name);
+    const disclosure = el("button", "project-disclosure");
+    disclosure.type = "button";
+    disclosure.tabIndex = -1;
+    disclosure.disabled = projectOrderManagementActive;
+    disclosure.setAttribute("aria-label", expandedProjectIds.has(collection.id) ? `折叠 ${collection.name}` : `展开 ${collection.name}`);
+    disclosure.classList.toggle("is-placeholder", !children.length);
+    if (children.length) disclosure.append(createUiIcon(expandedProjectIds.has(collection.id) ? "chevron-down" : "chevron-right"));
+    disclosure.addEventListener("click", () => {
+      if (expandedProjectIds.has(collection.id)) expandedProjectIds.delete(collection.id);
+      else expandedProjectIds.add(collection.id);
+      renderProjectFilters();
+    });
+    const logicalCount = new Set((subtreeEntryIdsByProject.get(collection.id) ?? [])
+      .map((id) => logicalIdByEntryId.get(id)).filter(Boolean)).size;
     const filter = el("button", "project-filter");
     filter.type = "button";
     filter.tabIndex = projectOrderManagementActive ? -1 : 0;
@@ -1589,16 +1687,37 @@ function renderProjectFilters() {
     actions.append(manage, analyze, share, visibility, rename, remove, removeWithEntries);
     menu.append(summary, actions);
     if (projectOrderManagementActive) bindProjectOrderInteractions(row, collection);
-    row.append(filter, menu);
+    else bindProjectTreeNavigation(row, collection);
+    row.append(disclosure, filter, menu);
     fragment.append(row);
   }
   elements.collectionFilters.replaceChildren(fragment);
+}
+
+function projectChildren(parentId = null) {
+  return indexProjectChildren().get(parentId || null) ?? [];
+}
+
+function indexProjectChildren() {
+  const result = new Map();
+  for (const collection of organizerState.collections) {
+    const children = result.get(collection.parentId) ?? [];
+    children.push(collection);
+    result.set(collection.parentId, children);
+  }
+  for (const children of result.values()) {
+    children.sort((left, right) => left.order - right.order || left.name.localeCompare(right.name, "zh-CN"));
+  }
+  return result;
 }
 
 function toggleProjectOrderManagement() {
   if (selectionMode) return;
   cancelProjectDrag();
   projectOrderManagementActive = !projectOrderManagementActive;
+  if (projectOrderManagementActive) {
+    for (const parentId of indexProjectChildren().keys()) if (parentId) expandedProjectIds.add(parentId);
+  }
   renderProjectFilters();
 }
 
@@ -1613,7 +1732,7 @@ function bindProjectOrderInteractions(row, collection) {
       collectionId: collection.id,
       startY: event.clientY,
       moved: false,
-      beforeIds: sortProjects(organizerState.collections, "manual").map((item) => item.id)
+      drop: null
     };
     try { row.setPointerCapture(event.pointerId); } catch {}
   });
@@ -1625,30 +1744,31 @@ function bindProjectOrderInteractions(row, collection) {
     drag.moved = true;
     row.classList.add("is-dragging");
     elements.collectionFilters.classList.add("is-project-dragging");
-    const siblings = [...elements.collectionFilters.querySelectorAll(":scope > .project-row")].filter((item) => item !== row);
-    const before = siblings.find((item) => event.clientY < item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2);
-    let reordered = false;
-    if (before && row.nextElementSibling !== before) {
-      elements.collectionFilters.insertBefore(row, before);
-      reordered = true;
-    } else if (!before && row !== elements.collectionFilters.lastElementChild) {
-      elements.collectionFilters.append(row);
-      reordered = true;
+    clearProjectDropIndicators();
+    const hit = document.elementFromPoint(event.clientX, event.clientY);
+    if (hit?.closest?.("#project-root-drop")) {
+      elements.projectRootDrop.classList.add("is-drop-target");
+      drag.drop = { parentId: null, index: projectChildren(null).filter((item) => item.id !== collection.id).length };
+      return;
     }
-    if (reordered && !row.hasPointerCapture(event.pointerId)) {
-      try { row.setPointerCapture(event.pointerId); } catch {}
-    }
+    const targetRow = hit?.closest?.(".project-row");
+    if (!targetRow || targetRow === row) return;
+    const target = organizerState.collections.find((item) => item.id === targetRow.dataset.collectionId);
+    if (!target) return;
+    const rect = targetRow.getBoundingClientRect();
+    const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
+    const position = ratio < .28 ? "before" : ratio > .72 ? "after" : "inside";
+    targetRow.classList.add(`drop-${position}`);
+    drag.drop = projectDropPlan(collection.id, target, position);
   });
   const finish = (event) => {
     const drag = projectDragState;
     if (!drag || drag.row !== row || drag.pointerId !== event.pointerId) return;
     const moved = drag.moved;
-    const beforeIds = drag.beforeIds;
+    const drop = drag.drop;
     cancelProjectDrag();
-    if (!moved) return;
-    const collectionIds = projectIdsFromRenderedRows();
-    if (collectionIds.every((id, index) => id === beforeIds[index])) return;
-    void persistProjectCollectionOrder(collectionIds, collection.id);
+    if (!moved || !drop) return;
+    void persistProjectCollectionMove(collection.id, drop.parentId, drop.index);
   };
   row.addEventListener("pointerup", finish);
   row.addEventListener("pointercancel", () => {
@@ -1656,21 +1776,45 @@ function bindProjectOrderInteractions(row, collection) {
     renderProjectFilters();
   });
   row.addEventListener("keydown", (event) => {
-    if (!projectOrderManagementActive || projectOrderSaving || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+    if (!projectOrderManagementActive || projectOrderSaving || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const collectionIds = sortProjects(organizerState.collections, "manual").map((item) => item.id);
-    const index = collectionIds.indexOf(collection.id);
-    const target = index + (event.key === "ArrowUp" ? -1 : 1);
-    if (index < 0 || target < 0 || target >= collectionIds.length) return;
-    [collectionIds[index], collectionIds[target]] = [collectionIds[target], collectionIds[index]];
-    void persistProjectCollectionOrder(collectionIds, collection.id);
+    const siblings = projectChildren(collection.parentId);
+    const index = siblings.findIndex((item) => item.id === collection.id);
+    if (event.key === "Home" || event.key === "End") {
+      const target = event.key === "Home" ? siblings[0] : siblings.at(-1);
+      return focusProjectRow(target?.id);
+    }
+    if (event.key === "ArrowUp" && index > 0) return void persistProjectCollectionMove(collection.id, collection.parentId, index - 1);
+    if (event.key === "ArrowDown" && index >= 0 && index < siblings.length - 1) return void persistProjectCollectionMove(collection.id, collection.parentId, index + 1);
+    if (event.key === "ArrowRight" && index > 0) {
+      const parent = siblings[index - 1];
+      expandedProjectIds.add(parent.id);
+      return void persistProjectCollectionMove(collection.id, parent.id, projectChildren(parent.id).length);
+    }
+    if (event.key === "ArrowLeft" && collection.parentId) {
+      const parent = organizerState.collections.find((item) => item.id === collection.parentId);
+      if (!parent) return;
+      const parentSiblings = projectChildren(parent.parentId).filter((item) => item.id !== collection.id);
+      const parentIndex = parentSiblings.findIndex((item) => item.id === parent.id);
+      return void persistProjectCollectionMove(collection.id, parent.parentId, parentIndex + 1);
+    }
   });
 }
 
-function projectIdsFromRenderedRows() {
-  return [...elements.collectionFilters.querySelectorAll(":scope > .project-row")]
-    .map((row) => row.dataset.collectionId)
-    .filter(Boolean);
+function projectDropPlan(collectionId, target, position) {
+  if (position === "inside") {
+    return { parentId: target.id, index: projectChildren(target.id).filter((item) => item.id !== collectionId).length };
+  }
+  const siblings = projectChildren(target.parentId).filter((item) => item.id !== collectionId);
+  const targetIndex = siblings.findIndex((item) => item.id === target.id);
+  return { parentId: target.parentId, index: targetIndex + (position === "after" ? 1 : 0) };
+}
+
+function clearProjectDropIndicators() {
+  elements.projectRootDrop.classList.remove("is-drop-target");
+  for (const item of elements.collectionFilters.querySelectorAll(".drop-before, .drop-inside, .drop-after")) {
+    item.classList.remove("drop-before", "drop-inside", "drop-after");
+  }
 }
 
 function cancelProjectDrag() {
@@ -1681,28 +1825,64 @@ function cancelProjectDrag() {
   }
   drag.row.classList.remove("is-dragging");
   elements.collectionFilters.classList.remove("is-project-dragging");
+  clearProjectDropIndicators();
   projectDragState = null;
 }
 
-async function persistProjectCollectionOrder(collectionIds, focusCollectionId) {
+async function persistProjectCollectionMove(collectionId, parentId, index) {
   if (projectOrderSaving) return;
   projectOrderSaving = true;
   try {
-    const response = await chrome.runtime.sendMessage({ type: "REORDER_COLLECTIONS", collectionIds });
-    if (!response?.ok) throw new Error(response?.message || "项目顺序保存失败");
+    const response = await chrome.runtime.sendMessage({ type: "MOVE_COLLECTION", collectionId, parentId, index });
+    if (!response?.ok) throw new Error(response?.message || "项目结构保存失败");
     organizerState = response.organizerState ?? organizerState;
-    const ordered = sortProjects(organizerState.collections, "manual");
-    const project = ordered.find((item) => item.id === focusCollectionId);
-    const position = ordered.findIndex((item) => item.id === focusCollectionId) + 1;
-    elements.projectOrderStatus.textContent = t("已将 {project} 移动到第 {position} 位", { project: project?.name || t("项目"), position });
+    const project = organizerState.collections.find((item) => item.id === collectionId);
+    elements.projectOrderStatus.textContent = `已移动“${project?.name || "项目"}”到 ${collectionPathLabel(organizerState, collectionId)}`;
     renderProjectFilters();
-    queueMicrotask(() => elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(focusCollectionId)}"]`)?.focus());
+    queueMicrotask(() => focusProjectRow(collectionId));
   } catch (error) {
-    showFeedback(error.message || "项目顺序保存失败", true);
+    showFeedback(error.message || "项目结构保存失败", true);
     renderProjectFilters();
   } finally {
     projectOrderSaving = false;
   }
+}
+
+function bindProjectTreeNavigation(row, collection) {
+  row.addEventListener("keydown", (event) => {
+    const rows = [...elements.collectionFilters.querySelectorAll(".project-row")];
+    const index = rows.indexOf(row);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const target = event.key === "Home" ? rows[0]
+        : event.key === "End" ? rows.at(-1)
+        : rows[index + (event.key === "ArrowDown" ? 1 : -1)];
+      target?.querySelector(".project-filter")?.focus();
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      if (projectChildren(collection.id).length && !expandedProjectIds.has(collection.id)) {
+        expandedProjectIds.add(collection.id);
+        renderProjectFilters();
+        queueMicrotask(() => focusProjectRow(collection.id, true));
+      } else if (projectChildren(collection.id).length) focusProjectRow(projectChildren(collection.id)[0].id, true);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      if (expandedProjectIds.has(collection.id)) {
+        expandedProjectIds.delete(collection.id);
+        renderProjectFilters();
+        queueMicrotask(() => focusProjectRow(collection.id, true));
+      } else if (collection.parentId) focusProjectRow(collection.parentId, true);
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const match = rows.find((candidate, candidateIndex) => candidateIndex > index && candidate.querySelector(".project-filter-name")?.textContent?.toLocaleLowerCase().startsWith(event.key.toLocaleLowerCase()))
+        ?? rows.find((candidate) => candidate.querySelector(".project-filter-name")?.textContent?.toLocaleLowerCase().startsWith(event.key.toLocaleLowerCase()));
+      match?.querySelector(".project-filter")?.focus();
+    }
+  });
+}
+
+function focusProjectRow(collectionId, filter = false) {
+  const row = elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(collectionId || "")}"]`);
+  (filter ? row?.querySelector(".project-filter") : row)?.focus({ preventScroll: true });
 }
 
 async function updateProjectVisibility(collection, button) {
@@ -1720,9 +1900,15 @@ async function updateProjectVisibility(collection, button) {
 }
 
 async function createProjectCollection(button) {
-  const name = await promptAppText({ title: t("新建项目"), label: t("项目名称"), confirmLabel: t("新建") });
+  const parent = organizerState.collections.find((item) => item.id === selectedCollectionId);
+  const name = await promptAppText({
+    title: t("新建项目"),
+    description: parent ? `将创建在“${collectionPathLabel(organizerState, parent.id)}”下面` : "将创建为根项目",
+    label: t("项目名称"),
+    confirmLabel: t("新建")
+  });
   if (!name?.trim()) return;
-  const response = await perform(button, { type: "CREATE_COLLECTION", name });
+  const response = await perform(button, { type: "CREATE_COLLECTION", name, parentId: parent?.id ?? null });
   if (response?.created?.id) enterProjectSelection(response.created.id);
 }
 
@@ -1733,24 +1919,30 @@ async function renameProjectCollection(collection) {
 }
 
 async function deleteProjectCollection(collection) {
-  if (!await confirmAppAction({ title: translateUiMessage(`将项目“${collection.name}”移入回收站？`), description: t("其中案例仍会保留在资料库，可从回收站恢复项目。"), confirmLabel: t("移入回收站"), danger: true })) return;
-  if (selectedCollectionId === collection.id) selectedCollectionId = "";
+  const subtreeIds = collectionSubtreeIds(organizerState, collection.id);
+  if (!await confirmAppAction({ title: translateUiMessage(`将项目“${collection.name}”及其 ${subtreeIds.length - 1} 个子项目移入回收站？`), description: t("其中案例仍会保留在资料库，可从回收站恢复项目。"), confirmLabel: t("移入回收站"), danger: true })) return;
+  if (subtreeIds.includes(selectedCollectionId)) selectedCollectionId = "";
   await perform(elements.createCollection, { type: "DELETE_COLLECTION", collectionId: collection.id });
 }
 
 async function deleteProjectCollectionWithEntries(collection, button) {
-  const memberIds = new Set(collection.entryIds);
+  const subtreeIds = collectionSubtreeIds(organizerState, collection.id);
+  const memberIds = new Set(collectionEntryIds(organizerState, collection.id, { subtree: true }));
   const memberEntries = entries.filter((entry) => memberIds.has(entry.id));
+  const otherProjectEntryIds = new Set(organizerState.collections
+    .filter((item) => !subtreeIds.includes(item.id))
+    .flatMap((item) => item.entryIds));
+  const sharedCount = memberEntries.filter((entry) => otherProjectEntryIds.has(entry.id)).length;
   const mediaCount = new Set(memberEntries.flatMap((entry) =>
     normalizeEntryMedia(entry).mediaAssets.map((asset) => asset.id)
   )).size;
   if (!await confirmAppAction({
     title: `将项目“${collection.name}”及全部案例移入回收站？`,
-    description: `将归档 ${memberEntries.length} 个案例和 ${mediaCount} 项媒体；可从回收站恢复。`,
+    description: `将归档 ${subtreeIds.length} 个项目、${memberEntries.length} 个去重案例和 ${mediaCount} 项媒体；其中 ${sharedCount} 个案例也属于其他项目。可从回收站恢复。`,
     confirmLabel: "全部移入回收站",
     danger: true
   })) return;
-  if (selectedCollectionId === collection.id) selectedCollectionId = "";
+  if (subtreeIds.includes(selectedCollectionId)) selectedCollectionId = "";
   await perform(button, {
     type: "DELETE_COLLECTION_WITH_ENTRIES",
     collectionId: collection.id,
@@ -1788,7 +1980,7 @@ async function enterVisionSelection(collection) {
     if (!elements.visionBatchDialog.open) elements.visionBatchDialog.showModal();
     return;
   }
-  if (!collection?.entryIds?.length) return showFeedback("这个项目还没有可分析的案例", true);
+  if (!collectionEntryIds(organizerState, collection?.id, { subtree: true }).length) return showFeedback("这个项目及其子项目还没有可分析的案例", true);
   if (!await closeDetail()) return;
   selectionMode = "vision";
   projectSelectionId = collection.id;
@@ -1809,6 +2001,8 @@ async function enterSelectMode() {
   selectionMode = "select";
   caseOrderManagementActive = false;
   projectOrderManagementActive = false;
+  selectionProjectTargetTouched = false;
+  elements.selectionProjectTarget.value = selectedCollectionId || "";
   selectedCaseIds.clear();
   updateSelectionBar();
   renderGallery();
@@ -1819,6 +2013,7 @@ function exitSelectionMode() {
   projectSelectionId = "";
   selectedCaseIds.clear();
   elements.selectionLabelInput.value = "";
+  selectionProjectTargetTouched = false;
   updateSelectionBar();
   renderGallery();
   requestAnimationFrame(() => elements.selectCases.focus());
@@ -1896,12 +2091,26 @@ function updateSelectionBar() {
   elements.projectSelectionClear.hidden = !visionSelection;
   elements.projectSelectionClear.disabled = selectedCaseIds.size === 0;
   elements.shareCount.textContent = currentLocale() === "en" ? `Selected ${selectedCaseIds.size}` : `已选 ${selectedCaseIds.size}`;
-  const selectedProject = elements.selectionProjectTarget.value;
-  const options = [option("", t("加入项目…"))];
-  for (const collection of organizerState.collections) options.push(option(collection.id, collection.name));
+  const selectedProject = selectionProjectTargetTouched
+    ? elements.selectionProjectTarget.value
+    : elements.selectionProjectTarget.value || selectedCollectionId;
+  const options = [option("", t("选择项目…"))];
+  const selectorLabelsByProject = collectionSelectorLabelsById(organizerState);
+  for (const collection of organizerState.collections) {
+    options.push(option(collection.id, selectorLabelsByProject.get(collection.id)));
+  }
   elements.selectionProjectTarget.replaceChildren(...options);
   elements.selectionProjectTarget.value = organizerState.collections.some((item) => item.id === selectedProject) ? selectedProject : "";
-  elements.selectionAddProject.disabled = !selectedCaseIds.size || !elements.selectionProjectTarget.value;
+  const targetCollection = organizerState.collections.find((item) => item.id === elements.selectionProjectTarget.value);
+  const selectedEntryIds = expandLogicalCaseIds([...selectedCaseIds], compoundCases);
+  const targetEntryIds = new Set(targetCollection?.entryIds ?? []);
+  const removableCount = selectedEntryIds.filter((id) => targetEntryIds.has(id)).length;
+  const projectActionUnavailable = !selectedCaseIds.size || !targetCollection;
+  elements.selectionAddProject.disabled = projectActionUnavailable;
+  elements.selectionRemoveProject.disabled = projectActionUnavailable || removableCount === 0;
+  elements.selectionRemoveProject.title = projectActionUnavailable
+    ? "请先选择案例和目标项目"
+    : removableCount === 0 ? "所选案例都不在该项目中" : `可移出 ${removableCount} 个案例`;
   elements.selectionSelectFiltered.disabled = selectionMode !== "select" || visibleEntries.length === 0;
   elements.selectionSelectFiltered.hidden = selectedCaseIds.size > 0;
   elements.selectionSelectFiltered.textContent = currentLocale() === "en" ? `Select current (${visibleEntries.length})` : `全选当前（${visibleEntries.length}）`;
@@ -1944,7 +2153,7 @@ function getVisionSelectableEntries(scope = "filtered") {
   if (scope === "filtered") return visibleEntries.filter(isVisionSelectableEntry);
   const collection = organizerState.collections.find((item) => item.id === projectSelectionId || item.id === selectedCollectionId);
   if (!collection) return logicalCases.filter(isVisionSelectableEntry);
-  const memberIds = new Set(collection.entryIds);
+  const memberIds = new Set(collectionEntryIds(organizerState, collection.id, { subtree: true }));
   return logicalCases.filter((entry) =>
     isVisionSelectableEntry(entry) &&
     (entry.memberEntryIds?.length
@@ -1965,22 +2174,30 @@ function completeSelection() {
 }
 
 async function addSelectionToProject() {
+  return updateSelectionProjectMembership("add", elements.selectionAddProject);
+}
+
+async function removeSelectionFromProject() {
+  return updateSelectionProjectMembership("remove", elements.selectionRemoveProject);
+}
+
+async function updateSelectionProjectMembership(mode, button) {
   const collection = organizerState.collections.find((item) => item.id === elements.selectionProjectTarget.value);
   if (!collection || !selectedCaseIds.size) return;
-  elements.selectionAddProject.disabled = true;
+  button.disabled = true;
   try {
     const message = buildLibraryBatchPayload([...selectedCaseIds], compoundCases, {
       type: LIBRARY_BATCH_ACTIONS.setProject,
       collectionId: collection.id,
-      mode: "add"
+      mode
     });
     const response = await chrome.runtime.sendMessage(message);
-    if (!response?.ok) throw new Error(response?.message || "加入项目失败");
+    if (!response?.ok) throw new Error(response?.message || (mode === "remove" ? "移出项目失败" : "加入项目失败"));
     organizerState = response.organizerState ?? organizerState;
-    showFeedback(`已加入项目“${collection.name}”`);
+    showFeedback(response.message || (mode === "remove" ? `已移出项目“${collection.name}”` : `已加入项目“${collection.name}”`));
     exitSelectionMode();
   } catch (error) {
-    showFeedback(error.message || "加入项目失败", true);
+    showFeedback(error.message || (mode === "remove" ? "移出项目失败" : "加入项目失败"), true);
     updateSelectionBar();
   }
 }
@@ -2027,7 +2244,10 @@ async function createProjectFromSelection() {
     selectFirst: true
   });
   if (!name?.trim()) return;
-  const createResponse = await perform(elements.selectionNewProject, { type: "CREATE_COLLECTION", name: name.trim() }, false);
+  const parentId = organizerState.collections.some((item) => item.id === elements.selectionProjectTarget.value)
+    ? elements.selectionProjectTarget.value
+    : null;
+  const createResponse = await perform(elements.selectionNewProject, { type: "CREATE_COLLECTION", name: name.trim(), parentId }, false);
   if (!createResponse?.ok || !createResponse.created?.id) return;
   organizerState = createResponse.organizerState ?? organizerState;
   const entryIds = expandLogicalCaseIds([...selectedCaseIds], compoundCases);
@@ -2119,8 +2339,8 @@ async function saveProjectSelection() {
 }
 
 async function shareProjectCollection(collection) {
-  const memberIds = new Set(collection.entryIds);
-  const count = entries.filter((entry) => memberIds.has(entry.id)).length;
+  const memberIds = new Set(collectionEntryIds(organizerState, collection.id, { subtree: true }));
+  const count = new Set([...memberIds].map((id) => logicalIdByEntryId.get(id)).filter(Boolean)).size;
   openShareDialog({ collectionId: collection.id, title: collection.name, count });
 }
 
@@ -4932,7 +5152,7 @@ function createDetailQuickOrganization(entry) {
     selectedProjects.length === 0
       ? t("选择项目")
       : selectedProjects.length === 1
-        ? selectedProjects[0].name
+        ? collectionPathLabel(organizerState, selectedProjects[0].id)
         : t("已加入 {count} 个项目", { count: selectedProjects.length })
   );
   const syncProjectSummary = () => {
@@ -4940,12 +5160,13 @@ function createDetailQuickOrganization(entry) {
     projectSummaryText.textContent = selected.length === 0
       ? t("选择项目")
       : selected.length === 1
-        ? selected[0].name
+        ? collectionPathLabel(organizerState, selected[0].id)
         : t("已加入 {count} 个项目", { count: selected.length });
   };
   projectSummary.append(projectSummaryText, createUiIcon("chevron-down"));
   const projectPopover = el("div", "detail-project-popover");
   const projectList = el("div", "detail-project-list");
+  const selectorLabelsByProject = collectionSelectorLabelsById(organizerState);
   for (const collection of organizerState.collections) {
     const members = new Set(collection.entryIds);
     const matchingCount = entryIds.filter((id) => members.has(id)).length;
@@ -4973,7 +5194,7 @@ function createDetailQuickOrganization(entry) {
       organizerState = response.organizerState ?? organizerState;
       syncProjectSummary();
     });
-    label.append(checkbox, rawTextEl("span", "", collection.name));
+    label.append(checkbox, rawTextEl("span", "", selectorLabelsByProject.get(collection.id)));
     projectList.append(label);
   }
   const newProject = el("div", "detail-new-project");
@@ -5578,10 +5799,14 @@ async function prepareImportFile({ file, handle = null, relativePath, forceImpor
 }
 
 function renderImportProjectOptions(rootName = "") {
-  const matching = rootName && organizerState.collections.find((item) => item.name.trim() === rootName);
+  const matching = rootName && organizerState.collections.find((item) => item.parentId === null && item.name.trim() === rootName);
   const selected = organizerState.collections.find((item) => item.id === selectedCollectionId);
-  importProjectCombobox.setProjects(organizerState.collections);
-  elements.importProject.value = matching?.name || rootName || selected?.name || "";
+  importProjectCombobox.setProjects(projectComboboxCollections());
+  const selectedProject = matching || (!rootName ? selected : null);
+  if (!selectedProject || !importProjectCombobox.setSelected(selectedProject.id)) {
+    elements.importProject.value = rootName;
+    delete elements.importProject.dataset.projectId;
+  }
   importTagEditor.input.value = "";
   importTagEditor.setValues(pendingLocalImport?.customLabels ?? []);
   elements.importProjectHint.textContent = rootName
@@ -5743,7 +5968,7 @@ async function startLocalImportJob() {
   showImportFeedback("正在把资料交给后台导入…");
   try {
     const projectName = String(elements.importProject.value || "").trim();
-    const existingCollection = organizerState.collections.find((item) => item.name.trim().toLocaleLowerCase() === projectName.toLocaleLowerCase());
+    const existingCollection = organizerState.collections.find((item) => item.id === elements.importProject.dataset.projectId);
     let collectionId = existingCollection?.id || "";
     if (projectName && !collectionId) {
       const response = await chrome.runtime.sendMessage({ type: "CREATE_COLLECTION", name: projectName });
@@ -6031,6 +6256,7 @@ async function readDroppedEntry(entry, parentPath) {
 
 async function addVideoReference(entryId = "") {
   const organizationFields = entryId ? [] : caseCreationOrganizationFields();
+  let projectInput = null;
   const result = await showAppDialog({
     title: "添加视频链接",
     description: "支持 YouTube、Vimeo、Bilibili、抖音和 X。这里只保存来源引用卡，不下载视频文件。",
@@ -6044,11 +6270,14 @@ async function addVideoReference(entryId = "") {
       autocomplete: "url",
       required: true
     }, ...organizationFields],
-    onReady: ({ controls }) => attachProjectSuggestions(controls.get("projectName")),
+    onReady: ({ controls }) => {
+      projectInput = controls.get("projectName");
+      attachProjectSuggestions(projectInput);
+    },
     onSubmit: async ({ url, projectName, customLabels }) => saveVideoReference(
       url,
       entryId,
-      caseCreationOrganization(projectName, customLabels)
+      caseCreationOrganization(projectName, customLabels, projectInput?.dataset.projectId)
     )
   });
   if (result) {
@@ -6123,6 +6352,7 @@ async function fetchVideoReferencePoster(value) {
 }
 
 async function createQuickNote() {
+  let projectInput = null;
   const result = await showAppDialog({
     title: "快速笔记",
     description: "标题和正文一次填写，保存后会作为资料文档显示在案例库。",
@@ -6133,13 +6363,16 @@ async function createQuickNote() {
       { id: "text", label: "笔记正文", type: "textarea", rows: 8, required: true, placeholder: "写下创作想法、判断或待办…" },
       ...caseCreationOrganizationFields()
     ],
-    onReady: ({ controls }) => attachProjectSuggestions(controls.get("projectName")),
+    onReady: ({ controls }) => {
+      projectInput = controls.get("projectName");
+      attachProjectSuggestions(projectInput);
+    },
     onSubmit: async ({ title, text, projectName, customLabels }) => {
       const response = await chrome.runtime.sendMessage({
         type: "CREATE_QUICK_NOTE",
         title,
         text,
-        ...caseCreationOrganization(projectName, customLabels)
+        ...caseCreationOrganization(projectName, customLabels, projectInput?.dataset.projectId)
       });
       if (!response?.ok) throw new Error(response?.message || "笔记保存失败");
       return response;
@@ -6175,14 +6408,12 @@ function caseCreationOrganizationFields() {
 
 function attachProjectSuggestions(input) {
   if (!input) return;
-  attachProjectCombobox(input, { projects: organizerState.collections, destroyOnDialogClose: true });
+  attachProjectCombobox(input, { projects: projectComboboxCollections(), destroyOnDialogClose: true });
 }
 
-function caseCreationOrganization(projectNameValue, customLabelsValue) {
+function caseCreationOrganization(projectNameValue, customLabelsValue, projectIdValue = "") {
   const projectName = String(projectNameValue ?? "").trim();
-  const existing = organizerState.collections.find((item) => (
-    item.name.trim().toLocaleLowerCase() === projectName.toLocaleLowerCase()
-  ));
+  const existing = organizerState.collections.find((item) => item.id === String(projectIdValue ?? "").trim());
   const customLabels = String(customLabelsValue ?? "")
     .split(/[,，\n\r]+/u)
     .map(normalizeImportLabel)
@@ -8447,6 +8678,12 @@ function relatedTrashGroupIds(startItem) {
       if (item.kind === "collection") {
         const memberIds = new Set(item.snapshot?.entryIds ?? []);
         for (const candidate of trashItems) {
+          if (candidate.kind === "collection" && (
+            candidate.snapshot?.parentId === item.targetId || item.snapshot?.parentId === candidate.targetId
+          ) && !selected.has(candidate.id)) {
+            selected.add(candidate.id);
+            changed = true;
+          }
           if (candidate.kind === "entry" && memberIds.has(candidate.targetId) && !selected.has(candidate.id)) {
             selected.add(candidate.id);
             changed = true;

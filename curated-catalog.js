@@ -208,10 +208,15 @@ export function prepareCuratedPackageVersion(libraryValue = {}, itemValue) {
     return next;
   });
   if (library.organizerState?.collections) {
-    library.organizerState.collections = library.organizerState.collections.map((collection, index) => ({
+    const collectionIds = new Map(library.organizerState.collections.map((collection, index) => [
+      clean(collection.id),
+      `${prefix}:collection:${safeId(collection.id || index)}`
+    ]));
+    library.organizerState.collections = library.organizerState.collections.map((collection) => ({
       ...collection,
-      id: `${prefix}:collection:${safeId(collection.id || index)}`,
-      entryIds: (collection.entryIds ?? []).map((id) => entryIds.get(id)).filter(Boolean),
+      id: collectionIds.get(clean(collection.id)),
+      parentId: collectionIds.get(clean(collection.parentId)) ?? null,
+      entryIds: (collection.entryIds ?? []).map((id) => entryIds.get(id)).filter(Boolean)
     }));
   }
   return library;
@@ -231,11 +236,26 @@ export function prepareCuratedEntriesPackage(libraryValue = {}, entryIdValues = 
   const selected = selectLibraryPackage(libraryValue, entryIds);
   if (selected.entries.length !== entryIds.length) throw new Error("精选案例批次不完整，无法保存");
   const selectedIds = new Set(entryIds);
+  const collections = Array.isArray(libraryValue.organizerState?.collections)
+    ? libraryValue.organizerState.collections
+    : [];
+  const byId = new Map(collections.map((collection) => [clean(collection.id), collection]));
+  const includedIds = new Set(collections
+    .filter((collection) => (collection.entryIds ?? []).some((id) => selectedIds.has(id)))
+    .map((collection) => clean(collection.id)));
+  for (const collectionId of [...includedIds]) {
+    let parentId = clean(byId.get(collectionId)?.parentId);
+    while (parentId && byId.has(parentId) && !includedIds.has(parentId)) {
+      includedIds.add(parentId);
+      parentId = clean(byId.get(parentId)?.parentId);
+    }
+  }
   selected.organizerState = {
     ...(selected.organizerState ?? {}),
-    collections: (libraryValue.organizerState?.collections ?? []).flatMap((collection) => {
+    collections: collections.flatMap((collection) => {
+      if (!includedIds.has(clean(collection.id))) return [];
       const memberIds = (collection.entryIds ?? []).filter((id) => selectedIds.has(id));
-      return memberIds.length ? [{ ...structuredClone(collection), entryIds: memberIds }] : [];
+      return [{ ...structuredClone(collection), entryIds: memberIds }];
     })
   };
   return selected;

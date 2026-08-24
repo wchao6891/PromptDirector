@@ -119,7 +119,10 @@ test("duplicate choice and import start preserve the complete background job con
 });
 
 test("project suggestions stay editable and import uses the shared multi-tag editor", () => {
-  assert.match(js, /importProject\.value\s*=\s*matching\?\.name\s*\|\|\s*rootName\s*\|\|\s*selected\?\.name\s*\|\|\s*""/);
+  assert.match(js, /importProjectCombobox\.setProjects\(projectComboboxCollections\(\)\)/);
+  assert.match(js, /importProjectCombobox\.setSelected\(selectedProject\.id\)/);
+  assert.match(js, /item\.id === elements\.importProject\.dataset\.projectId/);
+  assert.doesNotMatch(js, /collectionPathLabel\(organizerState, item\.id\)\.toLocaleLowerCase\(\) === projectName/);
   assert.match(js, /已按根文件夹建议项目；可以修改或清空/);
   assert.match(js, /const importTagEditor = createTagEditor/);
   assert.match(js, /pendingLocalImport\.customLabels\s*=\s*values/);

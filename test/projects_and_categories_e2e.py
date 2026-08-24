@@ -43,7 +43,7 @@ def main() -> None:
         expect(long_name).to_be_visible()
         assert long_name.evaluate("node => getComputedStyle(node).whiteSpace") == "normal"
         library.locator("#manage-project-order").click()
-        expect(library.locator("#manage-project-order")).to_have_attribute("aria-label", "完成项目排序")
+        expect(library.locator("#manage-project-order")).to_have_attribute("aria-label", "完成项目结构管理")
         expect(library.locator(".project-row.project-ordering")).to_have_count(2)
         assert library.locator(".project-row.project-ordering").first.evaluate("node => getComputedStyle(node).userSelect") == "none"
         expect(library.locator(".project-row > .project-menu:visible")).to_have_count(0)
@@ -75,7 +75,7 @@ def main() -> None:
 
         library.evaluate("""() => {
           window.__originalProjectSendMessage = chrome.runtime.sendMessage;
-          chrome.runtime.sendMessage = (message, ...rest) => message?.type === 'REORDER_COLLECTIONS'
+          chrome.runtime.sendMessage = (message, ...rest) => message?.type === 'MOVE_COLLECTION'
             ? Promise.resolve({ok: false, message: '模拟项目排序保存失败'})
             : window.__originalProjectSendMessage.call(chrome.runtime, message, ...rest);
         }""")
@@ -93,11 +93,17 @@ def main() -> None:
         expect(library.locator("#feedback")).to_contain_text("模拟项目排序保存失败")
         expect(library.locator(".project-filter-name").first).to_have_text("辅助项目")
         library.evaluate("""() => { chrome.runtime.sendMessage = window.__originalProjectSendMessage; }""")
+        library.locator(".project-row", has_text="项目与分类验收").focus()
+        library.locator(".project-row", has_text="项目与分类验收").press("ArrowRight")
+        expect(library.locator(".project-row", has_text="项目与分类验收")).to_have_attribute("aria-level", "2")
         library.locator("#manage-project-order").click()
         expect(library.locator(".project-row.project-ordering")).to_have_count(0)
         expect(library.locator(".project-row > .project-menu:visible")).to_have_count(2)
 
-        library.locator(".project-filter", has_text="项目与分类验收").click()
+        library.locator(".project-filter", has_text="辅助项目").click()
+        expect(library.locator("#project-folder-list .project-folder-card", has_text="项目与分类验收")).to_be_visible()
+        expect(library.locator("#result-count")).to_have_text("0 个直接案例 · 1 个子项目")
+        library.locator("#project-folder-list .project-folder-card", has_text="项目与分类验收").click()
         expect(library.locator("#manage-case-order")).to_be_visible()
         library.locator("#gallery-sort").select_option("project-manual")
         expect(library.locator(".case-reorder-controls:visible")).to_have_count(0)
@@ -118,7 +124,7 @@ def main() -> None:
         library.locator("#select-cases").click()
         expect(library.locator("#manage-project-order")).to_be_visible()
         expect(library.locator("#manage-project-order")).to_be_disabled()
-        expect(library.locator("#manage-project-order")).to_have_attribute("title", "结束案例选择后可排序项目")
+        expect(library.locator("#manage-project-order")).to_have_attribute("title", "结束案例选择后可管理项目结构")
         library.locator(".case-card").nth(0).click()
         library.locator(".case-card").nth(1).click()
         library.locator("#selection-more-menu > summary").click()

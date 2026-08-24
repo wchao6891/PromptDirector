@@ -1,6 +1,6 @@
 import { curatedSourceKey } from "./curated-catalog.js";
 import { mergeLibraryPackage } from "./library-package.js";
-import { COLLECTION_VISIBILITY, normalizeOrganizerState } from "./organizer.js";
+import { COLLECTION_VISIBILITY, createDefaultOrganizerState, normalizeOrganizerState } from "./organizer.js";
 
 export function mergeCuratedLibraryPackage(currentValue = {}, libraryValue = {}, options = {}) {
   const packageId = clean(options.packageId);
@@ -41,7 +41,7 @@ export function mergeCuratedLibraryPackage(currentValue = {}, libraryValue = {},
     if (existing) existingSourceEntryIds.add(sourceEntryId);
   }
   remapEntryRelationships(imported, originalToAdaptedId);
-  imported.organizerState = { version: 6, collections: [] };
+  imported.organizerState = createDefaultOrganizerState();
 
   const result = mergeLibraryPackage(current, imported, {
     entryIdMap: remapPreferredIds(options.entryIdMap, originalToAdaptedId),

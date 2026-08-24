@@ -17,6 +17,7 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
     "selection-add-labels",
     "selection-project-target",
     "selection-add-project",
+    "selection-remove-project",
     "share-export",
     "selection-trash"
   ]) assert.match(bar, new RegExp(`id="${id}"`));

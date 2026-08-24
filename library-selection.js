@@ -7,7 +7,7 @@ export const LIBRARY_BATCH_ACTIONS = Object.freeze({
   moveToTrash: "BATCH_MOVE_TO_TRASH"
 });
 
-const PROJECT_MODES = new Set(["add", "move"]);
+const PROJECT_MODES = new Set(["add", "remove", "move"]);
 
 export function normalizeSelectedLogicalCaseIds(values = []) {
   return uniqueIds(values);
@@ -50,7 +50,7 @@ export function buildLibraryBatchPayload(selectedLogicalCaseIds = [], compoundCa
     const collectionId = clean(operation.collectionId);
     const mode = clean(operation.mode);
     if (!collectionId) throw new Error("请选择项目");
-    if (!PROJECT_MODES.has(mode)) throw new Error("项目批量操作必须明确选择添加或移动");
+    if (!PROJECT_MODES.has(mode)) throw new Error("项目批量操作必须明确选择加入、移出或移动");
     return {
       type: LIBRARY_BATCH_ACTIONS.setProject,
       entryIds,
