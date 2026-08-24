@@ -210,7 +210,7 @@ test("localhost compatible services allow HTTP without an API key and list model
   assert.deepEqual(probe.models, ["local-vision", "text-only"]);
 });
 
-test("vision result requires a complete reconstruction record and keeps at most six optional compact tags", () => {
+test("vision result keeps partial paid output visible and keeps at most six optional compact tags", () => {
   const values = Array.from({ length: 6 }, (_, index) => ({ g: "light.direction", t: `标签${index + 1}` }));
   const result = normalizeVisionResult(completeVisionResult("  主体处于逆光中。  ", values));
   assert.equal(result.description, "主体处于逆光中。");
@@ -219,8 +219,27 @@ test("vision result requires a complete reconstruction record and keeps at most 
   const overLimit = normalizeVisionResult(completeVisionResult("有效描述", [...values, values[0]]));
   assert.equal(overLimit.tags.length, 6);
   assert.equal(overLimit.tagDiagnostics.rejectedCount, 1);
-  assert.throws(() => normalizeVisionResult(completeVisionResult("")), /画面描述/);
-  assert.throws(() => normalizeVisionResult({ description: "旧版简述", tags: [] }), /画布信息/);
+  const missingDescription = normalizeVisionResult(completeVisionResult(""));
+  assert.equal(missingDescription.quality, "partial");
+  assert.ok(missingDescription.missingFields.includes("description"));
+  const partial = normalizeVisionResult({ description: "旧版简述", tags: [] });
+  assert.equal(partial.quality, "partial");
+  assert.equal(partial.description, "旧版简述");
+  assert.ok(partial.missingFields.includes("canvas"));
+  assert.ok(partial.missingFields.includes("reconstructionPrompt"));
+});
+
+test("partial vision normalization accepts root casing and snake-case aliases without inventing fields", () => {
+  const partial = normalizeVisionResult({
+    Description: "可见人物站在窗边。",
+    reconstruction_prompt: "人物站在窗边，侧逆光。",
+    Tags: [{ group_id: "light.direction", detail: "侧逆光" }],
+    extra_model_note: "ignored"
+  });
+  assert.equal(partial.quality, "partial");
+  assert.equal(partial.reconstructionPrompt, "人物站在窗边，侧逆光。");
+  assert.deepEqual(partial.tags, [{ g: "light.direction", t: "侧逆光" }]);
+  assert.ok(partial.missingFields.includes("elements"));
 });
 
 test("an invalid optional search tag cannot discard an otherwise complete paid visual analysis", () => {
@@ -369,13 +388,15 @@ test("compatible json_object vision requests keep image input and local full-sch
   assert.match(instruction, /"ocr":\{"type":"array"/);
   assert.equal(success.description, "一张完整分析。");
 
-  await assert.rejects(() => analyzeImageWithVision(input, async () => ({
+  const partial = await analyzeImageWithVision(input, async () => ({
     ok: true,
     json: async () => ({ choices: [{ message: { content: JSON.stringify({ description: "不完整" }) } }] })
-  })), /画布信息|缺少|必须/);
+  }));
+  assert.equal(partial.quality, "partial");
+  assert.ok(partial.missingFields.includes("canvas"));
 });
 
-test("compatible empty vision results expose finish reasons without retrying or falling back", async () => {
+test("compatible empty vision results get exactly one structured-output correction request", async () => {
   const input = {
     imageDataUrl: "data:image/png;base64,AAAA",
     catalog: createDefaultFacetCatalog(),
@@ -408,7 +429,7 @@ test("compatible empty vision results expose finish reasons without retrying or 
       };
     }), expected);
   }
-  assert.equal(calls, cases.length);
+  assert.equal(calls, cases.length * 2);
 });
 
 test("compatible Responses request sends the OpenAI image shape and parses structured output", async () => {
@@ -542,14 +563,21 @@ test("vision service refusal, invalid JSON, missing description and HTTP errors 
     ok: true,
     json: async () => ({ output: [{ content: [{ type: "refusal", refusal: "not allowed" }] }] })
   })), /拒绝分析/);
-  await assert.rejects(() => analyzeImageWithVision(input, async () => ({
-    ok: true,
-    json: async () => ({ output_text: "not-json" })
-  })), /JSON 无效/);
-  await assert.rejects(() => analyzeImageWithVision(input, async () => ({
+  let invalidJsonCalls = 0;
+  await assert.rejects(() => analyzeImageWithVision(input, async () => {
+    invalidJsonCalls += 1;
+    return {
+      ok: true,
+      json: async () => ({ output_text: "not-json" })
+    };
+  }), /JSON 无效/);
+  assert.equal(invalidJsonCalls, 2);
+  const partial = await analyzeImageWithVision(input, async () => ({
     ok: true,
     json: async () => ({ output_text: JSON.stringify(completeVisionResult("")) })
-  })), /没有返回画面描述/);
+  }));
+  assert.equal(partial.quality, "partial");
+  assert.ok(partial.missingFields.includes("description"));
   await assert.rejects(() => analyzeImageWithVision(input, async () => ({
     ok: false,
     status: 429,

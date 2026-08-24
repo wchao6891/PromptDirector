@@ -446,7 +446,7 @@ function renderAnalysisBatch() {
   const job = analysisBatchJob;
   const preview = analysisBatchPreview;
   const active = Boolean(job && ["running", "paused"].includes(job.status));
-  const unfinishedRebuild = Boolean(job?.mode === "rebuild" && job?.status === "completed" && job?.counts.failed && !job.partialApplied);
+  const unfinishedRebuild = Boolean(job?.mode === "rebuild" && ["completed", "partial"].includes(job?.status) && job?.counts.failed && !job.partialApplied);
   const partialRebuildApplied = Boolean(job?.mode === "rebuild" && job?.partialApplied);
   if (preview && !active && !unfinishedRebuild) {
     elements.batchStatusBadge.textContent = t("本次预览");
@@ -463,11 +463,11 @@ function renderAnalysisBatch() {
     elements.batchStatusBadge.textContent = t("尚未开始");
     elements.analysisBatchSummary.textContent = t("先生成预览，不会直接产生 API 请求。");
   } else {
-    const statusNames = { running: "分析中", paused: "已暂停", completed: unfinishedRebuild ? "重建待完成" : partialRebuildApplied ? "成功结果已应用" : "上次任务", canceled: "上次已取消" };
+    const statusNames = { running: "分析中", paused: "已暂停", completed: unfinishedRebuild ? "重建待完成" : partialRebuildApplied ? "成功结果已应用" : "已完成", partial: "部分完成", failed: "分析失败", canceled: "上次已取消" };
     elements.batchStatusBadge.textContent = t(statusNames[job.status] || job.status);
     const progress = currentLocale() === "en"
-      ? [`${job.counts.succeeded}/${job.total} completed`, `${job.counts.running} active`, `${job.counts.pending} queued`, `${job.counts.failed} failed`, `input ${job.usage.promptTokens} / output ${job.usage.completionTokens} tokens`, `cache hits ${job.usage.cacheHitTokens} tokens`].join(" · ")
-      : [`${job.counts.succeeded}/${job.total} 已完成`, `${job.counts.running} 处理中`, `${job.counts.pending} 等待中`, `${job.counts.failed} 失败`, `输入 ${job.usage.promptTokens} / 输出 ${job.usage.completionTokens} tokens`, `缓存命中 ${job.usage.cacheHitTokens} tokens`].join(" · ");
+      ? [`${job.counts.succeeded}/${job.total} completed`, `${job.counts.partial || 0} partial`, `${job.counts.running} active`, `${job.counts.pending} queued`, `${job.counts.failed} failed`, `${job.requestAttempts || 0} actual requests`, `${job.outputCorrectionRequests || 0} output corrections`, `input ${job.usage.promptTokens} / output ${job.usage.completionTokens} tokens`, `${job.cacheHitCount || 0} result cache hits`, `prompt cache ${job.usage.cacheHitTokens} tokens`, analysisFailureCategorySummary(job, "en")].filter(Boolean).join(" · ")
+      : [`${job.counts.succeeded}/${job.total} 已完成`, `${job.counts.partial || 0} 待补全`, `${job.counts.running} 处理中`, `${job.counts.pending} 等待中`, `${job.counts.failed} 失败`, `真实请求 ${job.requestAttempts || 0} 次`, `结构补全 ${job.outputCorrectionRequests || 0} 次`, `输入 ${job.usage.promptTokens} / 输出 ${job.usage.completionTokens} tokens`, `结果缓存命中 ${job.cacheHitCount || 0} 次`, `提示缓存命中 ${job.usage.cacheHitTokens} tokens`, analysisFailureCategorySummary(job, "zh-CN")].filter(Boolean).join(" · ");
     const recovery = unfinishedRebuild
       ? (currentLocale() === "en"
         ? `${job.stagedResultCount ?? job.counts.succeeded} successful results are safely staged. ${analysisFailureSummary(job, "en")}`
@@ -491,8 +491,10 @@ function renderAnalysisBatch() {
   elements.cancelAnalysisBatch.hidden = !active;
   elements.retryAnalysisFailures.textContent = unfinishedRebuild
     ? (currentLocale() === "en" ? `Finish rebuild (${job.counts.failed})` : `继续完成重建（${job.counts.failed} 条）`)
-    : t("重试失败项");
-  elements.retryAnalysisFailures.hidden = !job?.counts.failed || running || partialRebuildApplied || (unfinishedRebuild && job.stagingValid !== true);
+    : currentLocale() === "en"
+      ? `Retry failed/incomplete (${(job?.counts.failed || 0) + (job?.counts.partial || 0)} expected items)`
+      : `重试失败/待补全（预计新增 ${(job?.counts.failed || 0) + (job?.counts.partial || 0)} 项）`;
+  elements.retryAnalysisFailures.hidden = !(job?.counts.failed || job?.counts.partial) || running || partialRebuildApplied || (unfinishedRebuild && job.stagingValid !== true);
   elements.applyStagedAnalysisRebuild.textContent = unfinishedRebuild
     ? (currentLocale() === "en"
       ? `Apply ${job.stagedResultCount ?? job.counts.succeeded} successful results (${job.counts.failed} pending)`
@@ -502,7 +504,7 @@ function renderAnalysisBatch() {
   elements.undoAnalysisBatch.hidden = !job || !canUndoAnalysisBatch || running || paused;
   elements.analysisProgress.hidden = !active;
   elements.analysisProgressBar.max = Math.max(1, job?.total || 1);
-  elements.analysisProgressBar.value = Math.min(job?.counts?.succeeded + job?.counts?.failed || 0, job?.total || 0);
+  elements.analysisProgressBar.value = Math.min((job?.counts?.succeeded || 0) + (job?.counts?.partial || 0) + (job?.counts?.failed || 0), job?.total || 0);
 }
 
 function analysisFailureSummary(job, locale) {
@@ -515,6 +517,16 @@ function analysisFailureSummary(job, locale) {
   const summaries = [...counts.entries()].slice(0, 3).map(([message, count]) => `${message.slice(0, 80)} (${count})`);
   if (!summaries.length) return locale === "en" ? "Retry only the failed cases to finish the atomic switch." : "只需重试失败案例，全部成功后自动切换。";
   return locale === "en" ? `Failures: ${summaries.join("; ")}` : `失败原因：${summaries.join("；")}`;
+}
+
+function analysisFailureCategorySummary(job, locale) {
+  const labels = locale === "en"
+    ? { authorization: "authorization", rate_limit: "rate limit", timeout: "timeout", service: "service", network: "network", output: "output" }
+    : { authorization: "授权", rate_limit: "限流", timeout: "超时", service: "服务", network: "网络", output: "输出格式" };
+  const values = Object.entries(job?.failureCategories ?? {}).filter(([, count]) => count > 0);
+  if (!values.length) return "";
+  const summary = values.map(([category, count]) => `${labels[category] || category} ${count}`).join(locale === "en" ? ", " : "、");
+  return locale === "en" ? `Failure types: ${summary}` : `失败类型：${summary}`;
 }
 
 function bindEvents() {
@@ -2426,8 +2438,8 @@ function renderVisionBatchDialog(preview = null) {
   const caseCount = preview?.caseCount ?? new Set(job?.items?.map((item) => item.entryId) ?? []).size;
   elements.visionBatchSummary.textContent = job
     ? currentLocale() === "en"
-      ? `${counts.succeeded ?? 0}/${requestCount} completed · ${counts.failed ?? 0} failed`
-      : `${counts.succeeded ?? 0}/${requestCount} 已完成 · ${counts.failed ?? 0} 失败`
+      ? `${counts.succeeded ?? 0}/${requestCount} completed · ${counts.partial ?? 0} partial · ${counts.failed ?? 0} failed · ${job.requestAttempts || 0} actual requests · ${job.outputCorrectionRequests || 0} output corrections · ${job.cacheHitCount || 0} cache hits${analysisFailureCategorySummary(job, "en") ? ` · ${analysisFailureCategorySummary(job, "en")}` : ""}`
+      : `${counts.succeeded ?? 0}/${requestCount} 已完成 · ${counts.partial ?? 0} 待补全 · ${counts.failed ?? 0} 失败 · 真实请求 ${job.requestAttempts || 0} 次 · 结构补全 ${job.outputCorrectionRequests || 0} 次 · 缓存命中 ${job.cacheHitCount || 0} 次${analysisFailureCategorySummary(job, "zh-CN") ? ` · ${analysisFailureCategorySummary(job, "zh-CN")}` : ""}`
     : currentLocale() === "en"
       ? `${caseCount} cases · ${requestCount} image requests`
       : `${caseCount} 个案例 · ${requestCount} 次图片请求`;
@@ -2438,13 +2450,17 @@ function renderVisionBatchDialog(preview = null) {
   elements.visionBatchStart.disabled = !requestCount;
   elements.visionBatchPause.hidden = !job || job.status !== "running" || !visionBatchRunnerActive;
   elements.visionBatchResume.hidden = !job || !active || visionBatchRunnerActive;
-  elements.visionBatchRetry.hidden = !job || !counts.failed || visionBatchRunnerActive;
+  elements.visionBatchRetry.hidden = !job || !(counts.failed || counts.partial) || visionBatchRunnerActive;
+  elements.visionBatchRetry.textContent = currentLocale() === "en"
+    ? `Retry failed/incomplete (${(counts.failed || 0) + (counts.partial || 0)} expected items)`
+    : `重试失败/待补全（预计新增 ${(counts.failed || 0) + (counts.partial || 0)} 项）`;
   elements.visionBatchCancel.hidden = !active;
   if (job && !active) {
     const total = job.usage?.totalTokens ?? 0;
-    showVisionBatchFeedback(currentLocale() === "en"
-      ? `Task finished · ${total} total tokens reported by the service`
-      : `任务已结束 · 服务实际返回 ${total} tokens`);
+    const label = job.status === "completed" ? (currentLocale() === "en" ? "Completed" : "全部完成")
+      : job.status === "failed" ? (currentLocale() === "en" ? "Failed" : "全部失败")
+      : (currentLocale() === "en" ? "Partially completed" : "部分完成，可重试失败或待补全项");
+    showVisionBatchFeedback(`${label} · ${total} tokens` , job.status === "failed");
   }
 }
 
@@ -2482,37 +2498,50 @@ async function runVisionBatch() {
       });
       if (!claimed?.ok) throw new Error(claimed?.message || "无法领取下一张图片");
       visionBatchJob = claimed.visionBatchJob;
-      const claim = claimed.claim;
-      if (!claim) break;
+      const claims = claimed.claims ?? (claimed.claim ? [claimed.claim] : []);
+      if (!claims.length) break;
       showVisionBatchFeedback(currentLocale() === "en"
-        ? `Analysing image ${visionBatchJob.counts.succeeded + visionBatchJob.counts.failed + 1} of ${visionBatchJob.requestCount}…`
-        : `正在分析第 ${visionBatchJob.counts.succeeded + visionBatchJob.counts.failed + 1}/${visionBatchJob.requestCount} 张图片…`);
-      const result = await chrome.runtime.sendMessage({
-        type: "ANALYZE_ENTRY_IMAGE",
-        entryId: claim.entryId,
-        visualId: claim.visualId,
-        outputLocale: visionBatchJob.outputLocale,
-        batchJobId: visionBatchJob.id
-      });
-      const update = result?.ok
-        ? await chrome.runtime.sendMessage({
-          type: "COMPLETE_VISION_BATCH_ITEM",
-          jobId: visionBatchJob.id,
+        ? `Analysing ${claims.length} images concurrently…`
+        : `正在并发分析 ${claims.length} 张图片…`);
+      const settled = await Promise.allSettled(claims.map(async (claim) => {
+        const result = await chrome.runtime.sendMessage({
+          type: "ANALYZE_ENTRY_IMAGE",
           entryId: claim.entryId,
           visualId: claim.visualId,
-          claimId: claim.claimId,
-          usage: result.usage
-        })
-        : await chrome.runtime.sendMessage({
-          type: "FAIL_VISION_BATCH_ITEM",
-          jobId: visionBatchJob.id,
-          entryId: claim.entryId,
-          visualId: claim.visualId,
-          claimId: claim.claimId,
-          error: { message: result?.message || "图片分析失败", status: 0 }
+          outputLocale: visionBatchJob.outputLocale,
+          batchJobId: visionBatchJob.id,
+          bypassCache: visionBatchJob.reanalyze === true,
+          assignment: {
+            providerId: visionBatchJob.providerId,
+            model: visionBatchJob.model,
+            concurrency: visionBatchJob.concurrency
+          }
         });
-      if (!update?.ok) throw new Error(update?.message || "无法保存批量任务进度");
-      visionBatchJob = update.visionBatchJob;
+        const update = result?.ok
+          ? await chrome.runtime.sendMessage({
+            type: "COMPLETE_VISION_BATCH_ITEM",
+            jobId: visionBatchJob.id,
+            entryId: claim.entryId,
+            visualId: claim.visualId,
+            claimId: claim.claimId,
+            usage: result.usage,
+            cacheHit: result.cacheHit,
+            attempts: result.attempts,
+            quality: result.quality
+          })
+          : await chrome.runtime.sendMessage({
+            type: "FAIL_VISION_BATCH_ITEM",
+            jobId: visionBatchJob.id,
+            entryId: claim.entryId,
+            visualId: claim.visualId,
+            claimId: claim.claimId,
+            error: { message: result?.message || "图片分析失败", status: Number(result?.status) || 0 }
+          });
+        if (!update?.ok) throw new Error(update?.message || "无法保存批量任务进度");
+        visionBatchJob = update.visionBatchJob;
+      }));
+      const rejected = settled.find((item) => item.status === "rejected");
+      if (rejected) throw rejected.reason;
       renderVisionBatchDialog();
       if (cancelVisionBatchAfterCurrent) {
         await updateVisionBatchAction("CANCEL_VISION_BATCH");
@@ -5188,6 +5217,7 @@ function createVisionDescription(entry) {
   const section = el("section", "detail-section vision-description");
   const heading = el("div", "vision-description-heading");
   heading.append(textEl("h3", "", "画面描述"));
+  if (vision.quality === "partial") heading.append(textEl("span", "batch-status-badge", `部分完成 · ${vision.missingFields?.length || 0} 项待补全`));
   const actions = el("div", "vision-description-actions");
   const copy = textEl("button", "button-secondary", "复制");
   copy.addEventListener("click", () => copyTextWithFeedback(
@@ -5228,7 +5258,13 @@ async function analyzeEntryVision(entry, button) {
   button.textContent = t("正在分析画面…");
   setVisionAnalysisStatus(entry.id, "loading", "正在发送当前截图，请保持页面打开。");
   try {
-    const response = await chrome.runtime.sendMessage({ type: "ANALYZE_ENTRY_IMAGE", entryId: entry.id, visualId: visual.id, outputLocale: currentLocale() });
+    const response = await chrome.runtime.sendMessage({
+      type: "ANALYZE_ENTRY_IMAGE",
+      entryId: entry.id,
+      visualId: visual.id,
+      outputLocale: currentLocale(),
+      bypassCache: Boolean(vision && vision.quality !== "partial")
+    });
     if (!response?.ok) throw new Error(response?.message || "图片分析失败");
     if (response.canUndoVisionAnalysis) visionUndoEntryIds.add(entry.id);
     const replacement = visualAnalysisPromptReplacement(response.entry, visual.id);
@@ -6543,7 +6579,7 @@ function createPromptSection(entry, options = {}) {
   const vision = primaryVisionAnalysis(entry);
   const primary = primaryVisual(entry);
   const analyzeVisual = primary?.kind === "image" && !entry.compoundCase
-    ? textEl("button", "button-secondary", vision ? "重新分析主图" : "分析主图")
+    ? textEl("button", "button-secondary", vision?.quality === "partial" ? "补全主图分析" : vision ? "重新分析主图" : "分析主图")
     : null;
   const analyze = textEl("button", "button-secondary", "分析检索标签");
   const edit = textEl("button", "button-secondary", separatesCurrentAndShared ? "编辑当前图片" : "编辑");
@@ -6625,7 +6661,8 @@ async function analyzeEntryVisualSet(entry, button) {
     const fingerprintMatches = Boolean(currentFingerprint && analysis?.imageFingerprint
       && currentFingerprint === analysis.imageFingerprint);
     if (analysis?.invalidated || !fingerprintMatches) return { valid: false, label: "分析已过期" };
-    if (Number(analysis?.version) === 2 && analysis?.reconstructionPrompt) return { valid: true, label: "有效 V2，可直接复用" };
+    if (Number(analysis?.version) === 2 && analysis?.quality !== "partial" && analysis?.reconstructionPrompt) return { valid: true, label: "有效 V2，可直接复用" };
+    if (analysis?.quality === "partial") return { valid: false, label: "部分完成，待补全" };
     return { valid: false, label: "未分析" };
   };
   const missingAssets = assets.filter((asset) => !stateFor(asset).valid);
@@ -6721,23 +6758,34 @@ async function analyzeEntryVisualSet(entry, button) {
       }
       const promptSuggestions = [];
       const failures = [];
-      for (const asset of selectedAssets) {
+      const partials = [];
+      await Promise.allSettled(selectedAssets.map(async (asset) => {
         const imageIndex = assets.findIndex((item) => item.id === asset.id);
         const card = cardByAssetId.get(asset.id);
         const statusLabel = card?.querySelector(".visual-analysis-card-status");
         if (card) card.dataset.state = "processing";
         if (statusLabel) statusLabel.textContent = t("正在分析…");
         try {
-          const response = await chrome.runtime.sendMessage({ type: "ANALYZE_ENTRY_IMAGE", entryId: entry.id, visualId: asset.id, outputLocale: currentLocale() });
+          const response = await chrome.runtime.sendMessage({
+            type: "ANALYZE_ENTRY_IMAGE",
+            entryId: entry.id,
+            visualId: asset.id,
+            outputLocale: currentLocale(),
+            bypassCache: stateFor(asset).valid
+          });
           if (!response?.ok) throw new Error(response?.message || "逐图分析失败");
-          completedAssetIds.add(asset.id);
+          const partial = response.quality === "partial";
+          if (partial) partials.push({ index: imageIndex + 1, missingFields: response.missingFields ?? [] });
+          else completedAssetIds.add(asset.id);
           const input = dialogControls?.get(`asset_${imageIndex}`);
-          if (input) {
+          if (input && !partial) {
             input.checked = false;
             input.disabled = true;
           }
-          if (card) card.dataset.state = "completed";
-          if (statusLabel) statusLabel.textContent = t("本次已完成");
+          if (card) card.dataset.state = partial ? "partial" : "completed";
+          if (statusLabel) statusLabel.textContent = partial
+            ? t("待补全 · 已保存有效结果")
+            : t("本次已完成");
           updateSelectionSummary();
           const replacement = visualAnalysisPromptReplacement(response.entry, asset.id);
           if (replacement) savedPromptSuggestions.set(asset.id, { ...replacement, index: imageIndex + 1 });
@@ -6747,11 +6795,15 @@ async function analyzeEntryVisualSet(entry, button) {
           if (card) card.dataset.state = "failed";
           if (statusLabel) statusLabel.textContent = t("失败 · {message}", { message });
         }
-      }
-      if (failures.length) {
+      }));
+      if (failures.length || partials.length) {
         const statusLine = status();
         statusLine.classList.add("error");
-        statusLine.textContent = t("{failed} 张失败，已成功 {completed} 张且不会重复请求。可直接重试失败项。", { failed: failures.length, completed: completedAssetIds.size });
+        statusLine.textContent = t("{failed} 张失败，{partial} 张待补全，已成功 {completed} 张且不会重复请求。可直接重试失败或待补全项。", {
+          failed: failures.length,
+          partial: partials.length,
+          completed: completedAssetIds.size
+        });
         await refreshLibrary();
         return false;
       }
@@ -7326,12 +7378,19 @@ async function openAiTaskAssignmentDialog(taskId) {
     ? current.providerId : capable[0].id;
   const modelOptions = (providerId) => taskModelOptions(aiProviderRegistry.providers?.[providerId], taskId);
   const initialModels = modelOptions(selectedProviderId);
+  const supportsBatchConcurrency = ["textTags", "imageAnalysis"].includes(taskId);
+  const defaultConcurrency = ["textTags", "skillExtraction", "creativePlanning"].includes(taskId) ? 20 : 10;
+  const initialConcurrency = Number.isInteger(Number(current.concurrency)) ? Number(current.concurrency) : defaultConcurrency;
   const result = await showAppDialog({
     title: t(task.label),
     description: t("这里设置全局默认；创作台中的本轮切换不会改动此处。"),
     fields: [
       { id: "providerId", label: t("AI 服务"), type: "select", value: selectedProviderId, options: capable.map((profile) => ({ value: profile.id, label: providerDisplayLabel(profile) })) },
-      { id: "model", label: t("模型"), type: "select", value: initialModels.some((item) => item.value === current.model) ? current.model : initialModels[0]?.value || "", options: initialModels }
+      { id: "model", label: t("模型"), type: "select", value: initialModels.some((item) => item.value === current.model) ? current.model : initialModels[0]?.value || "", options: initialModels },
+      ...(supportsBatchConcurrency ? [
+        { id: "concurrency", label: t("批量分析并发数"), type: "number", min: 2, step: 1, value: initialConcurrency, help: t("文字任务默认 20，图片和视频任务默认 10；调整只对新任务生效。") },
+        { id: "highConcurrencyConfirmed", label: t("我确认高于 20 的并发可能明显增加瞬时费用、内存占用和错误数量"), type: "checkbox", value: false }
+      ] : [])
     ],
     confirmLabel: t("保存任务默认"),
     cancelLabel: t("取消"),
@@ -7343,13 +7402,26 @@ async function openAiTaskAssignmentDialog(taskId) {
       localizeAiDialogClose(dialog);
       const provider = controls.get("providerId");
       const model = controls.get("model");
+      const concurrency = controls.get("concurrency");
+      const highConcurrencyConfirmed = controls.get("highConcurrencyConfirmed");
       const modelField = model?.closest(".app-dialog-field");
       const capabilityHelp = document.createElement("small");
       capabilityHelp.className = "model-capability-help";
       modelField?.append(capabilityHelp);
       const syncCapabilityHelp = () => {
-        capabilityHelp.textContent = modelAssignmentHelp(aiProviderRegistry.providers?.[provider.value], taskId, model.value);
+        const profile = aiProviderRegistry.providers?.[provider.value];
+        const descriptor = profile?.discoveredModels?.find((item) => item.id === model.value);
+        const officialLimit = Number(descriptor?.concurrencyLimit?.value);
+        const limitText = Number.isInteger(officialLimit)
+          ? t("官方并发上限：{count}", { count: officialLimit })
+          : t("服务商未提供固定并发上限");
+        capabilityHelp.textContent = [modelAssignmentHelp(profile, taskId, model.value), limitText].filter(Boolean).join(" · ");
         capabilityHelp.hidden = !capabilityHelp.textContent;
+        if (concurrency) concurrency.max = Number.isInteger(officialLimit) ? String(officialLimit) : "";
+        if (highConcurrencyConfirmed) {
+          const wrapper = highConcurrencyConfirmed.closest(".app-dialog-field");
+          if (wrapper) wrapper.hidden = Number(concurrency?.value) <= 20;
+        }
       };
       provider?.addEventListener("change", () => {
         const options = modelOptions(provider.value);
@@ -7365,13 +7437,17 @@ async function openAiTaskAssignmentDialog(taskId) {
         syncCapabilityHelp();
       });
       model?.addEventListener("change", syncCapabilityHelp);
+      concurrency?.addEventListener("input", syncCapabilityHelp);
       syncCapabilityHelp();
     },
     onSubmit: async (values) => {
       if (!String(values.model ?? "").trim()) throw new Error(t("请选择或填写模型"));
+      const concurrency = supportsBatchConcurrency ? Number(values.concurrency) : initialConcurrency;
+      if (supportsBatchConcurrency && (!Number.isInteger(concurrency) || concurrency < 2)) throw new Error(t("批量分析并发数必须是大于或等于 2 的整数"));
+      if (supportsBatchConcurrency && concurrency > 20 && values.highConcurrencyConfirmed !== true) throw new Error(t("并发高于 20，请先确认费用和稳定性风险"));
       const response = await chrome.runtime.sendMessage({
         type: "UPDATE_AI_PROVIDER_CONFIGURATION",
-        assignments: { ...aiTaskAssignments, [taskId]: { providerId: values.providerId, model: values.model } }
+        assignments: { ...aiTaskAssignments, [taskId]: { providerId: values.providerId, model: values.model, concurrency } }
       });
       if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("任务默认保存失败"));
       applyAiConfigurationResponse(response);
@@ -8021,7 +8097,11 @@ async function runAnalysisBatch() {
       const recovered = await chrome.runtime.sendMessage({ type: "RECOVER_ANALYSIS_BATCH" });
       if (recovered?.analysisBatchJob) analysisBatchJob = recovered.analysisBatchJob;
       recordAnalysisDiagnostic("job_recovered");
-      const settingsValue = await privateAiSettings();
+      const settingsValue = await privateAiSettings({
+        providerId: analysisBatchJob.providerId,
+        model: analysisBatchJob.model || analysisBatchJob.analysisModel,
+        concurrency: analysisBatchJob.concurrency
+      });
       const currentProfile = await analysisProfileFingerprint(settingsValue, analysisBatchJob.outputLocale);
       if (analysisBatchJob.profileFingerprint && currentProfile !== analysisBatchJob.profileFingerprint) {
         const paused = await chrome.runtime.sendMessage({ type: "PAUSE_ANALYSIS_BATCH", jobId: analysisBatchJob.id });
@@ -8114,21 +8194,23 @@ async function runAnalysisClaim(claim, catalog, settingsValue, signal) {
       fingerprint: claim.fingerprint,
       textRevision: claim.textRevision,
       tags: result.tags,
+      normalizationDiagnostics: result.normalizationDiagnostics,
+      attempts: result.attempts,
       usage: result.usage,
       model: result.model
     };
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    return analysisClaimFailure(claim, error.message || "分析失败", error.status || 0, error.usage);
+    return analysisClaimFailure(claim, error.message || "分析失败", error.status || 0, error.usage, error.attempts);
   }
 }
 
-function analysisClaimFailure(claim, message, status, usage) {
+function analysisClaimFailure(claim, message, status, usage, attempts) {
   return {
     entryId: claim.entryId,
     claimId: claim.claimId,
     textRevision: claim.textRevision,
-    error: { message, status, usage }
+    error: { message, status, usage, attempts }
   };
 }
 
@@ -8139,17 +8221,28 @@ async function analyzeEntryWithRetry(entry, catalog, settingsValue, outputLocale
     : undefined;
   for (;;) {
     try {
-      return await analyzeTextDetailedWithDeepSeek(entry, catalog, { ...settingsValue, outputLocale }, fetch, {
+      const result = await analyzeTextDetailedWithDeepSeek(entry, catalog, { ...settingsValue, outputLocale }, fetch, {
         signal,
         onDiagnostic: reportDiagnostic
       });
+      return {
+        ...result,
+        attempts: {
+          serviceRequests: serviceRetries + 1,
+          outputCorrectionRequests: Number(result.attempts?.outputCorrectionRequests) || 0
+        }
+      };
     } catch (error) {
       if (isRetryableDeepSeekError(error) && serviceRetries < ANALYSIS_SERVICE_RETRY_LIMIT) {
-        const delay = error.retryAfterMs || 1000 * (2 ** serviceRetries);
+        const delay = error.retryAfterMs || [1000, 3000][serviceRetries] + Math.floor(Math.random() * 501);
         serviceRetries += 1;
         await wait(Math.min(delay, 30_000), signal);
         continue;
       }
+      error.attempts = {
+        serviceRequests: serviceRetries + 1,
+        outputCorrectionRequests: Math.max(0, Number(error?.attempts?.outputCorrectionRequests) || 0)
+      };
       throw error;
     }
   }
@@ -8168,6 +8261,8 @@ async function analyzeSingleEntry(entry, button) {
       fingerprint,
       textRevision: entryTextRevision(entry),
       tags: result.tags,
+      normalizationDiagnostics: result.normalizationDiagnostics,
+      attempts: result.attempts,
       usage: result.usage,
       model: result.model,
       profileFingerprint
@@ -8182,8 +8277,8 @@ async function analyzeSingleEntry(entry, button) {
   }
 }
 
-async function privateAiSettings() {
-  const response = await chrome.runtime.sendMessage({ type: "GET_AI_TASK_RUNTIME", taskId: "textTags" });
+async function privateAiSettings(assignment = null) {
+  const response = await chrome.runtime.sendMessage({ type: "GET_AI_TASK_RUNTIME", taskId: "textTags", assignment });
   if (!response?.ok) throw new Error(response?.message || "无法读取文字标签服务");
   return normalizeAiSettings(response.aiSettings);
 }

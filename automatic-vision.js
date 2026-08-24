@@ -10,7 +10,10 @@ export function buildAutomaticVisionJob(entries, entryIds, options = {}, current
     includeAllImages: true,
     reanalyze: false,
     providerType: options.providerType,
-    model: options.model
+    providerId: options.providerId,
+    model: options.model,
+    outputProtocol: options.outputProtocol,
+    concurrency: options.concurrency
   });
   if (!preview.requestCount) return null;
 
@@ -34,7 +37,10 @@ export function buildAutomaticVisionJob(entries, entryIds, options = {}, current
     includeAllImages: true,
     reanalyze: false,
     providerType: options.providerType,
+    providerId: options.providerId,
     model: options.model,
+    outputProtocol: options.outputProtocol,
+    concurrency: options.concurrency,
     outputLocale: options.outputLocale,
     now: options.now,
     id: options.id

@@ -139,7 +139,7 @@ test("Gemini discovery grants Nano Banana image generation only to exact officia
 });
 
 test("Nano Banana capability metadata exposes official Interactions parameters and per-model reference limits", () => {
-  assert.deepEqual(AI_MODEL_CAPABILITIES.map((item) => item.id), [
+  assert.deepEqual(AI_MODEL_CAPABILITIES.filter((item) => item.providerId === "gemini").map((item) => item.id), [
     "gemini-3.1-flash-lite-image",
     "gemini-3.1-flash-image",
     "gemini-3-pro-image",

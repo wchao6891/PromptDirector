@@ -19,6 +19,9 @@ const ASSIGNMENT_EVIDENCE = new Set(["declared", "protocol_inferred", "manual_un
 const MANUAL_ASSIGNMENT_TASKS = new Set([
   "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
 ]);
+const TEXT_ANALYSIS_TASKS = new Set(["textTags", "skillExtraction", "creativePlanning"]);
+export const DEFAULT_TEXT_ANALYSIS_CONCURRENCY = 20;
+export const DEFAULT_MEDIA_ANALYSIS_CONCURRENCY = 10;
 
 export function normalizeAiProviderRegistry(value = {}) {
   const source = value?.providers && typeof value.providers === "object" ? value.providers : {};
@@ -33,7 +36,7 @@ export function normalizeAiProviderRegistry(value = {}) {
       discovery: { ...(preset?.discovery ?? {}), ...(saved.discovery ?? {}) }
     });
   }
-  return { version: 4, providers };
+  return { version: 5, providers };
 }
 
 export function normalizeAiTaskAssignments(value = {}, registryValue = {}) {
@@ -48,6 +51,7 @@ export function normalizeAiTaskAssignments(value = {}, registryValue = {}) {
       ? source.evidence
       : inferredEvidence === "manual_unverified" ? inferredEvidence : "";
     if (evidence) assignment.evidence = evidence;
+    assignment.concurrency = normalizeTaskConcurrency(task.id, source.concurrency, discovered?.concurrencyLimit?.value);
     return [task.id, assignment];
   }));
 }
@@ -237,8 +241,32 @@ function normalizeDiscoveredModels(values) {
     supportedAspectRatios: cleanArray(item?.supportedAspectRatios),
     referenceImages: normalizeReferenceImages(item?.referenceImages),
     contextLength: Number(item?.contextLength) > 0 ? Number(item.contextLength) : null,
-    pricing: item?.pricing && typeof item.pricing === "object" ? structuredClone(item.pricing) : null
+    pricing: item?.pricing && typeof item.pricing === "object" ? structuredClone(item.pricing) : null,
+    concurrencyLimit: normalizeConcurrencyLimit(item?.concurrencyLimit)
   })).filter((item) => item.id);
+}
+
+function normalizeConcurrencyLimit(value) {
+  const limit = Number(value?.value);
+  if (!Number.isInteger(limit) || limit < 2) return null;
+  const source = value?.source && typeof value.source === "object" ? {
+    authority: clean(value.source.authority),
+    document: clean(value.source.document),
+    url: clean(value.source.url),
+    reviewedAt: clean(value.source.reviewedAt)
+  } : null;
+  return { value: limit, source };
+}
+
+function normalizeTaskConcurrency(taskId, value, documentedLimit) {
+  const fallback = TEXT_ANALYSIS_TASKS.has(taskId)
+    ? DEFAULT_TEXT_ANALYSIS_CONCURRENCY
+    : DEFAULT_MEDIA_ANALYSIS_CONCURRENCY;
+  const requested = Number(value);
+  const normalized = Number.isInteger(requested) && requested >= 2 ? requested : fallback;
+  return Math.min(normalized, Number.isInteger(documentedLimit) && documentedLimit >= 2
+    ? documentedLimit
+    : Number.POSITIVE_INFINITY);
 }
 
 function normalizeReferenceImages(value) {

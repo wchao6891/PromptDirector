@@ -506,7 +506,7 @@ test("screenshot replacement invalidates vision references and undo restores the
   assert.deepEqual(restored.facetAssignments.map((item) => item.source).sort(), ["manual", "vision_model"]);
 });
 
-test("vision analysis stores zero to six tags and rejects an over-limit result as a whole", () => {
+test("vision analysis stores zero to six tags and safely caps an over-limit result", () => {
   for (const returned of [0, 3, 6]) {
     const applied = applyVisionAnalysis({
       facetCatalog: createDefaultFacetCatalog(),
@@ -518,11 +518,13 @@ test("vision analysis stores zero to six tags and rejects an over-limit result a
     assert.equal(applied.appliedCount, returned);
     assert.equal(applied.state.entries[0].facetAssignments.length, returned);
   }
-  assert.throws(() => applyVisionAnalysis({
+  const capped = applyVisionAnalysis({
     facetCatalog: createDefaultFacetCatalog(), entries: [{ id: "too-many", facetAssignments: [] }]
   }, "too-many", {
     description: "description", tags: Array.from({ length: 7 }, (_, index) => ({ g: "style.render", t: `标签${index}` }))
-  }), /0–6/);
+  });
+  assert.equal(capped.appliedCount, 6);
+  assert.equal(capped.state.entries[0].facetAssignments.length, 6);
 });
 
 test("image analysis can retain a reusable breakdown while promoting only six results", () => {

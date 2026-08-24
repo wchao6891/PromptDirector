@@ -3,6 +3,8 @@ import {
   validateAnalysisTagResponse,
   validateDetailOrganizationResponse
 } from "./tag-taxonomy.js";
+import { parseStructuredObject } from "./structured-output.js";
+import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 import {
   normalizeComposerAiProfile,
   normalizePlannerResult,
@@ -20,7 +22,7 @@ export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 export const DEFAULT_ANALYSIS_MODEL = "deepseek-v4-flash";
 export const DEFAULT_COMPOSER_STREAM_TIMEOUT_MS = 120_000;
 export const DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS = 120_000;
-export const ANALYSIS_SERVICE_RETRY_LIMIT = 3;
+export const ANALYSIS_SERVICE_RETRY_LIMIT = ANALYSIS_RETRY_POLICY.serviceRetries;
 export const ANALYSIS_CLAIM_TIMEOUT_MS = DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS * (ANALYSIS_SERVICE_RETRY_LIMIT + 1) + 30_000;
 const ANALYSIS_OUTPUT_CORRECTION_TIMEOUT_MS = DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS / 2;
 export const ANALYSIS_PROMPT_VERSION = 9;
@@ -180,10 +182,13 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
         elapsedMs: Date.now() - requestStartedAt,
         tagCount
       });
-      const tags = validateAnalysisTagResponse(parsed, catalogValue);
+      const normalizationDiagnostics = [];
+      const tags = validateAnalysisTagResponse(parsed, catalogValue, { diagnostics: normalizationDiagnostics });
       emitAnalysisDiagnostic(requestOptions, "validation_succeeded", { attempt, tagCount: tags.length });
       return {
         tags,
+        normalizationDiagnostics,
+        attempts: { outputCorrectionRequests: outputAttempt },
         usage,
         model: result.model || settings.analysisModel,
         finishReason: result.finishReason
@@ -554,9 +559,8 @@ async function requestDeepSeek(body, settings, options = {}) {
     options.signal?.removeEventListener("abort", onExternalAbort);
   }
   if (!response.ok) {
-    const retryAfter = Number(response.headers?.get?.("retry-after"));
     throw new DeepSeekApiError(apiError(payload, response.status), response.status, {
-      retryAfterMs: Number.isFinite(retryAfter) ? retryAfter * 1000 : 0
+      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after"))
     });
   }
   const choice = payload?.choices?.[0];
@@ -689,11 +693,8 @@ function deepSeekErrorKind(status) {
 }
 
 function parseJsonObject(content, message) {
-  const cleaned = String(content).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
-    const parsed = JSON.parse(cleaned);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-    return parsed;
+    return parseStructuredObject(content, message);
   } catch {
     throw new Error(message);
   }
@@ -725,6 +726,13 @@ function correctionRequestTimeout(value) {
 function finite(value) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
+}
+
+function retryAfterMilliseconds(value) {
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(String(value ?? ""));
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
 function apiError(payload, status) {

@@ -39,17 +39,23 @@ test("each protected other group cannot be renamed, archived, or merged away", (
   }), /必须保留/);
 });
 
-test("analysis response rejects empty, unknown, duplicate, and over-limit results as a whole", () => {
+test("analysis response keeps valid tags while dropping unknown, duplicate, extra, and over-limit output", () => {
   const catalog = createFixedFacetCatalog();
+  const diagnostics = [];
   assert.throws(() => validateAnalysisTagResponse({ tags: [] }, catalog), /1–10/);
   assert.throws(() => validateAnalysisTagResponse({ tags: [{ g: "unknown", t: "值" }] }, catalog), /未知分类路径/);
-  assert.throws(() => validateAnalysisTagResponse({ tags: [
+  assert.deepEqual(validateAnalysisTagResponse({ extra: "ignored", tags: [
     { g: "style.render", t: "Cel-Shading" },
-    { g: "style.render", t: "cel shading" }
-  ] }, catalog), /重复标签/);
-  assert.throws(() => validateAnalysisTagResponse({
-    tags: Array.from({ length: ANALYSIS_TAG_MAX + 1 }, (_, index) => ({ g: "style.render", t: `标签${index}` }))
-  }, catalog), /1–10/);
+    { g: "style.render", t: "cel shading" },
+    { g: "unknown", t: "discarded" }
+  ] }, catalog, { diagnostics }), [{ g: "style.render", t: "Cel-Shading" }]);
+  assert.ok(diagnostics.some((item) => item.code === "extra_fields_ignored"));
+  assert.ok(diagnostics.some((item) => item.code === "duplicate_dropped"));
+  assert.ok(diagnostics.some((item) => item.code === "unknown_path_dropped"));
+  const bounded = validateAnalysisTagResponse({
+    tags: Array.from({ length: ANALYSIS_TAG_MAX + 3 }, (_, index) => ({ g: "style.render", t: `标签${index}` }))
+  }, catalog);
+  assert.equal(bounded.length, ANALYSIS_TAG_MAX);
 });
 
 test("analysis can assign a group directly and reuses normalized detail labels", () => {

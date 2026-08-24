@@ -3,9 +3,11 @@ import {
   VISUAL_MODEL_PROTOCOL_VERSION,
   VISUAL_MODEL_RESPONSE_SCHEMA,
   compileVisualAnalysisInstruction,
+  mergePartialVisualAnalysis,
   normalizeVisualModelResponse,
   visualModelResponseSchema
 } from "./visual-analysis.js";
+import { parseStructuredObject } from "./structured-output.js";
 import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
 
 export const VISION_ANALYSIS_VERSION = VISUAL_ANALYSIS_VERSION;
@@ -21,6 +23,21 @@ export const MICU_DEFAULT_IMAGE_SIZE = MICU_COMPATIBLE_PROVIDER_PRESET.imageGene
 export const MICU_IMAGE_RESULT_PERMISSION = "https://oss.filenest.top/*";
 export const MAX_VISION_TAGS = 6;
 export const VISION_MAX_OUTPUT_TOKENS = 12000;
+export class VisionApiError extends Error {
+  constructor(message, status = 0, options = {}) {
+    super(message, options);
+    this.name = "VisionApiError";
+    this.status = Number(status) || 0;
+    this.retryAfterMs = Number(options.retryAfterMs) || 0;
+  }
+}
+class VisionOutputError extends Error {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.name = "VisionOutputError";
+    this.usage = options.usage;
+  }
+}
 export const VISION_REQUEST_TIMEOUT_MS = 120_000;
 
 export const DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE = Object.freeze({
@@ -302,28 +319,58 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
   const settings = requireVisionSettings(input.settings);
   const imageDataUrl = requireImageDataUrl(input.imageDataUrl);
   const locale = input.locale === "en" ? "en" : "zh-CN";
-  const instruction = compileVisualAnalysisInstruction({
+  const previousAnalysis = input.previousAnalysis?.quality === "partial" ? input.previousAnalysis : null;
+  const baseInstruction = compileVisualAnalysisInstruction({
     catalog: input.catalog,
     customInstruction: settings.instructionsByLocale[locale],
     locale,
     measuredCanvas: input.measuredCanvas
   });
+  const instruction = previousAnalysis
+    ? `${baseInstruction}\nThis is a completion request. Focus on repairing these missing or invalid root fields: ${JSON.stringify(previousAnalysis.missingFields ?? [])}. Previously validated fields are preserved locally and must not be weakened.`
+    : baseInstruction;
   const requestOptions = {
     maxOutputTokens: settings.maxOutputTokens,
     schema: visualModelResponseSchema(input.catalog)
   };
-  const response = settings.nativeProvider?.id === "gemini"
-    ? await requestGeminiVision(settings.nativeProvider, imageDataUrl, instruction, fetchImpl, requestOptions)
+  const request = async (requestInstruction) => settings.nativeProvider?.id === "gemini"
+    ? requestGeminiVision(settings.nativeProvider, imageDataUrl, requestInstruction, fetchImpl, requestOptions)
     : settings.activeProvider === "compatible"
-      ? await requestCompatible(settings, imageDataUrl, instruction, fetchImpl, requestOptions)
-    : await requestOpenAI(settings, imageDataUrl, instruction, fetchImpl, requestOptions);
-  const parsed = parseJson(response.content);
+      ? requestCompatible(settings, imageDataUrl, requestInstruction, fetchImpl, requestOptions)
+      : requestOpenAI(settings, imageDataUrl, requestInstruction, fetchImpl, requestOptions);
+  const perform = async (requestInstruction) => {
+    const response = await request(requestInstruction);
+    try {
+      return { response, normalized: normalizeVisionResult(parseJson(response.content), input.catalog) };
+    } catch (error) {
+      throw new VisionOutputError(error.message, { cause: error, usage: response.usage });
+    }
+  };
+  let firstUsage;
+  let outputCorrectionRequests = 0;
+  let completed;
+  try {
+    completed = await perform(instruction);
+  } catch (error) {
+    if (!(error instanceof VisionOutputError)) throw error;
+    firstUsage = error.usage;
+    outputCorrectionRequests = 1;
+    try {
+      completed = await perform(`${instruction}\nThe previous response was empty or structurally unusable. Return one corrected JSON object now; do not add commentary or markdown.`);
+    } catch (correctionError) {
+      correctionError.attempts = { outputCorrectionRequests };
+      correctionError.usage = addVisionUsage(firstUsage, correctionError.usage);
+      throw correctionError;
+    }
+  }
+  const { response, normalized } = completed;
   return {
-    ...normalizeVisionResult(parsed, input.catalog),
+    ...mergePartialVisualAnalysis(previousAnalysis, normalized),
     profileFingerprint: await visionAnalysisProfileFingerprint(settings, locale),
     providerType: settings.nativeProvider?.id || settings.activeProvider,
     model: response.model,
-    usage: response.usage
+    attempts: { outputCorrectionRequests },
+    usage: addVisionUsage(firstUsage, response.usage)
   };
 }
 
@@ -423,7 +470,7 @@ async function requestResponses(provider, imageDataUrl, instruction, fetchImpl, 
   const refusal = extractOpenAIRefusal(payload);
   if (refusal) throw new Error(`${provider.serviceName} 拒绝分析这张图片：${refusal}`);
   const content = String(payload.output_text ?? extractOpenAIText(payload) ?? "").trim();
-  if (!content) throw new Error(options.emptyResultMessage || `${provider.serviceName} 没有返回可用的画面描述`);
+  if (!content) throw new VisionOutputError(options.emptyResultMessage || `${provider.serviceName} 没有返回可用的画面描述`);
   return { content, model: String(payload.model ?? provider.model), usage: normalizeOpenAIUsage(payload.usage) };
 }
 
@@ -460,7 +507,7 @@ async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl,
   const choice = payload?.choices?.[0];
   const content = choice?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
-    throw new Error(compatibleEmptyResultMessage(choice?.finish_reason, options.emptyResultMessage));
+    throw new VisionOutputError(compatibleEmptyResultMessage(choice?.finish_reason, options.emptyResultMessage));
   }
   return { content, model: String(payload.model ?? settings.compatible.model), usage: normalizeCompatibleUsage(payload.usage) };
 }
@@ -502,15 +549,19 @@ async function requestGeminiVision(provider, imageDataUrl, instruction, fetchImp
       signal: controller.signal
     });
   } catch (error) {
-    if (controller.signal.aborted) throw new Error("Gemini 图片分析超过 2 分钟未完成", { cause: error });
-    throw new Error("无法连接 Gemini 图片分析服务", { cause: error });
+    if (controller.signal.aborted) throw new VisionApiError("Gemini 图片分析超过 2 分钟未完成", 408, { cause: error });
+    throw new VisionApiError("无法连接 Gemini 图片分析服务", 0, { cause: error });
   } finally {
     clearTimeout(timeoutId);
   }
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`Gemini 图片分析失败：${String(payload?.error?.message ?? `HTTP ${response.status}`)}`);
+  if (!response.ok) throw new VisionApiError(
+    `Gemini 图片分析失败：${String(payload?.error?.message ?? `HTTP ${response.status}`)}`,
+    response.status,
+    { retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after")) }
+  );
   const content = (payload?.candidates?.[0]?.content?.parts ?? []).map((part) => part?.text || "").join("").trim();
-  if (!content) throw new Error(options.emptyResultMessage || "Gemini 没有返回可用的画面描述");
+  if (!content) throw new VisionOutputError(options.emptyResultMessage || "Gemini 没有返回可用的画面描述");
   return {
     content,
     model: provider.model,
@@ -535,15 +586,17 @@ async function requestJson(url, apiKey, body, fetchImpl) {
       signal: controller.signal
     });
   } catch (error) {
-    if (controller.signal.aborted) throw new Error("图片分析超过 2 分钟未完成，本次已停止，请手动重试", { cause: error });
-    throw new Error("无法连接图片分析服务，请检查网络、地址和权限", { cause: error });
+    if (controller.signal.aborted) throw new VisionApiError("图片分析超过 2 分钟未完成，本次已停止，请手动重试", 408, { cause: error });
+    throw new VisionApiError("无法连接图片分析服务，请检查网络、地址和权限", 0, { cause: error });
   } finally {
     clearTimeout(timeoutId);
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = String(payload?.error?.message ?? payload?.message ?? "").trim();
-    throw new Error(`图片分析失败${detail ? `：${detail}` : `（HTTP ${response.status}）`}`);
+    throw new VisionApiError(`图片分析失败${detail ? `：${detail}` : `（HTTP ${response.status}）`}`, response.status, {
+      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after"))
+    });
   }
   return payload;
 }
@@ -658,9 +711,8 @@ function normalizeCreativeEvaluationResult(value) {
 }
 
 function parseJson(content) {
-  const cleaned = String(content ?? "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
-    return JSON.parse(cleaned);
+    return parseStructuredObject(content, "视觉模型返回的 JSON 无效，本次没有写入");
   } catch {
     throw new Error("视觉模型返回的 JSON 无效，本次没有写入");
   }
@@ -698,6 +750,20 @@ function normalizeCompatibleUsage(value = {}) {
     outputTokens: finite(value.completion_tokens),
     totalTokens: finite(value.total_tokens)
   };
+}
+
+function addVisionUsage(left = {}, right = {}) {
+  return Object.fromEntries(["inputTokens", "outputTokens", "totalTokens"].map((key) => [
+    key,
+    finite(left?.[key]) + finite(right?.[key])
+  ]));
+}
+
+function retryAfterMilliseconds(value) {
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(String(value ?? ""));
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
 function finite(value) {

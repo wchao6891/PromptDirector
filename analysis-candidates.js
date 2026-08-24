@@ -102,6 +102,16 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
   entry.visionAnalysis = {
     version: Math.max(1, Number(metadata.version) || 1),
     description,
+    quality: result.quality === "partial" ? "partial" : "complete",
+    missingFields: Array.isArray(result.missingFields) ? [...new Set(result.missingFields.map(String).filter(Boolean))] : [],
+    normalizationDiagnostics: Array.isArray(result.normalizationDiagnostics)
+      ? result.normalizationDiagnostics.map((item) => ({
+          field: String(item?.field ?? ""),
+          ...(String(item?.message ?? "").trim() ? { message: String(item.message).trim() } : {}),
+          ...(String(item?.code ?? "").trim() ? { code: String(item.code).trim() } : {}),
+          ...(Number(item?.count) > 0 ? { count: Number(item.count) } : {})
+        })).filter((item) => item.field)
+      : [],
     ...(result.canvas ? { canvas: structuredClone(result.canvas) } : {}),
     ...(Array.isArray(result.elements) ? { elements: structuredClone(result.elements) } : {}),
     ...(Array.isArray(result.dimensions) ? { dimensions: structuredClone(result.dimensions) } : {}),
@@ -113,10 +123,16 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
     locale: metadata.locale === "en" ? "en" : "zh-CN",
     imageFingerprint: String(metadata.imageFingerprint ?? "").trim(),
     profileFingerprint: String(metadata.profileFingerprint ?? "").trim(),
+    catalogRevision: Math.max(0, Number(metadata.catalogRevision) || 0),
     analyzedAt: String(metadata.analyzedAt ?? "").trim() || new Date().toISOString(),
     providerType: metadata.providerType === "compatible" ? "compatible" : "openai",
     model: String(metadata.model ?? "").trim(),
     ...(metadata.usage && typeof metadata.usage === "object" ? { usage: structuredClone(metadata.usage) } : {}),
+    cacheHit: metadata.cacheHit === true,
+    attempts: {
+      serviceRequests: Math.max(0, Number(metadata.attempts?.serviceRequests) || 0),
+      outputCorrectionRequests: Math.max(0, Number(metadata.attempts?.outputCorrectionRequests) || 0)
+    },
     ...(String(metadata.batchJobId ?? "").trim() ? { batchJobId: String(metadata.batchJobId).trim() } : {}),
     userEdited: false
   };

@@ -13,6 +13,7 @@ import {
   resolveAiProviderAssignment
 } from "../ai-provider-registry.js";
 import { AI_PROVIDER_PRESETS, getAiProviderPreset } from "../ai-provider-presets.js";
+import { getAiModelCapability } from "../ai-model-capabilities.js";
 
 function configuredRegistry() {
   return normalizeAiProviderRegistry({ providers: {
@@ -115,7 +116,8 @@ test("task model candidates separate declared catalog capability from explicit m
   }, registry).imageAnalysis, {
     providerId: "deepseek",
     model: "opaque-account-model",
-    evidence: "manual_unverified"
+    evidence: "manual_unverified",
+    concurrency: 10
   });
   assert.throws(() => createAiTaskAssignment(
     "imageAnalysis", "deepseek", "declared-text", registry
@@ -161,12 +163,12 @@ test("a manually assigned catalog-visible DeepSeek model resolves for image anal
   ), /当前模型目录中没有/);
 });
 
-test("registry v4 exposes provider categories and leaves all new-install tasks unassigned", () => {
+test("registry v5 exposes task concurrency defaults and official model limits", () => {
   const registry = normalizeAiProviderRegistry({ providers: {
     kimi: { discovery: { etag: "catalog-version" } }
   } });
   const assignments = normalizeAiTaskAssignments({}, registry);
-  assert.equal(registry.version, 4);
+  assert.equal(registry.version, 5);
   assert.equal(registry.providers.kimi.endpoint, "https://api.moonshot.cn/v1/chat/completions");
   assert.deepEqual(registry.providers.kimi.discovery, {
     adapter: "kimi",
@@ -177,9 +179,13 @@ test("registry v4 exposes provider categories and leaves all new-install tasks u
     error: ""
   });
   assert.equal(publicAiProviderRegistry(registry).providers.kimi.category, "official");
-  assert.deepEqual(assignments, Object.fromEntries(AI_ASSIGNMENT_TASKS.map(({ id }) => [id, {
-    providerId: "", model: ""
-  }])));
+  assert.equal(assignments.textTags.concurrency, 20);
+  assert.equal(assignments.imageAnalysis.concurrency, 10);
+  assert.equal(assignments.videoAnalysis.concurrency, 10);
+  const deepSeekVision = getAiModelCapability("deepseek", "deepseek-v4-flash-vision-exp");
+  assert.equal(deepSeekVision.inputModalities.includes("image"), true);
+  assert.equal(deepSeekVision.concurrencyLimit.value, 2500);
+  assert.match(deepSeekVision.concurrencyLimit.source.url, /deepseek\.com\/quick_start\/pricing/);
   assert.throws(() => resolveAiProviderAssignment("textTags", registry, assignments), /未分配/);
   const bounded = normalizeAiProviderRegistry({ providers: {
     kimi: { discoveredModels: [{ id: "declared-model", tasks: ["videoAnalysis", "imageGeneration", "videoGeneration"] }] }
@@ -203,32 +209,32 @@ test("unknown saved provider ids do not become hidden v4 connections", () => {
   assert.equal(Object.hasOwn(providers, "retired-provider"), false);
 });
 
-test("empty v4 storage normalizes without inventing task assignments", () => {
+test("empty v5 storage normalizes without inventing provider or model assignments", () => {
   const registry = normalizeAiProviderRegistry({});
   const assignments = normalizeAiTaskAssignments({});
-  assert.equal(registry.version, 4);
-  assert.deepEqual(assignments, Object.fromEntries(AI_ASSIGNMENT_TASKS.map(({ id }) => [id, {
-    providerId: "",
-    model: ""
-  }])));
+  assert.equal(registry.version, 5);
+  assert.equal(Object.values(assignments).every((assignment) => !assignment.providerId && !assignment.model), true);
+  assert.equal(assignments.textTags.concurrency, 20);
+  assert.equal(assignments.imageAnalysis.concurrency, 10);
 });
 
-test("obsolete shared text routes are ignored instead of entering v4 assignments", () => {
+test("obsolete shared text routes are ignored instead of entering v5 assignments", () => {
   const assignments = normalizeAiTaskAssignments({
     text: { providerId: "deepseek", model: "obsolete-shared-model" }
   });
-  assert.deepEqual(assignments, Object.fromEntries(AI_ASSIGNMENT_TASKS.map(({ id }) => [id, {
-    providerId: "",
-    model: ""
-  }])));
+  assert.equal(Object.values(assignments).every((assignment) => !assignment.providerId && !assignment.model), true);
 });
 
-test("explicit task assignments survive v4 normalization unchanged", () => {
+test("explicit task assignments survive v5 normalization with task defaults", () => {
   const explicit = Object.fromEntries(AI_ASSIGNMENT_TASKS.map(({ id }, index) => [id, {
     providerId: index % 2 ? "openai" : "deepseek",
     model: `account-model-${index}`
   }]));
-  assert.deepEqual(normalizeAiTaskAssignments(explicit), explicit);
+  const normalized = normalizeAiTaskAssignments(explicit);
+  assert.equal(AI_ASSIGNMENT_TASKS.every(({ id }) => normalized[id].providerId === explicit[id].providerId
+    && normalized[id].model === explicit[id].model), true);
+  assert.equal(normalized.textTags.concurrency, 20);
+  assert.equal(normalized.imageAnalysis.concurrency, 10);
   assert.equal(configuredRegistry().providers.deepseek.apiKey, "deepseek-secret");
 });
 

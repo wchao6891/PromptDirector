@@ -66,7 +66,7 @@ test("obsolete AI storage keys are ignored instead of becoming a second configur
   });
 
   assert.equal(configuration.registry.providers.deepseek.apiKey, "");
-  assert.deepEqual(configuration.assignments.textTags, { providerId: "", model: "" });
+  assert.deepEqual(configuration.assignments.textTags, { providerId: "", model: "", concurrency: 20 });
   assert.equal(JSON.stringify(configuration).includes("obsolete-key"), false);
 });
 

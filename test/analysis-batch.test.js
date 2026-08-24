@@ -11,6 +11,7 @@ import {
   createAnalysisBatchJob,
   finalizeAnalysisRebuild,
   failAnalysisItem,
+  partiallySucceedAnalysisItem,
   previewAnalysisBatch,
   finalizePartialAnalysisRebuild,
   resumeAnalysisBatch,
@@ -196,7 +197,7 @@ test("recovering an old stalled rebuild preserves completed work and queues only
 
   const recovered = resumeAnalysisBatch(job);
   const summary = analysisBatchSummary(recovered);
-  assert.deepEqual(summary.counts, { pending: 5, running: 0, succeeded: 586, failed: 0 });
+  assert.deepEqual(summary.counts, { pending: 5, running: 0, succeeded: 586, partial: 0, failed: 0 });
   assert.equal(summary.status, "running");
 });
 
@@ -291,7 +292,7 @@ test("batch success totals usage and failures can be retried", async () => {
   job = succeedAnalysisItem(claimed.job, "a", "claim-1", { totalTokens: 12, cacheHitTokens: 7 }, 4);
   job = failAnalysisItem(job, "b", "claim-2", { message: "busy", status: 503 });
   let summary = analysisBatchSummary(job);
-  assert.equal(summary.status, "completed");
+  assert.equal(summary.status, "partial");
   assert.equal(summary.counts.succeeded, 1);
   assert.equal(summary.counts.failed, 1);
   assert.equal(summary.usage.totalTokens, 12);
@@ -324,6 +325,76 @@ test("authentication failures pause the whole batch", async () => {
   job = failAnalysisItem(claimed.job, "a", "claim", { message: "bad key", status: 401 });
   assert.equal(job.status, "paused");
   assert.equal(job.items[0].status, "failed");
+});
+
+test("settled batch status distinguishes complete, partial, and failed outcomes", async () => {
+  let mixed = await createAnalysisBatchJob([{ id: "a", text: "one" }, { id: "b", text: "two" }], { id: "mixed" });
+  let claims = claimAnalysisItems(mixed, 2, (() => { let index = 0; return () => `mixed-${++index}`; })());
+  mixed = succeedAnalysisItem(claims.job, "a", "mixed-1", { totalTokens: 1 });
+  mixed = failAnalysisItem(mixed, "b", "mixed-2", { message: "bad json", status: 422 });
+  assert.equal(mixed.status, "partial");
+
+  let failed = await createAnalysisBatchJob([{ id: "a", text: "one" }], { id: "failed" });
+  claims = claimAnalysisItems(failed, 1, () => "failed-1");
+  failed = failAnalysisItem(claims.job, "a", "failed-1", { message: "bad json", status: 422 });
+  assert.equal(failed.status, "failed");
+
+  let complete = await createAnalysisBatchJob([{ id: "a", text: "one" }], { id: "complete" });
+  claims = claimAnalysisItems(complete, 1, () => "complete-1");
+  complete = succeedAnalysisItem(claims.job, "a", "complete-1", { totalTokens: 1 });
+  assert.equal(complete.status, "completed");
+});
+
+test("a saved partial item remains retryable and only the incomplete item is requeued", async () => {
+  let job = await createAnalysisBatchJob([{ id: "a", text: "one" }, { id: "b", text: "two" }], { id: "saved-partial" });
+  const claims = claimAnalysisItems(job, 2, (() => { let index = 0; return () => `partial-${++index}`; })());
+  job = succeedAnalysisItem(claims.job, "a", "partial-1", { totalTokens: 5 });
+  job = partiallySucceedAnalysisItem(job, "b", "partial-2", { totalTokens: 7 });
+  assert.equal(job.status, "partial");
+  assert.deepEqual(analysisBatchSummary(job).counts, { pending: 0, running: 0, succeeded: 1, partial: 1, failed: 0 });
+
+  job = retryFailedAnalysisItems(job);
+  assert.equal(job.items[0].status, "succeeded");
+  assert.equal(job.items[1].status, "pending");
+  assert.equal(job.status, "running");
+});
+
+test("batch summary exposes actual requests, output corrections, cache hits, and failure categories", async () => {
+  let job = await createAnalysisBatchJob([{ id: "a", text: "one" }, { id: "b", text: "two" }], { id: "execution-diagnostics" });
+  const claims = claimAnalysisItems(job, 2, (() => { let index = 0; return () => `diag-${++index}`; })());
+  job = succeedAnalysisItem(claims.job, "a", "diag-1", {}, undefined, {
+    attempts: { serviceRequests: 0, outputCorrectionRequests: 0 }, cacheHit: true
+  });
+  job = failAnalysisItem(job, "b", "diag-2", {
+    message: "rate limited", status: 429, attempts: { serviceRequests: 3, outputCorrectionRequests: 1 }
+  });
+  const summary = analysisBatchSummary(job);
+  assert.equal(summary.requestAttempts, 3);
+  assert.equal(summary.outputCorrectionRequests, 1);
+  assert.equal(summary.cacheHitCount, 1);
+  assert.deepEqual(summary.failureCategories, { rate_limit: 1 });
+});
+
+test("batch jobs snapshot configured concurrency and vision claims use it", () => {
+  const job = createVisionBatchJob([{
+    id: "one",
+    primaryMediaId: "image-1",
+    mediaAssets: Array.from({ length: 12 }, (_, index) => ({ id: `image-${index + 1}`, kind: "image", usage: "content" }))
+  }], {
+    id: "vision-concurrency",
+    entryIds: ["one"],
+    includeAllImages: true,
+    concurrency: 10
+  });
+  assert.equal(job.concurrency, 10);
+  assert.deepEqual(job.retryPolicy, {
+    serviceRetries: 2,
+    outputCorrectionRequests: 1,
+    backoffMs: [1000, 3000],
+    obeyRetryAfter: true
+  });
+  assert.equal(job.outputProtocol, "json_object");
+  assert.equal(claimAnalysisItems(job).claims.length, 10);
 });
 
 test("vision batch defaults to one primary image per selected case and can include every unanalysed image", async () => {

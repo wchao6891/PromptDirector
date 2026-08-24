@@ -8,9 +8,11 @@ import {
 } from "./analysis-revision.js";
 import { prepareFacetRebuild, validateAnalysisTagResponse } from "./tag-taxonomy.js";
 import { entryMediaAssets, primaryImageAsset } from "./media.js";
+import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 
 export const ANALYSIS_BATCH_VERSION = 2;
-export const ANALYSIS_BATCH_CONCURRENCY = 3;
+export const ANALYSIS_BATCH_CONCURRENCY = 20;
+export const VISION_BATCH_CONCURRENCY = 10;
 
 export async function previewAnalysisBatch(entries = [], options = {}) {
   const eligible = [];
@@ -85,9 +87,14 @@ export async function createAnalysisBatchJob(entries, options = {}) {
     createdAt: now,
     updatedAt: now,
     analysisModel: preview.analysisModel,
+    providerId: String(options.providerId ?? "").trim(),
+    model: preview.analysisModel,
+    outputProtocol: String(options.outputProtocol ?? "json_object").trim(),
+    retryPolicy: structuredClone(ANALYSIS_RETRY_POLICY),
     outputLocale: options.outputLocale === "en" ? "en" : "zh-CN",
     promptVersion: ANALYSIS_PROMPT_VERSION,
     profileFingerprint: preview.profileFingerprint,
+    concurrency: normalizeConcurrency(options.concurrency, ANALYSIS_BATCH_CONCURRENCY),
     catalogRevision: Number(options.catalogRevision) || 0,
     resultCatalogRevision: null,
     totalCharacters: preview.totalCharacters,
@@ -158,9 +165,13 @@ export function createVisionBatchJob(entries = [], options = {}) {
     updatedAt: now,
     outputLocale: options.outputLocale === "en" ? "en" : "zh-CN",
     providerType: preview.providerType,
+    providerId: String(options.providerId ?? "").trim(),
     model: preview.model,
+    outputProtocol: String(options.outputProtocol ?? "json_object").trim(),
+    retryPolicy: structuredClone(ANALYSIS_RETRY_POLICY),
     includeAllImages: preview.includeAllImages,
     reanalyze: preview.reanalyze,
+    concurrency: normalizeConcurrency(options.concurrency, VISION_BATCH_CONCURRENCY),
     requestCount: preview.requestCount,
     skippedAnalyzedCount: preview.skippedAnalyzedCount,
     items: preview.items.map((item) => ({
@@ -179,8 +190,8 @@ export function createVisionBatchJob(entries = [], options = {}) {
 
 export function normalizeAnalysisBatchJob(value) {
   if (!value || ![1, ANALYSIS_BATCH_VERSION].includes(value.version) || !value.id || !Array.isArray(value.items)) return null;
-  const statuses = new Set(["pending", "running", "succeeded", "failed"]);
-  const jobStatuses = new Set(["running", "paused", "completed", "canceled"]);
+  const statuses = new Set(["pending", "running", "succeeded", "partial", "failed"]);
+  const jobStatuses = new Set(["running", "paused", "completed", "partial", "failed", "canceled"]);
   return {
     version: ANALYSIS_BATCH_VERSION,
     kind: value.kind === "vision" ? "vision" : "text_tags",
@@ -190,11 +201,15 @@ export function normalizeAnalysisBatchJob(value) {
     createdAt: String(value.createdAt ?? ""),
     updatedAt: String(value.updatedAt ?? ""),
     analysisModel: String(value.analysisModel ?? "") || DEFAULT_ANALYSIS_MODEL,
+    providerId: String(value.providerId ?? ""),
+    outputProtocol: String(value.outputProtocol ?? "json_object"),
+    retryPolicy: normalizeRetryPolicy(value.retryPolicy),
     outputLocale: value.outputLocale === "en" ? "en" : "zh-CN",
     providerType: value.providerType === "compatible" ? "compatible" : "openai",
     model: String(value.model ?? ""),
     includeAllImages: value.includeAllImages === true,
     reanalyze: value.reanalyze === true,
+    concurrency: normalizeConcurrency(value.concurrency, value.kind === "vision" ? VISION_BATCH_CONCURRENCY : ANALYSIS_BATCH_CONCURRENCY),
     requestCount: Math.max(0, Number(value.requestCount) || value.items.length),
     skippedAnalyzedCount: Math.max(0, Number(value.skippedAnalyzedCount) || 0),
     promptVersion: Number(value.promptVersion) || ANALYSIS_PROMPT_VERSION,
@@ -214,7 +229,10 @@ export function normalizeAnalysisBatchJob(value) {
       attempts: Math.max(0, Number(item.attempts) || 0),
       claimId: String(item.claimId ?? ""),
       error: String(item.error ?? ""),
-      statusCode: Math.max(0, Number(item.statusCode) || 0)
+      statusCode: Math.max(0, Number(item.statusCode) || 0),
+      serviceRequests: Math.max(0, Number(item.serviceRequests) || 0),
+      outputCorrectionRequests: Math.max(0, Number(item.outputCorrectionRequests) || 0),
+      cacheHit: item.cacheHit === true
     }] : []),
     usage: normalizeUsage(value.usage)
   };
@@ -224,7 +242,7 @@ export function claimAnalysisItems(value, limit, idFactory = () => globalThis.cr
   const job = requireJob(value);
   if (job.status !== "running") return { job, claims: [] };
   const maximum = limit === undefined
-    ? job.kind === "vision" ? 1 : ANALYSIS_BATCH_CONCURRENCY
+    ? job.concurrency
     : Math.max(1, Math.floor(limit));
   const claims = [];
   for (const item of job.items) {
@@ -247,13 +265,29 @@ export function claimAnalysisItems(value, limit, idFactory = () => globalThis.cr
   return { job, claims };
 }
 
-export function succeedAnalysisItem(value, entryId, claimId, usage, catalogRevision) {
+export function succeedAnalysisItem(value, entryId, claimId, usage, catalogRevision, metadata = {}) {
   const job = requireJob(value);
   const item = claimedItem(job, entryId, claimId);
   item.status = "succeeded";
   item.claimId = "";
   item.error = "";
   item.statusCode = 0;
+  recordItemExecution(item, metadata);
+  job.usage = addUsage(job.usage, usage);
+  job.resultCatalogRevision = Number.isInteger(catalogRevision) ? catalogRevision : job.resultCatalogRevision;
+  finishIfSettled(job);
+  touch(job);
+  return job;
+}
+
+export function partiallySucceedAnalysisItem(value, entryId, claimId, usage, catalogRevision, metadata = {}) {
+  const job = requireJob(value);
+  const item = claimedItem(job, entryId, claimId);
+  item.status = "partial";
+  item.claimId = "";
+  item.error = "分析结果待补全";
+  item.statusCode = 0;
+  recordItemExecution(item, metadata);
   job.usage = addUsage(job.usage, usage);
   job.resultCatalogRevision = Number.isInteger(catalogRevision) ? catalogRevision : job.resultCatalogRevision;
   finishIfSettled(job);
@@ -268,9 +302,10 @@ export function failAnalysisItem(value, entryId, claimId, error = {}) {
   item.claimId = "";
   item.error = String(error.message ?? "分析失败");
   item.statusCode = Math.max(0, Number(error.status) || 0);
+  recordItemExecution(item, error);
   job.usage = addUsage(job.usage, error.usage);
   finishIfSettled(job);
-  if ([401, 402].includes(item.statusCode)) job.status = "paused";
+  if ([401, 402, 403].includes(item.statusCode)) job.status = "paused";
   touch(job);
   return job;
 }
@@ -307,9 +342,14 @@ export function stageAnalysisRebuildResults(jobValue, stagingValue, state, resul
       fingerprint: String(result.fingerprint ?? ""),
       textRevision: Math.max(1, Number(result.textRevision) || 1),
       model: String(result.model ?? ""),
+      normalizationDiagnostics: structuredClone(Array.isArray(result.normalizationDiagnostics) ? result.normalizationDiagnostics : []),
+      attempts: {
+        serviceRequests: Math.max(0, Number(result.attempts?.serviceRequests) || 0),
+        outputCorrectionRequests: Math.max(0, Number(result.attempts?.outputCorrectionRequests) || 0)
+      },
       usage: normalizeUsage(result.usage)
     };
-    job = succeedAnalysisItem(job, result.entryId, result.claimId, result.usage, state.facetCatalog.revision);
+    job = succeedAnalysisItem(job, result.entryId, result.claimId, result.usage, state.facetCatalog.revision, result);
   }
   return { job, staging };
 }
@@ -376,10 +416,13 @@ export function retryFailedAnalysisItems(value) {
   const job = requireJob(value);
   let count = 0;
   for (const item of job.items) {
-    if (item.status !== "failed") continue;
+    if (!["failed", "partial"].includes(item.status)) continue;
     item.status = "pending";
     item.error = "";
     item.statusCode = 0;
+    item.serviceRequests = 0;
+    item.outputCorrectionRequests = 0;
+    item.cacheHit = false;
     count += 1;
   }
   if (!count) throw new Error("没有可重试的失败案例");
@@ -414,10 +457,11 @@ export function reconcileVisionBatchResults(value, entries = []) {
     if (!["pending", "running"].includes(item.status)) continue;
     const analysis = visuals.get(`${item.entryId}:${item.visualId}`)?.visionAnalysis;
     if (!analysis?.description || analysis.batchJobId !== job.id) continue;
-    item.status = "succeeded";
+    item.status = analysis.quality === "partial" ? "partial" : "succeeded";
     item.claimId = "";
     item.error = "";
     item.statusCode = 0;
+    recordItemExecution(item, analysis);
     job.usage = addUsage(job.usage, {
       promptTokens: analysis.usage?.inputTokens,
       completionTokens: analysis.usage?.outputTokens,
@@ -435,9 +479,22 @@ export function reconcileVisionBatchResults(value, entries = []) {
 export function analysisBatchSummary(value) {
   const job = normalizeAnalysisBatchJob(value);
   if (!job) return null;
-  const counts = { pending: 0, running: 0, succeeded: 0, failed: 0 };
+  const counts = { pending: 0, running: 0, succeeded: 0, partial: 0, failed: 0 };
   for (const item of job.items) counts[item.status] += 1;
-  return { ...job, counts, total: job.items.length };
+  const failureCategories = {};
+  for (const item of job.items.filter((candidate) => candidate.status === "failed")) {
+    const category = failureCategory(item.statusCode);
+    failureCategories[category] = (failureCategories[category] ?? 0) + 1;
+  }
+  return {
+    ...job,
+    counts,
+    total: job.items.length,
+    requestAttempts: job.items.reduce((sum, item) => sum + item.serviceRequests, 0),
+    outputCorrectionRequests: job.items.reduce((sum, item) => sum + item.outputCorrectionRequests, 0),
+    cacheHitCount: job.items.filter((item) => item.cacheHit).length,
+    failureCategories
+  };
 }
 
 export function analysisRebuildRecovery(value, stagingValue) {
@@ -454,7 +511,7 @@ export function analysisRebuildRecovery(value, stagingValue) {
   return {
     stagedResultCount: stagedIds.length,
     stagingValid,
-    recoverable: job.status === "completed" && counts.failed > 0 && !job.partialApplied && stagingValid
+    recoverable: ["completed", "partial"].includes(job.status) && counts.failed > 0 && !job.partialApplied && stagingValid
   };
 }
 
@@ -510,7 +567,39 @@ function claimedItem(job, entryId, claimId) {
 
 function finishIfSettled(job) {
   if (job.items.some((item) => item.status === "pending" || item.status === "running")) return;
-  job.status = "completed";
+  const succeeded = job.items.filter((item) => item.status === "succeeded").length;
+  const partial = job.items.filter((item) => item.status === "partial").length;
+  const failed = job.items.filter((item) => item.status === "failed").length;
+  job.status = failed === job.items.length ? "failed" : failed || partial ? "partial" : succeeded ? "completed" : "failed";
+}
+
+function normalizeConcurrency(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 2 ? number : fallback;
+}
+
+function normalizeRetryPolicy(value) {
+  return {
+    serviceRetries: Number(value?.serviceRetries) === 2 ? 2 : ANALYSIS_RETRY_POLICY.serviceRetries,
+    outputCorrectionRequests: Number(value?.outputCorrectionRequests) === 1 ? 1 : ANALYSIS_RETRY_POLICY.outputCorrectionRequests,
+    backoffMs: [...ANALYSIS_RETRY_POLICY.backoffMs],
+    obeyRetryAfter: true
+  };
+}
+
+function recordItemExecution(item, metadata = {}) {
+  item.serviceRequests = Math.max(0, Number(metadata.attempts?.serviceRequests ?? metadata.serviceRequests) || 0);
+  item.outputCorrectionRequests = Math.max(0, Number(metadata.attempts?.outputCorrectionRequests ?? metadata.outputCorrectionRequests) || 0);
+  item.cacheHit = metadata.cacheHit === true;
+}
+
+function failureCategory(status) {
+  if ([401, 402, 403].includes(status)) return "authorization";
+  if (status === 429) return "rate_limit";
+  if (status === 408) return "timeout";
+  if (status >= 500) return "service";
+  if (status === 0) return "network";
+  return "output";
 }
 
 function requireJob(value) {
@@ -524,7 +613,7 @@ function touch(job) {
 }
 
 function emptyUsage() {
-  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 };
+  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0, cacheHits: 0 };
 }
 
 function pickEntryAnalysisState(entry) {
@@ -551,6 +640,11 @@ function rebuildAnalysisMeta(staged, job, entry, analyzedAt) {
     model: staged.model,
     analyzedAt,
     profileFingerprint: job.profileFingerprint,
+    normalizationDiagnostics: structuredClone(Array.isArray(staged.normalizationDiagnostics) ? staged.normalizationDiagnostics : []),
+    attempts: {
+      serviceRequests: Math.max(0, Number(staged.attempts?.serviceRequests) || 0),
+      outputCorrectionRequests: Math.max(0, Number(staged.attempts?.outputCorrectionRequests) || 0)
+    },
     usage: normalizeUsage(staged.usage)
   };
 }

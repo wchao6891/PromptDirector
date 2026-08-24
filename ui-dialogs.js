@@ -208,6 +208,9 @@ function createField(field = {}) {
   if (field.required === true) input.required = true;
   if (clean(field.pattern)) input.pattern = clean(field.pattern);
   if (Number.isFinite(Number(field.minLength))) input.minLength = Number(field.minLength);
+  if (Number.isFinite(Number(field.min))) input.min = String(Number(field.min));
+  if (Number.isFinite(Number(field.max))) input.max = String(Number(field.max));
+  if (Number.isFinite(Number(field.step))) input.step = String(Number(field.step));
   if (field.disabled === true) input.disabled = true;
   if (field.type === "checkbox") wrapper.append(input, label);
   else wrapper.append(label, input);

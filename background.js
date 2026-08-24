@@ -68,6 +68,7 @@ import {
   finalizePartialAnalysisRebuild,
   normalizeAnalysisBatchJob,
   pauseAnalysisBatch,
+  partiallySucceedAnalysisItem,
   previewAnalysisBatch,
   previewVisionBatch,
   reconcileVisionBatchResults,
@@ -79,6 +80,8 @@ import {
   textFingerprint
 } from "./analysis-batch.js";
 import { buildAutomaticVisionJob } from "./automatic-vision.js";
+import { coalesceAnalysisRequest, runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
+import { findPersistedVisionAnalysis } from "./vision-analysis-cache.js";
 import {
   analysisRevisionMeta,
   entryTextRevision,
@@ -304,7 +307,8 @@ import {
   analyzeImageWithVision,
   blobToDataUrl,
   imageFingerprint,
-  publicVisionSettings
+  publicVisionSettings,
+  visionAnalysisProfileFingerprint
 } from "./vision.js";
 import {
   activateCreativeResultContext,
@@ -800,7 +804,24 @@ async function handleMessage(message, interaction = {}) {
     case "ANALYZE_CREATIVE_OUTPUT":
       return analyzeCreativeOutput(message.runId, message.visualId);
     case "ANALYZE_ENTRY_IMAGE":
-      return analyzeEntryImage(message.entryId, message.visualId, message.outputLocale, message.batchJobId);
+      try {
+        return await analyzeEntryImage(
+          message.entryId,
+          message.visualId,
+          message.outputLocale,
+          message.batchJobId,
+          message.bypassCache === true,
+          message.assignment
+        );
+      } catch (error) {
+        return {
+          ok: false,
+          message: userMessage(error),
+          status: Number(error?.status) || 0,
+          usage: error?.usage,
+          attempts: error?.attempts
+        };
+      }
     case "ANALYZE_ENTRY_VISUAL_SET":
       return analyzeEntryVisualSet(message);
     case "ANALYZE_ENTRY_VIDEO":
@@ -3637,8 +3658,6 @@ async function saveTempReferenceAsCaseAction(message) {
 }
 
 async function analyzeTempReferencesAction(message) {
-  if (visionAnalysisInFlight) return { ok: false, message: "已有图片正在分析，请等待完成" };
-  visionAnalysisInFlight = true;
   try {
     const sessionId = String(message.sessionId ?? "").trim();
     const requestedIds = [...new Set((Array.isArray(message.tempReferenceIds) ? message.tempReferenceIds : [])
@@ -3646,7 +3665,8 @@ async function analyzeTempReferencesAction(message) {
     if (!sessionId || !requestedIds.length) return { ok: false, message: "没有可分析的临时图片" };
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.composerSessions,
-      STORAGE_KEYS.facetCatalog
+      STORAGE_KEYS.facetCatalog,
+      STORAGE_KEYS.entries
     ]);
     const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
     const session = sessions.find((item) => item.id === sessionId);
@@ -3659,37 +3679,45 @@ async function analyzeTempReferencesAction(message) {
     if (references.length !== requested.size) {
       return { ok: false, message: "参考图片已经变化，请确认后重试" };
     }
-    const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration());
+    const configuration = await loadAiConfiguration();
     const locale = message.outputLocale === "en" ? "en" : "zh-CN";
-    const analyzed = [];
-    for (const reference of references) {
+    const settledReferences = await Promise.allSettled(references.map(async (reference) => {
       const imageAssets = unreadReferenceImageAssets(reference);
-      const descriptions = [];
-      const fingerprints = [];
-      const analyses = [];
-      for (const asset of imageAssets) {
+      const assetResults = await Promise.all(imageAssets.map(async (asset) => {
         const blob = await getTempReferenceVisionBlob(asset);
         if (!blob) throw new Error(`参考图片已经失效：${asset.name || "未命名图片"}`);
-        const fingerprint = await imageFingerprint(blob);
-        const result = await analyzeImageWithVision({
-          imageDataUrl: await blobToDataUrl(blob),
+        const { result, fingerprint } = await analyzeVisionBlobWithScheduler({
+          blob,
           catalog: stored[STORAGE_KEYS.facetCatalog],
           locale,
-          settings
+          configuration,
+          entries: stored[STORAGE_KEYS.entries]
         });
-        descriptions.push(result.description);
-        fingerprints.push({ assetId: asset.assetId, fingerprint });
-        analyses.push({
-          assetId: asset.assetId,
-          imageFingerprint: fingerprint,
-          analysisImageFingerprint: fingerprint,
-          analysisVersion: VISION_ANALYSIS_VERSION,
-          analysisFingerprint: result.profileFingerprint,
-          reconstructionPrompt: result.reconstructionPrompt
-        });
-      }
-      analyzed.push({ referenceId: reference.entryId, descriptions, fingerprints, analyses });
-    }
+        return {
+          description: result.description,
+          fingerprint: { assetId: asset.assetId, fingerprint },
+          analysis: {
+            assetId: asset.assetId,
+            imageFingerprint: fingerprint,
+            analysisImageFingerprint: fingerprint,
+            analysisVersion: VISION_ANALYSIS_VERSION,
+            analysisFingerprint: result.profileFingerprint,
+            reconstructionPrompt: result.reconstructionPrompt
+          }
+        };
+      }));
+      return {
+        referenceId: reference.entryId,
+        descriptions: assetResults.map((item) => item.description),
+        fingerprints: assetResults.map((item) => item.fingerprint),
+        analyses: assetResults.map((item) => item.analysis)
+      };
+    }));
+    const analyzed = settledReferences.flatMap((settled) => settled.status === "fulfilled" ? [settled.value] : []);
+    const failures = settledReferences.flatMap((settled, index) => settled.status === "rejected"
+      ? [{ referenceId: references[index].entryId, message: userMessage(settled.reason) }]
+      : []);
+    if (!analyzed.length) throw new Error(failures[0]?.message || "临时图片分析失败");
 
     return await enqueue(async () => {
       const latestStored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
@@ -3731,15 +3759,18 @@ async function analyzeTempReferencesAction(message) {
       await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
       return {
         ok: true,
-        message: `已完成 ${analyzed.length} 项临时图片分析`,
+        quality: failures.length ? "partial" : "complete",
+        failedCount: failures.length,
+        failures,
+        message: failures.length
+          ? `已保存 ${analyzed.length} 项分析，另有 ${failures.length} 项失败，可直接重试`
+          : `已完成 ${analyzed.length} 项临时图片分析`,
         session: updatedSession,
         summaries: next.map(sessionSummary)
       };
     });
   } catch (error) {
     return { ok: false, message: userMessage(error) };
-  } finally {
-    visionAnalysisInFlight = false;
   }
 }
 
@@ -4626,10 +4657,7 @@ function canonicalAiTaskId(value) {
   return map[id] || id;
 }
 
-async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "") {
-  if (visionAnalysisInFlight) return { ok: false, message: "已有一张图片正在分析，请等待完成" };
-  visionAnalysisInFlight = true;
-  try {
+async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "", bypassCache = false, assignmentOverride = null) {
     const state = await readState();
     const entry = findEntry(state, entryId);
     const visualId = String(visualIdValue ?? "").trim() || primaryVisual(entry)?.id;
@@ -4637,14 +4665,18 @@ async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobI
     if (!visual) return { ok: false, message: "这条案例没有可分析的截图" };
     const blob = await getVisionImageBlob(visual.id);
     if (!blob) return { ok: false, message: "没有读取到这条案例的截图" };
-    const fingerprint = await imageFingerprint(blob);
-    const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration());
-    const result = await analyzeImageWithVision({
-      imageDataUrl: await blobToDataUrl(blob),
+    const loadedConfiguration = await loadAiConfiguration();
+    const configuration = configurationForAssignment(loadedConfiguration, "imageAnalysis", assignmentOverride);
+    const locale = outputLocale === "en" ? "en" : "zh-CN";
+    const { result, fingerprint } = await analyzeVisionBlobWithScheduler({
+      blob,
       catalog: state.facetCatalog,
-      locale: outputLocale === "en" ? "en" : "zh-CN",
+      locale,
       measuredCanvas: { width: visual.width, height: visual.height },
-      settings
+      configuration,
+      previousAnalysis: visual.visionAnalysis,
+      entries: state.entries,
+      bypassCache
     });
 
     return await enqueue(async () => {
@@ -4664,10 +4696,13 @@ async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobI
         visualId: visual.id,
         imageFingerprint: fingerprint,
         profileFingerprint: result.profileFingerprint,
+        catalogRevision: state.facetCatalog.revision,
         locale: outputLocale,
         providerType: result.providerType,
         model: result.model,
         usage: result.usage,
+        cacheHit: result.cacheHit,
+        attempts: result.attempts,
         batchJobId: String(batchJobIdValue ?? "").trim()
       });
       const analyzed = applied.state.entries.find((item) => item.id === current.id);
@@ -4689,18 +4724,99 @@ async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobI
       });
       return {
         ok: true,
-        message: result.tagDiagnostics?.rejectedCount
+        message: result.quality === "partial"
+          ? `画面分析已保存可用部分，仍有 ${result.missingFields.length} 项待补全`
+          : result.tagDiagnostics?.rejectedCount
           ? `画面分析已保存，并写入 ${applied.appliedCount} 个检索标签；另有 ${result.tagDiagnostics.rejectedCount} 个不符合当前分类体系的可选标签未采用`
           : `画面分析已保存，并写入 ${applied.appliedCount} 个检索标签`,
         entry: applied.state.entries.find((item) => item.id === current.id),
         usage: result.usage,
+        cacheHit: result.cacheHit,
+        quality: result.quality,
+        missingFields: result.missingFields,
         ...publicDomainState(applied.state),
         visionUndoEntryIds: Object.keys(undoStore)
       };
     });
-  } finally {
-    visionAnalysisInFlight = false;
+}
+
+function configurationForAssignment(configuration, taskId, assignmentOverride) {
+  const providerId = String(assignmentOverride?.providerId ?? "").trim();
+  const model = String(assignmentOverride?.model ?? "").trim();
+  if (!providerId && !model) return configuration;
+  return {
+    ...configuration,
+    assignments: normalizeAiTaskAssignments({
+      ...configuration.assignments,
+      [taskId]: {
+        ...configuration.assignments[taskId],
+        providerId: providerId || configuration.assignments[taskId]?.providerId,
+        model: model || configuration.assignments[taskId]?.model,
+        concurrency: assignmentOverride?.concurrency ?? configuration.assignments[taskId]?.concurrency
+      }
+    }, configuration.registry)
+  };
+}
+
+async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredCanvas, configuration, previousAnalysis, entries = [], bypassCache = false }) {
+  const fingerprint = await imageFingerprint(blob);
+  const assignment = configuration.assignments.imageAnalysis;
+  const settings = resolveVisionTaskSettings("imageAnalysis", configuration);
+  const profileFingerprint = await visionAnalysisProfileFingerprint(settings, locale);
+  const cached = findPersistedVisionAnalysis(entries, {
+    fingerprint,
+    profileFingerprint,
+    locale,
+    catalogRevision: catalog?.revision
+  });
+  if (!bypassCache && cached?.quality === "complete") return {
+    fingerprint,
+    result: {
+      ...cached,
+      cacheHit: true,
+      attempts: { serviceRequests: 0, outputCorrectionRequests: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+    }
+  };
+  const schedulerKey = `${assignment.providerId}:${assignment.model}:imageAnalysis`;
+  const requestKey = `${schedulerKey}:${fingerprint}:${locale}:${catalog?.revision ?? 0}`;
+  let serviceRequests = 0;
+  let coalesced = false;
+  let result;
+  try {
+    result = await coalesceAnalysisRequest(requestKey, () => runScheduledAnalysisWithRetries({
+      key: schedulerKey,
+      concurrency: assignment.concurrency,
+      task: async () => {
+        serviceRequests += 1;
+        return analyzeImageWithVision({
+          imageDataUrl: await blobToDataUrl(blob),
+          catalog,
+          locale,
+          measuredCanvas,
+          previousAnalysis: !bypassCache && previousAnalysis?.quality === "partial" ? previousAnalysis : !bypassCache ? cached : null,
+          settings
+        });
+      }
+    }), { onCoalesced: () => { coalesced = true; } });
+  } catch (error) {
+    error.attempts = {
+      serviceRequests,
+      outputCorrectionRequests: Math.max(0, Number(error?.attempts?.outputCorrectionRequests) || 0)
+    };
+    throw error;
   }
+  return {
+    result: {
+      ...result,
+      cacheHit: result.cacheHit === true || coalesced,
+      attempts: {
+        serviceRequests,
+        outputCorrectionRequests: Number(result.attempts?.outputCorrectionRequests) || 0
+      }
+    },
+    fingerprint
+  };
 }
 
 async function analyzeEntryVisualSet(message) {
@@ -5095,7 +5211,8 @@ async function createDeepSeekBatch(outputLocale, mode = "incremental") {
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisRebuildStaging
   ]);
-  const settings = resolveTextTaskSettings("textTags", await loadAiConfiguration());
+  const configuration = await loadAiConfiguration();
+  const settings = resolveTextTaskSettings("textTags", configuration);
   if (!publicAiSettings(settings).configured) return { ok: false, message: "请先完成所选 AI 服务配置" };
   if (!settings.consent) return { ok: false, message: "请先确认：主动分析时会发送案例文字到所选 AI 服务" };
   const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
@@ -5121,7 +5238,10 @@ async function createDeepSeekBatch(outputLocale, mode = "incremental") {
     profileFingerprint,
     mode,
     catalogRevision: state.facetCatalog.revision,
-    fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length
+    fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length,
+    concurrency: configuration.assignments.textTags.concurrency,
+    providerId: configuration.assignments.textTags.providerId,
+    outputProtocol: "json_object"
   });
   const changes = { [STORAGE_KEYS.batchJob]: job };
   if (job.mode === "rebuild") {
@@ -5200,7 +5320,8 @@ async function commitDeepSeekBatchItem(message) {
     message.entryId,
     message.claimId,
     message.usage,
-    applied.state.facetCatalog.revision
+    applied.state.facetCatalog.revision,
+    message
   );
   await commitLocalChanges({
     ...storagePayload(applied.state),
@@ -5255,7 +5376,7 @@ async function commitDeepSeekBatchItems(message) {
       ...result,
       profileFingerprint: job.profileFingerprint
     }, result.fingerprint, updated.analyzedAt, updated);
-    job = succeedAnalysisItem(job, result.entryId, result.claimId, result.usage, working.facetCatalog.revision);
+    job = succeedAnalysisItem(job, result.entryId, result.claimId, result.usage, working.facetCatalog.revision, result);
   }
   await commitLocalChanges({
     ...storagePayload(working),
@@ -5429,7 +5550,8 @@ async function undoDeepSeekBatch(jobId) {
 
 async function previewVisionBatchTask(message) {
   const state = await readState();
-  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+  const configuration = await loadAiConfiguration();
+  const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
   const provider = settings[settings.activeProvider];
   const preview = previewVisionBatch(state.entries, {
     entryIds: message.entryIds,
@@ -5444,7 +5566,8 @@ async function previewVisionBatchTask(message) {
 async function createVisionBatchTask(message) {
   const state = await readState();
   const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
-  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+  const configuration = await loadAiConfiguration();
+  const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
   const provider = settings[settings.activeProvider];
   if (!provider.apiKey) return { ok: false, message: "请先保存当前图片服务的 API Key" };
   if (!settings.consent) return { ok: false, message: "请先确认主动分析时会发送当前截图" };
@@ -5458,8 +5581,11 @@ async function createVisionBatchTask(message) {
     includeAllImages: message.includeAllImages,
     reanalyze: message.reanalyze,
     providerType: settings.activeProvider,
+    providerId: configuration.assignments.imageAnalysis.providerId,
     model: provider.model,
-    outputLocale: message.outputLocale
+    outputProtocol: settings.activeProvider === "compatible" ? settings.compatible.structuredOutput : "json_schema",
+    outputLocale: message.outputLocale,
+    concurrency: configuration.assignments.imageAnalysis.concurrency
   });
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
   await chrome.storage.local.remove(STORAGE_KEYS.analysisBatchUndo);
@@ -5481,19 +5607,22 @@ async function claimVisionBatchItem(jobId) {
   if (reconciled.recoveredCount) {
     await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
   }
-  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
-  const provider = settings[settings.activeProvider];
-  if (settings.activeProvider !== job.providerType || provider.model !== job.model) {
+  const loadedConfiguration = await loadAiConfiguration();
+  const configuration = configurationForAssignment(loadedConfiguration, "imageAnalysis", job);
+  const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
+  const snapshotReady = publicVisionSettings(settings)[settings.activeProvider]?.configured === true;
+  if (!snapshotReady || !settings.consent) {
     const paused = pauseAnalysisBatch(job);
     await commitLocalChanges({ [STORAGE_KEYS.batchJob]: paused });
-    return { ok: false, message: "图片服务或模型已变化，任务已暂停，请重新创建预览" };
+    return { ok: false, message: "任务快照所用服务当前不可用，任务已暂停" };
   }
-  const claimed = claimAnalysisItems(job, 1);
+  const claimed = claimAnalysisItems(job);
   if (claimed.claims.length) {
     await commitLocalChanges({ [STORAGE_KEYS.batchJob]: claimed.job });
   }
   return {
     ok: true,
+    claims: claimed.claims,
     claim: claimed.claims[0] ?? null,
     visionBatchJob: analysisBatchSummary(claimed.job)
   };
@@ -5506,9 +5635,12 @@ async function completeVisionBatchItem(message) {
   const usage = {
     promptTokens: Math.max(0, Number(message.usage?.inputTokens) || 0),
     completionTokens: Math.max(0, Number(message.usage?.outputTokens) || 0),
-    totalTokens: Math.max(0, Number(message.usage?.totalTokens) || 0)
+    totalTokens: Math.max(0, Number(message.usage?.totalTokens) || 0),
+    cacheHits: message.cacheHit === true ? 1 : 0
   };
-  const next = succeedAnalysisItem(job, message.entryId, message.claimId, usage);
+  const next = message.quality === "partial"
+    ? partiallySucceedAnalysisItem(job, message.entryId, message.claimId, usage, undefined, message)
+    : succeedAnalysisItem(job, message.entryId, message.claimId, usage, undefined, message);
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
   return { ok: true, visionBatchJob: analysisBatchSummary(next) };
 }
@@ -5547,14 +5679,18 @@ async function queueAutomaticVisionAnalysis(entryIdsValue, options = {}) {
     readState(),
     chrome.storage.local.get(STORAGE_KEYS.automaticVisionBatchJob)
   ]);
-  const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
+  const configuration = await loadAiConfiguration();
+  const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
   const publicSettings = publicVisionSettings(settings);
   if ((options.requireAutoImportSetting !== false && !settings.autoAnalyzeImports) ||
       !settings.consent || !publicSettings[settings.activeProvider].configured) return false;
   const provider = settings[settings.activeProvider];
   const job = buildAutomaticVisionJob(state.entries, entryIds, {
     providerType: settings.activeProvider,
+    providerId: configuration.assignments.imageAnalysis.providerId,
     model: provider.model,
+    outputProtocol: settings.activeProvider === "compatible" ? settings.compatible.structuredOutput : "json_schema",
+    concurrency: configuration.assignments.imageAnalysis.concurrency,
     outputLocale: resolveLocale(state.uiPreferences, chrome.i18n.getUILanguage()) === "en" ? "en" : "zh-CN"
   }, stored[STORAGE_KEYS.automaticVisionBatchJob]);
   if (!job) return false;
@@ -5581,44 +5717,58 @@ async function runAutomaticVisionItem() {
       STORAGE_KEYS.automaticVisionBatchJob
     ]);
     let job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.automaticVisionBatchJob]);
-    const settings = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration(), { requireConfigured: false });
-    const configured = publicVisionSettings(settings)[settings.activeProvider].configured;
-    if (!job || job.kind !== "vision" || job.status !== "running" ||
-        !settings.autoAnalyzeImports || !settings.consent || !configured) {
+    if (!job || job.kind !== "vision" || job.status !== "running") {
       await ensureAutomaticVisionAlarm(false);
       return;
     }
-    if (visionAnalysisInFlight) {
-      continueRunning = true;
+    const loadedConfiguration = await loadAiConfiguration();
+    const configuration = configurationForAssignment(loadedConfiguration, "imageAnalysis", job);
+    const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
+    const configured = publicVisionSettings(settings)[settings.activeProvider].configured;
+    if (!settings.autoAnalyzeImports || !settings.consent || !configured) {
+      job = pauseAnalysisBatch(job);
+      await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
+      await ensureAutomaticVisionAlarm(false);
       return;
     }
     const state = await readState();
     job = resumeAnalysisBatch(job);
     job = reconcileVisionBatchResults(job, state.entries).job;
-    const claimed = claimAnalysisItems(job, 1);
+    const claimed = claimAnalysisItems(job);
     job = claimed.job;
     await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
-    const claim = claimed.claims[0];
-    if (!claim) {
+    if (!claimed.claims.length) {
       await ensureAutomaticVisionAlarm(false);
       return;
     }
-
-    const result = await analyzeEntryImage(claim.entryId, claim.visualId, job.outputLocale, job.id);
-    await enqueue(async () => {
-      const latestStored = await chrome.storage.local.get(STORAGE_KEYS.automaticVisionBatchJob);
-      const latest = requireAnalysisBatch(latestStored[STORAGE_KEYS.automaticVisionBatchJob], job.id, "vision");
-      requireClaim(latest, claim.entryId, claim.claimId, claim.visualId);
-      const next = result.ok
-        ? succeedAnalysisItem(latest, claim.entryId, claim.claimId, {
-            promptTokens: result.usage?.inputTokens,
-            completionTokens: result.usage?.outputTokens,
-            totalTokens: result.usage?.totalTokens
-          })
-        : { ...failAnalysisItem(latest, claim.entryId, claim.claimId, { message: result.message }), status: "paused" };
-      await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: next });
-      job = next;
-    });
+    await Promise.all(claimed.claims.map(async (claim) => {
+      let result;
+      try {
+        result = await analyzeEntryImage(claim.entryId, claim.visualId, job.outputLocale, job.id, false, job);
+      } catch (error) {
+        result = { ok: false, message: userMessage(error), status: Number(error?.status) || 0, usage: error?.usage };
+      }
+      await enqueue(async () => {
+        const latestStored = await chrome.storage.local.get(STORAGE_KEYS.automaticVisionBatchJob);
+        const latest = requireAnalysisBatch(latestStored[STORAGE_KEYS.automaticVisionBatchJob], job.id, "vision");
+        requireClaim(latest, claim.entryId, claim.claimId, claim.visualId);
+        const next = result.ok
+          ? (result.quality === "partial" ? partiallySucceedAnalysisItem : succeedAnalysisItem)(latest, claim.entryId, claim.claimId, {
+              promptTokens: result.usage?.inputTokens,
+              completionTokens: result.usage?.outputTokens,
+              totalTokens: result.usage?.totalTokens,
+              cacheHits: result.cacheHit === true ? 1 : 0
+            }, undefined, result)
+          : failAnalysisItem(latest, claim.entryId, claim.claimId, {
+              message: result.message,
+              status: result.status,
+              usage: result.usage,
+              attempts: result.attempts
+            });
+        await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: next });
+        job = next;
+      });
+    }));
     continueRunning = job.status === "running";
     await ensureAutomaticVisionAlarm(continueRunning);
   } catch (error) {
@@ -6048,6 +6198,15 @@ function analysisMeta(message, fingerprint, analyzedAt, entry = {}) {
     model: String(message.model ?? ""),
     analyzedAt,
     profileFingerprint: String(message.profileFingerprint ?? "").trim(),
+    normalizationDiagnostics: (Array.isArray(message.normalizationDiagnostics) ? message.normalizationDiagnostics : []).map((item) => ({
+      field: String(item?.field ?? ""),
+      code: String(item?.code ?? ""),
+      count: Math.max(0, Number(item?.count) || 0)
+    })).filter((item) => item.field && item.code),
+    attempts: {
+      serviceRequests: Math.max(0, Number(message.attempts?.serviceRequests) || 0),
+      outputCorrectionRequests: Math.max(0, Number(message.attempts?.outputCorrectionRequests) || 0)
+    },
     usage: {
       promptTokens: Math.max(0, Number(message.usage?.promptTokens) || 0),
       completionTokens: Math.max(0, Number(message.usage?.completionTokens) || 0),

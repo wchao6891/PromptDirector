@@ -2,7 +2,7 @@ import { entryMediaAssets } from "./media.js";
 
 export function validReconstructionPrompt(assetValue = {}) {
   const analysis = assetValue?.visionAnalysis;
-  if (!analysis || analysis.invalidated || Number(analysis.version) !== 2) return "";
+  if (!analysis || analysis.invalidated || analysis.quality === "partial" || Number(analysis.version) !== 2) return "";
   const prompt = String(analysis.reconstructionPrompt ?? "").trim();
   if (!prompt) return "";
   const currentFingerprint = String(assetValue.contentHash ?? "").trim() || String(analysis.imageFingerprint ?? "").trim();

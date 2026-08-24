@@ -5,6 +5,7 @@ import {
   VISUAL_ANALYSIS_DIMENSIONS,
   VISUAL_MODEL_RESPONSE_SCHEMA,
   compileVisualAnalysisInstruction,
+  mergePartialVisualAnalysis,
   normalizeVisualAnalysisV2,
   normalizeVisualModelResponse,
   prepareVisualSetSummary
@@ -111,20 +112,40 @@ test("known root field casing is normalized before strict visual validation", ()
   assert.equal(Object.hasOwn(result, "OCR"), false);
 });
 
-test("root field casing conflicts and unknown fields remain rejected", () => {
+test("root field casing conflicts remain rejected while unknown fields are ignored", () => {
   const conflict = completeModelResponse();
   conflict.OCR = conflict.ocr;
   assert.throws(() => normalizeVisualModelResponse(conflict), /字段大小写冲突：ocr/);
 
   const unknown = completeModelResponse({ audit: [] });
-  assert.throws(() => normalizeVisualModelResponse(unknown), /未允许字段：audit/);
+  assert.equal(normalizeVisualModelResponse(unknown).quality, "complete");
 });
 
-test("invalid model boxes fail without clipping or rewriting the saved analysis", () => {
+test("invalid model boxes produce a visible partial result without clipping or rewriting input", () => {
   const invalid = completeModelResponse();
   invalid.elements[0].box_2d = [150, 250, 140, 900];
-  assert.throws(() => normalizeVisualModelResponse(invalid), /画面位置关系不完整/);
+  const result = normalizeVisualModelResponse(invalid);
+  assert.equal(result.quality, "partial");
+  assert.ok(result.missingFields.includes("elements"));
   assert.deepEqual(invalid.elements[0].box_2d, [150, 250, 140, 900]);
+});
+
+test("completion merges only missing fields and preserves fields already validated from a paid partial result", () => {
+  const previous = normalizeVisualModelResponse({
+    description: "已经保存的可靠描述",
+    reconstructionPrompt: "已经保存的可靠重建提示词",
+    tags: []
+  });
+  const incoming = normalizeVisualModelResponse(completeModelResponse({
+    description: "补全请求中的重复描述",
+    reconstructionPrompt: "补全请求中的重复提示词"
+  }));
+  const merged = mergePartialVisualAnalysis(previous, incoming);
+  assert.equal(merged.quality, "complete");
+  assert.deepEqual(merged.missingFields, []);
+  assert.equal(merged.description, "已经保存的可靠描述");
+  assert.equal(merged.reconstructionPrompt, "已经保存的可靠重建提示词");
+  assert.deepEqual(merged.canvas, incoming.canvas);
 });
 
 test("visual instruction requests quantitative reconstruction in one call and exposes only fixed taxonomy paths", () => {

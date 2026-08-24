@@ -162,12 +162,12 @@ export function validateAnalysisTagResponse(value, catalogValue, options = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.tags)) {
     throw new Error("AI 返回格式无效，本次没有写入任何标签");
   }
-  if (Object.keys(value).some((key) => key !== "tags")) {
-    throw new Error("AI 返回了未允许字段，本次没有写入");
-  }
   const minimum = options.allowEmpty === true ? 0 : ANALYSIS_TAG_MIN;
   const maximum = Math.min(ANALYSIS_TAG_MAX, Math.max(minimum, Number(options.maxTags) || ANALYSIS_TAG_MAX));
-  if (value.tags.length < minimum || value.tags.length > maximum) {
+  const diagnostics = Array.isArray(options.diagnostics) ? options.diagnostics : null;
+  const extraRootFields = Object.keys(value).filter((key) => key !== "tags").length;
+  if (extraRootFields) diagnostics?.push({ field: "root", code: "extra_fields_ignored", count: extraRootFields });
+  if (value.tags.length < minimum) {
     throw new Error(`AI 必须返回 ${minimum}–${maximum} 个标签，本次没有写入`);
   }
   const catalog = catalogValue && Array.isArray(catalogValue.nodes) ? catalogValue : createFixedFacetCatalog();
@@ -175,20 +175,43 @@ export function validateAnalysisTagResponse(value, catalogValue, options = {}) {
     .filter((item) => item.status !== "archived" && !item.parentId && item.kind !== "detail")
     .map((item) => [item.id, item]));
   const seen = new Set();
-  const tags = value.tags.map((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("AI 标签格式无效，本次没有写入");
-    const keys = Object.keys(item);
-    if (keys.some((key) => !["g", "t"].includes(key))) throw new Error("AI 返回了未允许字段，本次没有写入");
-    const groupId = String(item.g ?? "").trim();
-    if (!groups.has(groupId)) throw new Error("AI 返回了未知分类路径，本次没有写入");
-    const hasDetail = Object.hasOwn(item, "t") && String(item.t ?? "").trim();
-    const detail = hasDetail ? normalizeDetailLabel(item.t) : "";
-    if (detail.length > ANALYSIS_DETAIL_MAX_LENGTH) throw new Error("AI 标签过长，本次没有写入");
+  const tags = [];
+  let unknownCount = 0;
+  for (let index = 0; index < value.tags.length; index += 1) {
+    const item = value.tags[index];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      diagnostics?.push({ field: "tags", code: "invalid_tag_dropped", count: 1 });
+      continue;
+    }
+    const extraFields = Object.keys(item).filter((key) => !["g", "groupId", "group_id", "group", "t", "detail", "tag", "label"].includes(key)).length;
+    if (extraFields) diagnostics?.push({ field: "tags", code: "extra_fields_ignored", count: extraFields });
+    const groupId = String(item.g ?? item.groupId ?? item.group_id ?? item.group ?? "").trim();
+    if (!groups.has(groupId)) {
+      unknownCount += 1;
+      diagnostics?.push({ field: "tags", code: "unknown_path_dropped", count: 1 });
+      continue;
+    }
+    const detailValue = item.t ?? item.detail ?? item.tag ?? item.label;
+    const detail = String(detailValue ?? "").trim()
+      ? [...normalizeDetailLabel(detailValue)].slice(0, ANALYSIS_DETAIL_MAX_LENGTH).join("")
+      : "";
     const key = `${groupId}:${detailNormalizationKey(detail)}`;
-    if (seen.has(key)) throw new Error("AI 返回了重复标签，本次没有写入");
+    if (seen.has(key)) {
+      diagnostics?.push({ field: "tags", code: "duplicate_dropped", count: 1 });
+      continue;
+    }
     seen.add(key);
-    return detail ? { g: groupId, t: detail } : { g: groupId };
-  });
+    tags.push(detail ? { g: groupId, t: detail } : { g: groupId });
+    if (tags.length >= maximum) {
+      const capped = value.tags.length - index - 1;
+      if (capped) diagnostics?.push({ field: "tags", code: "over_limit_dropped", count: capped });
+      break;
+    }
+  }
+  if (tags.length < minimum || (!tags.length && value.tags.length)) {
+    if (unknownCount) throw new Error("AI 返回了未知分类路径，本次没有写入");
+    throw new Error(`AI 必须返回 ${minimum}–${maximum} 个标签，本次没有写入`);
+  }
   return tags;
 }
 

@@ -117,12 +117,19 @@ async function discoverIdentityModels(fetchImpl, profile, cache) {
       const inputModalities = normalizeModalities(architecture.input_modalities ?? architecture.inputModalities);
       const outputModalities = normalizeModalities(architecture.output_modalities ?? architecture.outputModalities);
       const hasDeclaredModalities = inputModalities.length > 0 && outputModalities.length > 0;
+      const id = clean(item.id ?? item.name).replace(/^models\//, "");
+      const official = getAiModelCapability(profile.id, id);
       return modelDescriptor(item, {
-        confidence: hasDeclaredModalities ? "declared" : "manual_unverified",
-        tasks: hasDeclaredModalities ? tasksFromModalities(inputModalities, outputModalities) : [],
-        inputModalities,
-        outputModalities,
-        source: "provider_models"
+        confidence: official || hasDeclaredModalities ? "declared" : "manual_unverified",
+        tasks: official?.tasks ?? (hasDeclaredModalities ? tasksFromModalities(inputModalities, outputModalities) : []),
+        inputModalities: official?.inputModalities ?? inputModalities,
+        outputModalities: official?.outputModalities ?? outputModalities,
+        supportedParameters: official?.supportedParameters,
+        supportedResolutions: official?.supportedResolutions,
+        supportedAspectRatios: official?.supportedAspectRatios,
+        referenceImages: official?.referenceImages,
+        concurrencyLimit: official?.concurrencyLimit,
+        source: official ? "provider_models+official_capabilities" : "provider_models"
       });
     }),
     cache: response.cache,
@@ -282,7 +289,8 @@ function modelDescriptor(item = {}, options = {}) {
     pricing: cloneObject(item.pricing ?? item.pricing_skus),
     supportedResolutions: options.supportedResolutions ?? stringArray(item.supported_resolutions ?? item.supportedResolutions ?? parameterDescriptors?.resolution?.values),
     supportedAspectRatios: options.supportedAspectRatios ?? stringArray(item.supported_aspect_ratios ?? item.supportedAspectRatios ?? parameterDescriptors?.aspect_ratio?.values),
-    referenceImages: options.referenceImages ? structuredClone(options.referenceImages) : undefined
+    referenceImages: options.referenceImages ? structuredClone(options.referenceImages) : undefined,
+    concurrencyLimit: options.concurrencyLimit ? structuredClone(options.concurrencyLimit) : undefined
   };
   return descriptor;
 }

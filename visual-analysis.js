@@ -25,6 +25,10 @@ const ROOT_FIELDS = new Set([
   "limitations", "completeness", "tags"
 ]);
 const ROOT_FIELDS_BY_CASE = new Map([...ROOT_FIELDS].map((field) => [field.toLocaleLowerCase("en-US"), field]));
+const ROOT_FIELD_ALIASES = new Map([...ROOT_FIELDS].flatMap((field) => [
+  [field.toLocaleLowerCase("en-US"), field],
+  [field.replace(/[A-Z]/g, (character) => `_${character.toLocaleLowerCase("en-US")}`), field]
+]));
 
 const BBOX_SCHEMA = Object.freeze({
   type: "object",
@@ -198,26 +202,150 @@ export function normalizeVisualModelResponse(value, catalogValue) {
   const tagDiagnostics = partitionModelTags(source.tags, catalogValue);
   const converted = {
     ...source,
-    elements: (Array.isArray(source.elements) ? source.elements : []).map((item) => convertModelBox(item)),
-    ocr: (Array.isArray(source.ocr) ? source.ocr : []).map((item) => convertModelBox(item)),
+    elements: (Array.isArray(source.elements) ? source.elements : []).map(convertModelBoxIfValid),
+    ocr: (Array.isArray(source.ocr) ? source.ocr : []).map(convertModelBoxIfValid),
     tags: tagDiagnostics.accepted
   };
-  return {
-    ...normalizeVisualAnalysisV2(converted, catalogValue),
-    tagDiagnostics: { rejectedCount: tagDiagnostics.rejectedCount }
+  try {
+    return {
+      ...normalizeVisualAnalysisV2(converted, catalogValue),
+      quality: "complete",
+      missingFields: [],
+      normalizationDiagnostics: tagDiagnostics.rejections,
+      tagDiagnostics: { rejectedCount: tagDiagnostics.rejectedCount, rejections: tagDiagnostics.rejections }
+    };
+  } catch (error) {
+    return normalizePartialVisualAnalysis(converted, catalogValue, tagDiagnostics, error);
+  }
+}
+
+export function mergePartialVisualAnalysis(previousValue, incomingValue) {
+  const previous = previousValue && typeof previousValue === "object" ? previousValue : {};
+  const incoming = incomingValue && typeof incomingValue === "object" ? incomingValue : {};
+  if (previous.quality !== "partial") return incoming;
+  const previousMissing = new Set(Array.isArray(previous.missingFields) ? previous.missingFields : []);
+  const incomingMissing = new Set(Array.isArray(incoming.missingFields) ? incoming.missingFields : []);
+  const fields = ["description", "canvas", "elements", "dimensions", "ocr", "reconstructionPrompt", "completeness"];
+  const merged = {};
+  const missingFields = [];
+  for (const field of fields) {
+    const previousValid = !previousMissing.has(field) && hasVisualField(previous, field);
+    const incomingValid = !incomingMissing.has(field) && hasVisualField(incoming, field);
+    if (previousValid) merged[field] = structuredClone(previous[field]);
+    else if (incomingValid) merged[field] = structuredClone(incoming[field]);
+    else {
+      if (hasVisualField(incoming, field)) merged[field] = structuredClone(incoming[field]);
+      else if (hasVisualField(previous, field)) merged[field] = structuredClone(previous[field]);
+      missingFields.push(field);
+    }
+  }
+  merged.limitations = [...new Set([...(previous.limitations ?? []), ...(incoming.limitations ?? [])].map(String).filter(Boolean))];
+  const tagKeys = new Set();
+  merged.tags = [...(incoming.tags ?? []), ...(previous.tags ?? [])].filter((tag) => {
+    const key = `${tag?.g ?? ""}\n${tag?.t ?? ""}`;
+    if (!tag?.g || !tag?.t || tagKeys.has(key) || tagKeys.size >= 6) return false;
+    tagKeys.add(key);
+    return true;
+  }).map((tag) => ({ g: tag.g, t: tag.t }));
+  const unresolved = new Set(missingFields);
+  merged.normalizationDiagnostics = [
+    ...(incoming.normalizationDiagnostics ?? []),
+    ...(previous.normalizationDiagnostics ?? [])
+  ].filter((item, index, all) => (item?.field === "tags" || unresolved.has(item?.field))
+    && all.findIndex((other) => other?.field === item?.field && other?.code === item?.code && other?.message === item?.message) === index);
+  merged.quality = missingFields.length ? "partial" : "complete";
+  merged.missingFields = missingFields;
+  merged.tagDiagnostics = {
+    rejectedCount: Number(previous.tagDiagnostics?.rejectedCount || 0) + Number(incoming.tagDiagnostics?.rejectedCount || 0),
+    rejections: [...(previous.tagDiagnostics?.rejections ?? []), ...(incoming.tagDiagnostics?.rejections ?? [])]
   };
+  return merged;
+}
+
+function hasVisualField(value, field) {
+  const fieldValue = value?.[field];
+  if (Array.isArray(fieldValue)) return true;
+  if (fieldValue && typeof fieldValue === "object") return true;
+  return typeof fieldValue === "string" && Boolean(fieldValue.trim());
 }
 
 function normalizeKnownRootFieldCasing(value) {
   const normalized = {};
   for (const [field, fieldValue] of Object.entries(value)) {
-    const canonical = ROOT_FIELDS_BY_CASE.get(field.toLocaleLowerCase("en-US")) || field;
+    const normalizedKey = field.toLocaleLowerCase("en-US").replace(/[\s-]+/g, "_");
+    const canonical = ROOT_FIELD_ALIASES.get(normalizedKey) || ROOT_FIELDS_BY_CASE.get(normalizedKey);
+    if (!canonical) continue;
     if (Object.hasOwn(normalized, canonical)) {
       throw new Error(`视觉分析字段大小写冲突：${canonical}`);
     }
     normalized[canonical] = fieldValue;
   }
   return normalized;
+}
+
+function normalizePartialVisualAnalysis(value, catalogValue, tagDiagnostics, fullError) {
+  const missingFields = [];
+  const normalizationDiagnostics = [];
+  const result = {};
+  const record = (field, normalize) => {
+    try {
+      const normalized = normalize();
+      if (normalized === undefined || normalized === null || normalized === "") throw new Error(`${field} 为空`);
+      result[field] = normalized;
+    } catch (error) {
+      missingFields.push(field);
+      normalizationDiagnostics.push({ field, message: String(error?.message || `${field} 无效`) });
+    }
+  };
+  record("description", () => requiredText(value.description, "视觉模型没有返回画面描述"));
+  record("canvas", () => normalizeCanvas(value.canvas));
+  record("elements", () => normalizePartialElements(value.elements));
+  record("dimensions", () => normalizePartialDimensions(value.dimensions));
+  record("ocr", () => normalizePartialOcr(value.ocr));
+  record("reconstructionPrompt", () => requiredText(value.reconstructionPrompt, "视觉模型没有返回可独立使用的重建提示词"));
+  record("completeness", () => normalizeCompleteness(value.completeness));
+  result.limitations = cleanStrings(value.limitations);
+  result.tags = validateAnalysisTagResponse({ tags: tagDiagnostics.accepted }, catalogValue, { allowEmpty: true, maxTags: 6 });
+  normalizationDiagnostics.push(...tagDiagnostics.rejections);
+  if (!result.description && !result.reconstructionPrompt) throw fullError;
+  if (!result.description) result.description = result.reconstructionPrompt;
+  return {
+    ...result,
+    quality: "partial",
+    missingFields,
+    normalizationDiagnostics,
+    tagDiagnostics: { rejectedCount: tagDiagnostics.rejectedCount, rejections: tagDiagnostics.rejections }
+  };
+}
+
+function normalizePartialElements(values) {
+  const normalized = (Array.isArray(values) ? values : []).flatMap((item) => {
+    try { return [normalizeElements([convertModelBoxIfValid(item)])[0]]; }
+    catch { return []; }
+  });
+  if (!normalized.length) throw new Error("视觉分析没有可用的画面元素");
+  return normalized;
+}
+
+function normalizePartialDimensions(values) {
+  const byId = new Map((Array.isArray(values) ? values : []).map((item) => [String(item?.id ?? "").trim(), item]));
+  const normalized = VISUAL_ANALYSIS_DIMENSIONS.flatMap((id) => {
+    const item = byId.get(id);
+    if (!item || typeof item.applicable !== "boolean") return [];
+    const facts = cleanStrings(item.facts);
+    if (!item.applicable && facts.length) return [];
+    return [{ id, applicable: item.applicable, facts, measurements: cleanStrings(item.measurements) }];
+  });
+  if (!normalized.length) throw new Error("视觉分析没有可用的视觉维度");
+  return normalized;
+}
+
+function normalizePartialOcr(values) {
+  if (!Array.isArray(values)) throw new Error("视觉分析缺少 OCR 清单");
+  return values.flatMap((item) => {
+    try { return [normalizeOcr([convertModelBoxIfValid(item)])[0]]; }
+    catch { return []; }
+  });
 }
 
 export function normalizeVisualAnalysisV2(value, catalogValue) {
@@ -251,7 +379,7 @@ export function prepareVisualSetSummary(values, locale = "zh-CN") {
   for (const item of Array.isArray(values) ? values : []) {
     const assetId = String(item?.assetId ?? "").trim();
     if (!assetId) continue;
-    if (!item?.analysis || Number(item.analysis.version ?? VISUAL_ANALYSIS_VERSION) !== VISUAL_ANALYSIS_VERSION) {
+    if (!item?.analysis || item.analysis.quality === "partial" || Number(item.analysis.version ?? VISUAL_ANALYSIS_VERSION) !== VISUAL_ANALYSIS_VERSION) {
       missingAssetIds.push(assetId);
       continue;
     }
@@ -423,23 +551,28 @@ function partitionModelTags(values, catalog) {
   const accepted = [];
   const seen = new Set();
   let rejectedCount = Array.isArray(values) ? 0 : 1;
+  const rejections = Array.isArray(values) ? [] : [{ field: "tags", code: "invalid_collection", count: 1 }];
   for (const value of source) {
     let tag;
     try {
-      [tag] = validateAnalysisTagResponse({ tags: [value] }, catalog, { allowEmpty: true, maxTags: 1 });
+      const diagnostics = [];
+      [tag] = validateAnalysisTagResponse({ tags: [value] }, catalog, { allowEmpty: true, maxTags: 1, diagnostics });
+      rejections.push(...diagnostics);
     } catch {
       rejectedCount += 1;
+      rejections.push({ field: "tags", code: "invalid_or_unknown_tag_dropped", count: 1 });
       continue;
     }
     const key = JSON.stringify(tag);
     if (seen.has(key) || accepted.length >= 6) {
       rejectedCount += 1;
+      rejections.push({ field: "tags", code: seen.has(key) ? "duplicate_dropped" : "over_limit_dropped", count: 1 });
       continue;
     }
     seen.add(key);
     accepted.push(tag);
   }
-  return { accepted, rejectedCount };
+  return { accepted, rejectedCount, rejections };
 }
 
 function convertModelBox(item) {
@@ -464,6 +597,11 @@ function convertModelBox(item) {
       source: "estimated"
     }
   };
+}
+
+function convertModelBoxIfValid(item) {
+  try { return convertModelBox(item); }
+  catch { return item; }
 }
 
 function assertOnlyFields(value, allowed, label) {
