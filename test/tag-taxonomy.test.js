@@ -58,6 +58,20 @@ test("analysis response keeps valid tags while dropping unknown, duplicate, extr
   assert.equal(bounded.length, ANALYSIS_TAG_MAX);
 });
 
+test("analysis response accepts common root and tag field casing or snake-camel aliases", () => {
+  const catalog = createFixedFacetCatalog();
+  assert.deepEqual(validateAnalysisTagResponse({ Tag_List: [
+    { Group_ID: "style.render", groupId: "style.render", Label: "赛璐珞", detail: "赛璐珞" },
+    { groupId: "light.direction", Detail: "侧逆光" }
+  ] }, catalog), [
+    { g: "style.render", t: "赛璐珞" },
+    { g: "light.direction", t: "侧逆光" }
+  ]);
+  const duplicateRoot = [{ g: "style.render", t: "赛璐珞" }];
+  assert.deepEqual(validateAnalysisTagResponse({ tags: duplicateRoot, Tags: structuredClone(duplicateRoot) }, catalog), duplicateRoot);
+  assert.throws(() => validateAnalysisTagResponse({ tags: duplicateRoot, Tags: [{ g: "light.direction" }] }, catalog), /格式无效/);
+});
+
 test("analysis can assign a group directly and reuses normalized detail labels", () => {
   let state = { facetCatalog: createFixedFacetCatalog(), entries: [{ id: "one", facetAssignments: [] }] };
   state = applyFixedAnalysisTags(state, "one", [

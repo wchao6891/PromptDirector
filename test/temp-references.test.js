@@ -7,6 +7,7 @@ import {
   extractTempReferenceText,
   imageTempReferenceBlock,
   namePastedTempReferenceFile,
+  unreadReferenceImageAssets,
   validateTempReferenceFile
 } from "../temp-references.js";
 import { createComposerSession } from "../composer.js";
@@ -128,6 +129,30 @@ test("a text-only service blocks image attachments without choosing another serv
     imageCount: 1,
     choices: ["chooseVisionService", "analyzeImages", "cancel"]
   });
+});
+
+test("a partial temporary-image analysis remains eligible for completion", () => {
+  const base = {
+    referenceText: "已保存的可见描述",
+    assetRefs: [{ assetId: "temp-reference-asset:partial", kind: "image", mimeType: "image/png" }],
+    imageRefs: [{ visualId: "temp-reference-asset:partial", mimeType: "image/png" }]
+  };
+  const partial = {
+    ...base,
+    assets: [{
+      assetId: "temp-reference-asset:partial",
+      imageFingerprint: "image-hash",
+      analysisImageFingerprint: "image-hash",
+      analysisVersion: 2,
+      analysisFingerprint: "profile-hash",
+      reconstructionPrompt: ""
+    }]
+  };
+  assert.deepEqual(unreadReferenceImageAssets(partial).map((item) => item.assetId), ["temp-reference-asset:partial"]);
+  assert.deepEqual(unreadReferenceImageAssets({
+    ...partial,
+    assets: [{ ...partial.assets[0], reconstructionPrompt: "可独立复用的重建提示词" }]
+  }), []);
 });
 
 test("text, Markdown, and HTML attachments expose readable text without script content", async () => {

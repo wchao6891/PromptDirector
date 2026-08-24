@@ -1,4 +1,5 @@
 import { AI_PROVIDER_PRESETS, getAiProviderPreset } from "./ai-provider-presets.js";
+import { getAiModelCapability } from "./ai-model-capabilities.js";
 
 export const AI_ASSIGNMENT_TASKS = Object.freeze([
   { id: "textTags", label: "文字标签" },
@@ -51,9 +52,24 @@ export function normalizeAiTaskAssignments(value = {}, registryValue = {}) {
       ? source.evidence
       : inferredEvidence === "manual_unverified" ? inferredEvidence : "";
     if (evidence) assignment.evidence = evidence;
-    assignment.concurrency = normalizeTaskConcurrency(task.id, source.concurrency, discovered?.concurrencyLimit?.value);
+    assignment.concurrency = normalizeTaskConcurrency(
+      task.id,
+      source.concurrency,
+      modelConcurrencyLimit(assignment.providerId, assignment.model, registryValue)
+    );
     return [task.id, assignment];
   }));
+}
+
+export function modelConcurrencyLimit(providerIdValue, modelValue, registryValue = {}) {
+  const providerId = clean(providerIdValue);
+  const model = clean(modelValue).replace(/^models\//, "");
+  if (!providerId || !model) return null;
+  const profile = registryValue?.providers?.[providerId];
+  const discoveredLimit = Number(profile?.discoveredModels?.find((item) => item.id === model)?.concurrencyLimit?.value);
+  if (Number.isInteger(discoveredLimit) && discoveredLimit >= 2) return discoveredLimit;
+  const officialLimit = Number(getAiModelCapability(providerId, model)?.concurrencyLimit?.value);
+  return Number.isInteger(officialLimit) && officialLimit >= 2 ? officialLimit : null;
 }
 
 export function publicAiProviderRegistry(value = {}) {

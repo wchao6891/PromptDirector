@@ -127,7 +127,8 @@ export function previewVisionBatch(entries = [], options = {}) {
       : [primaryImageAsset(entry)].filter(Boolean);
     for (const visual of candidates) {
       if (!visual?.id) continue;
-      if (!reanalyze && visual.visionAnalysis?.description) {
+      const hasCompleteAnalysis = Boolean(visual.visionAnalysis?.description) && visual.visionAnalysis?.quality !== "partial";
+      if (!reanalyze && hasCompleteAnalysis) {
         skippedAnalyzedCount += 1;
         continue;
       }
@@ -135,7 +136,7 @@ export function previewVisionBatch(entries = [], options = {}) {
         entryId: String(entry.id),
         visualId: String(visual.id),
         title: String(entry.title ?? ""),
-        alreadyAnalyzed: Boolean(visual.visionAnalysis?.description)
+        alreadyAnalyzed: hasCompleteAnalysis
       });
     }
   }
@@ -401,6 +402,15 @@ export function pauseAnalysisBatch(value) {
 export function resumeAnalysisBatch(value) {
   const job = requireJob(value);
   if (job.status === "canceled") throw new Error("已取消的批量任务不能继续");
+  if (job.items.some((item) => ["pending", "running"].includes(item.status))) job.status = "running";
+  else finishIfSettled(job);
+  touch(job);
+  return job;
+}
+
+export function recoverInterruptedAnalysisBatch(value) {
+  const job = requireJob(value);
+  if (job.status === "canceled") return job;
   for (const item of job.items) {
     if (item.status !== "running") continue;
     item.status = "pending";
@@ -420,9 +430,6 @@ export function retryFailedAnalysisItems(value) {
     item.status = "pending";
     item.error = "";
     item.statusCode = 0;
-    item.serviceRequests = 0;
-    item.outputCorrectionRequests = 0;
-    item.cacheHit = false;
     count += 1;
   }
   if (!count) throw new Error("没有可重试的失败案例");
@@ -588,9 +595,9 @@ function normalizeRetryPolicy(value) {
 }
 
 function recordItemExecution(item, metadata = {}) {
-  item.serviceRequests = Math.max(0, Number(metadata.attempts?.serviceRequests ?? metadata.serviceRequests) || 0);
-  item.outputCorrectionRequests = Math.max(0, Number(metadata.attempts?.outputCorrectionRequests ?? metadata.outputCorrectionRequests) || 0);
-  item.cacheHit = metadata.cacheHit === true;
+  item.serviceRequests += Math.max(0, Number(metadata.attempts?.serviceRequests ?? metadata.serviceRequests) || 0);
+  item.outputCorrectionRequests += Math.max(0, Number(metadata.attempts?.outputCorrectionRequests ?? metadata.outputCorrectionRequests) || 0);
+  item.cacheHit = item.cacheHit || metadata.cacheHit === true;
 }
 
 function failureCategory(status) {

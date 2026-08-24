@@ -37,19 +37,15 @@ import {
   isEntryPending
 } from "./library-model.js";
 import {
-  DeepSeekApiError,
-  ANALYSIS_CLAIM_TIMEOUT_MS,
   ANALYSIS_PROMPT_VERSION,
-  ANALYSIS_SERVICE_RETRY_LIMIT,
   DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE,
   analysisProfileFingerprint,
   analysisProtocolDescription,
   analyzeTextDetailedWithDeepSeek,
-  isRetryableDeepSeekError,
   normalizeAiSettings,
   organizeDetailTagsWithDeepSeek
 } from "./deepseek.js";
-import { runAnalysisClaimsIndependently } from "./analysis-runner.js";
+import { runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
 import {
   COMPOSER_METHOD_VERSION,
   DEFAULT_TASK_METHODS,
@@ -113,7 +109,8 @@ import { confirmAppAction, promptAppText, showAppDialog } from "./ui-dialogs.js"
 import {
   AI_ASSIGNMENT_TASKS,
   availableAiModelsForTask,
-  availableAiProvidersForTask
+  availableAiProvidersForTask,
+  modelConcurrencyLimit
 } from "./ai-provider-registry.js";
 import { buildSearchIndex, searchIndexedEntries } from "./search-index.js";
 import {
@@ -289,8 +286,6 @@ let analysisBatchJob = null;
 let visionBatchJob = null;
 let canUndoAnalysisBatch = false;
 let analysisBatchPreview = null;
-let batchRunnerActive = false;
-let batchRunnerAbortController = null;
 let analysisDiagnostics = [];
 let analysisDiagnosticStartedAt = 0;
 let analysisDiagnosticWrite = Promise.resolve();
@@ -314,9 +309,7 @@ const ERROR_FEEDBACK_DURATION_MS = 8000;
 let syncStatus = {};
 let dataSafetyOperationActive = false;
 let dataSafetyOperationType = "";
-let visionBatchRunnerActive = false;
 const activeDetailMediaIdByEntry = new Map();
-let cancelVisionBatchAfterCurrent = false;
 let promptEditState = null;
 const visionStatusByEntry = new Map();
 let activeFilterCount = 0;
@@ -369,7 +362,7 @@ window.addEventListener("scroll", () => {
   scheduleVisibleMediaHydration();
 }, { passive: true });
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !["entries", "organizerState", "compoundCases"].some((key) => changes[key])) return;
+  if (areaName !== "local" || !["entries", "organizerState", "compoundCases", "batchJob"].some((key) => changes[key])) return;
   externalLibraryRefreshPending = true;
   scheduleExternalLibraryRefresh();
 });
@@ -634,7 +627,7 @@ function bindEvents() {
   });
   elements.visionBatchClose.addEventListener("click", () => elements.visionBatchDialog.close());
   elements.visionBatchDialog.addEventListener("click", (event) => {
-    if (event.target === elements.visionBatchDialog && !visionBatchRunnerActive) elements.visionBatchDialog.close();
+    if (event.target === elements.visionBatchDialog) elements.visionBatchDialog.close();
   });
   for (const checkbox of [elements.visionBatchAllImages, elements.visionBatchReanalyze]) {
     checkbox.addEventListener("change", previewSelectedVisionBatch);
@@ -643,7 +636,7 @@ function bindEvents() {
   elements.visionBatchPause.addEventListener("click", () => updateVisionBatchAction("PAUSE_VISION_BATCH"));
   elements.visionBatchResume.addEventListener("click", () => updateVisionBatchAction("RESUME_VISION_BATCH"));
   elements.visionBatchRetry.addEventListener("click", () => updateVisionBatchAction("RETRY_VISION_BATCH_FAILURES"));
-  elements.visionBatchCancel.addEventListener("click", cancelVisionBatch);
+  elements.visionBatchCancel.addEventListener("click", () => updateVisionBatchAction("CANCEL_VISION_BATCH"));
   elements.saveLibrarySettings.addEventListener("click", saveLibrarySettings);
   elements.libraryNameSetting.addEventListener("input", updateLibrarySettingsSaveState);
   elements.exportPathSetting.addEventListener("input", updateLibrarySettingsSaveState);
@@ -792,15 +785,9 @@ function bindEvents() {
   elements.startAnalysisBatch.addEventListener("click", startDeepSeekAnalysisBatch);
   elements.startAnalysisReanalyze.addEventListener("click", startDeepSeekAnalysisBatch);
   elements.pauseAnalysisBatch.addEventListener("click", () => controlAnalysisBatch("PAUSE_ANALYSIS_BATCH"));
-  elements.resumeAnalysisBatch.addEventListener("click", async () => {
-    await controlAnalysisBatch("RESUME_ANALYSIS_BATCH");
-    runAnalysisBatch();
-  });
+  elements.resumeAnalysisBatch.addEventListener("click", () => controlAnalysisBatch("RESUME_ANALYSIS_BATCH"));
   elements.cancelAnalysisBatch.addEventListener("click", () => controlAnalysisBatch("CANCEL_ANALYSIS_BATCH"));
-  elements.retryAnalysisFailures.addEventListener("click", async () => {
-    await controlAnalysisBatch("RETRY_ANALYSIS_FAILURES");
-    runAnalysisBatch();
-  });
+  elements.retryAnalysisFailures.addEventListener("click", () => controlAnalysisBatch("RETRY_ANALYSIS_FAILURES"));
   elements.applyStagedAnalysisRebuild.addEventListener("click", applyStagedAnalysisRebuild);
   elements.copyAnalysisDiagnostics.addEventListener("click", () => copyTextWithFeedback(
     elements.copyAnalysisDiagnostics,
@@ -931,7 +918,6 @@ async function refreshLibrary() {
   if (elements.managerDialog.open) renderManager();
   if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
   if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty) await renderDetail();
-  if (analysisBatchJob?.status === "running") runAnalysisBatch();
   scheduleMaintenanceStatusPoll();
   if (response.restoredArchivedFacetCount) {
     showFeedback(`已自动恢复 ${response.restoredArchivedFacetCount} 个误归档维度，原案例标签没有丢失`);
@@ -2448,9 +2434,9 @@ function renderVisionBatchDialog(preview = null) {
   elements.visionBatchReanalyze.disabled = Boolean(active);
   elements.visionBatchStart.hidden = Boolean(job);
   elements.visionBatchStart.disabled = !requestCount;
-  elements.visionBatchPause.hidden = !job || job.status !== "running" || !visionBatchRunnerActive;
-  elements.visionBatchResume.hidden = !job || !active || visionBatchRunnerActive;
-  elements.visionBatchRetry.hidden = !job || !(counts.failed || counts.partial) || visionBatchRunnerActive;
+  elements.visionBatchPause.hidden = !job || job.status !== "running";
+  elements.visionBatchResume.hidden = !job || job.status !== "paused";
+  elements.visionBatchRetry.hidden = !job || !(counts.failed || counts.partial) || job.status === "running";
   elements.visionBatchRetry.textContent = currentLocale() === "en"
     ? `Retry failed/incomplete (${(counts.failed || 0) + (counts.partial || 0)} expected items)`
     : `重试失败/待补全（预计新增 ${(counts.failed || 0) + (counts.partial || 0)} 项）`;
@@ -2459,6 +2445,7 @@ function renderVisionBatchDialog(preview = null) {
     const total = job.usage?.totalTokens ?? 0;
     const label = job.status === "completed" ? (currentLocale() === "en" ? "Completed" : "全部完成")
       : job.status === "failed" ? (currentLocale() === "en" ? "Failed" : "全部失败")
+      : job.status === "canceled" ? (currentLocale() === "en" ? "Canceled" : "已取消")
       : (currentLocale() === "en" ? "Partially completed" : "部分完成，可重试失败或待补全项");
     showVisionBatchFeedback(`${label} · ${total} tokens` , job.status === "failed");
   }
@@ -2477,89 +2464,10 @@ async function startSelectedVisionBatch() {
     if (!response?.ok) throw new Error(response?.message || "无法创建批量画面分析");
     visionBatchJob = response.visionBatchJob;
     renderVisionBatchDialog();
-    await runVisionBatch();
   } catch (error) {
     showVisionBatchFeedback(error.message, true);
   } finally {
     elements.visionBatchStart.disabled = false;
-  }
-}
-
-async function runVisionBatch() {
-  if (visionBatchRunnerActive || !visionBatchJob || visionBatchJob.status !== "running") return;
-  visionBatchRunnerActive = true;
-  cancelVisionBatchAfterCurrent = false;
-  renderVisionBatchDialog();
-  try {
-    while (visionBatchJob?.status === "running") {
-      const claimed = await chrome.runtime.sendMessage({
-        type: "CLAIM_VISION_BATCH_ITEM",
-        jobId: visionBatchJob.id
-      });
-      if (!claimed?.ok) throw new Error(claimed?.message || "无法领取下一张图片");
-      visionBatchJob = claimed.visionBatchJob;
-      const claims = claimed.claims ?? (claimed.claim ? [claimed.claim] : []);
-      if (!claims.length) break;
-      showVisionBatchFeedback(currentLocale() === "en"
-        ? `Analysing ${claims.length} images concurrently…`
-        : `正在并发分析 ${claims.length} 张图片…`);
-      const settled = await Promise.allSettled(claims.map(async (claim) => {
-        const result = await chrome.runtime.sendMessage({
-          type: "ANALYZE_ENTRY_IMAGE",
-          entryId: claim.entryId,
-          visualId: claim.visualId,
-          outputLocale: visionBatchJob.outputLocale,
-          batchJobId: visionBatchJob.id,
-          bypassCache: visionBatchJob.reanalyze === true,
-          assignment: {
-            providerId: visionBatchJob.providerId,
-            model: visionBatchJob.model,
-            concurrency: visionBatchJob.concurrency
-          }
-        });
-        const update = result?.ok
-          ? await chrome.runtime.sendMessage({
-            type: "COMPLETE_VISION_BATCH_ITEM",
-            jobId: visionBatchJob.id,
-            entryId: claim.entryId,
-            visualId: claim.visualId,
-            claimId: claim.claimId,
-            usage: result.usage,
-            cacheHit: result.cacheHit,
-            attempts: result.attempts,
-            quality: result.quality
-          })
-          : await chrome.runtime.sendMessage({
-            type: "FAIL_VISION_BATCH_ITEM",
-            jobId: visionBatchJob.id,
-            entryId: claim.entryId,
-            visualId: claim.visualId,
-            claimId: claim.claimId,
-            error: { message: result?.message || "图片分析失败", status: Number(result?.status) || 0 }
-          });
-        if (!update?.ok) throw new Error(update?.message || "无法保存批量任务进度");
-        visionBatchJob = update.visionBatchJob;
-      }));
-      const rejected = settled.find((item) => item.status === "rejected");
-      if (rejected) throw rejected.reason;
-      renderVisionBatchDialog();
-      if (cancelVisionBatchAfterCurrent) {
-        await updateVisionBatchAction("CANCEL_VISION_BATCH");
-        break;
-      }
-    }
-  } catch (error) {
-    showVisionBatchFeedback(error.message, true);
-  } finally {
-    visionBatchRunnerActive = false;
-    renderVisionBatchDialog();
-    if (visionBatchJob && !["running", "paused"].includes(visionBatchJob.status)) {
-      selectionMode = "";
-      projectSelectionId = "";
-      selectedCaseIds.clear();
-      updateSelectionBar();
-      await refreshLibrary();
-    }
   }
 }
 
@@ -2571,19 +2479,9 @@ async function updateVisionBatchAction(type) {
     visionBatchJob = response.visionBatchJob;
     showVisionBatchFeedback(response.message);
     renderVisionBatchDialog();
-    if (type === "RESUME_VISION_BATCH" || type === "RETRY_VISION_BATCH_FAILURES") await runVisionBatch();
   } catch (error) {
     showVisionBatchFeedback(error.message, true);
   }
-}
-
-async function cancelVisionBatch() {
-  if (visionBatchRunnerActive) {
-    cancelVisionBatchAfterCurrent = true;
-    showVisionBatchFeedback(t("当前图片完成后取消，不会再发送下一张"));
-    return;
-  }
-  await updateVisionBatchAction("CANCEL_VISION_BATCH");
 }
 
 function showVisionBatchFeedback(message, isError = false) {
@@ -7445,6 +7343,10 @@ async function openAiTaskAssignmentDialog(taskId) {
       const concurrency = supportsBatchConcurrency ? Number(values.concurrency) : initialConcurrency;
       if (supportsBatchConcurrency && (!Number.isInteger(concurrency) || concurrency < 2)) throw new Error(t("批量分析并发数必须是大于或等于 2 的整数"));
       if (supportsBatchConcurrency && concurrency > 20 && values.highConcurrencyConfirmed !== true) throw new Error(t("并发高于 20，请先确认费用和稳定性风险"));
+      const officialLimit = modelConcurrencyLimit(values.providerId, values.model, aiProviderRegistry);
+      if (supportsBatchConcurrency && Number.isInteger(officialLimit) && concurrency > officialLimit) {
+        throw new Error(t("批量分析并发数不能超过所选模型的官方上限 {count}", { count: officialLimit }));
+      }
       const response = await chrome.runtime.sendMessage({
         type: "UPDATE_AI_PROVIDER_CONFIGURATION",
         assignments: { ...aiTaskAssignments, [taskId]: { providerId: values.providerId, model: values.model, concurrency } }
@@ -7988,7 +7890,6 @@ async function startDeepSeekAnalysisBatch() {
     beginAnalysisDiagnostics();
     renderAnalysisBatch();
     showFeedback(response.message);
-    runAnalysisBatch();
   } catch (error) {
     showFeedback(error.message, true);
   } finally {
@@ -8033,9 +7934,6 @@ async function organizeDetailTags() {
 
 async function controlAnalysisBatch(type) {
   if (!analysisBatchJob?.id) return;
-  if (["PAUSE_ANALYSIS_BATCH", "CANCEL_ANALYSIS_BATCH"].includes(type)) {
-    batchRunnerAbortController?.abort();
-  }
   const buttons = {
     PAUSE_ANALYSIS_BATCH: elements.pauseAnalysisBatch,
     RESUME_ANALYSIS_BATCH: elements.resumeAnalysisBatch,
@@ -8085,166 +7983,37 @@ async function applyStagedAnalysisRebuild() {
   }
 }
 
-async function runAnalysisBatch() {
-  if (batchRunnerActive || analysisBatchJob?.status !== "running") return;
-  batchRunnerActive = true;
-  recordAnalysisDiagnostic("runner_started");
-  const runnerController = new AbortController();
-  batchRunnerAbortController = runnerController;
-  try {
-    await navigator.locks.request("love-prompt-analysis-runner", { ifAvailable: true }, async (lock) => {
-      if (!lock) return;
-      const recovered = await chrome.runtime.sendMessage({ type: "RECOVER_ANALYSIS_BATCH" });
-      if (recovered?.analysisBatchJob) analysisBatchJob = recovered.analysisBatchJob;
-      recordAnalysisDiagnostic("job_recovered");
-      const settingsValue = await privateAiSettings({
-        providerId: analysisBatchJob.providerId,
-        model: analysisBatchJob.model || analysisBatchJob.analysisModel,
-        concurrency: analysisBatchJob.concurrency
-      });
-      const currentProfile = await analysisProfileFingerprint(settingsValue, analysisBatchJob.outputLocale);
-      if (analysisBatchJob.profileFingerprint && currentProfile !== analysisBatchJob.profileFingerprint) {
-        const paused = await chrome.runtime.sendMessage({ type: "PAUSE_ANALYSIS_BATCH", jobId: analysisBatchJob.id });
-        if (paused?.analysisBatchJob) analysisBatchJob = paused.analysisBatchJob;
-        throw new Error(t("分析设置已变化，任务已暂停；请先取消旧任务，再重新生成预览"));
-      }
-      while (analysisBatchJob?.status === "running") {
-        const response = await chrome.runtime.sendMessage({
-          type: "CLAIM_ANALYSIS_ITEMS",
-          jobId: analysisBatchJob.id
-        });
-        if (!response?.ok) throw new Error(response?.message || "无法领取批量任务");
-        analysisBatchJob = response.analysisBatchJob;
-        recordAnalysisDiagnostic("items_claimed", { count: response.claims?.length || 0 });
-        renderAnalysisBatch();
-        if (!response.claims?.length) break;
-        const entryById = new Map(entries.map((entry) => [entry.id, entry]));
-        const claims = response.claims.map((claim) => {
-          const entry = entryById.get(claim.entryId);
-          return {
-            ...claim,
-            entry: {
-              id: entry?.id ?? claim.entryId,
-              title: entry?.title ?? "",
-              text: entry?.text ?? "",
-              classification: entry?.classification
-            }
-          };
-        });
-        const settled = await runAnalysisClaimsIndependently({
-          claims,
-          signal: runnerController.signal,
-          timeoutMs: ANALYSIS_CLAIM_TIMEOUT_MS,
-          analyze: (claim, signal) => runAnalysisClaim(claim, facetCatalog, settingsValue, signal),
-          timeoutResult: (claim) => analysisClaimFailure(claim, "AI 分析超时，本次没有写入任何标签", 408),
-          commit: (result) => commitAnalysisClaimResult(analysisBatchJob.id, result)
-        });
-        if (runnerController.signal.aborted) break;
-        const rejected = settled.find((item) => item.status === "rejected");
-        if (rejected) throw rejected.reason;
-        const state = await chrome.runtime.sendMessage({
-          type: "GET_ANALYSIS_BATCH_STATUS",
-          jobId: analysisBatchJob.id
-        });
-        if (!state?.ok) throw new Error(state?.message || "无法读取批量进度");
-        analysisBatchJob = state.analysisBatchJob;
-        renderAnalysisBatch();
-      }
-    });
-  } catch (error) {
-    showFeedback(error.message || "批量分析已停止", true);
-  } finally {
-    if (batchRunnerAbortController === runnerController) batchRunnerAbortController = null;
-    batchRunnerActive = false;
-    await analysisDiagnosticWrite;
-    await refreshLibrary();
-  }
-}
-
-async function commitAnalysisClaimResult(jobId, result) {
-  recordAnalysisDiagnostic("commit_started");
-  const response = await chrome.runtime.sendMessage({
-    type: "COMMIT_ANALYSIS_ITEM",
-    jobId,
-    ...result
-  });
-  if (!response?.ok) throw new Error(response?.message || "无法保存批量分析结果");
-  if (response.facetCatalog) facetCatalog = normalizeFacetCatalog(response.facetCatalog);
-  if (response.analysisBatchJob) {
-    analysisBatchJob = response.analysisBatchJob;
-    renderAnalysisBatch();
-  }
-  recordAnalysisDiagnostic("commit_completed", { failed: Boolean(result.error) });
-  return response;
-}
-
-async function runAnalysisClaim(claim, catalog, settingsValue, signal) {
-  try {
-    const result = await analyzeEntryWithRetry(
-      claim.entry,
-      catalog,
-      settingsValue,
-      analysisBatchJob.outputLocale,
-      signal,
-      recordAnalysisDiagnostic
-    );
-    return {
-      entryId: claim.entryId,
-      claimId: claim.claimId,
-      fingerprint: claim.fingerprint,
-      textRevision: claim.textRevision,
-      tags: result.tags,
-      normalizationDiagnostics: result.normalizationDiagnostics,
-      attempts: result.attempts,
-      usage: result.usage,
-      model: result.model
-    };
-  } catch (error) {
-    if (error?.name === "AbortError") throw error;
-    return analysisClaimFailure(claim, error.message || "分析失败", error.status || 0, error.usage, error.attempts);
-  }
-}
-
-function analysisClaimFailure(claim, message, status, usage, attempts) {
-  return {
-    entryId: claim.entryId,
-    claimId: claim.claimId,
-    textRevision: claim.textRevision,
-    error: { message, status, usage, attempts }
-  };
-}
-
 async function analyzeEntryWithRetry(entry, catalog, settingsValue, outputLocale = currentLocale(), signal, onDiagnostic) {
-  let serviceRetries = 0;
   const reportDiagnostic = typeof onDiagnostic === "function"
     ? (event) => onDiagnostic(event.stage, event)
     : undefined;
-  for (;;) {
-    try {
-      const result = await analyzeTextDetailedWithDeepSeek(entry, catalog, { ...settingsValue, outputLocale }, fetch, {
-        signal,
-        onDiagnostic: reportDiagnostic
-      });
-      return {
-        ...result,
-        attempts: {
-          serviceRequests: serviceRetries + 1,
-          outputCorrectionRequests: Number(result.attempts?.outputCorrectionRequests) || 0
-        }
-      };
-    } catch (error) {
-      if (isRetryableDeepSeekError(error) && serviceRetries < ANALYSIS_SERVICE_RETRY_LIMIT) {
-        const delay = error.retryAfterMs || [1000, 3000][serviceRetries] + Math.floor(Math.random() * 501);
-        serviceRetries += 1;
-        await wait(Math.min(delay, 30_000), signal);
-        continue;
+  let serviceRequests = 0;
+  try {
+    const result = await runScheduledAnalysisWithRetries({
+      key: `${settingsValue.providerId}:${settingsValue.analysisModel || settingsValue.compatible?.model}:textTags`,
+      concurrency: settingsValue.concurrency,
+      wait: (milliseconds) => wait(milliseconds, signal),
+      task: async () => {
+        serviceRequests += 1;
+        return analyzeTextDetailedWithDeepSeek(entry, catalog, { ...settingsValue, outputLocale }, fetch, {
+          signal,
+          onDiagnostic: reportDiagnostic
+        });
       }
-      error.attempts = {
-        serviceRequests: serviceRetries + 1,
-        outputCorrectionRequests: Math.max(0, Number(error?.attempts?.outputCorrectionRequests) || 0)
-      };
-      throw error;
-    }
+    });
+    return {
+      ...result,
+      attempts: {
+        serviceRequests,
+        outputCorrectionRequests: Number(result.attempts?.outputCorrectionRequests) || 0
+      }
+    };
+  } catch (error) {
+    error.attempts = {
+      serviceRequests,
+      outputCorrectionRequests: Math.max(0, Number(error?.attempts?.outputCorrectionRequests) || 0)
+    };
+    throw error;
   }
 }
 
@@ -8280,7 +8049,11 @@ async function analyzeSingleEntry(entry, button) {
 async function privateAiSettings(assignment = null) {
   const response = await chrome.runtime.sendMessage({ type: "GET_AI_TASK_RUNTIME", taskId: "textTags", assignment });
   if (!response?.ok) throw new Error(response?.message || "无法读取文字标签服务");
-  return normalizeAiSettings(response.aiSettings);
+  return {
+    ...normalizeAiSettings(response.aiSettings),
+    providerId: String(response.assignment?.providerId ?? "").trim(),
+    concurrency: Math.max(2, Number(response.assignment?.concurrency) || 20)
+  };
 }
 
 function wait(milliseconds, signal) {

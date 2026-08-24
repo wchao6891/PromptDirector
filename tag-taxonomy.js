@@ -159,15 +159,17 @@ export function analysisTaxonomyPayload(catalogValue, locale = "zh-CN") {
 }
 
 export function validateAnalysisTagResponse(value, catalogValue, options = {}) {
-  if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.tags)) {
+  const tagField = knownField(value, ["tags", "tagList"]);
+  if (!value || typeof value !== "object" || Array.isArray(value) || tagField.conflict || !Array.isArray(tagField.value)) {
     throw new Error("AI 返回格式无效，本次没有写入任何标签");
   }
+  const sourceTags = tagField.value;
   const minimum = options.allowEmpty === true ? 0 : ANALYSIS_TAG_MIN;
   const maximum = Math.min(ANALYSIS_TAG_MAX, Math.max(minimum, Number(options.maxTags) || ANALYSIS_TAG_MAX));
   const diagnostics = Array.isArray(options.diagnostics) ? options.diagnostics : null;
-  const extraRootFields = Object.keys(value).filter((key) => key !== "tags").length;
+  const extraRootFields = Object.keys(value).filter((key) => key !== tagField.key).length;
   if (extraRootFields) diagnostics?.push({ field: "root", code: "extra_fields_ignored", count: extraRootFields });
-  if (value.tags.length < minimum) {
+  if (sourceTags.length < minimum) {
     throw new Error(`AI 必须返回 ${minimum}–${maximum} 个标签，本次没有写入`);
   }
   const catalog = catalogValue && Array.isArray(catalogValue.nodes) ? catalogValue : createFixedFacetCatalog();
@@ -177,21 +179,28 @@ export function validateAnalysisTagResponse(value, catalogValue, options = {}) {
   const seen = new Set();
   const tags = [];
   let unknownCount = 0;
-  for (let index = 0; index < value.tags.length; index += 1) {
-    const item = value.tags[index];
+  for (let index = 0; index < sourceTags.length; index += 1) {
+    const item = sourceTags[index];
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       diagnostics?.push({ field: "tags", code: "invalid_tag_dropped", count: 1 });
       continue;
     }
-    const extraFields = Object.keys(item).filter((key) => !["g", "groupId", "group_id", "group", "t", "detail", "tag", "label"].includes(key)).length;
+    const groupField = knownField(item, ["g", "groupId", "group"]);
+    const detailField = knownField(item, ["t", "detail", "tag", "label"]);
+    if (groupField.conflict || detailField.conflict) {
+      diagnostics?.push({ field: "tags", code: "conflicting_aliases_dropped", count: 1 });
+      continue;
+    }
+    const consumedKeys = new Set([groupField.key, detailField.key].filter(Boolean));
+    const extraFields = Object.keys(item).filter((key) => !consumedKeys.has(key)).length;
     if (extraFields) diagnostics?.push({ field: "tags", code: "extra_fields_ignored", count: extraFields });
-    const groupId = String(item.g ?? item.groupId ?? item.group_id ?? item.group ?? "").trim();
+    const groupId = String(groupField.value ?? "").trim();
     if (!groups.has(groupId)) {
       unknownCount += 1;
       diagnostics?.push({ field: "tags", code: "unknown_path_dropped", count: 1 });
       continue;
     }
-    const detailValue = item.t ?? item.detail ?? item.tag ?? item.label;
+    const detailValue = detailField.value;
     const detail = String(detailValue ?? "").trim()
       ? [...normalizeDetailLabel(detailValue)].slice(0, ANALYSIS_DETAIL_MAX_LENGTH).join("")
       : "";
@@ -203,16 +212,50 @@ export function validateAnalysisTagResponse(value, catalogValue, options = {}) {
     seen.add(key);
     tags.push(detail ? { g: groupId, t: detail } : { g: groupId });
     if (tags.length >= maximum) {
-      const capped = value.tags.length - index - 1;
+      const capped = sourceTags.length - index - 1;
       if (capped) diagnostics?.push({ field: "tags", code: "over_limit_dropped", count: capped });
       break;
     }
   }
-  if (tags.length < minimum || (!tags.length && value.tags.length)) {
+  if (tags.length < minimum || (!tags.length && sourceTags.length)) {
     if (unknownCount) throw new Error("AI 返回了未知分类路径，本次没有写入");
     throw new Error(`AI 必须返回 ${minimum}–${maximum} 个标签，本次没有写入`);
   }
   return tags;
+}
+
+function knownField(value, aliases) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { key: "", value: undefined, conflict: false };
+  }
+  const accepted = new Set(aliases.map(normalizedFieldKey));
+  const matches = Object.keys(value).filter((key) => accepted.has(normalizedFieldKey(key)));
+  const firstValue = matches.length ? value[matches[0]] : undefined;
+  return {
+    key: matches[0] ?? "",
+    value: firstValue,
+    conflict: matches.slice(1).some((key) => !equivalentKnownFieldValue(firstValue, value[key]))
+  };
+}
+
+function normalizedFieldKey(value) {
+  return String(value ?? "").toLocaleLowerCase("en-US").replace(/[\s_-]+/g, "");
+}
+
+function equivalentKnownFieldValue(left, right) {
+  try {
+    return JSON.stringify(canonicalKnownFieldValue(left)) === JSON.stringify(canonicalKnownFieldValue(right));
+  } catch {
+    return false;
+  }
+}
+
+function canonicalKnownFieldValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalKnownFieldValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalKnownFieldValue(value[key])]));
+  }
+  return typeof value === "string" ? value.trim() : value ?? null;
 }
 
 export function mapLegacyAnalysisCandidate(value = {}) {

@@ -11,6 +11,7 @@ import {
   createAnalysisBatchJob,
   finalizeAnalysisRebuild,
   failAnalysisItem,
+  pauseAnalysisBatch,
   partiallySucceedAnalysisItem,
   previewAnalysisBatch,
   finalizePartialAnalysisRebuild,
@@ -23,7 +24,8 @@ import {
   textFingerprint,
   previewVisionBatch,
   createVisionBatchJob,
-  reconcileVisionBatchResults
+  reconcileVisionBatchResults,
+  recoverInterruptedAnalysisBatch
 } from "../analysis-batch.js";
 import { ANALYSIS_PROMPT_VERSION } from "../deepseek.js";
 import { createFixedFacetCatalog } from "../tag-taxonomy.js";
@@ -36,6 +38,19 @@ test("analysis-file import wires the legacy baseline helper into the background 
   assert.ok(importStart >= 0 && importEnd > importStart);
   assert.match(backgroundSource.slice(importStart, importEnd), /backfillLegacyAnalysisMeta/);
   assert.match(backgroundSource, /await backfillLegacyAnalysisMeta\(importedEntries\)/);
+});
+
+test("vision in-flight identity includes the analysis profile and request mode", () => {
+  assert.match(backgroundSource, /requestKey = `\$\{schedulerKey\}:\$\{fingerprint\}:\$\{profileFingerprint\}/);
+  assert.match(backgroundSource, /:\$\{requestMode\}`/);
+  assert.match(backgroundSource, /return \{[\s\S]*?ok: true,[\s\S]*?attempts: result\.attempts,[\s\S]*?quality: result\.quality/);
+});
+
+test("manual text and vision batches run from the persistent background queue", () => {
+  assert.match(backgroundSource, /scheduleAnalysisBatchRunner\(\)/);
+  assert.match(backgroundSource, /runPersistedTextBatchSlice\(initial\.id\)/);
+  assert.match(backgroundSource, /runPersistedVisionBatchSlice\(initial\.id\)/);
+  assert.match(backgroundSource, /chrome\.alarms\.create\(ANALYSIS_BATCH_ALARM/);
 });
 
 test("batch preview selects only text cases that are new or changed", async () => {
@@ -173,7 +188,7 @@ test("legacy DeepSeek results receive a text baseline instead of being sent agai
   assert.equal(baseline.entries[0].analysisMeta.textFingerprint, undefined);
 });
 
-test("batch jobs claim stable references and resume interrupted work", async () => {
+test("pausing and immediately resuming preserves active claims to prevent duplicate paid requests", async () => {
   let job = await createAnalysisBatchJob([{ id: "a", text: "one" }, { id: "b", text: "two" }], { id: "job", now: "2026-07-18T00:00:00Z", outputLocale: "en" });
   assert.equal(job.outputLocale, "en");
   const claimed = claimAnalysisItems(job, 1, () => "claim-a");
@@ -181,9 +196,13 @@ test("batch jobs claim stable references and resume interrupted work", async () 
   assert.equal(claimed.claims[0].entryId, "a");
   assert.equal(job.items[0].status, "running");
 
+  job = pauseAnalysisBatch(job);
   job = resumeAnalysisBatch(job);
-  assert.equal(job.items[0].status, "pending");
+  assert.equal(job.items[0].status, "running");
+  assert.equal(job.items[0].claimId, "claim-a");
   assert.equal(job.status, "running");
+  job = succeedAnalysisItem(job, "a", "claim-a", {}, 1);
+  assert.equal(job.items[0].status, "succeeded");
 });
 
 test("recovering an old stalled rebuild preserves completed work and queues only unfinished cases", async () => {
@@ -195,7 +214,7 @@ test("recovering an old stalled rebuild preserves completed work and queues only
     job.items[index].claimId = `old-claim-${index}`;
   }
 
-  const recovered = resumeAnalysisBatch(job);
+  const recovered = recoverInterruptedAnalysisBatch(job);
   const summary = analysisBatchSummary(recovered);
   assert.deepEqual(summary.counts, { pending: 5, running: 0, succeeded: 586, partial: 0, failed: 0 });
   assert.equal(summary.status, "running");
@@ -375,6 +394,23 @@ test("batch summary exposes actual requests, output corrections, cache hits, and
   assert.deepEqual(summary.failureCategories, { rate_limit: 1 });
 });
 
+test("retry keeps lifetime request and correction counts instead of hiding earlier paid attempts", async () => {
+  let job = await createAnalysisBatchJob([{ id: "a", text: "one" }], { id: "lifetime-counts" });
+  let claimed = claimAnalysisItems(job, 1, () => "claim-1");
+  job = failAnalysisItem(claimed.job, "a", "claim-1", {
+    message: "busy", status: 503, attempts: { serviceRequests: 3, outputCorrectionRequests: 1 }
+  });
+  job = retryFailedAnalysisItems(job);
+  claimed = claimAnalysisItems(job, 1, () => "claim-2");
+  job = succeedAnalysisItem(claimed.job, "a", "claim-2", {}, 1, {
+    attempts: { serviceRequests: 1, outputCorrectionRequests: 0 }, cacheHit: true
+  });
+  const summary = analysisBatchSummary(job);
+  assert.equal(summary.requestAttempts, 4);
+  assert.equal(summary.outputCorrectionRequests, 1);
+  assert.equal(summary.cacheHitCount, 1);
+});
+
 test("batch jobs snapshot configured concurrency and vision claims use it", () => {
   const job = createVisionBatchJob([{
     id: "one",
@@ -403,8 +439,8 @@ test("vision batch defaults to one primary image per selected case and can inclu
     primaryMediaId: "one-a",
     mediaAssets: [
       { id: "one-a", kind: "image", usage: "content" },
-      { id: "one-b", kind: "image", usage: "content", visionAnalysis: { description: "already analysed" } },
-      { id: "one-c", kind: "image", usage: "content" },
+      { id: "one-b", kind: "image", usage: "content", visionAnalysis: { description: "already analysed", quality: "complete" } },
+      { id: "one-c", kind: "image", usage: "content", visionAnalysis: { description: "usable partial", quality: "partial", missingFields: ["canvas"] } },
       { id: "one-poster", kind: "image", usage: "poster" }
     ]
   }, {

@@ -50,3 +50,23 @@ test("analysis scheduler does not mistake local JSON validation errors for netwo
   }), /JSON 无效/);
   assert.equal(calls, 1);
 });
+
+test("shared work honors the lowest active job snapshot instead of the last caller", async () => {
+  let active = 0;
+  let lowLimitActive = 0;
+  let maximumWhileLowLimitActive = 0;
+  const task = async (lowLimit) => {
+    active += 1;
+    if (lowLimit) lowLimitActive += 1;
+    if (lowLimitActive) maximumWhileLowLimitActive = Math.max(maximumWhileLowLimitActive, active);
+    await delay(5);
+    if (lowLimit) lowLimitActive -= 1;
+    active -= 1;
+  };
+  await Promise.all([
+    scheduleAnalysis("shared-snapshot-limit", 2, () => task(true)),
+    scheduleAnalysis("shared-snapshot-limit", 2, () => task(true)),
+    ...Array.from({ length: 6 }, () => scheduleAnalysis("shared-snapshot-limit", 6, () => task(false)))
+  ]);
+  assert.equal(maximumWhileLowLimitActive, 2);
+});

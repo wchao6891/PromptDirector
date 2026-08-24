@@ -374,6 +374,7 @@ const EN = Object.freeze({
   "{failed} 张失败，已成功 {completed} 张且不会重复请求。可直接重试失败项。": "{failed} images failed. {completed} succeeded and will not be requested again. You can retry only the failed items.",
   "{failed} 张失败，{partial} 张待补全，已成功 {completed} 张且不会重复请求。可直接重试失败或待补全项。": "{failed} images failed, {partial} need completion, and {completed} succeeded without repeat requests. Retry only failed or incomplete items.",
   "批量分析并发数": "Batch analysis concurrency",
+  "批量分析并发数不能超过所选模型的官方上限 {count}": "Batch analysis concurrency cannot exceed the selected model's official limit of {count}",
   "文字任务默认 20，图片和视频任务默认 10；调整只对新任务生效。": "Text tasks default to 20; image and video tasks default to 10. Changes apply only to new jobs.",
   "我确认高于 20 的并发可能明显增加瞬时费用、内存占用和错误数量": "I understand concurrency above 20 may sharply increase burst cost, memory use, and errors",
   "官方并发上限：{count}": "Official concurrency limit: {count}",

@@ -8,14 +8,19 @@ export function scheduleAnalysis(keyValue, concurrencyValue, task) {
   const key = String(keyValue ?? "").trim();
   if (!key || typeof task !== "function") throw new Error("分析调度参数无效");
   const concurrency = normalizedConcurrency(concurrencyValue);
-  const state = schedulers.get(key) ?? { active: 0, limit: concurrency, effectiveLimit: concurrency, queue: [], throttledUntil: 0 };
-  state.limit = concurrency;
-  state.effectiveLimit = state.throttledUntil
-    ? Math.min(state.effectiveLimit, concurrency)
-    : concurrency;
+  const state = schedulers.get(key) ?? {
+    active: 0,
+    limit: concurrency,
+    effectiveLimit: concurrency,
+    queue: [],
+    activeItems: new Set(),
+    throttledUntil: 0
+  };
+  state.activeItems ??= new Set();
   if (!schedulers.has(key)) schedulers.set(key, state);
   return new Promise((resolve, reject) => {
-    state.queue.push({ task, resolve, reject });
+    state.queue.push({ task, resolve, reject, concurrency });
+    synchronizeLimit(state);
     drain(state);
   });
 }
@@ -50,9 +55,11 @@ export async function runScheduledAnalysisWithRetries(options = {}) {
 }
 
 function drain(state) {
+  synchronizeLimit(state);
   while (state.active < state.effectiveLimit && state.queue.length) {
     const item = state.queue.shift();
     state.active += 1;
+    state.activeItems.add(item);
     Promise.resolve().then(item.task).then((value) => {
       if (state.throttledUntil && Date.now() >= state.throttledUntil) {
         state.effectiveLimit = Math.min(state.limit, state.effectiveLimit + 1);
@@ -67,9 +74,19 @@ function drain(state) {
       item.reject(error);
     }).finally(() => {
       state.active -= 1;
+      state.activeItems.delete(item);
+      synchronizeLimit(state);
       drain(state);
     });
   }
+}
+
+function synchronizeLimit(state) {
+  const requestedLimits = [...state.activeItems, ...state.queue].map((item) => item.concurrency);
+  if (requestedLimits.length) state.limit = Math.min(...requestedLimits);
+  state.effectiveLimit = state.throttledUntil
+    ? Math.min(state.effectiveLimit, state.limit)
+    : state.limit;
 }
 
 function isRetryable(error) {

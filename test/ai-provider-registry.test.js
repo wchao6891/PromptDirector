@@ -7,6 +7,7 @@ import {
   availableAiProvidersForTask,
   createAiTaskAssignment,
   mergeAiProviderRegistry,
+  modelConcurrencyLimit,
   normalizeAiProviderRegistry,
   normalizeAiTaskAssignments,
   publicAiProviderRegistry,
@@ -236,6 +237,15 @@ test("explicit task assignments survive v5 normalization with task defaults", ()
   assert.equal(normalized.textTags.concurrency, 20);
   assert.equal(normalized.imageAnalysis.concurrency, 10);
   assert.equal(configuredRegistry().providers.deepseek.apiKey, "deepseek-secret");
+});
+
+test("official concurrency remains enforceable even before model discovery", () => {
+  const registry = normalizeAiProviderRegistry({});
+  assert.equal(modelConcurrencyLimit("deepseek", "deepseek-v4-flash-vision-exp", registry), 2500);
+  const assignments = normalizeAiTaskAssignments({
+    imageAnalysis: { providerId: "deepseek", model: "deepseek-v4-flash-vision-exp", concurrency: 3000 }
+  }, registry);
+  assert.equal(assignments.imageAnalysis.concurrency, 2500);
 });
 
 test("public provider registry never exposes credentials", () => {
