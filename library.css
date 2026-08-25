@@ -850,11 +850,6 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .task-option { display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 10px; border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; color: var(--ink); background: var(--subtle-card); }
 .task-option input { width: auto; min-height: auto; margin-top: 2px; accent-color: var(--accent-emphasis); }
 .privacy-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
-.vision-description { display: grid; gap: 10px; }
-.vision-description-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.vision-description-heading h3 { margin: 0; }
-.vision-description-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.vision-description p { margin: 0; white-space: pre-wrap; color: var(--prompt-ink); font-size: 12px; line-height: 1.7; }
 .vision-analysis-status { margin: 7px 0 0; color: var(--muted); font-size: 11px; font-weight: 700; line-height: 1.5; }
 .vision-analysis-status.success { color: var(--accent-ink); }
 .vision-analysis-status.error { color: var(--danger); }

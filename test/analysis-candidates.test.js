@@ -7,6 +7,7 @@ import {
   applyAnalysisImport,
   applyTextAnalysisTags,
   applyVisionAnalysis,
+  editVisionReconstructionPrompt,
   extractStructureCandidates,
   invalidateVisionForScreenshot,
   mergeAnalysisCandidates,
@@ -466,24 +467,26 @@ test("vision analysis replaces only vision tags and can be undone once", () => {
   state = applyFixedAnalysisTags(state, "image", [{ g: "style.render", t: "人工风格" }], { source: "manual" }).state;
   state = applyFixedAnalysisTags(state, "image", [{ g: "style.render", t: "文字标签" }], { source: "deepseek_text", replaceExisting: false }).state;
   state = applyFixedAnalysisTags(state, "image", [{ g: "style.render", t: "旧视觉标签" }], { source: "vision_model", replaceExisting: false }).state;
-  state.entries[0].visionAnalysis = { description: "旧描述", imageFingerprint: "old", userEdited: true };
+  state.entries[0].visionAnalysis = { reconstructionPrompt: "旧反推提示词", imageFingerprint: "old", userEdited: true };
   const beforeNodeIds = state.entries[0].facetAssignments.map((item) => item.nodeId);
   const applied = applyVisionAnalysis(state, "image", {
-    description: "新描述",
+    reconstructionPrompt: "新反推提示词：逆光人物站在潮湿街道中央，电影写实风格。",
     tags: [
       { g: "style.render", t: "人工风格" },
       { g: "light.direction", t: "逆光" }
     ]
   }, { imageFingerprint: "new", locale: "zh-CN", providerType: "openai", model: "gpt-5-mini" });
   const entry = applied.state.entries[0];
-  assert.equal(entry.visionAnalysis.description, "新描述");
+  assert.equal(entry.visionAnalysis.reconstructionPrompt, "新反推提示词：逆光人物站在潮湿街道中央，电影写实风格。");
+  assert.equal(Object.hasOwn(entry.visionAnalysis, "description"), false);
+  assert.equal(entry.visionAnalysis.quality, "complete");
   assert.equal(entry.visionAnalysis.tags.length, 2);
   assert.deepEqual(entry.facetAssignments.map((item) => item.source).sort(), ["deepseek_text", "manual", "vision_model"]);
   assert.equal(entry.facetAssignments.find((item) => item.nodeId === beforeNodeIds[0]).source, "manual");
   assert.equal(applied.appliedCount, 2);
 
   const undone = undoVisionAnalysis(applied.state, applied.undo);
-  assert.equal(undone.entries[0].visionAnalysis.description, "旧描述");
+  assert.equal(undone.entries[0].visionAnalysis.reconstructionPrompt, "旧反推提示词");
   assert.deepEqual(undone.entries[0].facetAssignments.map((item) => item.nodeId).sort(), beforeNodeIds.sort());
   assert.equal(undone.facetCatalog.nodes.some((item) => item.name === "逆光" && item.parentId === "light.direction"), false);
 });
@@ -506,13 +509,34 @@ test("screenshot replacement invalidates vision references and undo restores the
   assert.deepEqual(restored.facetAssignments.map((item) => item.source).sort(), ["manual", "vision_model"]);
 });
 
-test("vision analysis stores zero to six tags and safely caps an over-limit result", () => {
-  for (const returned of [0, 3, 6]) {
+test("vision analysis atomically requires a reconstruction prompt and at least one valid search tag", () => {
+  const original = {
+    facetCatalog: createDefaultFacetCatalog(),
+    entries: [{
+      id: "atomic",
+      facetAssignments: [{ facetId: "style", nodeId: "style.render", status: "confirmed", source: "manual" }],
+      visionAnalysis: { reconstructionPrompt: "上一版完整提示词", quality: "complete" }
+    }]
+  };
+  assert.throws(() => applyVisionAnalysis(original, "atomic", {
+    reconstructionPrompt: "只有提示词，没有标签",
+    tags: []
+  }), /至少.*标签|1–6|标签/);
+  assert.throws(() => applyVisionAnalysis(original, "atomic", {
+    reconstructionPrompt: "",
+    tags: [{ g: "style.render", t: "电影写实" }]
+  }), /反推提示词|重建提示词/);
+  assert.equal(original.entries[0].visionAnalysis.reconstructionPrompt, "上一版完整提示词");
+  assert.equal(original.entries[0].facetAssignments.length, 1);
+});
+
+test("vision analysis stores one to six tags and safely caps an over-limit result", () => {
+  for (const returned of [1, 3, 6]) {
     const applied = applyVisionAnalysis({
       facetCatalog: createDefaultFacetCatalog(),
       entries: [{ id: `image-${returned}`, facetAssignments: [] }]
     }, `image-${returned}`, {
-      description: `description ${returned}`,
+      reconstructionPrompt: `prompt ${returned}`,
       tags: Array.from({ length: returned }, (_, index) => ({ g: "style.render", t: `标签${index + 1}` }))
     }, { imageFingerprint: "image" });
     assert.equal(applied.appliedCount, returned);
@@ -521,10 +545,25 @@ test("vision analysis stores zero to six tags and safely caps an over-limit resu
   const capped = applyVisionAnalysis({
     facetCatalog: createDefaultFacetCatalog(), entries: [{ id: "too-many", facetAssignments: [] }]
   }, "too-many", {
-    description: "description", tags: Array.from({ length: 7 }, (_, index) => ({ g: "style.render", t: `标签${index}` }))
+    reconstructionPrompt: "prompt", tags: Array.from({ length: 7 }, (_, index) => ({ g: "style.render", t: `标签${index}` }))
   });
   assert.equal(capped.appliedCount, 6);
   assert.equal(capped.state.entries[0].facetAssignments.length, 6);
+});
+
+test("manual visual edits update only the reconstruction prompt", () => {
+  const original = {
+    visionAnalysis: {
+      reconstructionPrompt: "旧反推提示词",
+      tags: [{ tagId: "style.cinematic", label: "电影感" }],
+      quality: "complete"
+    }
+  };
+  const edited = editVisionReconstructionPrompt(original, "新的详细反推提示词");
+  assert.equal(edited.visionAnalysis.reconstructionPrompt, "新的详细反推提示词");
+  assert.equal(edited.visionAnalysis.description, undefined);
+  assert.deepEqual(edited.visionAnalysis.tags, original.visionAnalysis.tags);
+  assert.equal(edited.visionAnalysis.userEdited, true);
 });
 
 test("image analysis can retain a reusable breakdown while promoting only six results", () => {

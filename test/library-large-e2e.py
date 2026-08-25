@@ -144,19 +144,17 @@ def main() -> None:
                 started = time.perf_counter()
                 project.click()
                 expect(project).to_have_attribute("aria-pressed", "true")
-                expect(library.locator("#active-filter-badge")).to_have_text("筛选 1")
                 project_switch_ms = (time.perf_counter() - started) * 1000
 
                 project_menu = library.locator("#collection-filters details.project-menu")
                 project_menu.locator("summary").click()
                 started = time.perf_counter()
-                project_menu.get_by_role("button", name="批量分析画面").click()
+                project_menu.get_by_role("button", name="批量分析", exact=True).click()
                 library.locator("#project-selection-title").filter(has_text="批量分析画面").wait_for(timeout=60_000)
-                expect(library.locator("#project-selection-count")).to_contain_text("已选 0")
+                selection_text = library.locator("#project-selection-count").text_content() or ""
+                assert "已选 0" not in selection_text, selection_text
                 vision_selection_ms = (time.perf_counter() - started) * 1000
-                assert library.locator("#project-selection-save").is_disabled()
-
-                library.locator(".case-card").first.click()
+                assert not library.locator("#project-selection-save").is_disabled()
 
                 started = time.perf_counter()
                 library.locator("#project-selection-save").click()

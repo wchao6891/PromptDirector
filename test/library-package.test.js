@@ -336,13 +336,21 @@ test("imports remap visual ids that would overwrite a different local case", () 
         { id: "article-copy", kind: "paragraph", text: "正文" },
         { id: "article-image", kind: "image", assetId: "shared-visual", sourceUrl: "https://example.com/original.webp" }
       ]
-    }
+    },
+    facetAssignments: [
+      { facetId: "facet:mood", nodeId: "tag:epic", status: "confirmed", source: "manual" },
+      { facetId: "facet:mood", nodeId: "tag:dramatic", status: "confirmed", source: "vision_model", visualId: "shared-visual" }
+    ]
   }];
   const result = mergeLibraryPackage(current, imported);
   const remote = result.state.entries.find((item) => item.id === "remote");
   assert.notEqual(remote.primaryMediaId, "shared-visual");
   assert.equal(result.visualIdMap["shared-visual"], remote.primaryMediaId);
   assert.equal(remote.articleDocument.blocks[1].assetId, remote.primaryMediaId);
+  assert.equal(
+    remote.facetAssignments.find((item) => item.source === "vision_model").visualId,
+    remote.primaryMediaId
+  );
 });
 
 test("imports remap both sides of a video poster relationship", () => {
@@ -422,7 +430,7 @@ test("single curated saves preserve an empty user's library configuration", () =
   assert.deepEqual(result.state.organizerState.collections.map((item) => item.name), ["我的项目"]);
 });
 
-test("existing-library import merges new cases, reuses same-name vocabulary and skips repeated shares", () => {
+test("existing-library import reuses same-name vocabulary and remaps repeated case ids without merging", () => {
   const localCatalog = createFacetNode(createDefaultFacetCatalog(), {
     id: "tag:local-epic", facetId: "mood", parentId: "mood.emotion", name: "史诗"
   });
@@ -432,16 +440,75 @@ test("existing-library import merges new cases, reuses same-name vocabulary and 
   };
 
   const first = mergeLibraryPackage(current, packageData([entry("one"), entry("two")], catalog()));
-  assert.equal(first.importedCount, 1);
-  assert.equal(first.skippedCount, 1);
+  assert.equal(first.importedCount, 2);
+  assert.equal(first.skippedCount, 0);
+  assert.equal(first.state.entries.length, 3);
   assert.equal(first.state.entries.find((item) => item.id === "two").facetAssignments[0].nodeId, "tag:local-epic");
   assert.equal(first.state.facetCatalog.facets.length, 10);
   assert.equal(first.state.settings.libraryTitle, "接收者资料库");
   assert.equal(first.state.classificationRules.length, 0);
 
   const repeated = mergeLibraryPackage(first.state, packageData([entry("two")], catalog()));
-  assert.equal(repeated.importedCount, 0);
-  assert.equal(repeated.skippedCount, 1);
+  assert.equal(repeated.importedCount, 1);
+  assert.equal(repeated.skippedCount, 0);
+  assert.equal(repeated.state.entries.length, 4);
+});
+
+test("a colliding case id imports as a new case instead of silently keeping a stale tagless copy", () => {
+  const stale = entry("shared-case");
+  stale.facetAssignments = [];
+  const incoming = entry("shared-case");
+  incoming.facetAssignments = [{
+    facetId: "facet:mood",
+    nodeId: "tag:epic",
+    status: "confirmed",
+    source: "vision_model"
+  }];
+  incoming.visuals = [{
+    id: "shared-case",
+    screenshotPath: "images/shared-case.webp",
+    visionAnalysis: {
+      version: 2,
+      reconstructionPrompt: "保留这份完整反推提示词",
+      quality: "complete",
+      tags: [{ g: "mood.emotion", t: "史诗" }]
+    }
+  }];
+  incoming.primaryVisualId = "shared-case";
+
+  const result = mergeLibraryPackage({
+    entries: [stale],
+    taxonomy: createDefaultTaxonomy(),
+    facetCatalog: catalog(),
+    classificationRules: [],
+    settings: {}
+  }, packageData([incoming], catalog()));
+
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.remappedCount, 1);
+  assert.equal(result.skippedCount, 0);
+  assert.equal(result.state.entries.length, 2);
+  const restored = result.state.entries.find((item) => item.id !== "shared-case");
+  assert.ok(restored);
+  assert.equal(restored.mediaAssets[0].visionAnalysis.reconstructionPrompt, "保留这份完整反推提示词");
+  assert.equal(restored.facetAssignments.some((item) => item.source === "vision_model"), true);
+});
+
+test("import aborts instead of silently dropping an assignment whose vocabulary node is missing", () => {
+  const incoming = entry("broken-label");
+  incoming.facetAssignments = [{
+    facetId: "facet:mood",
+    nodeId: "tag:not-in-package",
+    status: "confirmed",
+    source: "vision_model"
+  }];
+  assert.throws(() => mergeLibraryPackage({
+    entries: [entry("local")],
+    taxonomy: createDefaultTaxonomy(),
+    facetCatalog: catalog(),
+    classificationRules: [],
+    settings: {}
+  }, packageData([incoming], catalog())), /标签|词表|不完整/);
 });
 
 test("package import keeps source time but assigns one receiver-local added time and batch", () => {
@@ -616,6 +683,50 @@ test("share package keeps vision description but strips provider metadata", () =
     analyzedAt: "2026-07-19T10:00:00.000Z",
     userEdited: true
   });
+});
+
+test("v2 share packages roundtrip reconstruction prompts, inline vision tags, and persisted vision labels", () => {
+  const source = entry("vision-v2");
+  source.visuals = [{
+    id: "vision-v2",
+    screenshotPath: "images/vision-v2.webp",
+    visionAnalysis: {
+      version: 2,
+      description: "完整画面描述",
+      reconstructionPrompt: "完整反推提示词",
+      quality: "complete",
+      tags: [{ g: "style.render", t: "赛璐珞" }],
+      locale: "zh-CN",
+      analyzedAt: "2026-08-21T10:00:00.000Z"
+    }
+  }];
+  source.primaryVisualId = "vision-v2";
+  source.facetAssignments = [
+    { facetId: "facet:mood", nodeId: "tag:epic", status: "confirmed", source: "manual" },
+    { facetId: "facet:mood", nodeId: "tag:dramatic", status: "confirmed", source: "vision_model" }
+  ];
+  const selected = selectLibraryPackage(
+    { entries: [source], taxonomy: createDefaultTaxonomy(), facetCatalog: catalog(), classificationRules: [] },
+    ["vision-v2"]
+  );
+  const exported = {
+    format: "prompt-case-library",
+    version: 3,
+    settings: { libraryTitle: "我的灵感库", outputPath: "提示词案例库/案例库.zip" },
+    taxonomy: selected.taxonomy,
+    facetCatalog: selected.facetCatalog,
+    classificationRules: selected.classificationRules,
+    organizerState: selected.organizerState,
+    entries: selected.entries
+  };
+  const merged = mergeLibraryPackage({ entries: [] }, exported);
+  const restored = merged.state.entries[0];
+  const restoredVisual = restored.mediaAssets?.[0] ?? restored.visuals?.[0];
+
+  assert.equal(restoredVisual.visionAnalysis.reconstructionPrompt, "完整反推提示词");
+  assert.deepEqual(restoredVisual.visionAnalysis.tags, [{ g: "style.render", t: "赛璐珞" }]);
+  assert.equal(restoredVisual.visionAnalysis.quality, "complete");
+  assert.equal(restored.facetAssignments.some((item) => item.source === "vision_model"), true);
 });
 
 test("full imports merge project collections and permanently ignore legacy project methods", () => {

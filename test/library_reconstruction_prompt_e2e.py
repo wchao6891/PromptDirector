@@ -47,6 +47,7 @@ def main() -> None:
               await chrome.storage.local.set({
                 schemaVersion: 25,
                 entries: [entry],
+                visionAnalysisUndo: {[entry.id]: {entryId: entry.id}},
                 uiPreferences: {locale: 'zh-CN', theme: 'dark', motion: 'reduced'}
               });
               await saveMediaBlob(entry.primaryMediaId, new Blob([bytes], {type: 'image/png'}), {checkCapacity: false});
@@ -66,6 +67,9 @@ def main() -> None:
             "actual": copied,
         }
         expect(library.locator(".prompt-text").first).to_have_text(reconstruction_prompt)
+        expect(library.get_by_text(reconstruction_prompt, exact=True)).to_have_count(1)
+        expect(library.locator(".vision-description")).to_have_count(0)
+        expect(library.get_by_role("button", name="撤回本次分析")).to_have_count(0)
 
         library.get_by_role("button", name="关闭详情").click()
         library.evaluate(

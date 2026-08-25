@@ -59,6 +59,15 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
   data.taxonomy = normalizeTaxonomy(data.taxonomy);
   data.facetCatalog = normalizeFacetCatalog(data.facetCatalog);
   data.classificationRules = Array.isArray(data.classificationRules) ? data.classificationRules : [];
+  const packageFacetIds = new Set(data.facetCatalog.facets.map((item) => item.id));
+  const packageNodeIds = new Set(data.facetCatalog.nodes.map((item) => item.id));
+  for (const entry of data.entries) {
+    const missingAssignment = (Array.isArray(entry?.facetAssignments) ? entry.facetAssignments : [])
+      .find((item) => !packageFacetIds.has(String(item?.facetId ?? "")) || !packageNodeIds.has(String(item?.nodeId ?? "")));
+    if (missingAssignment) {
+      throw new Error(`分享包中的案例“${clean(entry?.title) || clean(entry?.id) || "未命名案例"}”引用了缺失的 AI 标签词表，导入已取消`);
+    }
+  }
   const ids = new Set();
   const visualIds = new Set();
   const assets = new Map();
@@ -373,6 +382,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       importedRunCount: imported.creativeRuns.length,
       importedOutputCount: imported.creativeRuns.reduce((sum, run) => sum + run.outputs.length, 0),
       importedCount: imported.entries.length,
+      remappedCount: 0,
       skippedCount: 0
     };
   }
@@ -397,15 +407,22 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   const visualIdMap = { ...(options.visualIdMap ?? {}) };
   const organizerEntryIdMap = {};
   let importedCount = 0;
+  let remappedCount = 0;
   let skippedCount = 0;
   for (const source of imported.entries) {
-    if (usedEntryIds.has(source.id)) {
+    const idCollision = usedEntryIds.has(source.id);
+    if (idCollision && options.skipExistingEntryIds === true) {
       skippedCount += 1;
       organizerEntryIdMap[source.id] = source.id;
       continue;
     }
     const preferred = clean(options.entryIdMap?.[source.id]);
-    const targetId = preferred && !usedEntryIds.has(preferred) ? preferred : source.id;
+    const targetId = preferred && !usedEntryIds.has(preferred)
+      ? preferred
+      : usedEntryIds.has(source.id)
+        ? uniqueId("entry", usedEntryIds)
+        : source.id;
+    if (idCollision) remappedCount += 1;
     if (usedEntryIds.has(targetId)) throw new Error("导入期间案例库发生变化，请重试");
     const entry = withoutArchivePath(structuredClone(source));
     Object.assign(entry, importMetadata);
@@ -440,10 +457,18 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       assetId: visualIdMap[note.assetId] ?? note.assetId,
       ...(note.frameAssetId ? { frameAssetId: visualIdMap[note.frameAssetId] ?? note.frameAssetId } : {})
     }));
-    entry.facetAssignments = (entry.facetAssignments ?? []).flatMap((item) => {
+    entry.facetAssignments = (entry.facetAssignments ?? []).map((item) => {
       const facetId = facetIds.get(item.facetId);
       const nodeId = nodeIds.get(item.nodeId);
-      return facetId && nodeId ? [{ ...item, facetId, nodeId }] : [];
+      if (!facetId || !nodeId) {
+        throw new Error(`分享包中的案例“${clean(entry.title) || source.id}”引用了缺失的 AI 标签词表，导入已取消且没有写入案例`);
+      }
+      return {
+        ...item,
+        facetId,
+        nodeId,
+        ...(item.visualId ? { visualId: visualIdMap[item.visualId] ?? item.visualId } : {})
+      };
     });
     next.entries.push(entry);
     usedEntryIds.add(targetId);
@@ -529,6 +554,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     importedRunCount: imported.creativeRuns.length,
     importedOutputCount: imported.creativeRuns.reduce((sum, run) => sum + run.outputs.length, 0),
     importedCount,
+    remappedCount,
     skippedCount
   };
 }

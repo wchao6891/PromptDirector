@@ -31,6 +31,19 @@ def action_geometry(page, name: str) -> dict:
 
 
 def assert_action_is_reachable(page, name: str) -> None:
+    page.wait_for_function(
+        """name => {
+          const button = [...document.querySelectorAll('button')]
+            .find(node => node.textContent.trim().includes(name));
+          if (!button) return false;
+          const rect = button.getBoundingClientRect();
+          const stage = button.closest('.detail-visual-stage')?.getBoundingClientRect();
+          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          return stage && stage.top <= rect.top && rect.bottom <= stage.bottom
+            && (hit === button || button.contains(hit));
+        }""",
+        arg=name,
+    )
     geometry = action_geometry(page, name)
     assert geometry["stageTop"] <= geometry["buttonTop"], geometry
     assert geometry["buttonBottom"] <= geometry["stageBottom"], geometry

@@ -261,8 +261,8 @@ function renderEntry(entry, index, taxonomy, facetCatalog, locale) {
     ? `[${escapeLinkText(entry.title)}](${escapeLinkUrl(sourceUrl.href)})`
     : escapeLinkText(entry.title);
   const fence = codeFenceFor(entry.text);
-  const visionDescription = primaryVisionDescription(entry);
-  const visionFence = codeFenceFor(visionDescription);
+  const reconstructionPrompt = primaryVisionDescription(entry);
+  const visionFence = codeFenceFor(reconstructionPrompt);
   const screenshot = entry.visuals.flatMap((visual, visualIndex) => isSafeScreenshotPath(visual.screenshotPath)
     ? [`- ${english ? `Visual ${visualIndex + 1}${visual.id === entry.primaryVisualId ? " (primary)" : ""}: ` : `截图 ${visualIndex + 1}${visual.id === entry.primaryVisualId ? "（主图）" : ""}：`}![${english ? "Matching visual" : "对应画面"}](${visual.screenshotPath})`]
     : []);
@@ -305,7 +305,7 @@ function renderEntry(entry, index, taxonomy, facetCatalog, locale) {
     ...screenshot,
     "",
     ...(attributeLines.length ? ["### Creative attributes", "", ...attributeLines, ""] : []),
-    ...(visionDescription ? ["### Visual description", "", `${visionFence}text`, visionDescription, visionFence, ""] : []),
+    ...(reconstructionPrompt ? ["### Reconstruction prompt", "", `${visionFence}text`, reconstructionPrompt, visionFence, ""] : []),
     ...(entry.text ? ["### Original prompt", "", `${fence}text`, entry.text, fence] : ["### Case note", "", "This visual reference contains a screenshot and creative attributes without prompt text."]),
     ...(suggestionLines.length ? ["", "### Suggestions awaiting review", "", ...suggestionLines] : [])
   ].join("\n") : [
@@ -321,7 +321,7 @@ function renderEntry(entry, index, taxonomy, facetCatalog, locale) {
     ...screenshot,
     "",
     ...(attributeLines.length ? ["### AI 标签", "", ...attributeLines, ""] : []),
-    ...(visionDescription ? ["### 画面描述", "", `${visionFence}text`, visionDescription, visionFence, ""] : []),
+    ...(reconstructionPrompt ? ["### 反推提示词", "", `${visionFence}text`, reconstructionPrompt, visionFence, ""] : []),
     ...(entry.text ? ["### 原始提示词", "", `${fence}text`, entry.text, fence] : ["### 案例说明", "", "这是一条仅包含截图和 AI 标签的图片案例。"]),
     ...(suggestionLines.length ? ["", "### 待确认建议", "", ...suggestionLines] : [])
   ].join("\n");

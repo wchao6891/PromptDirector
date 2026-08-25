@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_VISION_MODEL,
   analyzeImageWithVision,
+  createVisionRequestBudget,
   evaluateCreativeOutputWithVision,
   mergeVisionSettings,
   normalizeVisionResult,
@@ -25,7 +26,7 @@ function sampleCatalog() {
   return catalog;
 }
 
-function completeVisionResult(description = "一名人物站在逆光环境中。", tags = []) {
+function completeVisionResult(description = "一名人物站在逆光环境中。", tags = [{ g: "light.direction", t: "逆光" }]) {
   return {
     description,
     canvas: {
@@ -222,11 +223,45 @@ test("vision result keeps partial paid output visible and keeps at most six opti
   const missingDescription = normalizeVisionResult(completeVisionResult(""));
   assert.equal(missingDescription.quality, "partial");
   assert.ok(missingDescription.missingFields.includes("description"));
-  const partial = normalizeVisionResult({ description: "旧版简述", tags: [] });
-  assert.equal(partial.quality, "partial");
-  assert.equal(partial.description, "旧版简述");
-  assert.ok(partial.missingFields.includes("canvas"));
-  assert.ok(partial.missingFields.includes("reconstructionPrompt"));
+  assert.throws(
+    () => normalizeVisionResult({ description: "旧版简述", tags: [] }),
+    /至少一个有效检索标签/
+  );
+});
+
+test("vision request schema is minimized to reconstructionPrompt plus tags", async () => {
+  let body;
+  await analyzeImageWithVision({
+    imageDataUrl: "data:image/png;base64,AAAA",
+    catalog: createDefaultFacetCatalog(),
+    settings: {
+      activeProvider: "compatible",
+      consent: true,
+      compatible: {
+        protocol: "chat_completions",
+        endpoint: "https://api.deepseek.com/chat/completions",
+        apiKey: "secret",
+        model: "deepseek-v4-vision"
+      }
+    }
+  }, async (_url, options) => {
+    body = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({
+        model: "deepseek-v4-vision",
+        choices: [{ message: { content: JSON.stringify({ reconstructionPrompt: "主体居中", tags: [{ g: "light.direction", t: "逆光" }] }) } }]
+      })
+    };
+  });
+
+  const schema = body.response_format?.json_schema?.schema ?? body.text?.format?.schema ?? body.response_format;
+  assert.deepEqual(Object.keys(schema.properties).sort(), ["reconstructionPrompt", "tags"]);
+  assert.deepEqual(schema.required, ["reconstructionPrompt", "tags"]);
+  const prompt = body.messages[0].content.find((item) => item.type === "text").text;
+  assert.match(prompt, /reconstructionPrompt/);
+  assert.match(prompt, /tags/);
+  assert.doesNotMatch(prompt, /"description"|"canvas"|"elements"|"dimensions"|"ocr"|"completeness"|partial/);
 });
 
 test("partial vision normalization accepts root casing and snake-case aliases without inventing fields", () => {
@@ -242,13 +277,10 @@ test("partial vision normalization accepts root casing and snake-case aliases wi
   assert.ok(partial.missingFields.includes("elements"));
 });
 
-test("an invalid optional search tag cannot discard an otherwise complete paid visual analysis", () => {
-  const result = normalizeVisionResult(completeVisionResult("主体分析完整。", [
+test("an invalid-only tag response fails atomically even when the reconstruction prompt is usable", () => {
+  assert.throws(() => normalizeVisionResult(completeVisionResult("主体分析完整。", [
     { g: "invented.path", t: "模型自造路径" }
-  ]), sampleCatalog());
-  assert.equal(result.description, "主体分析完整。");
-  assert.deepEqual(result.tags, []);
-  assert.equal(result.tagDiagnostics.rejectedCount, 1);
+  ]), sampleCatalog()), /至少一个有效检索标签/);
 });
 
 test("OpenAI vision request sends the image and fixed paths without dynamic detail vocabulary", async () => {
@@ -279,21 +311,29 @@ test("OpenAI vision request sends the image and fixed paths without dynamic deta
   assert.equal(request.store, false);
   assert.equal(request.max_output_tokens, 12000);
   assert.equal(request.text.format.type, "json_schema");
-  assert.ok(request.text.format.schema.properties.elements.items.properties.box_2d);
-  assert.equal(request.text.format.schema.properties.elements.items.properties.bbox, undefined);
-  assert.ok(request.text.format.schema.properties.tags.items.properties.g.enum.includes("light.direction"));
-  assert.equal(request.text.format.schema.properties.tags.items.properties.g.enum.includes("detail:secret"), false);
+  assert.deepEqual(Object.keys(request.text.format.schema.properties).sort(), ["reconstructionPrompt", "tags"]);
+  assert.equal(request.text.format.schema.properties.reconstructionPrompt.type, "string");
+  assert.equal(request.text.format.schema.properties.tags.maxItems, 6);
   const content = request.input[0].content;
   assert.deepEqual(content.find((item) => item.type === "input_image"), {
     type: "input_image", image_url: "data:image/webp;base64,AAAA", detail: "high"
   });
   const sentText = content.filter((item) => item.type === "input_text").map((item) => item.text).join("\n");
   assert.match(sentText, /优先描述空间关系/);
-  assert.match(sentText, /light\.direction/);
-  assert.doesNotMatch(sentText, /secret-dynamic-tag/);
-  assert.doesNotMatch(sentText, /example\.com|原提示词|案例标题/);
-  assert.doesNotMatch(sentText, /1280x720|serviceDeclaredGeneration/);
-  assert.equal(result.description, "一名人物站在逆光环境中。");
+  assert.match(sentText, /reconstructionPrompt/);
+  assert.match(sentText, /tags/);
+  assert.match(sentText, /主体/);
+  assert.match(sentText, /场景/);
+  assert.match(sentText, /动作/);
+  assert.match(sentText, /风格材质/);
+  assert.match(sentText, /构图镜头/);
+  assert.match(sentText, /光线色彩/);
+  assert.match(sentText, /情绪/);
+  assert.match(sentText, /可见文字图形/);
+  assert.match(sentText, /媒介画质/);
+  assert.match(sentText, /制作表现/);
+  assert.doesNotMatch(sentText, /"description"|"canvas"|"elements"|"dimensions"|"ocr"|"completeness"|partial/);
+  assert.equal(result.reconstructionPrompt, "一名人物站在逆光环境中。 主体居中，逆光。");
   assert.equal(result.tags.length, 1);
   assert.equal(result.usage.totalTokens, 55);
 });
@@ -324,7 +364,7 @@ test("Gemini native vision adapter sends inline image data and preserves the uni
   assert.equal(result.usage.totalTokens, 12);
 });
 
-test("compatible request uses Chat Completions image messages and refuses redirects", async () => {
+test("compatible request disables thinking on DeepSeek chat completions and refuses redirects", async () => {
   let options;
   const fetchStub = async (_url, input) => {
     options = input;
@@ -341,7 +381,7 @@ test("compatible request uses Chat Completions image messages and refuses redire
       activeProvider: "compatible", consent: true,
       compatible: {
         protocol: "chat_completions",
-        endpoint: "https://vision.example.com/v1/chat/completions",
+        endpoint: "https://api.deepseek.com/v1/chat/completions",
         apiKey: "secret",
         model: "vision-pro"
       }
@@ -349,11 +389,12 @@ test("compatible request uses Chat Completions image messages and refuses redire
   }, fetchStub);
   const body = JSON.parse(options.body);
   assert.equal(options.redirect, "error");
+  assert.deepEqual(body.thinking, { type: "disabled" });
   assert.equal(body.messages[0].content.some((item) => item.type === "image_url" && item.image_url.detail === "high"), true);
   assert.equal(body.max_tokens, 12000);
 });
 
-test("compatible json_object vision requests keep image input and local full-schema validation", async () => {
+test("compatible json_object vision requests keep image input and local reconstruction validation", async () => {
   let body;
   const input = {
     imageDataUrl: "data:image/png;base64,AAAA",
@@ -384,16 +425,15 @@ test("compatible json_object vision requests keep image input and local full-sch
   assert.deepEqual(body.response_format, { type: "json_object" });
   assert.equal(body.messages[0].content.some((item) => item.type === "image_url"), true);
   const instruction = body.messages[0].content.find((item) => item.type === "text").text;
-  assert.match(instruction, /JSON property names are case-sensitive/);
-  assert.match(instruction, /"ocr":\{"type":"array"/);
-  assert.equal(success.description, "一张完整分析。");
+  assert.match(instruction, /reconstructionPrompt/);
+  assert.match(instruction, /tags/);
+  assert.doesNotMatch(instruction, /"description"|"canvas"|"elements"|"dimensions"|"ocr"|"completeness"|partial/);
+  assert.equal(success.reconstructionPrompt, "一张完整分析。 主体居中，逆光。");
 
-  const partial = await analyzeImageWithVision(input, async () => ({
+  await assert.rejects(() => analyzeImageWithVision(input, async () => ({
     ok: true,
-    json: async () => ({ choices: [{ message: { content: JSON.stringify({ description: "不完整" }) } }] })
-  }));
-  assert.equal(partial.quality, "partial");
-  assert.ok(partial.missingFields.includes("canvas"));
+    json: async () => ({ choices: [{ message: { content: JSON.stringify({ reconstructionPrompt: "缺少标签", tags: [] }) } }] })
+  })), /至少一个有效检索标签/);
 });
 
 test("compatible empty vision results get exactly one structured-output correction request", async () => {
@@ -432,7 +472,54 @@ test("compatible empty vision results get exactly one structured-output correcti
   assert.equal(calls, cases.length * 2);
 });
 
-test("compatible Responses request sends the OpenAI image shape and parses structured output", async () => {
+test("vision provider calls share one budget across service retries and output correction", async () => {
+  const input = {
+    imageDataUrl: "data:image/png;base64,AAAA",
+    catalog: createDefaultFacetCatalog(),
+    requestBudget: createVisionRequestBudget(),
+    settings: {
+      activeProvider: "compatible", consent: true,
+      compatible: {
+        protocol: "chat_completions",
+        structuredOutput: "json_object",
+        endpoint: "http://localhost:1234/v1/chat/completions",
+        model: "fixture-model"
+      }
+    }
+  };
+  let providerCalls = 0;
+  const failingFetch = async () => {
+    providerCalls += 1;
+    if (providerCalls === 2) {
+      return {
+        ok: false,
+        status: 503,
+        headers: { get: () => null },
+        json: async () => ({ error: { message: "temporary" } })
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({ choices: [{ message: { content: "{}" } }] })
+    };
+  };
+
+  await assert.rejects(() => analyzeImageWithVision(input, failingFetch), (error) => error.status === 503);
+  await assert.rejects(
+    () => analyzeImageWithVision(input, failingFetch),
+    (error) => error.code === "vision_request_budget_exhausted"
+  );
+  assert.equal(providerCalls, 3);
+  assert.deepEqual(input.requestBudget, {
+    maxProviderCalls: 3,
+    providerCalls: 3,
+    outputCorrectionRequests: 1
+  });
+});
+
+test("third-party compatible Responses disables reasoning by task policy and parses structured output", async () => {
   let captured;
   const result = await analyzeImageWithVision({
     imageDataUrl: "data:image/png;base64,AAAA",
@@ -444,7 +531,7 @@ test("compatible Responses request sends the OpenAI image shape and parses struc
         protocol: "responses",
         endpoint: "https://www.micuapi.ai/v1/responses",
         apiKey: "secret",
-        model: "gpt-5.4-mini"
+        model: "gpt-5.6-terra"
       }
     }
   }, async (url, options) => {
@@ -452,12 +539,12 @@ test("compatible Responses request sends the OpenAI image shape and parses struc
     return {
       ok: true,
       json: async () => ({
-        model: "gpt-5.4-mini",
+        model: "gpt-5.6-terra",
         output: [{
           type: "message",
           content: [{
             type: "output_text",
-            text: JSON.stringify(completeVisionResult("雾中的庭院。", [{ g: "light.direction", t: "逆光" }]))
+            text: JSON.stringify({ reconstructionPrompt: "雾中的庭院。", tags: [{ g: "light.direction", t: "逆光" }] })
           }]
         }]
       })
@@ -466,10 +553,11 @@ test("compatible Responses request sends the OpenAI image shape and parses struc
   assert.equal(captured.url, "https://www.micuapi.ai/v1/responses");
   assert.equal(captured.options.redirect, "error");
   assert.equal(captured.body.store, false);
+  assert.deepEqual(captured.body.reasoning, { effort: "none" });
   assert.equal(captured.body.messages, undefined);
   assert.equal(captured.body.input[0].content.some((item) => item.type === "input_image" && item.detail === "high"), true);
   assert.equal(captured.body.text.format.type, "json_schema");
-  assert.equal(result.description, "雾中的庭院。");
+  assert.equal(result.reconstructionPrompt, "雾中的庭院。");
   assert.equal(result.tags.length, 1);
 });
 
@@ -578,9 +666,13 @@ test("vision service refusal, invalid JSON, missing description and HTTP errors 
   }));
   assert.equal(partial.quality, "partial");
   assert.ok(partial.missingFields.includes("description"));
-  await assert.rejects(() => analyzeImageWithVision(input, async () => ({
+  const rateLimited = await analyzeImageWithVision(input, async () => ({
     ok: false,
     status: 429,
     json: async () => ({ error: { message: "rate limited" } })
-  })), /rate limited/);
+  })).catch((error) => error);
+  assert.match(rateLimited.message, /请求过于频繁/);
+  assert.equal(rateLimited.status, 429);
+  assert.match(rateLimited.detail, /rate limited/);
+  assert.doesNotMatch(rateLimited.message, /rate limited/);
 });

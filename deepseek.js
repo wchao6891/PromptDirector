@@ -17,6 +17,7 @@ import {
   compileAgentExecutionPrompt,
   compileAgentPlanningPrompt
 } from "./composer-agent.js";
+import { canonicalTextAnalysisInput } from "./analysis-input.js";
 
 export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 export const DEFAULT_ANALYSIS_MODEL = "deepseek-v4-flash";
@@ -49,6 +50,9 @@ export function deepSeekErrorDetails(error) {
   }
   if (error instanceof DeepSeekApiError) {
     return { kind: error.kind, message: error.message, retryable: error.retryable };
+  }
+  if (error instanceof TypeError && /fetch|network|load/i.test(String(error.message ?? ""))) {
+    return { kind: "network", message: "网络连接失败，请检查服务地址、权限或网络后重试", retryable: true };
   }
   return { kind: "unknown", message: error?.message || "DeepSeek 处理失败", retryable: false };
 }
@@ -128,13 +132,14 @@ export async function analyzeTextWithDeepSeek(entry, catalogValue, settingsValue
 export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, settingsValue, fetchImpl = fetch, requestOptions = {}) {
   const settings = requireAiSettings(settingsValue, "分析");
   const outputLocale = settingsValue?.outputLocale === "en" ? "en" : "zh-CN";
-  if (!String(entry?.text ?? "").trim()) throw new Error("这条案例没有文字，DeepSeek 文字分析会跳过");
+  const input = requestOptions.analysisInput || canonicalTextAnalysisInput(entry);
+  if (!input.text) throw new Error("这条案例没有文字，DeepSeek 文字分析会跳过");
   const systemMessages = [
     { role: "system", content: analysisSystemInstruction(outputLocale) },
     { role: "system", content: analysisTaxonomyPrompt(catalogValue, outputLocale) },
     { role: "system", content: settings.analysisInstructionsByLocale[outputLocale].slice(0, 1200) }
   ];
-  const userMessage = { role: "user", content: analysisEntryInput(entry) };
+  const userMessage = { role: "user", content: analysisEntryInput(entry, input.text) };
   let usage = normalizeUsage();
   for (let outputAttempt = 0; outputAttempt < 2; outputAttempt += 1) {
     const attempt = outputAttempt ? "correction" : "initial";
@@ -665,11 +670,11 @@ export function analysisTaxonomyPrompt(catalogValue, outputLocale = "zh-CN") {
   return `fixedPaths=${analysisTaxonomyPayload(catalogValue, outputLocale)}`;
 }
 
-function analysisEntryInput(entry) {
+function analysisEntryInput(entry, textValue = entry?.text) {
   return JSON.stringify({
     contentType: String(entry.contentTypeName ?? "").trim() || "unknown",
     title: String(entry.title ?? ""),
-    text: String(entry.text ?? "")
+    text: String(textValue ?? "")
   });
 }
 

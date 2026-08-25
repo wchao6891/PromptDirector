@@ -64,7 +64,7 @@ def complete_visual_analysis() -> dict:
         "reconstructionPrompt": "深色背景中的中央主体，保持清晰轮廓和居中构图。",
         "limitations": ["无法确认画外信息"],
         "completeness": {"checkedRegions": ["四角", "主体", "背景", "文字"], "omittedVisibleElements": []},
-        "tags": [],
+        "tags": [{"g": "camera.composition", "t": "居中构图"}],
     }
 
 
@@ -192,7 +192,7 @@ def assert_deepseek_dynamic_image_analysis() -> None:
         expect(model_select).to_have_value(model_id)
         expect(model_select.locator("option")).to_have_text(model_id)
         expect(dialog.locator(".model-capability-help")).to_have_count(1)
-        expect(dialog.locator(".model-capability-help")).to_have_text("当前模型未声明这项能力；是否可用以真实执行结果为准")
+        expect(dialog.locator(".model-capability-help")).to_contain_text("当前模型未声明这项能力；是否可用以真实执行结果为准")
         expect(dialog).not_to_contain_text("实验")
         dialog.get_by_role("button", name="保存任务默认").click()
         expect(dialog).to_be_hidden()
@@ -205,6 +205,7 @@ def assert_deepseek_dynamic_image_analysis() -> None:
             "providerId": "deepseek",
             "model": model_id,
             "evidence": "manual_unverified",
+            "concurrency": 10,
         }, stored_assignment
         runtime = library.evaluate(
             "() => chrome.runtime.sendMessage({type: 'GET_AI_TASK_RUNTIME', taskId: 'imageAnalysis'})"
@@ -229,7 +230,8 @@ def assert_deepseek_dynamic_image_analysis() -> None:
         content = request["messages"][0]["content"]
         assert [item["type"] for item in content] == ["text", "image_url"], content
         assert "JSON property names are case-sensitive" in content[0]["text"], content[0]
-        assert '\"ocr\":{\"type\":\"array\"' in content[0]["text"], content[0]
+        assert '\"required\":[\"reconstructionPrompt\",\"tags\"]' in content[0]["text"], content[0]
+        assert '\"ocr\"' not in content[0]["text"], content[0]
         assert content[1]["image_url"]["url"].startswith("data:image/png;base64,"), content
         assert not openai_paid_requests, openai_paid_requests
 
@@ -297,8 +299,20 @@ def assert_new_install_defaults() -> None:
 
         stored = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
         assert set(stored["aiTaskAssignments"].keys()) == TASK_IDS, stored
-        assert all(value == {"providerId": "", "model": ""} for value in stored["aiTaskAssignments"].values()), stored
-        assert stored["aiProviderRegistry"]["version"] == 4, stored
+        assert all(value["providerId"] == "" and value["model"] == "" for value in stored["aiTaskAssignments"].values()), stored
+        assert {
+            task_id: value["concurrency"]
+            for task_id, value in stored["aiTaskAssignments"].items()
+        } == {
+            "textTags": 20,
+            "skillExtraction": 20,
+            "creativePlanning": 20,
+            "imageAnalysis": 10,
+            "videoAnalysis": 10,
+            "imageGeneration": 10,
+            "videoGeneration": 10,
+        }, stored
+        assert stored["aiProviderRegistry"]["version"] == 5, stored
 
         execution_state = library.evaluate(
             "() => chrome.runtime.sendMessage({type: 'GET_CREATIVE_JOB_EXECUTION_STATE'})"
@@ -664,7 +678,9 @@ def main() -> None:
         task_dialog = library.locator("#promptdirector-app-dialog")
         expect(task_dialog.locator('[data-field-id="providerId"]')).to_be_visible()
         expect(task_dialog.locator('[data-field-id="model"]')).to_be_visible()
-        expect(task_dialog.locator('[data-field-id]')).to_have_count(2)
+        expect(task_dialog.locator('[data-field-id="concurrency"]')).to_be_visible()
+        expect(task_dialog.locator('[data-field-id="concurrency"] input')).to_have_value("10")
+        expect(task_dialog.locator('[data-field-id="highConcurrencyConfirmed"]')).to_be_hidden()
         task_dialog.locator(".app-dialog-close").click()
 
         stored = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
@@ -709,7 +725,7 @@ def main() -> None:
 
         nano_saved = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
         assert nano_saved["aiTaskAssignments"]["imageGeneration"] == {
-            "providerId": "gemini", "model": "gemini-3.1-flash-image"
+            "providerId": "gemini", "model": "gemini-3.1-flash-image", "concurrency": 10
         }
         assert assignment_routes({
             task: value for task, value in nano_saved["aiTaskAssignments"].items() if task != "imageGeneration"

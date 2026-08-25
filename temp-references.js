@@ -100,7 +100,12 @@ export function imageTempReferenceBlock(referenceSnapshots, service) {
 export function unreadReferenceImageAssets(reference) {
   const analyzedAssets = new Map((Array.isArray(reference?.assets) ? reference.assets : [])
     .map((item) => [String(item?.assetId ?? "").trim(), item]));
-  if (String(reference?.referenceText ?? "").trim() && !analyzedAssets.size) return [];
+  const promptBacked = Boolean(
+    String(reference?.originalText ?? "").trim()
+    || (["prompt", "prompt_vision"].includes(reference?.referenceKind)
+      && String(reference?.referenceText ?? "").trim())
+  );
+  if (promptBacked || (String(reference?.referenceText ?? "").trim() && !analyzedAssets.size)) return [];
   const assets = [];
   const seen = new Set();
   for (const asset of Array.isArray(reference?.assetRefs) ? reference.assetRefs : []) {

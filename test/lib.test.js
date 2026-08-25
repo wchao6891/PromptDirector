@@ -193,18 +193,22 @@ test("screenshot-only cases can have no prompt text and export as image referenc
   assert.doesNotMatch(markdown, /### 原始提示词/);
 });
 
-test("Markdown backup keeps the current visual description without exposing provider metadata", () => {
+test("Markdown backup keeps the current reconstruction prompt without exposing provider metadata", () => {
   const markdown = renderMarkdown([{
     id: "vision-case",
     title: "Visual case",
     text: "",
     visuals: [{ id: "vision-1", visionAnalysis: {
-      description: "A courtyard surrounded by blue-green mist.", providerType: "compatible", model: "private-model"
+      reconstructionPrompt: "A courtyard surrounded by blue-green mist.",
+      tags: [{ tagId: "style.cinematic", label: "Cinematic" }],
+      providerType: "compatible",
+      model: "private-model"
     } }],
     primaryVisualId: "vision-1",
     classification: { pathIds: [CONTENT_IDS.imageCase], status: "confirmed" }
   }]);
-  assert.match(markdown, /### 画面描述[\s\S]*A courtyard surrounded by blue-green mist\./);
+  assert.match(markdown, /### 反推提示词[\s\S]*A courtyard surrounded by blue-green mist\./);
+  assert.doesNotMatch(markdown, /### 画面描述/);
   assert.doesNotMatch(markdown, /private-model|compatible/);
 });
 

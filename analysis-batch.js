@@ -1,5 +1,6 @@
 import { ANALYSIS_PROMPT_VERSION, DEFAULT_ANALYSIS_MODEL } from "./deepseek.js";
 import { applyTextAnalysisTags } from "./analysis-candidates.js";
+import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import {
   analysisRevisionMeta,
   entryTextRevision,
@@ -19,13 +20,14 @@ export async function previewAnalysisBatch(entries = [], options = {}) {
   const mode = ["reanalyze", "rebuild"].includes(options.mode) ? "rebuild" : "incremental";
   const profileFingerprint = String(options.profileFingerprint ?? "").trim();
   for (const entry of Array.isArray(entries) ? entries : []) {
-    const text = String(entry?.text ?? "").trim();
+    const { text, assetId, textRevision } = canonicalTextAnalysisInput(entry);
     if (!entry?.id || !text) continue;
     const reason = mode === "rebuild" ? "explicit_reanalysis" : textAnalysisReason(entry);
     if (!reason) continue;
     eligible.push({
       entryId: entry.id,
-      textRevision: entryTextRevision(entry),
+      textRevision,
+      ...(assetId ? { assetId } : {}),
       characterCount: text.length,
       title: String(entry.title ?? ""),
       reason
@@ -53,7 +55,7 @@ export async function backfillLegacyAnalysisMeta(entries = []) {
   let updatedCount = 0;
   const next = [];
   for (const entry of Array.isArray(entries) ? entries : []) {
-    const text = String(entry?.text ?? "").trim();
+    const { text } = canonicalTextAnalysisInput(entry);
     if (!entry?.id || !text || entry.analysisMeta || !hasPriorTextAnalysis(entry)) {
       next.push(entry);
       continue;
@@ -61,7 +63,7 @@ export async function backfillLegacyAnalysisMeta(entries = []) {
     next.push({
       ...entry,
       analysisMeta: {
-        textRevision: entryTextRevision(entry),
+        ...analysisRevisionMeta(entry),
         promptVersion: ANALYSIS_PROMPT_VERSION,
         model: "previous-analysis",
         analyzedAt: String(entry.analyzedAt ?? ""),
@@ -102,6 +104,7 @@ export async function createAnalysisBatchJob(entries, options = {}) {
     items: preview.entries.map((item) => ({
       entryId: item.entryId,
       textRevision: item.textRevision,
+      ...(item.assetId ? { assetId: item.assetId } : {}),
       fingerprint: "",
       status: "pending",
       attempts: 0,
@@ -127,7 +130,7 @@ export function previewVisionBatch(entries = [], options = {}) {
       : [primaryImageAsset(entry)].filter(Boolean);
     for (const visual of candidates) {
       if (!visual?.id) continue;
-      const hasCompleteAnalysis = Boolean(visual.visionAnalysis?.description) && visual.visionAnalysis?.quality !== "partial";
+      const hasCompleteAnalysis = hasReusableVisionAnalysis(visual);
       if (!reanalyze && hasCompleteAnalysis) {
         skippedAnalyzedCount += 1;
         continue;
@@ -151,6 +154,14 @@ export function previewVisionBatch(entries = [], options = {}) {
     model: String(options.model ?? "").trim(),
     items
   };
+}
+
+function hasReusableVisionAnalysis(visual = {}) {
+  const analysis = visual?.visionAnalysis;
+  if (!analysis || analysis.quality === "partial") return false;
+  if (!String(analysis.reconstructionPrompt ?? "").trim()) return false;
+  return Array.isArray(analysis.tags)
+    && analysis.tags.some((tag) => String(tag?.g ?? "").trim() && String(tag?.t ?? "").trim());
 }
 
 export function createVisionBatchJob(entries = [], options = {}) {
@@ -191,7 +202,7 @@ export function createVisionBatchJob(entries = [], options = {}) {
 
 export function normalizeAnalysisBatchJob(value) {
   if (!value || ![1, ANALYSIS_BATCH_VERSION].includes(value.version) || !value.id || !Array.isArray(value.items)) return null;
-  const statuses = new Set(["pending", "running", "succeeded", "partial", "failed"]);
+  const statuses = new Set(["pending", "running", "succeeded", "failed"]);
   const jobStatuses = new Set(["running", "paused", "completed", "partial", "failed", "canceled"]);
   return {
     version: ANALYSIS_BATCH_VERSION,
@@ -224,12 +235,17 @@ export function normalizeAnalysisBatchJob(value) {
     items: value.items.flatMap((item) => item?.entryId ? [{
       entryId: String(item.entryId),
       ...(String(item.visualId ?? "").trim() ? { visualId: String(item.visualId).trim() } : {}),
+      ...(String(item.assetId ?? "").trim() ? { assetId: String(item.assetId).trim() } : {}),
       fingerprint: String(item.fingerprint ?? ""),
       textRevision: Math.max(1, Math.floor(Number(item.textRevision) || 1)),
-      status: statuses.has(item.status) ? item.status : "pending",
+      status: item.status === "partial"
+        ? "failed"
+        : statuses.has(item.status) ? item.status : "pending",
       attempts: Math.max(0, Number(item.attempts) || 0),
       claimId: String(item.claimId ?? ""),
-      error: String(item.error ?? ""),
+      error: item.status === "partial"
+        ? value.kind === "vision" ? "旧版图片分析结果不完整，请重试" : "旧版分析结果不完整，请重试"
+        : String(item.error ?? ""),
       statusCode: Math.max(0, Number(item.statusCode) || 0),
       serviceRequests: Math.max(0, Number(item.serviceRequests) || 0),
       outputCorrectionRequests: Math.max(0, Number(item.outputCorrectionRequests) || 0),
@@ -256,6 +272,7 @@ export function claimAnalysisItems(value, limit, idFactory = () => globalThis.cr
     claims.push({
       entryId: item.entryId,
       ...(item.visualId ? { visualId: item.visualId } : {}),
+      ...(item.assetId ? { assetId: item.assetId } : {}),
       fingerprint: item.fingerprint,
       textRevision: item.textRevision,
       claimId: item.claimId,
@@ -281,21 +298,6 @@ export function succeedAnalysisItem(value, entryId, claimId, usage, catalogRevis
   return job;
 }
 
-export function partiallySucceedAnalysisItem(value, entryId, claimId, usage, catalogRevision, metadata = {}) {
-  const job = requireJob(value);
-  const item = claimedItem(job, entryId, claimId);
-  item.status = "partial";
-  item.claimId = "";
-  item.error = "分析结果待补全";
-  item.statusCode = 0;
-  recordItemExecution(item, metadata);
-  job.usage = addUsage(job.usage, usage);
-  job.resultCatalogRevision = Number.isInteger(catalogRevision) ? catalogRevision : job.resultCatalogRevision;
-  finishIfSettled(job);
-  touch(job);
-  return job;
-}
-
 export function failAnalysisItem(value, entryId, claimId, error = {}) {
   const job = requireJob(value);
   const item = claimedItem(job, entryId, claimId);
@@ -307,6 +309,22 @@ export function failAnalysisItem(value, entryId, claimId, error = {}) {
   job.usage = addUsage(job.usage, error.usage);
   finishIfSettled(job);
   if ([401, 402, 403].includes(item.statusCode)) job.status = "paused";
+  touch(job);
+  return job;
+}
+
+export function failUnfinishedAnalysisItems(value, error = {}) {
+  const job = requireJob(value);
+  const message = String(error.message ?? "批量任务启动失败");
+  const statusCode = Math.max(0, Number(error.status) || 0);
+  for (const item of job.items) {
+    if (!["pending", "running"].includes(item.status)) continue;
+    item.status = "failed";
+    item.claimId = "";
+    item.error = message;
+    item.statusCode = statusCode;
+  }
+  finishIfSettled(job);
   touch(job);
   return job;
 }
@@ -324,7 +342,7 @@ export function stageAnalysisRebuildResults(jobValue, stagingValue, state, resul
       continue;
     }
     const entry = state.entries?.find((item) => item.id === result.entryId);
-    if (!entry || entryTextRevision(entry) !== Math.max(1, Number(result.textRevision) || 1)) {
+    if (!entry || canonicalTextAnalysisInput(entry, result.assetId).textRevision !== Math.max(1, Number(result.textRevision) || 1)) {
       job = failAnalysisItem(job, result.entryId, result.claimId, {
         message: "提示词原文已变化，请重新预览",
         status: 409
@@ -342,6 +360,7 @@ export function stageAnalysisRebuildResults(jobValue, stagingValue, state, resul
       tags,
       fingerprint: String(result.fingerprint ?? ""),
       textRevision: Math.max(1, Number(result.textRevision) || 1),
+      ...(String(result.assetId ?? "").trim() ? { assetId: String(result.assetId).trim() } : {}),
       model: String(result.model ?? ""),
       normalizationDiagnostics: structuredClone(Array.isArray(result.normalizationDiagnostics) ? result.normalizationDiagnostics : []),
       attempts: {
@@ -463,8 +482,11 @@ export function reconcileVisionBatchResults(value, entries = []) {
   for (const item of job.items) {
     if (!["pending", "running"].includes(item.status)) continue;
     const analysis = visuals.get(`${item.entryId}:${item.visualId}`)?.visionAnalysis;
-    if (!analysis?.description || analysis.batchJobId !== job.id) continue;
-    item.status = analysis.quality === "partial" ? "partial" : "succeeded";
+    const hasPrompt = Boolean(String(analysis?.reconstructionPrompt ?? "").trim());
+    const hasTags = Array.isArray(analysis?.tags)
+      && analysis.tags.some((tag) => String(tag?.g ?? "").trim() && String(tag?.t ?? "").trim());
+    if (!hasPrompt || !hasTags || analysis.batchJobId !== job.id) continue;
+    item.status = "succeeded";
     item.claimId = "";
     item.error = "";
     item.statusCode = 0;
@@ -589,6 +611,7 @@ function normalizeRetryPolicy(value) {
   return {
     serviceRetries: Number(value?.serviceRetries) === 2 ? 2 : ANALYSIS_RETRY_POLICY.serviceRetries,
     outputCorrectionRequests: Number(value?.outputCorrectionRequests) === 1 ? 1 : ANALYSIS_RETRY_POLICY.outputCorrectionRequests,
+    maxProviderCallsPerItem: ANALYSIS_RETRY_POLICY.maxProviderCallsPerItem,
     backoffMs: [...ANALYSIS_RETRY_POLICY.backoffMs],
     obeyRetryAfter: true
   };
@@ -642,7 +665,8 @@ function normalizeUsage(value = {}) {
 function rebuildAnalysisMeta(staged, job, entry, analyzedAt) {
   return {
     ...(staged.fingerprint ? { textFingerprint: staged.fingerprint } : {}),
-    ...analysisRevisionMeta(entry),
+    textRevision: Math.max(1, Math.floor(Number(staged.textRevision) || analysisRevisionMeta(entry).textRevision)),
+    ...(String(staged.assetId ?? "").trim() ? { assetId: String(staged.assetId).trim() } : {}),
     promptVersion: job.promptVersion || ANALYSIS_PROMPT_VERSION,
     model: staged.model,
     analyzedAt,

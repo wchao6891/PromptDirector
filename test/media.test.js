@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   addEntryMedia,
   addTimeNote,
+  mediaDescriptions,
   mediaKindFromFile,
   normalizeEntryMedia,
   normalizeMediaAsset,
@@ -13,6 +14,41 @@ import {
   updateLocalAssetReferenceMetadata
 } from "../media.js";
 import { normalizeEntryVisuals, reorderEntryVisuals } from "../visuals.js";
+
+test("new visual analysis remains readable through reconstruction prompts without a legacy description", () => {
+  const entry = normalizeEntryMedia({
+    id: "case:analysis",
+    mediaAssets: [{
+      id: "image:analysis",
+      kind: "image",
+      usage: "content",
+      storageMode: "managed",
+      visionAnalysis: {
+        quality: "complete",
+        reconstructionPrompt: "一名披风角色站在雨夜霓虹街道中央，35mm 低机位电影镜头。",
+        tags: [{ g: "style.render", t: "电影写实" }]
+      }
+    }]
+  });
+  assert.deepEqual(mediaDescriptions(entry), ["一名披风角色站在雨夜霓虹街道中央，35mm 低机位电影镜头。"]);
+});
+
+test("legacy partial visual output is not exposed as usable analysis", () => {
+  const entry = {
+    mediaAssets: [{
+      id: "image-partial",
+      kind: "image",
+      usage: "content",
+      visionAnalysis: {
+        reconstructionPrompt: "只有半截的旧结果",
+        quality: "partial",
+        tags: []
+      }
+    }],
+    primaryMediaId: "image-partial"
+  };
+  assert.deepEqual(mediaDescriptions(entry), []);
+});
 
 test("media normalization discards empty slots instead of crashing library startup", () => {
   assert.equal(normalizeMediaAsset(null), null);

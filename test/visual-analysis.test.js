@@ -91,6 +91,13 @@ test("VisualAnalysisV2 rejects incomplete dimensions and out-of-frame coordinate
   })), /边界框/);
 });
 
+test("visual model response schema is reduced to reconstructionPrompt plus tags", () => {
+  assert.deepEqual(Object.keys(VISUAL_MODEL_RESPONSE_SCHEMA.properties).sort(), ["reconstructionPrompt", "tags"]);
+  assert.deepEqual(VISUAL_MODEL_RESPONSE_SCHEMA.required, ["reconstructionPrompt", "tags"]);
+  assert.equal(VISUAL_MODEL_RESPONSE_SCHEMA.additionalProperties, false);
+  assert.equal(VISUAL_MODEL_RESPONSE_SCHEMA.properties.tags.minItems, 1);
+});
+
 test("model box_2d uses yxyx order and converts once into the persisted V2 bbox", () => {
   const result = normalizeVisualModelResponse(completeModelResponse(), createDefaultFacetCatalog());
   assert.deepEqual(result.elements[0].bbox, {
@@ -99,8 +106,9 @@ test("model box_2d uses yxyx order and converts once into the persisted V2 bbox"
   assert.deepEqual(result.ocr[0].bbox, {
     x: 120, y: 70, width: 760, height: 90, source: "estimated"
   });
-  assert.ok(VISUAL_MODEL_RESPONSE_SCHEMA.properties.elements.items.properties.box_2d);
-  assert.equal(VISUAL_MODEL_RESPONSE_SCHEMA.properties.elements.items.properties.bbox, undefined);
+  assert.deepEqual(Object.keys(VISUAL_MODEL_RESPONSE_SCHEMA.properties).sort(), ["reconstructionPrompt", "tags"]);
+  assert.equal(VISUAL_MODEL_RESPONSE_SCHEMA.properties.reconstructionPrompt.type, "string");
+  assert.equal(VISUAL_MODEL_RESPONSE_SCHEMA.properties.tags.maxItems, 6);
 });
 
 test("known root field casing is normalized before strict visual validation", () => {
@@ -134,7 +142,7 @@ test("completion merges only missing fields and preserves fields already validat
   const previous = normalizeVisualModelResponse({
     description: "已经保存的可靠描述",
     reconstructionPrompt: "已经保存的可靠重建提示词",
-    tags: []
+    tags: [{ g: "light.direction", t: "逆光" }]
   });
   const incoming = normalizeVisualModelResponse(completeModelResponse({
     description: "补全请求中的重复描述",
@@ -159,30 +167,77 @@ test("visual instruction requests quantitative reconstruction in one call and ex
     locale: "zh-CN",
     customInstruction: "记录所有可见文字。"
   });
-  assert.match(instruction, /0 to 1000/);
-  assert.match(instruction, /\[y_min, x_min, y_max, x_max\]/);
-  assert.match(instruction, /programMeasuredCanvasPixels/);
-  assert.match(instruction, /单次分析/);
+  assert.match(instruction, /只输出 reconstructionPrompt 和 tags/);
+  assert.match(instruction, /主体/);
+  assert.match(instruction, /场景/);
+  assert.match(instruction, /动作/);
+  assert.match(instruction, /风格材质/);
+  assert.match(instruction, /构图镜头/);
+  assert.match(instruction, /光线色彩/);
+  assert.match(instruction, /情绪/);
+  assert.match(instruction, /可见文字图形/);
+  assert.match(instruction, /媒介画质/);
+  assert.match(instruction, /制作表现/);
+  assert.match(instruction, /四角|four corners/i);
+  assert.match(instruction, /前景|foreground/i);
+  assert.match(instruction, /相对位置|relative position/i);
+  assert.match(instruction, /比例|scale/i);
+  assert.match(instruction, /景深|depth/i);
+  assert.match(instruction, /遮挡|occlusion/i);
+  assert.match(instruction, /字体|typography/i);
+  assert.match(instruction, /逐字|exact legible text/i);
+  assert.match(instruction, /不适用.*省略|omit.*not applicable/i);
+  assert.doesNotMatch(instruction, /box_2d/);
   assert.match(instruction, /reconstructionPrompt/);
-  assert.match(instruction, /every reconstruction-relevant visible fact/);
-  assert.match(instruction, /do not merely summarize the scene/);
-  for (const id of VISUAL_ANALYSIS_DIMENSIONS) assert.match(instruction, new RegExp(`\\b${id}\\b`));
+  assert.match(instruction, /tags/);
+  assert.doesNotMatch(instruction, /"description"|"canvas"|"elements"|"dimensions"|"ocr"|"completeness"|partial/);
   assert.match(instruction, /light\.direction/);
   assert.doesNotMatch(instruction, /secret-dynamic-tag/);
 });
 
-test("visual set summary consumes saved V2 text and reports missing assets without accepting a contact sheet", () => {
+test("visual set summary consumes saved atomic prompts and tags without accepting a contact sheet", () => {
   const ready = prepareVisualSetSummary([
-    { assetId: "image-a", imageFingerprint: "fingerprint-a", analysis: completeAnalysis({ imageFingerprint: "fingerprint-a" }) },
-    { assetId: "image-b", imageFingerprint: "fingerprint-b", analysis: completeAnalysis({ imageFingerprint: "fingerprint-b", description: "第二张图展示同一人物的侧面近景。" }) }
+    {
+      assetId: "image-a",
+      imageFingerprint: "fingerprint-a",
+      analysis: {
+        version: 2,
+        quality: "complete",
+        imageFingerprint: "fingerprint-a",
+        reconstructionPrompt: "第一张图的完整反推提示词",
+        tags: [{ g: "light.direction", t: "逆光" }]
+      }
+    },
+    {
+      assetId: "image-b",
+      imageFingerprint: "fingerprint-b",
+      analysis: {
+        version: 2,
+        quality: "complete",
+        imageFingerprint: "fingerprint-b",
+        reconstructionPrompt: "第二张图的完整反推提示词",
+        tags: [{ g: "composition.shot", t: "近景" }]
+      }
+    }
   ], "zh-CN");
   assert.equal(ready.ready, true);
   assert.deepEqual(ready.missingAssetIds, []);
   assert.equal(JSON.stringify(ready.input).includes("data:image"), false);
   assert.equal(ready.input.assets.length, 2);
+  assert.deepEqual(Object.keys(ready.input.assets[0]).sort(), ["assetId", "reconstructionPrompt", "tags"]);
 
   const missing = prepareVisualSetSummary([
-    { assetId: "image-a", imageFingerprint: "fingerprint-a", analysis: completeAnalysis({ imageFingerprint: "fingerprint-a" }) },
+    {
+      assetId: "image-a",
+      imageFingerprint: "fingerprint-a",
+      analysis: {
+        version: 2,
+        quality: "complete",
+        imageFingerprint: "fingerprint-a",
+        reconstructionPrompt: "第一张图的完整反推提示词",
+        tags: [{ g: "light.direction", t: "逆光" }]
+      }
+    },
     { assetId: "image-b", analysis: null }
   ], "zh-CN");
   assert.equal(missing.ready, false);

@@ -188,7 +188,7 @@ export function anonymousSkillSources(entriesValue = [], selectionsValue = [], o
     const selectedIds = new Set(selectedAssets.map((asset) => String(asset.id)));
     const analysis = [
       ...selectedAssets.filter((asset) => !asset?.visionAnalysis?.invalidated)
-        .map((asset) => multiline(asset?.visionAnalysis?.description)),
+        .map((asset) => multiline(asset?.visionAnalysis?.reconstructionPrompt || asset?.visionAnalysis?.description)),
       ...(Array.isArray(entry?.timeNotes) ? entry.timeNotes : [])
         .filter((note) => selectedIds.has(String(note?.assetId ?? ""))).map((note) => multiline(note?.text)),
       ...(Array.isArray(entry?.videoAnalyses) ? entry.videoAnalyses : [])

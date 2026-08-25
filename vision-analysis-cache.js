@@ -7,16 +7,20 @@ export function findPersistedVisionAnalysis(entries, options = {}) {
   const locale = options.locale === "en" ? "en" : "zh-CN";
   const catalogRevision = Number(options.catalogRevision);
   if (!fingerprint || !profileFingerprint || !Number.isFinite(catalogRevision)) return null;
-  let partial = null;
   for (const entry of Array.isArray(entries) ? entries : []) {
     for (const visual of normalizeEntryVisuals(entry).visuals) {
       const analysis = visual.visionAnalysis;
       if (!analysis || Number(analysis.version) !== VISION_ANALYSIS_VERSION) continue;
       if (analysis.imageFingerprint !== fingerprint || analysis.profileFingerprint !== profileFingerprint) continue;
       if (analysis.locale !== locale || Number(analysis.catalogRevision) !== catalogRevision) continue;
-      if (analysis.quality === "complete") return structuredClone(analysis);
-      if (analysis.quality === "partial") partial = structuredClone(analysis);
+      const complete = analysis.quality === "complete"
+        && String(analysis.reconstructionPrompt ?? "").trim()
+        && Array.isArray(analysis.tags)
+        && analysis.tags.some((tag) =>
+          String(tag?.g ?? "").trim() && String(tag?.t ?? "").trim()
+        );
+      if (complete) return structuredClone(analysis);
     }
   }
-  return partial;
+  return null;
 }

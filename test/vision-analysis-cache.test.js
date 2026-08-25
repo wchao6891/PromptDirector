@@ -16,7 +16,8 @@ function entryWithAnalysis(id, quality, overrides = {}) {
       visionAnalysis: {
         version: 2,
         quality,
-        description: `${quality} result`,
+        reconstructionPrompt: `${quality} result`,
+        tags: [{ g: "style.render", t: "电影写实" }],
         imageFingerprint: "same-image",
         profileFingerprint: "same-profile",
         locale: "zh-CN",
@@ -27,16 +28,29 @@ function entryWithAnalysis(id, quality, overrides = {}) {
   };
 }
 
-test("persisted vision cache prefers a complete matching result and can use a partial result as completion input", () => {
+test("persisted vision cache reuses only complete atomic results and ignores legacy partial output", () => {
   const options = { fingerprint: "same-image", profileFingerprint: "same-profile", locale: "zh-CN", catalogRevision: 7 };
   const partial = findPersistedVisionAnalysis([entryWithAnalysis("partial", "partial")], options);
-  assert.equal(partial.quality, "partial");
+  assert.equal(partial, null);
 
   const complete = findPersistedVisionAnalysis([
     entryWithAnalysis("partial", "partial"),
     entryWithAnalysis("complete", "complete")
   ], options);
   assert.equal(complete.quality, "complete");
+});
+
+test("persisted vision cache rejects records missing either the reverse prompt or tags", () => {
+  const options = { fingerprint: "same-image", profileFingerprint: "same-profile", locale: "zh-CN", catalogRevision: 7 };
+  assert.equal(findPersistedVisionAnalysis([
+    entryWithAnalysis("no-prompt", "complete", { reconstructionPrompt: "" })
+  ], options), null);
+  assert.equal(findPersistedVisionAnalysis([
+    entryWithAnalysis("no-tags", "complete", { tags: [] })
+  ], options), null);
+  assert.equal(findPersistedVisionAnalysis([
+    entryWithAnalysis("invalid-tags", "complete", { tags: [{ g: "", t: "伪标签" }, {}] })
+  ], options), null);
 });
 
 test("persisted vision cache rejects stale model, locale, taxonomy, and protocol matches", () => {

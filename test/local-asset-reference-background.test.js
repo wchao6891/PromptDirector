@@ -14,6 +14,18 @@ test("background imports inert local references without reading a managed media 
   const itemEnd = source.indexOf("function importedEntryFromStagedAsset", itemStart);
   const item = source.slice(itemStart, itemEnd);
   assert.match(item, /staged\.storageMode !== "reference" && !await getMediaBlob/u);
+  assert.match(item, /await commitLocalChanges\(/u);
+  assert.match(item, /await enqueueAutomaticLibraryMaintenance\(\[entry\]\)/u);
+  assert.match(item, /await notifySaved\(entries\.length\)/u);
+  assert.match(item, /await queueImportJobAnalysis\(finished\.job\)/u);
+});
+
+test("startup recovery cannot replace a newly created import job with an empty snapshot", () => {
+  assert.match(source, /enqueue\(recoverImportJobs\)\.catch/u);
+  const start = source.indexOf("async function recoverImportJobs");
+  const end = source.indexOf("function scheduleImportRunner", start);
+  const recovery = source.slice(start, end);
+  assert.match(recovery, /if \(stored\[STORAGE_KEYS\.importJobs\][\s\S]*JSON\.stringify\(stored\[STORAGE_KEYS\.importJobs\]\)/u);
 });
 
 test("relink metadata action touches the case and never accepts a file handle", () => {

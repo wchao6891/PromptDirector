@@ -2,7 +2,7 @@ import { analysisTaxonomyPayload, validateAnalysisTagResponse } from "./tag-taxo
 
 export const VISUAL_ANALYSIS_VERSION = 2;
 export const VISUAL_SET_SUMMARY_VERSION = 1;
-export const VISUAL_MODEL_PROTOCOL_VERSION = "box_2d-yxyx-v1";
+export const VISUAL_MODEL_PROTOCOL_VERSION = "reconstruction-tags-v1";
 export const VISUAL_ANALYSIS_DIMENSIONS = Object.freeze([
   "subject",
   "scene",
@@ -175,20 +175,25 @@ export function compileVisualAnalysisInstruction({ catalog, customInstruction = 
     ? "Write all descriptions, facts, labels, limitations, and the reconstruction prompt in English. Preserve exact visible spelling."
     : "所有描述、事实、标签、限制项和重建提示词使用简体中文；画面中的文字保留原始拼写。";
   const measured = measuredCanvas?.width && measuredCanvas?.height
-    ? `programMeasuredCanvasPixels=${JSON.stringify({ width: measuredCanvas.width, height: measuredCanvas.height })}; these pixel dimensions describe only the source file and must never be copied into box_2d.`
-    : "programMeasuredCanvasPixels=unavailable; estimate the canvas size, but never use estimated pixel dimensions inside box_2d.";
+    ? `sourceCanvasPixels=${JSON.stringify({ width: measuredCanvas.width, height: measuredCanvas.height })}; use this only to determine the visible aspect ratio and relative composition.`
+    : "sourceCanvasPixels=unavailable; infer only the visible aspect ratio and relative composition.";
+  const reconstructionChecklist = locale === "en"
+    ? "Build reconstructionPrompt from this internal ten-dimension checklist: (1) subjects and count, appearance, pose and relative scale; (2) scene, time, environment and foreground/midground/background; (3) actions, interactions and physical state; (4) visual style, medium, rendering, materials and textures; (5) framing, camera angle, lens feel, composition, focus and depth; (6) light sources, direction, contrast, palette and grading; (7) mood and narrative atmosphere; (8) visible text, typography, graphic marks and overlays; (9) aspect ratio, medium and image-quality traits; (10) reliably visible production or post-processing traits only. This checklist guides one continuous prompt; do not return ten separate sections."
+    : "用十维度在内部检查后写成一段连续的 reconstructionPrompt，不要输出十个独立分区。十维度是：主体、场景、动作、风格材质、构图镜头、光线色彩、情绪、可见文字图形、媒介画质、制作表现。具体检查：（1）主体数量、外观、姿态、朝向、相对位置与比例；（2）场景、时间环境、前景/中景/背景；（3）动作、交互与物理状态；（4）视觉风格、媒介、渲染、材质与纹理；（5）画幅、机位视角、镜头感、构图、焦点与景深；（6）光源、方向、明暗、色彩方案与调色；（7）情绪与叙事氛围；（8）可见文字、字体观感、图形标记与叠加层；（9）画幅比例、媒介与画质特征；（10）只有可靠可见时才写制作与后期表现。";
+  const completenessCheck = locale === "en"
+    ? "Before returning, check all four corners, foreground, main subject area, background, overlays, borders, and visible text. Include exact legible text and its typography or placement when useful for reconstruction. Omit uncertain or not applicable details instead of naming them as missing; especially do not invent sound, workflow, authors, brands, hidden objects, or AI probability."
+    : "返回前检查画面四角、前景、主体区、背景、叠加层、边缘和所有可见文字；对复刻有用且能辨认的文字要逐字保留，并写明字体观感与位置。不确定或不适用的内容直接省略，不要写成缺失项；尤其不要编造声音、工作流、作者、品牌、隐藏物体或 AI 概率。";
   return [
     "Analyze only the attached image in one single visual-analysis call.",
     locale === "en" ? "Complete the full analysis in this single call; no second visual audit is allowed." : "必须在这一次单次分析中完成全部拆解与自检，不进行第二次视觉复审。",
     language,
     String(customInstruction ?? "").trim().slice(0, 1200),
     measured,
-    "Produce a reconstruction-grade inventory of every visible subject, background object, decoration, text block, mark, edge detail, and occlusion. Do not infer off-image facts, authors, brands, or hidden objects.",
-    "For every visible element and OCR region, return box_2d exactly as [y_min, x_min, y_max, x_max] using relative integers from 0 to 1000. These are frame-relative edges, never pixel dimensions: 0 <= y_min < y_max <= 1000 and 0 <= x_min < x_max <= 1000. Do not return x/y/width/height.",
-    "Record coverage percentage, depth, occlusion, relationships, material, texture, color, lighting, pose, orientation, and typography wherever visible.",
-    `Return each of these ten visual dimensions exactly once and in this order: ${VISUAL_ANALYSIS_DIMENSIONS.join(", ")}. Mark a dimension applicable=false with empty facts when it is not visibly applicable; never invent content to fill it.`,
-    "Mark quantitative sources as measured, estimated, or not_observable. OCR must distinguish exact, partial, and unreadable text. reconstructionPrompt must be self-contained and usable without the image. It must synthesize every reconstruction-relevant visible fact recorded in canvas, elements, dimensions, and OCR, including aspect ratio, subject count, relative position and scale, depth and occlusion, materials, colors, lighting, focus, typography, and exact legible text; do not merely summarize the scene.",
-    "Before returning, inspect all four corners, foreground, subject area, background, overlays, and text. Put any still-visible omission in completeness.omittedVisibleElements; an empty array asserts that the single-call completeness check found none.",
+    "只输出 reconstructionPrompt 和 tags。",
+    reconstructionChecklist,
+    completenessCheck,
+    "reconstructionPrompt must be self-contained, detailed enough to recreate the image without seeing it, and limited to visible evidence. Preserve spatial relationships, relative scale, depth, occlusion, exact legible text, and distinctive visual traits; do not merely summarize the scene.",
+    "tags must contain one to six valid, compact, search-oriented labels from the fixed taxonomy paths; prefer the highest-value visible cues.",
     `fixedPaths=${analysisTaxonomyPayload(catalog, locale)}`,
     "Return exactly one JSON object matching the supplied visual-model response schema. Do not output commentary, markdown, scores, hidden reasoning, or additional fields."
   ].filter(Boolean).join("\n");
@@ -200,6 +205,24 @@ export function normalizeVisualModelResponse(value, catalogValue) {
   }
   const source = normalizeKnownRootFieldCasing(value);
   const tagDiagnostics = partitionModelTags(source.tags, catalogValue);
+  if (!tagDiagnostics.accepted.length) {
+    throw new Error("视觉模型没有返回至少一个有效检索标签，本次没有写入");
+  }
+  const legacyFieldsPresent = ["description", "canvas", "elements", "dimensions", "ocr", "limitations", "completeness"]
+    .some((field) => Object.hasOwn(source, field));
+  if (!legacyFieldsPresent && Object.hasOwn(source, "reconstructionPrompt")) {
+    const reconstructionPrompt = requiredText(source.reconstructionPrompt, "视觉模型没有返回可独立使用的重建提示词");
+    return {
+      reconstructionPrompt,
+      description: reconstructionPrompt,
+      tags: tagDiagnostics.accepted,
+      version: VISUAL_ANALYSIS_VERSION,
+      quality: "complete",
+      missingFields: [],
+      normalizationDiagnostics: tagDiagnostics.rejections,
+      tagDiagnostics: { rejectedCount: tagDiagnostics.rejectedCount, rejections: tagDiagnostics.rejections }
+    };
+  }
   const converted = {
     ...source,
     elements: (Array.isArray(source.elements) ? source.elements : []).map(convertModelBoxIfValid),
@@ -389,21 +412,17 @@ export function prepareVisualSetSummary(values, locale = "zh-CN") {
       missingAssetIds.push(assetId);
       continue;
     }
-    try {
-      const analysis = normalizeVisualAnalysisV2(visualAnalysisPayload(item.analysis));
-      assets.push({
-        assetId,
-        description: analysis.description,
-        canvas: analysis.canvas,
-        elements: analysis.elements,
-        dimensions: analysis.dimensions,
-        ocr: analysis.ocr,
-        reconstructionPrompt: analysis.reconstructionPrompt,
-        limitations: analysis.limitations
-      });
-    } catch {
+    const reconstructionPrompt = String(item.analysis.reconstructionPrompt ?? "").trim();
+    const tags = (Array.isArray(item.analysis.tags) ? item.analysis.tags : []).flatMap((tag) => {
+      const g = String(tag?.g ?? "").trim();
+      const t = String(tag?.t ?? "").trim();
+      return g && t ? [{ g, t }] : [];
+    }).slice(0, 6);
+    if (!reconstructionPrompt || !tags.length) {
       missingAssetIds.push(assetId);
+      continue;
     }
+    assets.push({ assetId, reconstructionPrompt, tags });
   }
   return {
     ready: missingAssetIds.length === 0 && assets.length > 0,
@@ -417,8 +436,8 @@ export function prepareVisualSetSummary(values, locale = "zh-CN") {
 
 export function compileVisualSetSummaryInstruction(locale = "zh-CN") {
   return locale === "en"
-    ? "Summarize the saved per-image VisualAnalysisV2 records as one creative set. Do not request or infer from source images. Return strict JSON with imageRoles, sharedVisualSystem, differences, continuity, compositionRules, and reusablePrompt. Cover every assetId exactly once in imageRoles."
-    : "仅汇总已保存的逐图 VisualAnalysisV2 记录，不请求原图，也不把主图或拼图当作缺失图片的替代。严格返回 JSON：imageRoles（每个 assetId 恰好一次）、sharedVisualSystem（共同视觉系统）、differences（差异）、continuity（连续关系）、compositionRules（组合规律）、reusablePrompt（不依赖原图的可复用创作提示词）。";
+    ? "Summarize only the saved per-image reconstruction prompts and search tags as one creative set. Do not request or infer from source images. Return strict JSON with imageRoles, sharedVisualSystem, differences, continuity, compositionRules, and reusablePrompt. Cover every assetId exactly once in imageRoles."
+    : "仅汇总已保存的逐图反推提示词与检索标签，不请求原图，也不把主图或拼图当作缺失图片的替代。严格返回 JSON：imageRoles（每个 assetId 恰好一次）、sharedVisualSystem（共同视觉系统）、differences（差异）、continuity（连续关系）、compositionRules（组合规律）、reusablePrompt（不依赖原图的可复用创作提示词）。";
 }
 
 export function normalizeVisualSetSummaryV1(value, assetIds = []) {
@@ -531,14 +550,28 @@ function normalizeBbox(value) {
 }
 
 function createVisualModelResponseSchema() {
-  const schema = structuredClone(VISUAL_ANALYSIS_SCHEMA);
-  for (const collection of ["elements", "ocr"]) {
-    const item = schema.properties[collection].items;
-    item.required = item.required.map((field) => field === "bbox" ? "box_2d" : field);
-    delete item.properties.bbox;
-    item.properties.box_2d = MODEL_BOX_SCHEMA;
-  }
-  return schema;
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["reconstructionPrompt", "tags"],
+    properties: {
+      reconstructionPrompt: { type: "string", minLength: 1 },
+      tags: {
+        type: "array",
+        minItems: 1,
+        maxItems: 6,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["g", "t"],
+          properties: {
+            g: { type: "string" },
+            t: { type: ["string", "null"] }
+          }
+        }
+      }
+    }
+  };
 }
 
 function fixedTagGroupIds(catalog) {

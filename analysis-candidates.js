@@ -72,8 +72,8 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
   next.facetCatalog = normalizeFacetCatalog(next.facetCatalog);
   let entry = next.entries?.find((item) => item.id === entryId);
   if (!entry) throw new Error("没有找到需要分析的案例");
-  const description = String(result.description ?? "").trim();
-  if (!description) throw new Error("视觉模型没有返回画面描述，本次没有写入");
+  const reconstructionPrompt = String(result.reconstructionPrompt ?? "").trim();
+  if (!reconstructionPrompt) throw new Error("视觉模型没有返回可独立使用的反推提示词，本次没有写入");
   const visualId = String(metadata.visualId ?? "").trim();
   const matchesVisual = (item) => item.source === "vision_model" && (!visualId || item.visualId === visualId);
 
@@ -88,7 +88,6 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
   const assignmentStart = entry.facetAssignments.length;
   const tagged = applyFixedAnalysisTags(next, entryId, result.tags ?? [], {
     source: "vision_model",
-    allowEmpty: true,
     maxTags: 6,
     replaceExisting: false
   });
@@ -101,9 +100,8 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
   }
   entry.visionAnalysis = {
     version: Math.max(1, Number(metadata.version) || 1),
-    description,
-    quality: result.quality === "partial" ? "partial" : "complete",
-    missingFields: Array.isArray(result.missingFields) ? [...new Set(result.missingFields.map(String).filter(Boolean))] : [],
+    reconstructionPrompt,
+    quality: "complete",
     normalizationDiagnostics: Array.isArray(result.normalizationDiagnostics)
       ? result.normalizationDiagnostics.map((item) => ({
           field: String(item?.field ?? ""),
@@ -112,13 +110,6 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
           ...(Number(item?.count) > 0 ? { count: Number(item.count) } : {})
         })).filter((item) => item.field)
       : [],
-    ...(result.canvas ? { canvas: structuredClone(result.canvas) } : {}),
-    ...(Array.isArray(result.elements) ? { elements: structuredClone(result.elements) } : {}),
-    ...(Array.isArray(result.dimensions) ? { dimensions: structuredClone(result.dimensions) } : {}),
-    ...(Array.isArray(result.ocr) ? { ocr: structuredClone(result.ocr) } : {}),
-    ...(String(result.reconstructionPrompt ?? "").trim() ? { reconstructionPrompt: String(result.reconstructionPrompt).trim() } : {}),
-    ...(Array.isArray(result.limitations) ? { limitations: structuredClone(result.limitations) } : {}),
-    ...(result.completeness ? { completeness: structuredClone(result.completeness) } : {}),
     tags: Array.isArray(result.tags) ? structuredClone(result.tags) : [],
     locale: metadata.locale === "en" ? "en" : "zh-CN",
     imageFingerprint: String(metadata.imageFingerprint ?? "").trim(),
@@ -169,11 +160,18 @@ export function undoVisionAnalysis(state = {}, undo = {}) {
   return next;
 }
 
-export function editVisionDescription(entry = {}, description) {
-  if (!entry.visionAnalysis || entry.visionAnalysis.invalidated) throw new Error("这条案例还没有可编辑的画面描述");
-  const value = String(description ?? "").trim();
-  if (!value) throw new Error("画面描述不能为空");
-  return { ...entry, visionAnalysis: { ...entry.visionAnalysis, description: value, userEdited: true } };
+export function editVisionReconstructionPrompt(entry = {}, prompt) {
+  if (!entry.visionAnalysis || entry.visionAnalysis.invalidated) throw new Error("这条案例还没有可编辑的反推提示词");
+  const value = String(prompt ?? "").trim();
+  if (!value) throw new Error("反推提示词不能为空");
+  return {
+    ...entry,
+    visionAnalysis: {
+      ...entry.visionAnalysis,
+      reconstructionPrompt: value,
+      userEdited: true
+    }
+  };
 }
 
 export function invalidateVisionForScreenshot(entry = {}) {

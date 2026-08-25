@@ -143,7 +143,7 @@ test("share preview renders every portable media kind and its time notes", () =>
   assert.match(html, /镜头加速/);
 });
 
-test("share preview shows visual descriptions and related cases from the package", () => {
+test("share preview shows reconstruction prompts without a redundant visual-description section", () => {
   const entries = ["one", "two"].map((id) => ({
     id,
     title: `Visual ${id}`,
@@ -157,16 +157,15 @@ test("share preview shows visual descriptions and related cases from the package
       palette: { colors: ["#123456", "#345678"] },
       visionAnalysis: {
         version: 2,
-        description: id === "one" ? "青绿色雾气中的古代庭院。" : "青绿色夜色中的庭院。",
         reconstructionPrompt: id === "one" ? "青绿色雾气中的古代庭院，完整重建构图与光色。" : "青绿色夜色中的庭院，完整重建构图与光色。",
+        tags: [{ tagId: "facet:style:cinematic", label: "电影感" }],
         imageFingerprint: `${id}-fingerprint`
       }
     }],
     primaryMediaId: `image-${id}`
   }));
   const html = renderSharePreviewHtml(entries, { libraryTitle: "Archive" }, createDefaultTaxonomy(), createDefaultFacetCatalog(), previewOptions);
-  assert.match(html, /画面描述/);
-  assert.match(html, /青绿色雾气中的古代庭院/);
+  assert.doesNotMatch(html, /画面描述|Visual description/);
   assert.match(html, /青绿色雾气中的古代庭院，完整重建构图与光色/);
   assert.match(html, /data-copy-prompt="青绿色雾气中的古代庭院，完整重建构图与光色。"/);
   assert.match(html, /相关案例/);

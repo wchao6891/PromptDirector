@@ -38,7 +38,7 @@ test("background keeps service profiles for job execution but stops publishing o
   assert.doesNotMatch(source, /aiTaskRoutes:/);
 });
 
-test("persisted batch recovery wakes the runner while runner exceptions wait for the alarm", () => {
+test("persisted batch recovery wakes the runner while runner exceptions become visible failures", () => {
   const recovery = source.slice(
     source.indexOf("async function recoverDeepSeekBatch"),
     source.indexOf("async function undoDeepSeekBatch")
@@ -50,5 +50,32 @@ test("persisted batch recovery wakes the runner while runner exceptions wait for
     source.indexOf("async function runPersistedAnalysisBatch"),
     source.indexOf("async function runPersistedTextBatchSlice")
   );
-  assert.match(runner, /catch \(error\)[\s\S]*ensureAnalysisBatchAlarm\(stillRunning\)[\s\S]*continueRunning = false/);
+  assert.match(runner, /catch \(error\)[\s\S]*failUnfinishedAnalysisItems\(current,[\s\S]*commitLocalChanges\(\{ \[STORAGE_KEYS\.batchJob\]: failed \}\)/);
+  assert.match(runner, /ensureAnalysisBatchAlarm\(false\)[\s\S]*continueRunning = false/);
+});
+
+test("vision batch runner cancels stale model snapshots instead of blocking new settings", () => {
+  const claim = source.slice(
+    source.indexOf("async function claimVisionBatchItem"),
+    source.indexOf("async function completeVisionBatchItem")
+  );
+  const runner = source.slice(
+    source.indexOf("async function runPersistedVisionBatchSlice"),
+    source.indexOf("async function finalizeVisionBatchResults")
+  );
+  assert.match(claim, /const currentSettings = resolveVisionTaskSettings\("imageAnalysis", loadedConfiguration, \{ requireConfigured: false \}\);/);
+  assert.match(claim, /job\.providerType !== currentSettings\.activeProvider \|\| job\.model !== currentModel/);
+  assert.match(claim, /const canceled = cancelAnalysisBatch\(job\)/);
+  assert.match(runner, /const currentSettings = resolveVisionTaskSettings\("imageAnalysis", configuration, \{ requireConfigured: false \}\);/);
+  assert.match(runner, /job\.providerType !== currentSettings\.activeProvider \|\| job\.model !== currentModel/);
+  assert.match(runner, /job = cancelAnalysisBatch\(job\)/);
+});
+
+test("vision retries and structured-output correction share one per-image provider-call budget", () => {
+  const scheduled = source.slice(
+    source.indexOf("async function analyzeVisionBlobWithScheduler"),
+    source.indexOf("async function analyzeEntryVideo")
+  );
+  assert.match(scheduled, /const requestBudget = createVisionRequestBudget\(\)/);
+  assert.match(scheduled, /runScheduledAnalysisWithRetries\([\s\S]*analyzeImageWithVision\([\s\S]*requestBudget/);
 });

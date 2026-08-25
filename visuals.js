@@ -73,11 +73,12 @@ export function entryPalette(entryValue = {}) {
 
 export function primaryVisionAnalysis(entryValue = {}) {
   const analysis = primaryVisual(entryValue)?.visionAnalysis;
-  return analysis && !analysis.invalidated ? analysis : null;
+  return analysis && !analysis.invalidated && analysis.quality !== "partial" ? analysis : null;
 }
 
 export function primaryVisionDescription(entryValue = {}) {
-  return clean(primaryVisionAnalysis(entryValue)?.description);
+  const analysis = primaryVisionAnalysis(entryValue);
+  return clean(analysis?.reconstructionPrompt || analysis?.description);
 }
 
 export function visualDescriptions(entryValue = {}) {

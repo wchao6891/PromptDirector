@@ -484,6 +484,11 @@ test("DeepSeek failures expose safe retry categories", () => {
   assert.equal(deepSeekErrorDetails(new DeepSeekApiError("rate", 429)).kind, "rate_limit");
   assert.equal(deepSeekErrorDetails(new DeepSeekApiError("timeout", 408)).kind, "timeout");
   assert.equal(deepSeekErrorDetails(new DOMException("Aborted", "AbortError")).kind, "stopped");
+  assert.deepEqual(deepSeekErrorDetails(new TypeError("Failed to fetch")), {
+    kind: "network",
+    message: "网络连接失败，请检查服务地址、权限或网络后重试",
+    retryable: true
+  });
   assert.equal(deepSeekErrorDetails(new Error("unexpected response")).kind, "unknown");
 });
 

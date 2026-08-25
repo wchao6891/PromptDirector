@@ -125,13 +125,13 @@ def main() -> None:
         expect(library.locator("#analysis-batch-summary")).to_contain_text("1 条成功结果已安全暂存")
         expect(library.locator("#analysis-batch-summary")).to_contain_text("AI 返回了未知分类路径")
         expect(library.locator("#retry-analysis-failures")).to_have_text("继续完成重建（1 条）")
-        expect(library.locator("#apply-staged-analysis-rebuild")).to_have_text("应用已成功结果（1 条待补）")
+        expect(library.locator("#apply-staged-analysis-rebuild")).to_have_text("应用完整成功结果（1 条失败不写入）")
         expect(library.locator("#start-analysis-batch")).to_be_hidden()
         expect(library.locator("#preview-analysis-batch")).to_be_hidden()
 
         library.locator("#apply-staged-analysis-rebuild").click()
         expect(library.locator("#batch-status-badge")).to_contain_text("成功结果已应用")
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("1 条失败案例已转为待分析")
+        expect(library.locator("#analysis-batch-summary")).to_contain_text("完整成功结果已经生效，1 条失败案例未写入，可单独重试")
         expect(library.locator("#apply-staged-analysis-rebuild")).to_be_hidden()
         expect(library.locator("#retry-analysis-failures")).to_be_hidden()
         partial_state = library.evaluate(

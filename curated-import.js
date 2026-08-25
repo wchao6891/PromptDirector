@@ -50,6 +50,7 @@ export function mergeCuratedLibraryPackage(currentValue = {}, libraryValue = {},
     sessionIdMap: options.sessionIdMap,
     runIdMap: options.runIdMap,
     preserveLibraryConfiguration: true,
+    skipExistingEntryIds: true,
     now: projectCreatedAt
   });
 

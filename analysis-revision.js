@@ -1,5 +1,11 @@
+import { canonicalTextAnalysisInput, hasCommittedTextAnalysisTags } from "./analysis-input.js";
+
 export function entryTextRevision(entry = {}) {
   return Math.max(1, Math.floor(Number(entry.textRevision) || 1));
+}
+
+export function analysisInputRevision(entry = {}, assetId = "") {
+  return canonicalTextAnalysisInput(entry, assetId).textRevision;
 }
 
 export function analyzedTextRevision(entry = {}) {
@@ -8,11 +14,11 @@ export function analyzedTextRevision(entry = {}) {
 }
 
 export function textAnalysisReason(entry = {}) {
-  const text = String(entry.text ?? "").trim();
+  const { text } = canonicalTextAnalysisInput(entry);
   if (!entry.id || !text) return "";
   const analyzedRevision = analyzedTextRevision(entry);
   if (!analyzedRevision) return "missing_analysis";
-  return analyzedRevision === entryTextRevision(entry) ? "" : "text_changed";
+  return analyzedRevision === analysisInputRevision(entry) ? "" : "text_changed";
 }
 
 export function markEntryTextChanged(entryValue = {}, nextTextValue) {
@@ -40,12 +46,9 @@ export function updateEntryText(entryValue = {}, nextTextValue, expectedRevision
 }
 
 export function analysisRevisionMeta(entry = {}) {
-  return { textRevision: entryTextRevision(entry) };
+  return { textRevision: analysisInputRevision(entry) };
 }
 
 export function hasPriorTextAnalysis(entry = {}) {
-  if (entry.analysisMeta && typeof entry.analysisMeta === "object") return true;
-  if (String(entry.analyzedAt ?? "").trim()) return true;
-  return [...(entry.facetAssignments ?? []), ...(entry.analysisCandidates ?? [])]
-    .some((item) => item?.source === "deepseek_text");
+  return hasCommittedTextAnalysisTags(entry);
 }

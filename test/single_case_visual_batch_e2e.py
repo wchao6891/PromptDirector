@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -10,6 +11,7 @@ from e2e_support import base_entry, extension_session
 
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+FAILURE_TARGET_SUFFIX = b"PromptDirectorFailureTarget"
 DIMENSIONS = ["subject", "scene", "action", "style", "camera", "light", "mood", "sound", "output", "workflow"]
 
 
@@ -47,14 +49,14 @@ def complete_analysis(description: str, *, model_response: bool = False) -> dict
         "reconstructionPrompt": f"{description}，主体居中，完整还原构图和光色。",
         "limitations": ["无法确认画外信息"],
         "completeness": {"checkedRegions": ["四角", "主体", "背景", "文字"], "omittedVisibleElements": []},
-        "tags": [],
+        "tags": [{"g": "style.render", "t": "电影感"}],
     }
 
 
 class AiHandler(BaseHTTPRequestHandler):
     visual_requests: list[dict] = []
     summary_requests: list[dict] = []
-    fail_visual_request_once = 2
+    failure_target_attempts = 0
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -66,7 +68,18 @@ class AiHandler(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(length) or b"{}")
         if self.path.endswith("/responses"):
             self.visual_requests.append(payload)
-            if len(self.visual_requests) == self.fail_visual_request_once:
+            encoded_images = [
+                item
+                for item in json.dumps(payload).split('"')
+                if item.startswith("data:image/") and "," in item
+            ]
+            is_failure_target = any(
+                base64.b64decode(item.split(",", 1)[1]).endswith(FAILURE_TARGET_SUFFIX)
+                for item in encoded_images
+            )
+            if is_failure_target:
+                type(self).failure_target_attempts += 1
+            if is_failure_target and type(self).failure_target_attempts <= 3:
                 return self.reply({"error": {"message": "temporary local fixture failure"}}, status=503)
             result = complete_analysis(f"第 {len(self.visual_requests)} 张待补齐图片", model_response=True)
             return self.reply({
@@ -168,16 +181,20 @@ def main() -> None:
               const {{saveMediaBlob}} = await import(chrome.runtime.getURL('media-store.js'));
               const {{imageFingerprint}} = await import(chrome.runtime.getURL('vision.js'));
               const bytes = Uint8Array.from(atob('{PNG}'), value => value.charCodeAt(0));
-              const blob = new Blob([bytes], {{type: 'image/png'}});
-              const fingerprint = await imageFingerprint(blob);
-              for (let index = 1; index <= 15; index += 1) await saveMediaBlob(`visual-batch-${{index}}`, blob, {{checkCapacity: false}});
+              const contentHashes = [];
+              for (let index = 1; index <= 15; index += 1) {{
+                const suffix = index === 2 ? `visual-${{index}}-PromptDirectorFailureTarget` : `visual-${{index}}`;
+                const assetBlob = new Blob([bytes, new TextEncoder().encode(suffix)], {{type: 'image/png'}});
+                await saveMediaBlob(`visual-batch-${{index}}`, assetBlob, {{checkCapacity: false}});
+                contentHashes.push(await imageFingerprint(assetBlob));
+              }}
               const stored = await chrome.storage.local.get('entries');
               const entry = stored.entries[0];
-              entry.mediaAssets.forEach(asset => {{ asset.contentHash = fingerprint; }});
+              entry.mediaAssets.forEach((asset, index) => {{ asset.contentHash = contentHashes[index]; }});
               entry.mediaAssets[0].visionAnalysis = {{
                 ...{json.dumps(complete_analysis('第一张已有有效分析'), ensure_ascii=False)},
                 version: 2,
-                imageFingerprint: fingerprint,
+                imageFingerprint: contentHashes[0],
                 profileFingerprint: 'saved-profile',
                 providerType: 'compatible',
                 model: 'previous-model',
@@ -220,7 +237,7 @@ def main() -> None:
         expect(dialog).to_contain_text("1 张失败，已成功 13 张且不会重复请求", timeout=15_000)
         expect(dialog.locator('.visual-analysis-card[data-state="failed"]')).to_have_count(1)
         expect(dialog.locator('.visual-analysis-card[data-state="completed"]')).to_have_count(13)
-        assert len(AiHandler.visual_requests) == 14
+        assert len(AiHandler.visual_requests) == 16, len(AiHandler.visual_requests)
         assert len(AiHandler.summary_requests) == 0
         dialog.get_by_role("button", name="开始分析").click()
 
@@ -245,7 +262,7 @@ def main() -> None:
         assert prompts["visual-batch-3"]["text"] == analyses[2]["reconstructionPrompt"]
         assert prompts["visual-batch-3"]["source"] == "ai-suggestion"
         assert stored["visualSetAnalyses"][0]["version"] == 1
-        assert len(AiHandler.visual_requests) == 15
+        assert len(AiHandler.visual_requests) == 17, len(AiHandler.visual_requests)
         assert len(AiHandler.summary_requests) == 1
         assert "data:image" not in json.dumps(AiHandler.summary_requests[0])
 

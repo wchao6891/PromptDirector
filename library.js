@@ -53,6 +53,7 @@ import {
   normalizeComposerSettings
 } from "./composer.js";
 import { textFingerprint } from "./analysis-batch.js";
+import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import { entryTextRevision, textAnalysisReason } from "./analysis-revision.js";
 import { createSimilarityIndex, rankSimilarEntries } from "./local-similarity.js";
 import {
@@ -193,7 +194,7 @@ const elements = Object.fromEntries([
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
   "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
   "vision-batch-dialog", "vision-batch-close", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze",
-  "vision-batch-start", "vision-batch-pause", "vision-batch-resume", "vision-batch-retry", "vision-batch-cancel", "vision-batch-feedback",
+  "vision-batch-progress", "vision-batch-progress-bar", "vision-batch-start", "vision-batch-pause", "vision-batch-resume", "vision-batch-retry", "vision-batch-cancel", "vision-batch-feedback",
   "library-drop-target", "import-dialog", "import-dialog-title", "import-close", "import-source", "import-choose-files", "import-last-job", "import-actions", "import-preparing", "import-confirmation", "import-supported-count", "import-skipped-count", "import-duplicate-count", "import-byte-size", "import-project", "import-project-hint", "import-auto-analyze", "import-label-editor", "import-file-list", "import-feedback", "import-job-panel", "import-job-title", "import-job-count", "import-job-progress", "import-job-feedback", "import-cancel", "import-retry", "import-undo", "import-view-project", "import-start"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
@@ -256,7 +257,6 @@ let aiProviderRegistry = { version: 1, providers: {} };
 let aiTaskAssignments = {};
 let aiModelCatalogRefreshStarted = false;
 let creativeExperimentSettings = { enabled: false, autoAnalyze: false };
-let visionUndoEntryIds = new Set();
 let visibleEntries = [];
 let renderedCount = 0;
 let selectedContentId = "";
@@ -476,19 +476,19 @@ function renderAnalysisBatch() {
     elements.batchStatusBadge.textContent = t("尚未开始");
     elements.analysisBatchSummary.textContent = t("先生成预览，不会直接产生 API 请求。");
   } else {
-    const statusNames = { running: "分析中", paused: "已暂停", completed: unfinishedRebuild ? "重建待完成" : partialRebuildApplied ? "成功结果已应用" : "已完成", partial: "部分完成", failed: "分析失败", canceled: "上次已取消" };
+    const statusNames = { running: "分析中", paused: "已暂停", completed: unfinishedRebuild ? "重建待完成" : partialRebuildApplied ? "成功结果已应用" : "已完成", partial: "有失败项", failed: "分析失败", canceled: "上次已取消" };
     elements.batchStatusBadge.textContent = t(statusNames[job.status] || job.status);
     const progress = currentLocale() === "en"
-      ? [`${job.counts.succeeded}/${job.total} completed`, `${job.counts.partial || 0} partial`, `${job.counts.running} active`, `${job.counts.pending} queued`, `${job.counts.failed} failed`, `${job.requestAttempts || 0} actual requests`, `${job.outputCorrectionRequests || 0} output corrections`, `input ${job.usage.promptTokens} / output ${job.usage.completionTokens} tokens`, `${job.cacheHitCount || 0} result cache hits`, `prompt cache ${job.usage.cacheHitTokens} tokens`, analysisFailureCategorySummary(job, "en")].filter(Boolean).join(" · ")
-      : [`${job.counts.succeeded}/${job.total} 已完成`, `${job.counts.partial || 0} 待补全`, `${job.counts.running} 处理中`, `${job.counts.pending} 等待中`, `${job.counts.failed} 失败`, `真实请求 ${job.requestAttempts || 0} 次`, `结构补全 ${job.outputCorrectionRequests || 0} 次`, `输入 ${job.usage.promptTokens} / 输出 ${job.usage.completionTokens} tokens`, `结果缓存命中 ${job.cacheHitCount || 0} 次`, `提示缓存命中 ${job.usage.cacheHitTokens} tokens`, analysisFailureCategorySummary(job, "zh-CN")].filter(Boolean).join(" · ");
+      ? [`${job.counts.succeeded}/${job.total} completed`, `${job.counts.running} active`, `${job.counts.pending} queued`, `${job.counts.failed} failed`, `${job.requestAttempts || 0} actual requests`, `${job.outputCorrectionRequests || 0} output corrections`, `input ${job.usage.promptTokens} / output ${job.usage.completionTokens} tokens`, `${job.cacheHitCount || 0} result cache hits`, `prompt cache ${job.usage.cacheHitTokens} tokens`, analysisFailureCategorySummary(job, "en")].filter(Boolean).join(" · ")
+      : [`${job.counts.succeeded}/${job.total} 已完成`, `${job.counts.running} 处理中`, `${job.counts.pending} 等待中`, `${job.counts.failed} 失败`, `真实请求 ${job.requestAttempts || 0} 次`, `结构补全 ${job.outputCorrectionRequests || 0} 次`, `输入 ${job.usage.promptTokens} / 输出 ${job.usage.completionTokens} tokens`, `结果缓存命中 ${job.cacheHitCount || 0} 次`, `提示缓存命中 ${job.usage.cacheHitTokens} tokens`, analysisFailureCategorySummary(job, "zh-CN")].filter(Boolean).join(" · ");
     const recovery = unfinishedRebuild
       ? (currentLocale() === "en"
         ? `${job.stagedResultCount ?? job.counts.succeeded} successful results are safely staged. ${analysisFailureSummary(job, "en")}`
         : `${job.stagedResultCount ?? job.counts.succeeded} 条成功结果已安全暂存。${analysisFailureSummary(job, "zh-CN")}`)
       : partialRebuildApplied
         ? (currentLocale() === "en"
-          ? `Successful results are active. ${job.counts.failed} cases remain pending analysis.`
-          : `成功结果已经生效，${job.counts.failed} 条失败案例已转为待分析。`)
+          ? `Complete successful results are active. ${job.counts.failed} failed cases were not written and can be retried.`
+          : `完整成功结果已经生效，${job.counts.failed} 条失败案例未写入，可单独重试。`)
         : "";
     elements.analysisBatchSummary.textContent = [progress, recovery].filter(Boolean).join(" · ");
   }
@@ -505,19 +505,19 @@ function renderAnalysisBatch() {
   elements.retryAnalysisFailures.textContent = unfinishedRebuild
     ? (currentLocale() === "en" ? `Finish rebuild (${job.counts.failed})` : `继续完成重建（${job.counts.failed} 条）`)
     : currentLocale() === "en"
-      ? `Retry failed/incomplete (${(job?.counts.failed || 0) + (job?.counts.partial || 0)} expected items)`
-      : `重试失败/待补全（预计新增 ${(job?.counts.failed || 0) + (job?.counts.partial || 0)} 项）`;
-  elements.retryAnalysisFailures.hidden = !(job?.counts.failed || job?.counts.partial) || running || partialRebuildApplied || (unfinishedRebuild && job.stagingValid !== true);
+      ? `Retry failed (${job?.counts.failed || 0})`
+      : `重试失败（${job?.counts.failed || 0} 条）`;
+  elements.retryAnalysisFailures.hidden = !job?.counts.failed || running || partialRebuildApplied || (unfinishedRebuild && job.stagingValid !== true);
   elements.applyStagedAnalysisRebuild.textContent = unfinishedRebuild
     ? (currentLocale() === "en"
-      ? `Apply ${job.stagedResultCount ?? job.counts.succeeded} successful results (${job.counts.failed} pending)`
-      : `应用已成功结果（${job.counts.failed} 条待补）`)
+      ? `Apply ${job.stagedResultCount ?? job.counts.succeeded} complete results (${job.counts.failed} failed)`
+      : `应用完整成功结果（${job.counts.failed} 条失败不写入）`)
     : t("应用已成功结果");
   elements.applyStagedAnalysisRebuild.hidden = !unfinishedRebuild || job.stagingValid !== true;
   elements.undoAnalysisBatch.hidden = !job || !canUndoAnalysisBatch || running || paused;
   elements.analysisProgress.hidden = !active;
   elements.analysisProgressBar.max = Math.max(1, job?.total || 1);
-  elements.analysisProgressBar.value = Math.min((job?.counts?.succeeded || 0) + (job?.counts?.partial || 0) + (job?.counts?.failed || 0), job?.total || 0);
+  elements.analysisProgressBar.value = Math.min((job?.counts?.succeeded || 0) + (job?.counts?.failed || 0), job?.total || 0);
 }
 
 function analysisFailureSummary(job, locale) {
@@ -902,7 +902,6 @@ async function refreshLibrary() {
   composerSettings = normalizeComposerSettings(response.composerSettings);
   creativeExperimentSettings = response.creativeExperimentSettings ?? creativeExperimentSettings;
   syncStatus = response.syncStatus ?? {};
-  visionUndoEntryIds = new Set(response.visionUndoEntryIds ?? []);
   canUndoFacetUpdate = Boolean(response.canUndoFacetUpdate);
   analysisBatchJob = response.analysisBatchJob ?? null;
   maintenanceJob = response.maintenanceJob ?? maintenanceJob;
@@ -940,6 +939,7 @@ async function refreshLibrary() {
     if (elements.searchInput.value.trim()) scheduleSearchRender();
   }).catch(() => undefined);
   if (elements.managerDialog.open) renderManager();
+  if (elements.visionBatchDialog.open) renderVisionBatchDialog();
   if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
   if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty) await renderDetail();
   scheduleMaintenanceStatusPoll();
@@ -1903,7 +1903,9 @@ async function createProjectCollection(button) {
   const parent = organizerState.collections.find((item) => item.id === selectedCollectionId);
   const name = await promptAppText({
     title: t("新建项目"),
-    description: parent ? `将创建在“${collectionPathLabel(organizerState, parent.id)}”下面` : "将创建为根项目",
+    description: parent
+      ? t("将创建在“{project}”下面", { project: collectionPathLabel(organizerState, parent.id) })
+      : t("将创建为根项目"),
     label: t("项目名称"),
     confirmLabel: t("新建")
   });
@@ -1987,12 +1989,11 @@ async function enterVisionSelection(collection) {
   caseOrderManagementActive = false;
   projectOrderManagementActive = false;
   selectedCollectionId = collection.id;
-  selectedCaseIds.clear();
+  replaceSelectedCaseIds(getVisionSelectableEntries("all").map((entry) => entry.id));
   selectedContentId = "";
   selectedFacets.clear();
   elements.pendingFilter.checked = false;
   elements.searchInput.value = "";
-  updateSelectionBar();
   renderGallery();
 }
 
@@ -2622,6 +2623,18 @@ async function openVisionBatchConfirmation() {
 
 async function previewSelectedVisionBatch() {
   if (visionBatchJob && ["running", "paused"].includes(visionBatchJob.status)) {
+    const currentModel = visionSettings.activeProvider === "openai" ? visionSettings.openai.model : visionSettings.compatible.model;
+    if (visionBatchJob.providerType !== visionSettings.activeProvider || visionBatchJob.model !== currentModel) {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "CANCEL_VISION_BATCH", jobId: visionBatchJob.id });
+        if (!response?.ok) throw new Error(response?.message || "无法取消旧批量任务");
+        visionBatchJob = response.visionBatchJob;
+      } catch (error) {
+        showVisionBatchFeedback(error.message || "无法取消旧批量任务", true);
+        return;
+      }
+      return previewSelectedVisionBatch();
+    }
     renderVisionBatchDialog();
     return;
   }
@@ -2636,38 +2649,51 @@ async function previewSelectedVisionBatch() {
 }
 
 function renderVisionBatchDialog(preview = null) {
-  const job = visionBatchJob;
-  const active = job && ["running", "paused"].includes(job.status);
-  const source = job ?? preview ?? {};
+  const activeJob = visionBatchJob && ["running", "paused"].includes(visionBatchJob.status) ? visionBatchJob : null;
+  const job = activeJob ?? (preview ? null : visionBatchJob);
+  const active = Boolean(activeJob);
+  const source = activeJob ?? preview ?? visionBatchJob ?? {};
   const counts = job?.counts ?? {};
   const requestCount = job?.requestCount ?? preview?.requestCount ?? 0;
   const caseCount = preview?.caseCount ?? new Set(job?.items?.map((item) => item.entryId) ?? []).size;
+  const processedCount = Math.min(
+    requestCount,
+    (counts.succeeded ?? 0) + (counts.failed ?? 0)
+  );
   elements.visionBatchSummary.textContent = job
-    ? currentLocale() === "en"
-      ? `${counts.succeeded ?? 0}/${requestCount} completed · ${counts.partial ?? 0} partial · ${counts.failed ?? 0} failed · ${job.requestAttempts || 0} actual requests · ${job.outputCorrectionRequests || 0} output corrections · ${job.cacheHitCount || 0} cache hits${analysisFailureCategorySummary(job, "en") ? ` · ${analysisFailureCategorySummary(job, "en")}` : ""}`
-      : `${counts.succeeded ?? 0}/${requestCount} 已完成 · ${counts.partial ?? 0} 待补全 · ${counts.failed ?? 0} 失败 · 真实请求 ${job.requestAttempts || 0} 次 · 结构补全 ${job.outputCorrectionRequests || 0} 次 · 缓存命中 ${job.cacheHitCount || 0} 次${analysisFailureCategorySummary(job, "zh-CN") ? ` · ${analysisFailureCategorySummary(job, "zh-CN")}` : ""}`
+    ? active
+      ? currentLocale() === "en"
+        ? `${counts.succeeded ?? 0}/${requestCount} completed · ${counts.running ?? 0} processing · ${counts.pending ?? 0} waiting · ${counts.failed ?? 0} failed`
+        : `${counts.succeeded ?? 0}/${requestCount} 已完成 · ${counts.running ?? 0} 处理中 · ${counts.pending ?? 0} 等待中 · ${counts.failed ?? 0} 失败`
+      : currentLocale() === "en"
+        ? `${counts.succeeded ?? 0}/${requestCount} completed · ${counts.failed ?? 0} failed · ${job.requestAttempts || 0} requests · ${job.cacheHitCount || 0} cache hits${analysisFailureCategorySummary(job, "en") ? ` · ${analysisFailureCategorySummary(job, "en")}` : ""}`
+        : `${counts.succeeded ?? 0}/${requestCount} 已完成 · ${counts.failed ?? 0} 失败 · 请求 ${job.requestAttempts || 0} 次 · 缓存 ${job.cacheHitCount || 0} 次${analysisFailureCategorySummary(job, "zh-CN") ? ` · ${analysisFailureCategorySummary(job, "zh-CN")}` : ""}`
     : currentLocale() === "en"
       ? `${caseCount} cases · ${requestCount} image requests`
       : `${caseCount} 个案例 · ${requestCount} 次图片请求`;
   elements.visionBatchService.textContent = [source.providerType, source.model].filter(Boolean).join(" · ");
   elements.visionBatchAllImages.disabled = Boolean(active);
   elements.visionBatchReanalyze.disabled = Boolean(active);
-  elements.visionBatchStart.hidden = Boolean(job);
+  elements.visionBatchProgress.hidden = !job;
+  elements.visionBatchProgressBar.max = Math.max(1, requestCount || job?.requestCount || 1);
+  elements.visionBatchProgressBar.value = Math.min(processedCount, elements.visionBatchProgressBar.max);
+  elements.visionBatchStart.hidden = Boolean(activeJob);
   elements.visionBatchStart.disabled = !requestCount;
-  elements.visionBatchPause.hidden = !job || job.status !== "running";
-  elements.visionBatchResume.hidden = !job || job.status !== "paused";
-  elements.visionBatchRetry.hidden = !job || !(counts.failed || counts.partial) || job.status === "running";
+  elements.visionBatchPause.hidden = !activeJob || activeJob.status !== "running";
+  elements.visionBatchResume.hidden = !activeJob || activeJob.status !== "paused";
+  elements.visionBatchRetry.hidden = !job || !counts.failed || job.status === "running";
   elements.visionBatchRetry.textContent = currentLocale() === "en"
-    ? `Retry failed/incomplete (${(counts.failed || 0) + (counts.partial || 0)} expected items)`
-    : `重试失败/待补全（预计新增 ${(counts.failed || 0) + (counts.partial || 0)} 项）`;
+    ? `Retry failed (${counts.failed || 0} expected items)`
+    : `重试失败项（预计新增 ${counts.failed || 0} 项）`;
   elements.visionBatchCancel.hidden = !active;
   if (job && !active) {
     const total = job.usage?.totalTokens ?? 0;
+    const failureMessage = job.items?.find((item) => item.status === "failed")?.error || "";
     const label = job.status === "completed" ? (currentLocale() === "en" ? "Completed" : "全部完成")
       : job.status === "failed" ? (currentLocale() === "en" ? "Failed" : "全部失败")
       : job.status === "canceled" ? (currentLocale() === "en" ? "Canceled" : "已取消")
-      : (currentLocale() === "en" ? "Partially completed" : "部分完成，可重试失败或待补全项");
-    showVisionBatchFeedback(`${label} · ${total} tokens` , job.status === "failed");
+      : (currentLocale() === "en" ? "Completed with failures" : "已完成，可重试失败项");
+    showVisionBatchFeedback(`${label}${failureMessage ? ` · ${failureMessage}` : ""} · ${total} tokens` , job.status === "failed");
   }
 }
 
@@ -2699,8 +2725,10 @@ async function updateVisionBatchAction(type) {
     visionBatchJob = response.visionBatchJob;
     showVisionBatchFeedback(response.message);
     renderVisionBatchDialog();
+    return response;
   } catch (error) {
     showVisionBatchFeedback(error.message, true);
+    return null;
   }
 }
 
@@ -3042,7 +3070,7 @@ async function restoreCompleteFolderBackup() {
     if (!preview?.ok) throw new Error(preview?.message || "无法检查资料夹备份");
     const approved = await confirmAppAction({
       title: "恢复资料库备份？",
-      description: `将恢复 ${preview.importedCount || 0} 个新案例、${preview.importedSkillCount || 0} 个 Skill 和 ${parsed.assets.size + parsed.skillAssets.size} 项本地文件（${formatBytes(totalBytes)}）。已有内容不会被覆盖。`,
+      description: `将恢复 ${preview.importedCount || 0} 个新案例、${preview.importedSkillCount || 0} 个 Skill 和 ${parsed.assets.size + parsed.skillAssets.size} 项本地文件（${formatBytes(totalBytes)}）。${preview.remappedCount ? `其中 ${preview.remappedCount} 个同源案例会作为新副本导入。` : ""}已有内容不会被覆盖。`,
       confirmLabel: "开始恢复"
     });
     if (!approved) {
@@ -3127,6 +3155,7 @@ async function importSharedLibraryPackage() {
     const approved = await confirmAppAction({
       title: "导入分享包？",
       description: `将导入 ${preview.importedCount || 0} 个新案例和 ${parsed.assets.size} 项本地媒体` +
+        `${preview.remappedCount ? `；其中 ${preview.remappedCount} 个同源案例会作为新副本导入` : ""}` +
         `${preview.skippedCount ? `，跳过 ${preview.skippedCount} 个已有案例` : ""}。现有资料不会被覆盖。`,
       confirmLabel: "开始导入"
     });
@@ -3773,8 +3802,6 @@ async function renderDetail({ resetScroll = false } = {}) {
   if (isEntryPending(entry)) body.append(createPendingReviewPanel(entry));
   const prompt = capturedPost ? null : createPromptSection(entry);
   if (prompt) body.append(prompt);
-  const visionDescription = createVisionDescription(entry);
-  if (visionDescription) body.append(visionDescription);
   const visualSetAnalyses = createVisualSetAnalyses(entry);
   if (visualSetAnalyses) body.append(visualSetAnalyses);
   const attributes = createDetailAttributes(entry);
@@ -3929,8 +3956,6 @@ async function renderCompoundDetail(entry, content, body) {
     if (isEntryPending(member)) section.append(createPendingReviewPanel(member));
     const prompt = createPromptSection(member, { compoundMember: true });
     if (prompt) section.append(prompt);
-    const vision = createVisionDescription(member);
-    if (vision) section.append(vision);
     const attributes = createDetailAttributes(member);
     if (attributes) section.append(attributes);
     const metadata = createDetailMetadata(member);
@@ -4385,11 +4410,6 @@ function refreshActiveDetailAssetSections(entry) {
   else if (prompt) body.querySelector(":scope > .detail-header")?.after(prompt);
   else currentPrompt?.remove();
 
-  const vision = createVisionDescription(entry);
-  const currentVision = body.querySelector(":scope > .vision-description");
-  if (vision && currentVision) currentVision.replaceWith(vision);
-  else if (vision) (body.querySelector(":scope > .prompt-section") || body.querySelector(":scope > .detail-header"))?.after(vision);
-  else currentVision?.remove();
 }
 
 function handleVideoAnalysisProgress(message) {
@@ -5328,34 +5348,6 @@ async function openSingleCaseComposer(entry, targetType, assetId = "") {
   }
 }
 
-function createVisionDescription(entry) {
-  const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId;
-  const activeAsset = entryMediaAssets(entry).find((asset) => asset.id === activeAssetId && asset.kind === "image" && asset.usage !== "poster");
-  const vision = activeAsset ? activeAsset.visionAnalysis : primaryVisionAnalysis(entry);
-  if (!vision?.description?.trim()) return null;
-  const section = el("section", "detail-section vision-description");
-  const heading = el("div", "vision-description-heading");
-  heading.append(textEl("h3", "", "画面描述"));
-  if (vision.quality === "partial") heading.append(textEl("span", "batch-status-badge", `部分完成 · ${vision.missingFields?.length || 0} 项待补全`));
-  const actions = el("div", "vision-description-actions");
-  const copy = textEl("button", "button-secondary", "复制");
-  copy.addEventListener("click", () => copyTextWithFeedback(
-    copy,
-    vision.description,
-    "画面描述已复制",
-    "浏览器未允许复制，请选中描述后复制"
-  ));
-  actions.append(copy);
-  if (visionUndoEntryIds.has(entry.id)) {
-    const undo = textEl("button", "button-secondary", "撤回本次分析");
-    undo.addEventListener("click", () => perform(undo, { type: "UNDO_VISION_ANALYSIS", entryId: entry.id }));
-    actions.append(undo);
-  }
-  heading.append(actions);
-  section.append(heading, rawTextEl("p", "", vision.description));
-  return section;
-}
-
 async function analyzeEntryVision(entry, button) {
   const provider = visionSettings.activeProvider === "compatible" ? visionSettings.compatible : visionSettings.openai;
   if (!provider?.configured || !visionSettings.consent) {
@@ -5368,9 +5360,9 @@ async function analyzeEntryVision(entry, button) {
   if (!visual) return;
   if (vision) {
     const message = currentLocale() === "en"
-      ? `Reanalyzing will replace the ${vision.userEdited ? "manually revised description" : "previous model description"} and vision-model tags. Manual tags and DeepSeek text tags remain unchanged. Continue?`
-      : `重新分析会替换${vision.userEdited ? "手动修订过的描述" : "旧模型描述"}和视觉模型标签；人工标签与 DeepSeek 文字标签不会改变。继续吗？`;
-    if (!await confirmAppAction({ title: "重新分析当前画面？", description: message, confirmLabel: "重新分析" })) return;
+      ? `Reanalyzing will replace the ${vision.userEdited ? "manually revised reconstruction prompt" : "previous model reconstruction prompt"} and vision-model tags. Manual tags and DeepSeek text tags remain unchanged. Continue?`
+      : `重新分析会替换${vision.userEdited ? "手动修订过的反推提示词" : "旧模型反推提示词"}和视觉模型标签；人工标签与 DeepSeek 文字标签不会改变。继续吗？`;
+    if (!await confirmAppAction({ title: "重新分析主图？", description: message, confirmLabel: "重新分析主图" })) return;
   }
   const originalLabel = button.textContent;
   button.disabled = true;
@@ -5382,10 +5374,9 @@ async function analyzeEntryVision(entry, button) {
       entryId: entry.id,
       visualId: visual.id,
       outputLocale: currentLocale(),
-      bypassCache: Boolean(vision && vision.quality !== "partial")
+      bypassCache: Boolean(vision)
     });
     if (!response?.ok) throw new Error(response?.message || "图片分析失败");
-    if (response.canUndoVisionAnalysis) visionUndoEntryIds.add(entry.id);
     const replacement = visualAnalysisPromptReplacement(response.entry, visual.id);
     if (replacement) await reviewVisualAnalysisPromptReplacements(entry.id, [{ ...replacement, index: 1 }]);
     setVisionAnalysisStatus(entry.id, "success", response.message || "画面分析已保存");
@@ -6655,6 +6646,7 @@ function createPromptSection(entry, options = {}) {
   const separatesCurrentAndShared = Boolean(activeImage && (imageAssets.length > 1 || options.compoundMember));
   const mediaPrompt = activeImage ? (entry.mediaPrompts || []).find((item) => item.assetId === activeImage.id) : null;
   const displayedPrompt = activeImage ? promptForEntryImage(entry, activeImage.id) : String(entry.text ?? "").trim();
+  const analysisInput = canonicalTextAnalysisInput(entry, activeImage?.id || "");
   if (promptEditState?.entryId === entry.id) {
     const textarea = document.createElement("textarea");
     textarea.className = "prompt-text prompt-editor";
@@ -6708,7 +6700,7 @@ function createPromptSection(entry, options = {}) {
   const vision = primaryVisionAnalysis(entry);
   const primary = primaryVisual(entry);
   const analyzeVisual = primary?.kind === "image" && !entry.compoundCase
-    ? textEl("button", "button-secondary", vision?.quality === "partial" ? "补全主图分析" : vision ? "重新分析主图" : "分析主图")
+    ? textEl("button", "button-secondary", vision ? "重新分析主图" : "分析主图")
     : null;
   const analyze = textEl("button", "button-secondary", "分析检索标签");
   const edit = textEl("button", "button-secondary", separatesCurrentAndShared ? "编辑当前图片" : "编辑");
@@ -6716,7 +6708,7 @@ function createPromptSection(entry, options = {}) {
   const promptReplacement = activeImage ? visualAnalysisPromptReplacement(entry, activeImage.id) : null;
   const replaceAnalyzedPrompt = promptReplacement ? textEl("button", "button-secondary", "更新为 V2 提示词") : null;
   copy.disabled = !displayedPrompt;
-  analyze.disabled = !entry.text;
+  analyze.disabled = !analysisInput.text;
   copy.addEventListener("click", () => copyTextWithFeedback(
     copy,
     displayedPrompt,
@@ -6724,7 +6716,7 @@ function createPromptSection(entry, options = {}) {
     "浏览器未允许复制，请选中文本后复制"
   ));
   analyzeVisual?.addEventListener("click", () => analyzeEntryVision(entry, analyzeVisual));
-  analyze.addEventListener("click", () => analyzeSingleEntry(entry, analyze));
+  analyze.addEventListener("click", () => analyzeSingleEntry(entry, analyze, analysisInput));
   edit.addEventListener("click", () => {
     promptEditState = { entryId: entry.id, assetId: separatesCurrentAndShared ? activeImage?.id || "" : "", originalText: displayedPrompt, draftText: displayedPrompt, dirty: false };
     renderDetail();
@@ -6791,7 +6783,7 @@ async function analyzeEntryVisualSet(entry, button) {
       && currentFingerprint === analysis.imageFingerprint);
     if (analysis?.invalidated || !fingerprintMatches) return { valid: false, label: "分析已过期" };
     if (Number(analysis?.version) === 2 && analysis?.quality !== "partial" && analysis?.reconstructionPrompt) return { valid: true, label: "有效 V2，可直接复用" };
-    if (analysis?.quality === "partial") return { valid: false, label: "部分完成，待补全" };
+    if (analysis?.quality === "partial") return { valid: false, label: "分析失败，请重试" };
     return { valid: false, label: "未分析" };
   };
   const missingAssets = assets.filter((asset) => !stateFor(asset).valid);
@@ -6887,7 +6879,6 @@ async function analyzeEntryVisualSet(entry, button) {
       }
       const promptSuggestions = [];
       const failures = [];
-      const partials = [];
       await Promise.allSettled(selectedAssets.map(async (asset) => {
         const imageIndex = assets.findIndex((item) => item.id === asset.id);
         const card = cardByAssetId.get(asset.id);
@@ -6904,17 +6895,15 @@ async function analyzeEntryVisualSet(entry, button) {
           });
           if (!response?.ok) throw new Error(response?.message || "逐图分析失败");
           const partial = response.quality === "partial";
-          if (partial) partials.push({ index: imageIndex + 1, missingFields: response.missingFields ?? [] });
-          else completedAssetIds.add(asset.id);
+          if (partial) throw new Error("图片分析结果不完整，请重试");
+          completedAssetIds.add(asset.id);
           const input = dialogControls?.get(`asset_${imageIndex}`);
-          if (input && !partial) {
+          if (input) {
             input.checked = false;
             input.disabled = true;
           }
-          if (card) card.dataset.state = partial ? "partial" : "completed";
-          if (statusLabel) statusLabel.textContent = partial
-            ? t("待补全 · 已保存有效结果")
-            : t("本次已完成");
+          if (card) card.dataset.state = "completed";
+          if (statusLabel) statusLabel.textContent = t("本次已完成");
           updateSelectionSummary();
           const replacement = visualAnalysisPromptReplacement(response.entry, asset.id);
           if (replacement) savedPromptSuggestions.set(asset.id, { ...replacement, index: imageIndex + 1 });
@@ -6925,12 +6914,11 @@ async function analyzeEntryVisualSet(entry, button) {
           if (statusLabel) statusLabel.textContent = t("失败 · {message}", { message });
         }
       }));
-      if (failures.length || partials.length) {
+      if (failures.length) {
         const statusLine = status();
         statusLine.classList.add("error");
-        statusLine.textContent = t("{failed} 张失败，{partial} 张待补全，已成功 {completed} 张且不会重复请求。可直接重试失败或待补全项。", {
+        statusLine.textContent = t("{failed} 张失败，已成功 {completed} 张且不会重复请求。可直接重试失败项。", {
           failed: failures.length,
-          partial: partials.length,
           completed: completedAssetIds.size
         });
         await refreshLibrary();
@@ -6987,19 +6975,6 @@ function createEntryEditor(entry, options = {}) {
       onSave: (button, select) => perform(button, { type: "CONFIRM_CLASSIFICATION", entryId: entry.id, pathIds: [select.value], rememberSource: false })
     });
     body.append(textEl("h4", "", "内容类型"), classification);
-  }
-  const vision = primaryVisionAnalysis(entry);
-  const visual = primaryVisual(entry);
-  if (vision && visual) {
-    const field = el("label", "vision-edit-field");
-    const textarea = document.createElement("textarea");
-    textarea.value = vision.description;
-    field.append(textEl("span", "sr-only", "画面描述"), textarea);
-    const saveDescription = textEl("button", "button-secondary", "保存");
-    saveDescription.addEventListener("click", () => perform(saveDescription, {
-      type: "UPDATE_VISION_DESCRIPTION", entryId: entry.id, visualId: visual.id, description: textarea.value
-    }));
-    body.append(textEl("h4", "", "画面描述"), field, saveDescription);
   }
   const grouped = groupEntryAssignments(entry, facetCatalog, "confirmed");
   const selected = el("div", "selected-edit-tags");
@@ -8214,7 +8189,7 @@ async function applyStagedAnalysisRebuild() {
   }
 }
 
-async function analyzeEntryWithRetry(entry, catalog, settingsValue, outputLocale = currentLocale(), signal, onDiagnostic) {
+async function analyzeEntryWithRetry(entry, catalog, settingsValue, outputLocale = currentLocale(), signal, onDiagnostic, analysisInput) {
   const reportDiagnostic = typeof onDiagnostic === "function"
     ? (event) => onDiagnostic(event.stage, event)
     : undefined;
@@ -8228,7 +8203,8 @@ async function analyzeEntryWithRetry(entry, catalog, settingsValue, outputLocale
         serviceRequests += 1;
         return analyzeTextDetailedWithDeepSeek(entry, catalog, { ...settingsValue, outputLocale }, fetch, {
           signal,
-          onDiagnostic: reportDiagnostic
+          onDiagnostic: reportDiagnostic,
+          analysisInput
         });
       }
     });
@@ -8248,18 +8224,19 @@ async function analyzeEntryWithRetry(entry, catalog, settingsValue, outputLocale
   }
 }
 
-async function analyzeSingleEntry(entry, button) {
+async function analyzeSingleEntry(entry, button, analysisInput = canonicalTextAnalysisInput(entry)) {
   button.disabled = true;
   try {
     const settingsValue = await privateAiSettings();
-    const fingerprint = await textFingerprint(entry.text);
-    const result = await analyzeEntryWithRetry(entry, facetCatalog, settingsValue, currentLocale());
+    const fingerprint = await textFingerprint(analysisInput.text);
+    const result = await analyzeEntryWithRetry(entry, facetCatalog, settingsValue, currentLocale(), undefined, undefined, analysisInput);
     const profileFingerprint = await analysisProfileFingerprint(settingsValue, currentLocale());
     const response = await chrome.runtime.sendMessage({
       type: "APPLY_ENTRY_ANALYSIS_RESULT",
       entryId: entry.id,
       fingerprint,
-      textRevision: entryTextRevision(entry),
+      textRevision: analysisInput.textRevision,
+      assetId: analysisInput.assetId,
       tags: result.tags,
       normalizationDiagnostics: result.normalizationDiagnostics,
       attempts: result.attempts,
@@ -8403,8 +8380,11 @@ function renderReanalysisPreview() {
   const wrapper = el("div", "");
   const nothingMissing = !reanalysisPreview.confirmed && !reanalysisPreview.suggested && !reanalysisPreview.paletteCount;
   wrapper.append(textEl("strong", "", nothingMissing
-    ? "资料索引已完整"
-    : `待补全：${reanalysisPreview.confirmed} 条内容类型，${reanalysisPreview.paletteCount} 张图片色卡。`));
+    ? t("资料索引已完整")
+    : t("需要更新索引：{types} 条内容类型，{palettes} 张图片色卡。", {
+        types: reanalysisPreview.confirmed,
+        palettes: reanalysisPreview.paletteCount
+      })));
   const list = el("div", "reanalyze-case-list");
   reanalysisPreview.cases.forEach((item) => list.append(rawTextEl("p", "", `${item.title}：${t("确认")} ${item.confirmed}，${currentLocale() === "en" ? "suggestions" : "建议"} ${item.suggested}`)));
   wrapper.append(list);

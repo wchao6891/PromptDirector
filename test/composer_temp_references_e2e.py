@@ -89,7 +89,7 @@ def main() -> None:
                         "reconstructionPrompt": "Centered subject with a clear silhouette and controlled contrast.",
                         "limitations": [],
                         "completeness": {"checkedRegions": ["full frame"], "omittedVisibleElements": []},
-                        "tags": [],
+                        "tags": [{"g": "camera.composition", "t": "主体居中"}],
                     }),
                     "usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20},
                 }),
@@ -213,7 +213,7 @@ def main() -> None:
             }""",
             session_id,
         )
-        assert len(vision_requests) == 2, vision_requests
+        assert len(vision_requests) == 1, vision_requests
         assert len(composer_requests) == 2, composer_requests
         assert analyzed == [
             {"kind": "vision", "text": "Centered subject with a clear silhouette and controlled contrast."},

@@ -197,6 +197,14 @@ def main() -> None:
         expect(library.locator("#selection-trash")).to_be_enabled()
         library.locator("#selection-more-menu > summary").press("Escape")
         library.set_viewport_size({"width": 700, "height": 900})
+        library.wait_for_function(
+            """() => {
+              const bar = document.querySelector('#share-bar');
+              const rect = bar?.getBoundingClientRect();
+              return innerWidth === 700 && rect && rect.left >= 0 && rect.right <= innerWidth
+                && document.documentElement.scrollWidth <= document.documentElement.clientWidth;
+            }"""
+        )
         compact_desktop = library.locator("#share-bar").evaluate(
             "node => { const rect = node.getBoundingClientRect(); return {left: rect.left, right: rect.right, height: rect.height, viewport: innerWidth, overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth}; }"
         )

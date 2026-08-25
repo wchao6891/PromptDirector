@@ -23,7 +23,8 @@ test("local index maintenance exposes checked, running, complete, and failed tex
   assert.match(manager, /t\(reanalysisPreview \|\| maintenanceJob \? "重新检查" : "检查缺失项"\)/);
   assert.match(manager, /elements\.applyReanalyze\.hidden = maintenanceActive \|\| !maintenanceMissing/);
   assert.match(status, /资料索引已完整/);
-  assert.match(status, /待补全：\$\{reanalysisPreview\.confirmed\} 条内容类型，\$\{reanalysisPreview\.paletteCount\} 张图片色卡/);
+  assert.match(status, /t\("需要更新索引：\{types\} 条内容类型，\{palettes\} 张图片色卡。"/);
+  assert.doesNotMatch(status, /待补全/);
   assert.match(status, /t\("\{status\} · 已处理 \{processed\}\/\{total\} · 成功 \{succeeded\} · 失败 \{failed\}"/);
   assert.match(status, /processed: maintenanceJob\.processed/);
   assert.match(status, /succeeded: maintenanceJob\.succeeded/);

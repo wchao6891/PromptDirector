@@ -12,7 +12,6 @@ import {
   finalizeAnalysisRebuild,
   failAnalysisItem,
   pauseAnalysisBatch,
-  partiallySucceedAnalysisItem,
   previewAnalysisBatch,
   finalizePartialAnalysisRebuild,
   resumeAnalysisBatch,
@@ -24,6 +23,7 @@ import {
   textFingerprint,
   previewVisionBatch,
   createVisionBatchJob,
+  normalizeAnalysisBatchJob,
   reconcileVisionBatchResults,
   recoverInterruptedAnalysisBatch
 } from "../analysis-batch.js";
@@ -56,8 +56,19 @@ test("manual text and vision batches run from the persistent background queue", 
 test("batch preview selects only text cases that are new or changed", async () => {
   const unchanged = await textFingerprint("same prompt");
   const preview = await previewAnalysisBatch([
-    { id: "same", text: "same prompt", analysisMeta: { textFingerprint: unchanged, promptVersion: ANALYSIS_PROMPT_VERSION } },
-    { id: "changed", text: "new prompt", textRevision: 2, analysisMeta: { textRevision: 1, textFingerprint: "old", promptVersion: ANALYSIS_PROMPT_VERSION } },
+    {
+      id: "same",
+      text: "same prompt",
+      analysisMeta: { textFingerprint: unchanged, promptVersion: ANALYSIS_PROMPT_VERSION },
+      facetAssignments: [{ source: "deepseek_text", nodeId: "node:same" }]
+    },
+    {
+      id: "changed",
+      text: "new prompt",
+      textRevision: 2,
+      analysisMeta: { textRevision: 1, textFingerprint: "old", promptVersion: ANALYSIS_PROMPT_VERSION },
+      facetAssignments: [{ source: "deepseek_text", nodeId: "node:changed" }]
+    },
     { id: "new", text: "first analysis" },
     { id: "image", text: "" }
   ]);
@@ -66,12 +77,42 @@ test("batch preview selects only text cases that are new or changed", async () =
   assert.deepEqual(preview.reasonCounts, { missing_analysis: 1, text_changed: 1, explicit_reanalysis: 0 });
 });
 
+test("batch preview uses the same canonical primary-image prompt and revision as detail analysis", async () => {
+  const entry = {
+    id: "media-prompt",
+    title: "带逐图提示词",
+    text: "",
+    primaryMediaId: "image-b",
+    mediaAssets: [
+      { id: "image-a", kind: "image" },
+      { id: "image-b", kind: "image" }
+    ],
+    mediaPrompts: [
+      { assetId: "image-b", text: "当前图片提示词", updatedAt: "2026-08-21T09:30:00.000Z" }
+    ],
+    facetAssignments: []
+  };
+  const preview = await previewAnalysisBatch([entry]);
+  assert.deepEqual(preview.entries.map((item) => ({
+    entryId: item.entryId,
+    textRevision: item.textRevision,
+    characterCount: item.characterCount,
+    reason: item.reason
+  })), [{
+    entryId: "media-prompt",
+    textRevision: Date.parse("2026-08-21T09:30:00.000Z"),
+    characterCount: "当前图片提示词".length,
+    reason: "missing_analysis"
+  }]);
+});
+
 test("analysis profile changes never queue unchanged text in the default incremental preview", async () => {
   const unchanged = await textFingerprint("same prompt");
   const preview = await previewAnalysisBatch([{
     id: "same",
     text: "same prompt",
-    analysisMeta: { textFingerprint: unchanged, promptVersion: ANALYSIS_PROMPT_VERSION, profileFingerprint: "old-profile" }
+    analysisMeta: { textFingerprint: unchanged, promptVersion: ANALYSIS_PROMPT_VERSION, profileFingerprint: "old-profile" },
+    facetAssignments: [{ source: "deepseek_text", nodeId: "node:same" }]
   }], { profileFingerprint: "new-profile" });
   assert.equal(preview.mode, "incremental");
   assert.equal(preview.caseCount, 0);
@@ -168,7 +209,8 @@ test("matching text and analysis profile do not queue a paid request", async () 
   const preview = await previewAnalysisBatch([{
     id: "same",
     text: "same prompt",
-    analysisMeta: { textFingerprint: unchanged, profileFingerprint: "same-profile" }
+    analysisMeta: { textFingerprint: unchanged, profileFingerprint: "same-profile" },
+    facetAssignments: [{ source: "deepseek_text", nodeId: "node:same" }]
   }], { profileFingerprint: "same-profile" });
   assert.equal(preview.caseCount, 0);
 });
@@ -186,6 +228,68 @@ test("legacy DeepSeek results receive a text baseline instead of being sent agai
   assert.equal(preview.caseCount, 0);
   assert.equal(baseline.entries[0].analysisMeta.textRevision, 1);
   assert.equal(baseline.entries[0].analysisMeta.textFingerprint, undefined);
+});
+
+test("dangling text analysis metadata is still queued until committed deepseek tags exist", async () => {
+  const preview = await previewAnalysisBatch([{
+    id: "dangling",
+    text: "共享提示词",
+    textRevision: 4,
+    analysisMeta: { textRevision: 4, model: "old" },
+    analyzedAt: "2026-08-21T00:00:00.000Z",
+    facetAssignments: []
+  }]);
+  assert.deepEqual(preview.entries.map((item) => item.entryId), ["dangling"]);
+  assert.deepEqual(preview.reasonCounts, { missing_analysis: 1, text_changed: 0, explicit_reanalysis: 0 });
+});
+
+test("vision preview skips only analyses with a reusable reconstruction prompt and tags", () => {
+  const preview = previewVisionBatch([{
+    id: "case",
+    title: "视觉案例",
+    primaryMediaId: "image-a",
+    mediaAssets: [
+      {
+        id: "image-a",
+        kind: "image",
+        visionAnalysis: {
+          version: 2,
+          description: "只有描述",
+          reconstructionPrompt: "只有反推提示词但没有本图标签",
+          quality: "complete"
+        }
+      },
+      {
+        id: "image-b",
+        kind: "image",
+        visionAnalysis: {
+          version: 2,
+          description: "完整分析",
+          reconstructionPrompt: "可复用提示词",
+          tags: [{ g: "style.render", t: "赛璐珞" }],
+          quality: "complete"
+        }
+      },
+      {
+        id: "image-c",
+        kind: "image",
+        visionAnalysis: {
+          version: 2,
+          description: "partial",
+          reconstructionPrompt: "不应视为完成",
+          tags: [{ g: "style.render", t: "赛璐珞" }],
+          quality: "partial"
+        }
+      }
+    ],
+    facetAssignments: [{ source: "vision_model", visualId: "image-b", nodeId: "style.render" }]
+  }], {
+    entryIds: ["case"],
+    includeAllImages: true,
+    reanalyze: false
+  });
+  assert.equal(preview.skippedAnalyzedCount, 1);
+  assert.deepEqual(preview.items.map((item) => item.visualId), ["image-a", "image-c"]);
 });
 
 test("pausing and immediately resuming preserves active claims to prevent duplicate paid requests", async () => {
@@ -364,13 +468,19 @@ test("settled batch status distinguishes complete, partial, and failed outcomes"
   assert.equal(complete.status, "completed");
 });
 
-test("a saved partial item remains retryable and only the incomplete item is requeued", async () => {
-  let job = await createAnalysisBatchJob([{ id: "a", text: "one" }, { id: "b", text: "two" }], { id: "saved-partial" });
-  const claims = claimAnalysisItems(job, 2, (() => { let index = 0; return () => `partial-${++index}`; })());
-  job = succeedAnalysisItem(claims.job, "a", "partial-1", { totalTokens: 5 });
-  job = partiallySucceedAnalysisItem(job, "b", "partial-2", { totalTokens: 7 });
-  assert.equal(job.status, "partial");
-  assert.deepEqual(analysisBatchSummary(job).counts, { pending: 0, running: 0, succeeded: 1, partial: 1, failed: 0 });
+test("legacy incomplete text items migrate to failures and retry without a partial state", () => {
+  let job = normalizeAnalysisBatchJob({
+    version: 2,
+    kind: "text_tags",
+    id: "saved-partial",
+    status: "partial",
+    items: [
+      { entryId: "a", status: "succeeded", attempts: 1 },
+      { entryId: "b", status: "partial", attempts: 1, error: "分析结果待补全" }
+    ]
+  });
+  assert.deepEqual(analysisBatchSummary(job).counts, { pending: 0, running: 0, succeeded: 1, partial: 0, failed: 1 });
+  assert.match(job.items[1].error, /不完整.*重试/);
 
   job = retryFailedAnalysisItems(job);
   assert.equal(job.items[0].status, "succeeded");
@@ -426,6 +536,7 @@ test("batch jobs snapshot configured concurrency and vision claims use it", () =
   assert.deepEqual(job.retryPolicy, {
     serviceRetries: 2,
     outputCorrectionRequests: 1,
+    maxProviderCallsPerItem: 3,
     backoffMs: [1000, 3000],
     obeyRetryAfter: true
   });
@@ -439,7 +550,17 @@ test("vision batch defaults to one primary image per selected case and can inclu
     primaryMediaId: "one-a",
     mediaAssets: [
       { id: "one-a", kind: "image", usage: "content" },
-      { id: "one-b", kind: "image", usage: "content", visionAnalysis: { description: "already analysed", quality: "complete" } },
+      {
+        id: "one-b",
+        kind: "image",
+        usage: "content",
+        visionAnalysis: {
+          description: "already analysed",
+          reconstructionPrompt: "可复用提示词",
+          tags: [{ g: "style.render", t: "赛璐珞" }],
+          quality: "complete"
+        }
+      },
       { id: "one-c", kind: "image", usage: "content", visionAnalysis: { description: "usable partial", quality: "partial", missingFields: ["canvas"] } },
       { id: "one-poster", kind: "image", usage: "poster" }
     ]
@@ -501,7 +622,8 @@ test("vision batch resumes after a saved result without paying for the same imag
       kind: "image",
       usage: "content",
       visionAnalysis: {
-        description: "云端白龙与少女",
+        reconstructionPrompt: "云端白龙盘旋在少女身后，电影级逆光与冷暖对比",
+        tags: [{ g: "style.render", t: "电影感" }],
         batchJobId: "vision-job",
         usage: { inputTokens: 40, outputTokens: 20, totalTokens: 60 }
       }
@@ -513,4 +635,29 @@ test("vision batch resumes after a saved result without paying for the same imag
   assert.equal(reconciled.job.items[0].status, "succeeded");
   assert.equal(reconciled.job.usage.totalTokens, 60);
   assert.deepEqual(claimAnalysisItems(reconciled.job, 1).claims, []);
+});
+
+test("legacy partial vision items migrate to failed so the UI can retry them", () => {
+  const normalized = normalizeAnalysisBatchJob({
+    version: 2,
+    kind: "vision",
+    id: "legacy-vision",
+    status: "partial",
+    items: [{
+      entryId: "one",
+      visualId: "one-a",
+      status: "partial",
+      error: "分析结果待补全"
+    }]
+  });
+
+  assert.equal(normalized.items[0].status, "failed");
+  assert.equal(normalized.items[0].error, "旧版图片分析结果不完整，请重试");
+  assert.deepEqual(analysisBatchSummary(normalized).counts, {
+    pending: 0,
+    running: 0,
+    succeeded: 0,
+    partial: 0,
+    failed: 1
+  });
 });

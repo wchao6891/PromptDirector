@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -30,7 +31,7 @@ def main() -> None:
                 setup.goto(f"chrome-extension://{extension_id}/collector.html")
                 setup.evaluate(
                     """async () => {
-                      const [{createDefaultTaxonomy}, {createDefaultFacetCatalog}, {createDefaultOrganizerState}] = await Promise.all([
+                      const [{createDefaultTaxonomy, SCHEMA_VERSION}, {createDefaultFacetCatalog}, {createDefaultOrganizerState}] = await Promise.all([
                         import(chrome.runtime.getURL('taxonomy.js')),
                         import(chrome.runtime.getURL('facets.js')),
                         import(chrome.runtime.getURL('organizer.js'))
@@ -41,7 +42,7 @@ def main() -> None:
                         const width = 720 + (index % 5) * 120;
                         const height = 720 + (index % 7) * 150;
                         return {
-                          schemaVersion: 22,
+                          schemaVersion: SCHEMA_VERSION,
                           id: caseId,
                           text: `Large library prompt ${index}`,
                           textRevision: index ? 1 : 2,
@@ -63,7 +64,7 @@ def main() -> None:
                           analysisMeta: {textRevision: 1, promptVersion: 1, model: 'existing'},
                           facetAssignments: [{
                             facetId: 'style', nodeId: `large-style-${index % 400}`,
-                            source: 'manual', status: 'confirmed'
+                            source: index ? 'deepseek_text' : 'manual', status: 'confirmed'
                           }],
                           analysisCandidates: [],
                           analysisBreakdown: [],
@@ -78,11 +79,12 @@ def main() -> None:
                       })));
                       await chrome.storage.local.clear();
                       await chrome.storage.local.set({
-                        schemaVersion: 22,
+                        schemaVersion: SCHEMA_VERSION,
                         entries,
                         taxonomy: createDefaultTaxonomy(),
                         facetCatalog,
                         organizerState: createDefaultOrganizerState(),
+                        trashState: {version: 1, items: []},
                         compoundCases: [],
                         classificationRules: []
                       });
@@ -107,8 +109,32 @@ def main() -> None:
                 ready_ms = round((time.perf_counter() - started) * 1000)
                 assert ready_ms < 5_000, f"6500-case first usable paint took {ready_ms}ms"
 
+                analysis_requests = []
+
+                def mock_analysis(route) -> None:
+                    analysis_requests.append(route.request.post_data_json)
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=json.dumps({
+                            "model": "isolated-e2e",
+                            "choices": [{
+                                "finish_reason": "stop",
+                                "message": {"content": json.dumps({
+                                    "tags": [{"g": "style.render", "t": "赛璐珞"}],
+                                }, ensure_ascii=False)},
+                            }],
+                            "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+                        }, ensure_ascii=False),
+                    )
+
+                context.route("https://api.deepseek.com/**", mock_analysis)
                 batch = library.evaluate(
                     """async () => {
+                      const {createAnalysisBatchJob, claimAnalysisItems} = await import(chrome.runtime.getURL('analysis-batch.js'));
+                      const payloadJob = await createAnalysisBatchJob([{id: 'payload-check', text: 'payload check'}], {concurrency: 20});
+                      const payloadClaimed = claimAnalysisItems(payloadJob, 1, () => 'payload-claim');
+                      const payloadItem = payloadClaimed.claims[0];
                       await chrome.runtime.sendMessage({
                         type: 'UPDATE_AI_PROVIDER_CONFIGURATION',
                         registry: {providers: {deepseek: {
@@ -119,29 +145,24 @@ def main() -> None:
                         assignments: {textTags: {providerId: 'deepseek', model: 'isolated-e2e'}}
                       });
                       const created = await chrome.runtime.sendMessage({type: 'CREATE_ANALYSIS_BATCH'});
-                      const claimed = await chrome.runtime.sendMessage({
-                        type: 'CLAIM_ANALYSIS_ITEMS',
-                        jobId: created.analysisBatchJob.id
-                      });
-                      const item = claimed.claims[0];
-                      const committed = await chrome.runtime.sendMessage({
-                        type: 'COMMIT_ANALYSIS_ITEMS',
-                        jobId: created.analysisBatchJob.id,
-                        results: [{
-                          entryId: item.entryId,
-                          claimId: item.claimId,
-                          textRevision: item.textRevision,
-                          tags: [{g: 'style.render', t: '赛璐珞'}],
-                          usage: {},
-                          model: 'isolated-e2e'
-                        }]
-                      });
+                      let completed = created.analysisBatchJob;
+                      for (let index = 0; index < 120 && ['running', 'paused'].includes(completed.status); index += 1) {
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        completed = (await chrome.runtime.sendMessage({
+                          type: 'GET_ANALYSIS_BATCH_STATUS',
+                          jobId: created.analysisBatchJob.id
+                        })).analysisBatchJob;
+                      }
+                      const stored = await chrome.storage.local.get(['entries', 'facetCatalog']);
+                      const savedEntry = stored.entries.find(item => item.id === 'large-00000');
+                      const savedNodeIds = new Set(savedEntry.facetAssignments.filter(item => item.source === 'deepseek_text').map(item => item.nodeId));
                       return {
                         createdTotal: created.analysisBatchJob.total,
-                        claimCount: claimed.claims.length,
-                        claimHasEntry: Object.hasOwn(item, 'entry'),
-                        claimHasCatalog: Object.hasOwn(claimed, 'facetCatalog'),
-                        completedStatus: committed.analysisBatchJob.status
+                        claimCount: payloadClaimed.claims.length,
+                        claimHasEntry: Object.hasOwn(payloadItem, 'entry'),
+                        claimHasCatalog: Object.hasOwn(payloadClaimed, 'facetCatalog'),
+                        completedStatus: completed.status,
+                        savedTag: stored.facetCatalog.nodes.some(item => savedNodeIds.has(item.id) && item.name === '赛璐珞')
                       };
                     }"""
                 )
@@ -151,7 +172,9 @@ def main() -> None:
                     "claimHasEntry": False,
                     "claimHasCatalog": False,
                     "completedStatus": "completed",
+                    "savedTag": True,
                 }, batch
+                assert len(analysis_requests) == 1, analysis_requests
 
                 style_facet = library.locator('.facet-filter[data-facet-id="style"]')
                 style_facet.locator("summary").click()

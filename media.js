@@ -94,7 +94,9 @@ export function normalizeMediaAsset(value = {}) {
     ...(kind === "video" && storageMode === "reference" && reference.url ? { reference } : {}),
     ...(localAssetReference ?? {}),
     ...(value.palette?.colors?.length ? { palette: structuredClone(value.palette) } : {}),
-    ...(value.visionAnalysis?.description?.trim() ? { visionAnalysis: structuredClone(value.visionAnalysis) } : {}),
+    ...(String(value.visionAnalysis?.reconstructionPrompt ?? value.visionAnalysis?.description ?? "").trim()
+      ? { visionAnalysis: structuredClone(value.visionAnalysis) }
+      : {}),
     reviewStatus: value.reviewStatus === "verified" ? "verified" : "unverified"
   };
 }
@@ -331,7 +333,9 @@ export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source 
 
 export function mediaDescriptions(entryValue = {}) {
   return entryMediaAssets(entryValue)
-    .map((asset) => asset.visionAnalysis?.invalidated ? "" : clean(asset.visionAnalysis?.description))
+    .map((asset) => asset.visionAnalysis?.invalidated || asset.visionAnalysis?.quality === "partial"
+      ? ""
+      : clean(asset.visionAnalysis?.reconstructionPrompt || asset.visionAnalysis?.description))
     .filter(Boolean);
 }
 

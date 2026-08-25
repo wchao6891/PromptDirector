@@ -465,8 +465,9 @@
           <span id="vision-batch-service"></span>
         </section>
         <label class="task-option"><input id="vision-batch-all-images" type="checkbox" /><span data-i18n="分析所选案例中的全部未分析图片">分析所选案例中的全部未分析图片</span></label>
-        <label class="task-option"><input id="vision-batch-reanalyze" type="checkbox" /><span data-i18n="重新分析已有画面描述">重新分析已有画面描述</span></label>
+        <label class="task-option"><input id="vision-batch-reanalyze" type="checkbox" /><span data-i18n="重新分析已有反推提示词">重新分析已有反推提示词</span></label>
         <p class="data-safety-note" data-i18n="每次分析一张图片；失败项需手动重试。">每次分析一张图片；失败项需手动重试。</p>
+        <div id="vision-batch-progress" class="maintenance-progress" hidden><progress id="vision-batch-progress-bar" max="1" value="0"></progress></div>
         <div class="data-safety-primary-actions">
           <button id="vision-batch-start" type="button" data-i18n="确认并开始">确认并开始</button>
           <button id="vision-batch-pause" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>

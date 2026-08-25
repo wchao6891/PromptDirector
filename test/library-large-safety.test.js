@@ -11,10 +11,9 @@ test("current libraries bypass whole-library migration and normalization on ever
   assert.match(readState, /shouldMigrate \? migrateLibraryState\(stored\) : null/);
 });
 
-test("visual batch selection never preselects an entire project", () => {
+test("visual batch selection preselects analyzable project cases before continuing", () => {
   const enterVision = library.slice(library.indexOf("function enterVisionSelection"), library.indexOf("function enterSelectMode"));
-  assert.match(enterVision, /selectedCaseIds\.clear\(\)/);
-  assert.doesNotMatch(enterVision, /selectedCaseIds\.add/);
+  assert.match(enterVision, /replaceSelectedCaseIds\(getVisionSelectableEntries\("all"\)\.map\(\(entry\) => entry\.id\)\)/);
 });
 
 test("visible thumbnails use a bounded queue and a rebuildable persistent cache", () => {

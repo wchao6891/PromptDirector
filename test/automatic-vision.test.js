@@ -9,7 +9,17 @@ const entries = [{
   mediaAssets: [
     { id: "image-one", kind: "image", usage: "content" },
     { id: "image-two", kind: "image", usage: "content" },
-    { id: "image-done", kind: "image", usage: "content", visionAnalysis: { description: "already analyzed" } },
+    {
+      id: "image-done",
+      kind: "image",
+      usage: "content",
+      visionAnalysis: {
+        version: 2,
+        quality: "complete",
+        reconstructionPrompt: "already analyzed",
+        tags: [{ g: "light.direction", t: "逆光" }]
+      }
+    },
     { id: "video-poster", kind: "image", usage: "poster" }
   ]
 }];

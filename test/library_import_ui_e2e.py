@@ -178,7 +178,8 @@ def main() -> None:
             assert import_project_menu["clientHeight"] <= import_project_menu["scrollHeight"], import_project_menu
             library.locator("#import-project").press("Escape")
             expect(library.locator("#import-project")).to_have_attribute("aria-expanded", "false")
-            library.locator("#import-project").fill("Import Review")
+            library.locator("#import-project").click()
+            library.locator(".project-combobox-option", has_text="Import Review").click()
             duplicate_row.locator("input").check()
             expect(duplicate_row).to_contain_text("仍导入")
 

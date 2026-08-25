@@ -26,7 +26,7 @@ test("compound Skill sources include only explicitly selected assets", () => {
     id: "compound",
     text: "共享案例文字",
     mediaAssets: [
-      { id: "chosen", kind: "image", usage: "content", visionAnalysis: { description: "保留的构图" } },
+      { id: "chosen", kind: "image", usage: "content", visionAnalysis: { reconstructionPrompt: "保留的构图" } },
       { id: "hidden", kind: "image", usage: "content", visionAnalysis: { description: "不应发送的构图" } },
       { id: "doc", kind: "document", usage: "content" }
     ],
@@ -46,7 +46,7 @@ test("compound Skill sources include only explicitly selected assets", () => {
 });
 
 test("extraction payload contains anonymous selected text and no local identity fields", () => {
-  const entries = [{ id: "local:secret", title: "Secret Project", url: "https://private.example", text: "original prompt", mediaAssets: [{ usage: "content", visionAnalysis: { description: "visible composition" } }] }];
+  const entries = [{ id: "local:secret", title: "Secret Project", url: "https://private.example", text: "original prompt", mediaAssets: [{ usage: "content", visionAnalysis: { reconstructionPrompt: "visible composition" } }] }];
   const request = buildSkillExtractionRequest({ goal: "提炼构图", sources: anonymousSkillSources(entries, ["local:secret"]), locale: "zh-CN" });
   assert.match(request, /原提示词[\s\S]*original prompt/);
   assert.match(request, /已有画面分析[\s\S]*visible composition/);

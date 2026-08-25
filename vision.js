@@ -9,6 +9,7 @@ import {
 } from "./visual-analysis.js";
 import { parseStructuredObject } from "./structured-output.js";
 import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
+import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 
 export const VISION_ANALYSIS_VERSION = VISUAL_ANALYSIS_VERSION;
 export const DEFAULT_VISION_MODEL = "gpt-5-mini";
@@ -23,12 +24,25 @@ export const MICU_DEFAULT_IMAGE_SIZE = MICU_COMPATIBLE_PROVIDER_PRESET.imageGene
 export const MICU_IMAGE_RESULT_PERMISSION = "https://oss.filenest.top/*";
 export const MAX_VISION_TAGS = 6;
 export const VISION_MAX_OUTPUT_TOKENS = 12000;
+
+export function createVisionRequestBudget(maxProviderCallsValue = ANALYSIS_RETRY_POLICY.maxProviderCallsPerItem) {
+  const maxProviderCalls = Number(maxProviderCallsValue);
+  return {
+    maxProviderCalls: Number.isInteger(maxProviderCalls) && maxProviderCalls > 0
+      ? maxProviderCalls
+      : ANALYSIS_RETRY_POLICY.maxProviderCallsPerItem,
+    providerCalls: 0,
+    outputCorrectionRequests: 0
+  };
+}
+
 export class VisionApiError extends Error {
   constructor(message, status = 0, options = {}) {
     super(message, options);
     this.name = "VisionApiError";
     this.status = Number(status) || 0;
     this.retryAfterMs = Number(options.retryAfterMs) || 0;
+    this.detail = String(options.detail ?? "").trim();
   }
 }
 class VisionOutputError extends Error {
@@ -333,13 +347,20 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
     maxOutputTokens: settings.maxOutputTokens,
     schema: visualModelResponseSchema(input.catalog)
   };
-  const request = async (requestInstruction) => settings.nativeProvider?.id === "gemini"
-    ? requestGeminiVision(settings.nativeProvider, imageDataUrl, requestInstruction, fetchImpl, requestOptions)
-    : settings.activeProvider === "compatible"
-      ? requestCompatible(settings, imageDataUrl, requestInstruction, fetchImpl, requestOptions)
-      : requestOpenAI(settings, imageDataUrl, requestInstruction, fetchImpl, requestOptions);
-  const perform = async (requestInstruction) => {
-    const response = await request(requestInstruction);
+  const requestBudget = input.requestBudget && typeof input.requestBudget === "object"
+    ? input.requestBudget
+    : createVisionRequestBudget();
+  const correctionCountAtStart = Math.max(0, Number(requestBudget.outputCorrectionRequests) || 0);
+  const request = async (requestInstruction, requestKind) => {
+    consumeVisionRequestBudget(requestBudget, requestKind);
+    return settings.nativeProvider?.id === "gemini"
+      ? requestGeminiVision(settings.nativeProvider, imageDataUrl, requestInstruction, fetchImpl, requestOptions)
+      : settings.activeProvider === "compatible"
+        ? requestCompatible(settings, imageDataUrl, requestInstruction, fetchImpl, requestOptions)
+        : requestOpenAI(settings, imageDataUrl, requestInstruction, fetchImpl, requestOptions);
+  };
+  const perform = async (requestInstruction, requestKind = "primary") => {
+    const response = await request(requestInstruction, requestKind);
     try {
       return { response, normalized: normalizeVisionResult(parseJson(response.content), input.catalog) };
     } catch (error) {
@@ -347,18 +368,16 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
     }
   };
   let firstUsage;
-  let outputCorrectionRequests = 0;
   let completed;
   try {
     completed = await perform(instruction);
   } catch (error) {
     if (!(error instanceof VisionOutputError)) throw error;
     firstUsage = error.usage;
-    outputCorrectionRequests = 1;
     try {
-      completed = await perform(`${instruction}\nThe previous response was empty or structurally unusable. Return one corrected JSON object now; do not add commentary or markdown.`);
+      completed = await perform(`${instruction}\nThe previous response was empty or structurally unusable. Return one corrected JSON object now; do not add commentary or markdown.`, "correction");
     } catch (correctionError) {
-      correctionError.attempts = { outputCorrectionRequests };
+      correctionError.attempts = { outputCorrectionRequests: visionCorrectionCount(requestBudget, correctionCountAtStart) };
       correctionError.usage = addVisionUsage(firstUsage, correctionError.usage);
       throw correctionError;
     }
@@ -369,9 +388,28 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
     profileFingerprint: await visionAnalysisProfileFingerprint(settings, locale),
     providerType: settings.nativeProvider?.id || settings.activeProvider,
     model: response.model,
-    attempts: { outputCorrectionRequests },
+    attempts: { outputCorrectionRequests: visionCorrectionCount(requestBudget, correctionCountAtStart) },
     usage: addVisionUsage(firstUsage, response.usage)
   };
+}
+
+function consumeVisionRequestBudget(budget, requestKind) {
+  const maxProviderCalls = Math.max(1, Number(budget?.maxProviderCalls) || ANALYSIS_RETRY_POLICY.maxProviderCallsPerItem);
+  const providerCalls = Math.max(0, Number(budget?.providerCalls) || 0);
+  if (providerCalls >= maxProviderCalls) {
+    const error = new Error(`单张图片最多请求 AI 服务 ${maxProviderCalls} 次，本次已停止继续请求`);
+    error.code = "vision_request_budget_exhausted";
+    throw error;
+  }
+  budget.maxProviderCalls = maxProviderCalls;
+  budget.providerCalls = providerCalls + 1;
+  if (requestKind === "correction") {
+    budget.outputCorrectionRequests = Math.max(0, Number(budget.outputCorrectionRequests) || 0) + 1;
+  }
+}
+
+function visionCorrectionCount(budget, start) {
+  return Math.max(0, (Number(budget?.outputCorrectionRequests) || 0) - start);
 }
 
 export async function evaluateCreativeOutputWithVision(input = {}, fetchImpl = fetch) {
@@ -418,8 +456,8 @@ export async function blobToDataUrl(blob) {
 
 export function visionProtocolDescription(locale = "zh-CN") {
   return locale === "en"
-    ? "Fixed input: the current image, measured canvas when available, fixed taxonomy paths, and these vision rules. Fixed output: one complete VisualAnalysisV2 reconstruction record and 0–6 compact search tags in one call. Existing detail tags, prompt text, title, URL, project, and other cases are never sent."
-    : "固定输入：当前图片、可用的程序实测画布、固定分类路径和本页图片规则。固定输出：单次调用完成一份 VisualAnalysisV2 高保真重建记录和 0–6 个紧凑检索标签；不发送已有三级标签、原提示词、标题、网址、项目或其他案例。";
+    ? "Fixed input: the current image, fixed taxonomy paths, and these vision rules. Fixed output: one self-contained reconstructionPrompt and 1–6 compact search tags in one call. The reconstructionPrompt must cover every visibly reconstructable detail that matters for reuse; do not invent hidden facts, sound, or workflow."
+    : "固定输入：当前图片、固定分类路径和本页图片规则。固定输出：单次调用只返回一个可独立使用的 reconstructionPrompt 和 1–6 个紧凑检索标签；reconstructionPrompt 必须覆盖所有适用的可复刻可见细节，不编造不可见事实、声音或工作流。";
 }
 
 export async function visionAnalysisProfileFingerprint(settingsValue = {}, localeValue = "zh-CN") {
@@ -452,7 +490,7 @@ async function requestOpenAI(settings, imageDataUrl, instruction, fetchImpl, opt
 
 async function requestResponses(provider, imageDataUrl, instruction, fetchImpl, options = {}) {
   const schema = options.schema ?? VISUAL_MODEL_RESPONSE_SCHEMA;
-  const schemaName = options.schemaName ?? "vision_analysis_box_2d_v1";
+  const schemaName = options.schemaName ?? "vision_reconstruction_tags_v1";
   const body = {
     model: provider.model,
     store: false,
@@ -466,6 +504,7 @@ async function requestResponses(provider, imageDataUrl, instruction, fetchImpl, 
       ]
     }]
   };
+  body.reasoning = { effort: "none" };
   const payload = await requestJson(provider.endpoint, provider.apiKey, body, fetchImpl);
   const refusal = extractOpenAIRefusal(payload);
   if (refusal) throw new Error(`${provider.serviceName} 拒绝分析这张图片：${refusal}`);
@@ -476,16 +515,18 @@ async function requestResponses(provider, imageDataUrl, instruction, fetchImpl, 
 
 async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl, options = {}) {
   const { url } = endpointDetails(settings.compatible.endpoint);
+  const deepseekCompatible = isDeepSeekEndpoint(url);
   if (settings.compatible.protocol === "responses") {
     return requestResponses({
       endpoint: url,
       apiKey: settings.compatible.apiKey,
       model: settings.compatible.model,
-      serviceName: "兼容服务"
+      serviceName: "兼容服务",
+      disableReasoning: deepseekCompatible
     }, imageDataUrl, instruction, fetchImpl, options);
   }
   const schema = options.schema ?? VISUAL_MODEL_RESPONSE_SCHEMA;
-  const schemaName = options.schemaName ?? "vision_analysis_box_2d_v1";
+  const schemaName = options.schemaName ?? "vision_reconstruction_tags_v1";
   const structuredInstruction = settings.compatible.structuredOutput === "json_object"
     ? `${instruction}\nJSON property names are case-sensitive. Return exactly one object matching this JSON Schema: ${JSON.stringify(schema)}`
     : instruction;
@@ -503,6 +544,7 @@ async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl,
       ]
     }]
   };
+  if (deepseekCompatible) body.thinking = { type: "disabled" };
   const payload = await requestJson(url, settings.compatible.apiKey, body, fetchImpl);
   const choice = payload?.choices?.[0];
   const content = choice?.message?.content;
@@ -520,6 +562,26 @@ function compatibleEmptyResultMessage(finishReason, fallback = "") {
   if (reason === "insufficient_system_resource") return prefix ? `${prefix}：资源暂时不足` : "兼容服务资源暂时不足，未返回分析结果，请手动重试";
   if (reason === "stop") return prefix ? `${prefix}：返回了空的 JSON 内容` : "兼容服务返回了空的 JSON 内容，本次没有写入，请手动重试";
   return prefix || "兼容服务响应缺少可用内容，本次没有写入";
+}
+
+function visionHttpErrorMessage(status) {
+  const code = Number(status) || 0;
+  if (code === 401 || code === 403) return "图片分析认证失败，请检查 API Key、模型权限和接口配置";
+  if (code === 408) return "图片分析超时，请稍后重试或降低并发";
+  if (code === 409) return "图片分析请求发生冲突，请稍后重试";
+  if (code === 413) return "图片分析请求过大，请换更小的图片或降低输入体积";
+  if (code === 429) return "图片分析请求过于频繁，请稍后重试";
+  if (code >= 500 && code <= 599) return "图片分析服务暂时不可用，请稍后重试";
+  return "图片分析失败，请检查模型、协议和输出格式";
+}
+
+function isDeepSeekEndpoint(url) {
+  try {
+    const { hostname } = new URL(url);
+    return /(^|\.)deepseek\.com$/i.test(hostname);
+  } catch {
+    return false;
+  }
 }
 
 async function requestGeminiVision(provider, imageDataUrl, instruction, fetchImpl, options = {}) {
@@ -556,9 +618,12 @@ async function requestGeminiVision(provider, imageDataUrl, instruction, fetchImp
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new VisionApiError(
-    `Gemini 图片分析失败：${String(payload?.error?.message ?? `HTTP ${response.status}`)}`,
+    visionHttpErrorMessage(response.status),
     response.status,
-    { retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after")) }
+    {
+      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after")),
+      detail: String(payload?.error?.message ?? payload?.message ?? "").trim()
+    }
   );
   const content = (payload?.candidates?.[0]?.content?.parts ?? []).map((part) => part?.text || "").join("").trim();
   if (!content) throw new VisionOutputError(options.emptyResultMessage || "Gemini 没有返回可用的画面描述");
@@ -594,8 +659,9 @@ async function requestJson(url, apiKey, body, fetchImpl) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = String(payload?.error?.message ?? payload?.message ?? "").trim();
-    throw new VisionApiError(`图片分析失败${detail ? `：${detail}` : `（HTTP ${response.status}）`}`, response.status, {
-      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after"))
+    throw new VisionApiError(visionHttpErrorMessage(response.status), response.status, {
+      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after")),
+      detail
     });
   }
   return payload;

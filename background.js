@@ -36,7 +36,7 @@ import {
   applyAnalysisImport,
   applyTextAnalysisTags,
   applyVisionAnalysis,
-  editVisionDescription,
+  editVisionReconstructionPrompt,
   rejectAnalysisCandidate,
   undoVisionAnalysis,
   setManualAssignment
@@ -65,11 +65,11 @@ import {
   createAnalysisBatchJob,
   createVisionBatchJob,
   failAnalysisItem,
+  failUnfinishedAnalysisItems,
   finalizeAnalysisRebuild,
   finalizePartialAnalysisRebuild,
   normalizeAnalysisBatchJob,
   pauseAnalysisBatch,
-  partiallySucceedAnalysisItem,
   previewAnalysisBatch,
   previewVisionBatch,
   reconcileVisionBatchResults,
@@ -81,6 +81,7 @@ import {
   succeedAnalysisItem,
   textFingerprint
 } from "./analysis-batch.js";
+import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import { buildAutomaticVisionJob } from "./automatic-vision.js";
 import { coalesceAnalysisRequest, runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
 import { findPersistedVisionAnalysis } from "./vision-analysis-cache.js";
@@ -312,6 +313,7 @@ import {
   evaluateCreativeOutputWithVision,
   analyzeImageWithVision,
   blobToDataUrl,
+  createVisionRequestBudget,
   imageFingerprint,
   publicVisionSettings,
   visionAnalysisProfileFingerprint
@@ -497,7 +499,7 @@ scheduleLibraryMaintenanceRunner();
 scheduleAutomaticVisionRunner();
 scheduleAnalysisBatchRunner();
 recoverCreativeJobs().catch((error) => console.error("PromptDirector creative job recovery failed", error));
-recoverImportJobs().catch((error) => console.error("PromptDirector local import recovery failed", error));
+enqueue(recoverImportJobs).catch((error) => console.error("PromptDirector local import recovery failed", error));
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   handleContextMenuCapture(info, tab, {
@@ -837,8 +839,8 @@ async function handleMessage(message, interaction = {}) {
       return analyzeEntryVisualSet(message);
     case "ANALYZE_ENTRY_VIDEO":
       return analyzeEntryVideo(message);
-    case "UPDATE_VISION_DESCRIPTION":
-      return enqueue(async () => updateVisionDescription(message.entryId, message.visualId, message.description));
+    case "UPDATE_VISION_RECONSTRUCTION_PROMPT":
+      return enqueue(async () => updateVisionReconstructionPrompt(message.entryId, message.visualId, message.reconstructionPrompt));
     case "UPDATE_ENTRY_TEXT":
       return enqueue(async () => updateCaseText(message));
     case "UPDATE_ENTRY_MEDIA_PROMPT":
@@ -3449,7 +3451,8 @@ async function undoImportJobAction(jobId) {
 async function recoverImportJobs() {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
   const recovered = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs], { recoverRunning: true });
-  if (JSON.stringify(stored[STORAGE_KEYS.importJobs] ?? {}) !== JSON.stringify(recovered)) {
+  if (stored[STORAGE_KEYS.importJobs]
+      && JSON.stringify(stored[STORAGE_KEYS.importJobs]) !== JSON.stringify(recovered)) {
     await commitLocalChanges({ [STORAGE_KEYS.importJobs]: recovered });
   }
   if (recovered.items.some((job) => ["queued", "running"].includes(job.status) && job.items.some((item) => item.status === "queued"))) {
@@ -4753,17 +4756,14 @@ async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobI
       });
       return {
         ok: true,
-        message: result.quality === "partial"
-          ? `画面分析已保存可用部分，仍有 ${result.missingFields.length} 项待补全`
-          : result.tagDiagnostics?.rejectedCount
+        message: result.tagDiagnostics?.rejectedCount
           ? `画面分析已保存，并写入 ${applied.appliedCount} 个检索标签；另有 ${result.tagDiagnostics.rejectedCount} 个不符合当前分类体系的可选标签未采用`
           : `画面分析已保存，并写入 ${applied.appliedCount} 个检索标签`,
         entry: applied.state.entries.find((item) => item.id === current.id),
         usage: result.usage,
         cacheHit: result.cacheHit,
         attempts: result.attempts,
-        quality: result.quality,
-        missingFields: result.missingFields,
+        quality: "complete",
         ...publicDomainState(applied.state),
         visionUndoEntryIds: Object.keys(undoStore)
       };
@@ -4809,9 +4809,9 @@ async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredC
     }
   };
   const schedulerKey = `${assignment.providerId}:${assignment.model}:imageAnalysis`;
-  const requestMode = bypassCache ? "reanalyze" : (previousAnalysis?.quality === "partial" || cached?.quality === "partial") ? "complete" : "analyze";
+  const requestMode = bypassCache ? "reanalyze" : "analyze";
   const requestKey = `${schedulerKey}:${fingerprint}:${profileFingerprint}:${locale}:${catalog?.revision ?? 0}:${requestMode}`;
-  let serviceRequests = 0;
+  const requestBudget = createVisionRequestBudget();
   let coalesced = false;
   let result;
   try {
@@ -4819,21 +4819,21 @@ async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredC
       key: schedulerKey,
       concurrency: assignment.concurrency,
       task: async () => {
-        serviceRequests += 1;
         return analyzeImageWithVision({
           imageDataUrl: await blobToDataUrl(blob),
           catalog,
           locale,
           measuredCanvas,
-          previousAnalysis: !bypassCache && previousAnalysis?.quality === "partial" ? previousAnalysis : !bypassCache ? cached : null,
-          settings
+          previousAnalysis: null,
+          settings,
+          requestBudget
         });
       }
     }), { onCoalesced: () => { coalesced = true; } });
   } catch (error) {
     error.attempts = {
-      serviceRequests,
-      outputCorrectionRequests: Math.max(0, Number(error?.attempts?.outputCorrectionRequests) || 0)
+      serviceRequests: coalesced ? 0 : visionPrimaryRequestCount(requestBudget),
+      outputCorrectionRequests: coalesced ? 0 : requestBudget.outputCorrectionRequests
     };
     throw error;
   }
@@ -4842,12 +4842,19 @@ async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredC
       ...result,
       cacheHit: result.cacheHit === true || coalesced,
       attempts: {
-        serviceRequests,
-        outputCorrectionRequests: Number(result.attempts?.outputCorrectionRequests) || 0
+        serviceRequests: coalesced ? 0 : visionPrimaryRequestCount(requestBudget),
+        outputCorrectionRequests: coalesced ? 0 : requestBudget.outputCorrectionRequests
       }
     },
     fingerprint
   };
+}
+
+function visionPrimaryRequestCount(requestBudget) {
+  return Math.max(
+    0,
+    (Number(requestBudget?.providerCalls) || 0) - (Number(requestBudget?.outputCorrectionRequests) || 0)
+  );
 }
 
 async function analyzeEntryVisualSet(message) {
@@ -4946,17 +4953,17 @@ async function analyzeEntryVideo(message) {
   });
 }
 
-async function updateVisionDescription(entryId, visualIdValue, description) {
+async function updateVisionReconstructionPrompt(entryId, visualIdValue, reconstructionPrompt) {
   const state = await readState();
   const current = findEntry(state, entryId);
   const visualId = String(visualIdValue ?? "").trim() || primaryVisual(current)?.id;
   const visual = normalizeEntryVisuals(current).visuals.find((item) => item.id === visualId);
-  if (!visual?.visionAnalysis) throw new Error("这张截图还没有可编辑的画面描述");
-  const temporary = editVisionDescription({ visionAnalysis: visual.visionAnalysis }, description);
+  if (!visual?.visionAnalysis) throw new Error("这张截图还没有可编辑的反推提示词");
+  const temporary = editVisionReconstructionPrompt({ visionAnalysis: visual.visionAnalysis }, reconstructionPrompt);
   const updated = updateEntryVisual(current, visual.id, (item) => ({ ...item, visionAnalysis: temporary.visionAnalysis }));
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "画面描述已保存", entry: updated, entries };
+  return { ok: true, message: "反推提示词已保存", entry: updated, entries };
 }
 
 async function updateEntryMediaPromptAction(message) {
@@ -5215,10 +5222,15 @@ async function decideAnalysisCandidate(message, accepted) {
 async function applyEntryAnalysisResult(message) {
   const state = await readState();
   const entry = findEntry(state, message.entryId);
-  if (message.textRevision && message.textRevision !== entryTextRevision(entry)) {
+  const input = canonicalTextAnalysisInput(entry, message.assetId);
+  if (message.textRevision && message.textRevision !== input.textRevision) {
     return { ok: false, message: "提示词原文已变化，本次分析结果没有写入" };
   }
-  const fingerprint = message.fingerprint || await textFingerprint(entry.text);
+  const currentFingerprint = await textFingerprint(input.text);
+  if (message.fingerprint && message.fingerprint !== currentFingerprint) {
+    return { ok: false, message: "提示词原文已变化，本次分析结果没有写入" };
+  }
+  const fingerprint = currentFingerprint;
   const applied = applyTextAnalysisTags(domainState(state), entry.id, message.tags);
   const updated = applied.state.entries.find((item) => item.id === entry.id);
   updated.analysisPending = false;
@@ -5351,7 +5363,7 @@ async function commitDeepSeekBatchItem(message) {
   }
   const state = await readState();
   const entry = findEntry(state, message.entryId);
-  if (entryTextRevision(entry) !== Math.max(1, Number(message.textRevision) || 1)) {
+  if (canonicalTextAnalysisInput(entry, message.assetId).textRevision !== Math.max(1, Number(message.textRevision) || 1)) {
     return failDeepSeekBatchItem({
       ...message,
       error: { message: "提示词原文已变化，请重新预览", status: 409 }
@@ -5420,7 +5432,7 @@ async function commitDeepSeekBatchItems(message) {
       continue;
     }
     const entry = working.entries.find((item) => item.id === result.entryId);
-    if (!entry || entryTextRevision(entry) !== Math.max(1, Number(result.textRevision) || 1)) {
+    if (!entry || canonicalTextAnalysisInput(entry, result.assetId).textRevision !== Math.max(1, Number(result.textRevision) || 1)) {
       job = failAnalysisItem(job, result.entryId, result.claimId, {
         message: "提示词原文已变化，请重新预览",
         status: 409
@@ -5546,7 +5558,7 @@ async function applyStagedAnalysisRebuild(jobId) {
   const staleCount = job.items.filter((item) => {
     if (item.status !== "succeeded") return false;
     const entry = state.entries.find((candidate) => candidate.id === item.entryId);
-    return !entry || entryTextRevision(entry) !== item.textRevision;
+    return !entry || canonicalTextAnalysisInput(entry, item.assetId).textRevision !== item.textRevision;
   }).length;
   if (staleCount) {
     return { ok: false, message: `${staleCount} 条成功案例的原文已变化，不能安全应用旧缓存` };
@@ -5682,6 +5694,14 @@ async function claimVisionBatchItem(jobId) {
   const loadedConfiguration = await loadAiConfiguration();
   const configuration = configurationForAssignment(loadedConfiguration, "imageAnalysis", job);
   const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
+  const currentSettings = resolveVisionTaskSettings("imageAnalysis", loadedConfiguration, { requireConfigured: false });
+  const currentModel = currentSettings.activeProvider === "openai" ? currentSettings.openai.model : currentSettings.compatible.model;
+  const snapshotModel = settings.activeProvider === "openai" ? settings.openai.model : settings.compatible.model;
+  if (job.providerType !== currentSettings.activeProvider || job.model !== currentModel || job.providerType !== settings.activeProvider || job.model !== snapshotModel) {
+    const canceled = cancelAnalysisBatch(job);
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: canceled });
+    return { ok: false, message: "图片分析设置已变化，旧批量任务已取消，请重新开始" };
+  }
   const snapshotReady = publicVisionSettings(settings)[settings.activeProvider]?.configured === true;
   if (!snapshotReady || !settings.consent) {
     const paused = pauseAnalysisBatch(job);
@@ -5710,9 +5730,7 @@ async function completeVisionBatchItem(message) {
     totalTokens: Math.max(0, Number(message.usage?.totalTokens) || 0),
     cacheHits: message.cacheHit === true ? 1 : 0
   };
-  const next = message.quality === "partial"
-    ? partiallySucceedAnalysisItem(job, message.entryId, message.claimId, usage, undefined, message)
-    : succeedAnalysisItem(job, message.entryId, message.claimId, usage, undefined, message);
+  const next = succeedAnalysisItem(job, message.entryId, message.claimId, usage, undefined, message);
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
   return { ok: true, visionBatchJob: analysisBatchSummary(next) };
 }
@@ -5778,8 +5796,16 @@ async function runPersistedAnalysisBatch() {
   } catch (error) {
     console.error("PromptDirector persisted analysis batch failed", error);
     const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob).catch(() => ({}));
-    const stillRunning = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob])?.status === "running";
-    await ensureAnalysisBatchAlarm(stillRunning);
+    const current = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+    if (current?.status === "running") {
+      const taskLabel = current.kind === "vision" ? "图片服务" : "文字服务";
+      const failed = failUnfinishedAnalysisItems(current, {
+        message: `任务启动失败：${taskLabel}配置或后台运行状态无效，请检查 AI 服务后重试`,
+        status: 500
+      });
+      await commitLocalChanges({ [STORAGE_KEYS.batchJob]: failed });
+    }
+    await ensureAnalysisBatchAlarm(false);
     continueRunning = false;
   } finally {
     analysisBatchRunnerActive = false;
@@ -5830,6 +5856,7 @@ async function runPersistedTextBatchSlice(jobId) {
 
 async function analyzePersistedTextClaim(job, claim, entry, catalog, settings) {
   if (!entry) return persistedTextFailure(claim, "案例已不存在", 404);
+  const analysisInput = canonicalTextAnalysisInput(entry, claim.assetId);
   let serviceRequests = 0;
   try {
     const result = await runScheduledAnalysisWithRetries({
@@ -5840,14 +5867,15 @@ async function analyzePersistedTextClaim(job, claim, entry, catalog, settings) {
         return analyzeTextDetailedWithDeepSeek(entry, catalog, {
           ...settings,
           outputLocale: job.outputLocale
-        });
+        }, fetch, { analysisInput });
       }
     });
     return {
       entryId: claim.entryId,
       claimId: claim.claimId,
-      fingerprint: await textFingerprint(entry.text),
+      fingerprint: await textFingerprint(analysisInput.text),
       textRevision: claim.textRevision,
+      assetId: analysisInput.assetId,
       tags: result.tags,
       normalizationDiagnostics: result.normalizationDiagnostics,
       attempts: {
@@ -5890,6 +5918,14 @@ async function runPersistedVisionBatchSlice(jobId) {
     job = reconcileVisionBatchResults(recoverInterruptedAnalysisBatch(job), state.entries).job;
     const snapshotConfiguration = configurationForAssignment(configuration, "imageAnalysis", job);
     const settings = resolveVisionTaskSettings("imageAnalysis", snapshotConfiguration, { requireConfigured: false });
+    const currentSettings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
+    const currentModel = currentSettings.activeProvider === "openai" ? currentSettings.openai.model : currentSettings.compatible.model;
+    const snapshotModel = settings.activeProvider === "openai" ? settings.openai.model : settings.compatible.model;
+    if (job.providerType !== currentSettings.activeProvider || job.model !== currentModel || job.providerType !== settings.activeProvider || job.model !== snapshotModel) {
+      job = cancelAnalysisBatch(job);
+      await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
+      return { job, claims: [] };
+    }
     const snapshotReady = publicVisionSettings(settings)[settings.activeProvider]?.configured === true;
     if (!snapshotReady || !settings.consent) {
       job = pauseAnalysisBatch(job);
@@ -6035,7 +6071,7 @@ async function runAutomaticVisionItem() {
         const latest = requireAnalysisBatch(latestStored[STORAGE_KEYS.automaticVisionBatchJob], job.id, "vision");
         requireClaim(latest, claim.entryId, claim.claimId, claim.visualId);
         const next = result.ok
-          ? (result.quality === "partial" ? partiallySucceedAnalysisItem : succeedAnalysisItem)(latest, claim.entryId, claim.claimId, {
+          ? succeedAnalysisItem(latest, claim.entryId, claim.claimId, {
               promptTokens: result.usage?.inputTokens,
               completionTokens: result.usage?.outputTokens,
               totalTokens: result.usage?.totalTokens,
@@ -6475,7 +6511,8 @@ function requireClaim(job, entryId, claimId, visualId = "") {
 function analysisMeta(message, fingerprint, analyzedAt, entry = {}) {
   return {
     ...(fingerprint ? { textFingerprint: fingerprint } : {}),
-    ...analysisRevisionMeta(entry),
+    textRevision: Math.max(1, Math.floor(Number(message.textRevision) || analysisRevisionMeta(entry).textRevision)),
+    ...(String(message.assetId ?? "").trim() ? { assetId: String(message.assetId).trim() } : {}),
     promptVersion: ANALYSIS_PROMPT_VERSION,
     model: String(message.model ?? ""),
     analyzedAt,
@@ -6794,6 +6831,7 @@ function previewLibraryImport(state, library, options = {}) {
     skillIdMap: result.skillIdMap,
     packageAssetIdMap: result.packageAssetIdMap,
     importedCount: result.importedCount,
+    remappedCount: result.remappedCount,
     skippedCount: result.skippedCount,
     importedRunCount: result.importedRunCount,
     importedOutputCount: result.importedOutputCount,
@@ -6833,10 +6871,11 @@ async function applyLibraryImport(state, message) {
   return {
     ok: true,
     message: result.importedCount || result.importedRunCount || result.importedSkillCount
-      ? `已导入 ${result.importedCount} 个案例、${result.importedRunCount} 次创作运行和 ${result.importedSkillCount} 个 Skill${result.skippedCount || result.skippedSkillCount ? `，跳过 ${result.skippedCount} 个已有案例和 ${result.skippedSkillCount} 个已有 Skill` : ""}`
+      ? `已导入 ${result.importedCount} 个案例、${result.importedRunCount} 次创作运行和 ${result.importedSkillCount} 个 Skill${result.remappedCount ? `；其中 ${result.remappedCount} 个同源案例作为新副本导入，未覆盖旧数据` : ""}${result.skippedCount || result.skippedSkillCount ? `，跳过 ${result.skippedCount} 个已有案例和 ${result.skippedSkillCount} 个已有 Skill` : ""}`
       : `没有新增内容，${result.skippedCount} 个案例已经存在`,
     count: result.state.entries.length,
     importedCount: result.importedCount,
+    remappedCount: result.remappedCount,
     skippedCount: result.skippedCount,
     importedRunCount: result.importedRunCount,
     importedOutputCount: result.importedOutputCount,

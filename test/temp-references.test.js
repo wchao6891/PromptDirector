@@ -129,6 +129,18 @@ test("a text-only service blocks image attachments without choosing another serv
     imageCount: 1,
     choices: ["chooseVisionService", "analyzeImages", "cancel"]
   });
+  assert.deepEqual(imageTempReferenceBlock([{
+    sourceType: "library",
+    referenceKind: "prompt",
+    originalText: "A centered portrait with hard side light.",
+    referenceText: "A centered portrait with hard side light.",
+    imageRefs: [{ visualId: "temp-reference-asset:one", mimeType: "image/png" }],
+    assets: [{ assetId: "temp-reference-asset:one", kind: "image" }]
+  }], { serviceId: "deepseek", vision: false }), {
+    blocked: false,
+    imageCount: 0,
+    choices: []
+  });
 });
 
 test("a partial temporary-image analysis remains eligible for completion", () => {

@@ -2,7 +2,7 @@ import { libraryTitleForLocale, normalizeSettings } from "./lib.js";
 import { entryAttributeSummary } from "./library-model.js";
 import { normalizeTaxonomy } from "./taxonomy.js";
 import { normalizeFacetCatalog } from "./facets.js";
-import { entryPalette, normalizeEntryVisuals, primaryVisionDescription } from "./visuals.js";
+import { entryPalette, normalizeEntryVisuals } from "./visuals.js";
 import { posterAssetForVideo, primaryMediaAsset } from "./media.js";
 import { createSimilarityIndex, rankSimilarEntries } from "./local-similarity.js";
 import { promptForEntryImage } from "./image-prompt.js";
@@ -318,7 +318,6 @@ function renderDetail(entry, index, taxonomy, facetCatalog, relatedEntries) {
   const sourceUrl = safeWebUrl(entry.url);
   const primary = primaryMediaAsset(entry);
   const prompt = primary?.kind === "image" ? promptForEntryImage(entry, primary.id) : clean(entry.text);
-  const visionDescription = primaryVisionDescription(entry);
   const metadataRows = renderMetadataRows(entry.metadataLabels);
   const timeNotes = renderTimeNotes(entry, media);
   const related = relatedEntries.length
@@ -331,7 +330,6 @@ function renderDetail(entry, index, taxonomy, facetCatalog, relatedEntries) {
         <section class="detail-section detail-heading"><p class="eyebrow">PROMPTDIRECTOR</p><h2>${escapeHtml(title)}</h2><div class="detail-meta"><span data-zh="${escapeAttribute(contentZh)}" data-en="${escapeAttribute(contentEn)}">${escapeHtml(contentZh)}</span>${dateZh ? `<span data-zh="${escapeAttribute(dateZh)}" data-en="${escapeAttribute(dateEn)}">${escapeHtml(dateZh)}</span>` : ""}<span>${media.length} <span data-zh="项媒体" data-en="media items">项媒体</span></span></div>${palette.length ? `<div class="palette">${palette.map((color) => `<i style="background:${color}" title="${color}"></i>`).join("")}</div>` : ""}</section>
         ${attributes.length ? `<section class="detail-section"><h3 data-zh="AI 标签" data-en="AI tags">AI 标签</h3><div class="detail-tags">${attributes.map((item) => `<span title="${escapeAttribute(item.label)}">${escapeHtml(item.leafLabel)}</span>`).join("")}</div></section>` : ""}
         ${prompt ? `<section class="detail-section prompt-section"><div class="section-heading"><h3 data-zh="提示词" data-en="Prompt">提示词</h3><button class="button-secondary compact" type="button" data-copy-prompt="${escapeAttribute(prompt)}"><span data-zh="复制提示词" data-en="Copy prompt">复制提示词</span></button></div><pre class="prompt-text">${escapeHtml(prompt)}</pre><p class="compose-guide" data-zh="导入 PromptDirector 后可将当前图片作为具体参考继续创作。" data-en="Import this package into PromptDirector to continue creating with the current image as a specific reference.">导入 PromptDirector 后可将当前图片作为具体参考继续创作。</p></section>` : ""}
-        ${visionDescription ? `<section class="detail-section"><h3 data-zh="画面描述" data-en="Visual description">画面描述</h3><p class="visual-description">${escapeHtml(visionDescription)}</p></section>` : ""}
         ${metadataRows || sourceUrl ? `<section class="detail-section"><div class="section-heading"><h3 data-zh="来源" data-en="Source">来源</h3>${sourceUrl ? `<a class="source-open-action" href="${escapeAttribute(sourceUrl)}" target="_blank" rel="noreferrer"><span data-zh="打开来源" data-en="Open source">打开来源</span></a>` : ""}</div>${metadataRows}</section>` : ""}
         ${timeNotes}
       </aside>
@@ -349,7 +347,6 @@ function renderDetailMedia(entry, media, title) {
 
 function renderMediaAsset(entry, asset, title) {
   const prompt = clean(entry.mediaPrompts?.find((item) => item.assetId === asset.id)?.text);
-  const description = clean(asset.visionAnalysis?.description);
   let content;
   if (asset.kind === "image") {
     const path = safeArchiveMediaPath(asset.assetPath, asset);
@@ -373,7 +370,7 @@ function renderMediaAsset(entry, asset, title) {
       ? `<div class="document-panel"><strong>${escapeHtml(assetFormatLabel(asset))}</strong><span>${escapeHtml(asset.sourceTitle || title)}</span><small>${escapeHtml(assetFileSummary(asset))}</small><a class="button-primary" href="${escapeAttribute(path)}" download><span data-zh="下载源文件" data-en="Download source file">下载源文件</span></a></div>`
       : renderExternalMedia(asset, label);
   }
-  const caption = prompt || description ? `<div class="media-caption">${prompt ? `<p><strong data-zh="本图提示词" data-en="Media prompt">本图提示词</strong>${escapeHtml(prompt)}</p>` : ""}${description ? `<p><strong data-zh="画面描述" data-en="Visual description">画面描述</strong>${escapeHtml(description)}</p>` : ""}</div>` : "";
+  const caption = prompt ? `<div class="media-caption"><p><strong data-zh="本图提示词" data-en="Media prompt">本图提示词</strong>${escapeHtml(prompt)}</p></div>` : "";
   return `${content}${caption}`;
 }
 
