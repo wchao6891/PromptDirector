@@ -6,6 +6,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from e2e_support import launch_context
+
 
 EXTENSION_DIR = Path(__file__).resolve().parents[1]
 TINY_PNG = base64.b64decode(
@@ -53,9 +55,11 @@ def scroll_through_gallery(page) -> None:
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="promptdirector-thumbnail-rebind-") as profile:
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                profile, headless=True, channel="chromium", viewport={"width": 1440, "height": 900},
-                args=[f"--disable-extensions-except={EXTENSION_DIR}", f"--load-extension={EXTENSION_DIR}"]
+            context = launch_context(
+                playwright, profile,
+                viewport={"width": 1440, "height": 900},
+                accept_downloads=True,
+                extension_dir=EXTENSION_DIR,
             )
             try:
                 worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")

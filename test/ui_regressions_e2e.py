@@ -69,6 +69,7 @@ def main() -> None:
         )
 
         library = session.open_page("library.html", wait_until="networkidle")
+        expect(library.locator("body")).to_have_attribute("data-library-state", "ready")
         expect(library.locator("#case-list > .case-card")).to_have_count(2)
         assert library.locator("#import-candidates").count() == 0
         assert library.get_by_text("高级工具", exact=True).count() == 0

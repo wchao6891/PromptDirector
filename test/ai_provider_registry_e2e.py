@@ -174,7 +174,8 @@ def assert_deepseek_dynamic_image_analysis() -> None:
             "pageErrors": run.page_errors,
             "loadingText": library.locator("#library-loading").text_content(),
         }
-        library.locator("#open-settings").click()
+        if not library.locator("#settings-dialog").is_visible():
+            library.locator("#open-settings").click()
         library.locator('[data-settings-tab="ai"]').click()
         library.locator('[data-ai-routing-tab="providers"]').click()
         deepseek_row = library.locator('[data-provider-id="deepseek"]')

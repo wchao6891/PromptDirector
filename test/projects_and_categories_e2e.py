@@ -38,6 +38,7 @@ def main() -> None:
             },
         )
         library = session.open_page("library.html", wait_until="networkidle")
+        expect(library.locator("body")).to_have_attribute("data-library-state", "ready")
         expect(library.locator(".project-row.project-ordering")).to_have_count(0)
         long_name = library.locator(".project-filter-name", has_text="完整长项目名称")
         expect(long_name).to_be_visible()

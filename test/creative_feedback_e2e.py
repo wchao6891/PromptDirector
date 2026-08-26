@@ -5,6 +5,8 @@ from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 
+from e2e_support import launch_context
+
 
 EXTENSION_DIR = Path(__file__).resolve().parents[1]
 
@@ -13,16 +15,11 @@ def main() -> None:
     screenshots = Path(tempfile.gettempdir())
     with tempfile.TemporaryDirectory(prefix="prompt-director-feedback-") as profile_dir:
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                profile_dir,
-                headless=True,
-                channel="chromium",
+            context = launch_context(
+                playwright, profile_dir,
                 viewport={"width": 390, "height": 844},
-                permissions=["clipboard-read", "clipboard-write"],
-                args=[
-                    f"--disable-extensions-except={EXTENSION_DIR}",
-                    f"--load-extension={EXTENSION_DIR}",
-                ],
+                accept_downloads=True,
+                extension_dir=EXTENSION_DIR,
             )
             try:
                 worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
