@@ -60,8 +60,9 @@ jobs:
       - run: npm run test:upgrade
       - name: Verify both Chrome archives
         run: |
-          unzip -t "dist/PromptDirector-$(node -p \"require('./package.json').version\").zip"
-          unzip -t "dist/PromptDirector-$(node -p \"require('./package.json').version\")-FIXED-ID-DEV.zip"
+          PROMPTDIRECTOR_PACKAGE_VERSION="$(node -p 'require("./package.json").version')"
+          unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}.zip"
+          unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-FIXED-ID-DEV.zip"
       - name: Preserve the exact tested packages
         uses: actions/upload-artifact@v7
         with:
