@@ -110,7 +110,7 @@ def launch_context(
     accept_downloads: bool,
     extension_dir: Path = EXTENSION_DIR,
 ) -> BrowserContext:
-    return playwright.chromium.launch_persistent_context(
+    context = playwright.chromium.launch_persistent_context(
         profile_dir,
         headless=True,
         channel=os.environ.get("PROMPTDIRECTOR_E2E_CHANNEL", "chromium"),
@@ -123,6 +123,17 @@ def launch_context(
             f"--load-extension={extension_dir}",
         ],
     )
+    worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
+    bootstrap = context.new_page()
+    bootstrap_errors: list[str] = []
+    record_page_errors(bootstrap, bootstrap_errors)
+    try:
+        bootstrap.goto(f"chrome-extension://{worker.url.split('/')[2]}/collector.html", wait_until="domcontentloaded")
+        bootstrap.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
+        assert not bootstrap_errors, f"扩展首次初始化出现运行时错误：{bootstrap_errors}"
+    finally:
+        bootstrap.close()
+    return context
 
 
 def record_page_errors(page: Page, errors: list[str]) -> None:
