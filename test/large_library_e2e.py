@@ -7,6 +7,8 @@ from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
+from e2e_support import launch_context
+
 
 EXTENSION_DIR = Path(__file__).resolve().parents[1]
 
@@ -14,15 +16,11 @@ EXTENSION_DIR = Path(__file__).resolve().parents[1]
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="prompt-director-large-") as profile_dir:
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                profile_dir,
-                headless=True,
-                channel="chromium",
+            context = launch_context(
+                playwright, profile_dir,
                 viewport={"width": 1666, "height": 900},
-                args=[
-                    f"--disable-extensions-except={EXTENSION_DIR}",
-                    f"--load-extension={EXTENSION_DIR}",
-                ],
+                accept_downloads=True,
+                extension_dir=EXTENSION_DIR,
             )
             try:
                 worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
@@ -179,9 +177,19 @@ def main() -> None:
                 style_facet = library.locator('.facet-filter[data-facet-id="style"]')
                 style_facet.locator("summary").click()
                 style_category = style_facet.locator('[data-facet-node-id="style.render"]')
-                started = time.perf_counter()
-                style_category.click()
-                tag_filter_ms = round((time.perf_counter() - started) * 1000)
+                style_category.wait_for(state="visible")
+                tag_filter_ms = round(library.evaluate(
+                    """async () => {
+                      const button = document.querySelector('[data-facet-node-id="style.render"]');
+                      const result = document.querySelector('#result-count');
+                      const started = performance.now();
+                      button.click();
+                      while (button.getAttribute('aria-pressed') !== 'true' || !result.textContent.includes('6500')) {
+                        await new Promise(resolve => requestAnimationFrame(resolve));
+                      }
+                      return performance.now() - started;
+                    }"""
+                ))
                 assert style_category.get_attribute("aria-pressed") == "true"
                 assert "6500" in library.locator("#result-count").inner_text()
                 assert tag_filter_ms < 250, f"6500-case tag category switch took {tag_filter_ms}ms"
