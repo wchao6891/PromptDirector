@@ -40,13 +40,39 @@ class ExtensionTestSession:
         return page
 
     def seed_storage(self, page: Page, payload: dict) -> None:
-        page.evaluate(
-            """async (payload) => {
-              await chrome.storage.local.clear();
-              await chrome.storage.local.set(payload);
-            }""",
-            payload,
-        )
+        seed_extension_storage(page, payload)
+
+
+def seed_extension_storage(page: Page, payload: dict) -> None:
+    """Seed a fixture only after the extension's first state migration has settled."""
+    result = page.evaluate(
+        """async (payload) => {
+          await chrome.runtime.sendMessage({type: 'GET_STATE'});
+          await chrome.storage.local.clear();
+          await chrome.storage.local.set(payload);
+          const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+          const expectedEntryIds = (payload.entries ?? []).map((entry) => entry.id);
+          const actualEntryIds = new Set((state.entries ?? []).map((entry) => entry.id));
+          const expectedRunIds = (payload.creativeRuns ?? []).map((run) => run.id);
+          const actualRunIds = new Set((state.creativeRuns ?? []).map((run) => run.id));
+          const missingEntryIds = expectedEntryIds.filter((id) => !actualEntryIds.has(id));
+          const missingRunIds = expectedRunIds.filter((id) => !actualRunIds.has(id));
+          const missingSessionIds = [];
+          for (const session of payload.composerSessions ?? []) {
+            const response = await chrome.runtime.sendMessage({
+              type: 'GET_COMPOSER_SESSION',
+              sessionId: session.id
+            });
+            if (!response?.ok) missingSessionIds.push(session.id);
+          }
+          return {ok: state.ok, missingEntryIds, missingRunIds, missingSessionIds};
+        }""",
+        payload,
+    )
+    assert result["ok"] is True, result
+    assert not result["missingEntryIds"], result
+    assert not result["missingRunIds"], result
+    assert not result["missingSessionIds"], result
 
 
 @contextmanager

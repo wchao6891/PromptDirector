@@ -5,7 +5,7 @@ from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
-from e2e_support import launch_context
+from e2e_support import launch_context, seed_extension_storage
 
 
 EXTENSION_DIR = Path(__file__).resolve().parents[1]
@@ -83,13 +83,7 @@ def main() -> None:
                 extension_id = worker.url.split("/")[2]
                 setup = context.new_page()
                 setup.goto(f"chrome-extension://{extension_id}/collector.html")
-                setup.evaluate(
-                    """async (entries) => {
-                      await chrome.storage.local.clear();
-                      await chrome.storage.local.set({schemaVersion: 3, entries});
-                    }""",
-                    make_entries(),
-                )
+                seed_extension_storage(setup, {"schemaVersion": 3, "entries": make_entries()})
 
                 library = context.new_page()
                 library.add_init_script(
