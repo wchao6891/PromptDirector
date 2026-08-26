@@ -1,0 +1,22 @@
+{
+  "contractVersion": 1,
+  "publishedPackages": [
+    { "version": 1, "fixture": "v1/library.json", "provenance": "v1" },
+    { "version": 2, "fixture": "v2/library.json", "provenance": "v2" },
+    { "version": 3, "fixture": "v3/library.json", "provenance": "v3" },
+    { "version": 4, "fixture": "v4/library.json", "provenance": "v4" },
+    { "version": 5, "fixture": "v5/library.json", "provenance": "v5" }
+  ],
+  "releasedStorageSchemas": [
+    {
+      "schemaVersion": 28,
+      "sourceRelease": "v1.19.2",
+      "provenanceType": "reconstructed-domain-state-from-release-contract",
+      "originalUserArchive": false,
+      "fixture": "storage/schema-28.json",
+      "activeEntryIds": ["fixture:schema-28:active"],
+      "trashedEntryIds": ["fixture:schema-28:trash"],
+      "projectIds": ["fixture:schema-28:project"]
+    }
+  ]
+}
