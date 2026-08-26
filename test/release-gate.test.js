@@ -21,7 +21,7 @@ test("installed-package acceptance can point the shared browser harness at an un
 });
 
 test("the shared browser harness has a deterministic default UI language across operating systems", () => {
-  assert.match(e2eSupport, /--lang=zh-CN/);
+  assert.match(e2eSupport, /locale="zh-CN"/);
 });
 
 test("release verification cannot bypass the historical data compatibility gate", () => {
