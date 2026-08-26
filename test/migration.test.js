@@ -91,6 +91,41 @@ test("fixed-tree upgrade keeps mapped DeepSeek labels usable until an explicit r
   assert.equal(entry.analyzedAt, "2026-08-02T00:00:00.000Z");
 });
 
+test("schema upgrade preserves sanitized analysis diagnostics and paid-attempt counts", () => {
+  const stored = {
+    schemaVersion: 24,
+    taxonomy: createDefaultTaxonomy(),
+    facetCatalog: { version: 2, revision: 1, facets: [], nodes: [] },
+    organizerState: { collections: [] },
+    compoundCases: [],
+    entries: [{
+      id: "analyzed-with-diagnostics",
+      schemaVersion: 24,
+      title: "保留分析诊断",
+      text: "cinematic portrait",
+      savedAt: "2026-08-02T00:00:00.000Z",
+      classification: { pathIds: [CONTENT_IDS.promptImage], status: "confirmed", source: "manual" },
+      facetAssignments: [], analysisCandidates: [], analysisBreakdown: [], customLabels: [],
+      analysisMeta: {
+        textRevision: 2,
+        promptVersion: 7,
+        model: "previous",
+        normalizationDiagnostics: [
+          { field: "tags", message: "丢弃未知标签", code: "unknown_tag", count: 2, secret: "drop" },
+          { message: "缺少字段名" }
+        ],
+        attempts: { serviceRequests: 3, outputCorrectionRequests: 1, secret: 99 }
+      }
+    }]
+  };
+
+  const meta = migrateLibraryState(stored).state.entries[0].analysisMeta;
+  assert.deepEqual(meta.normalizationDiagnostics, [{
+    field: "tags", message: "丢弃未知标签", code: "unknown_tag", count: 2
+  }]);
+  assert.deepEqual(meta.attempts, { serviceRequests: 3, outputCorrectionRequests: 1 });
+});
+
 test("schema upgrade separates verified importer metadata without moving user labels", () => {
   const common = {
     schemaVersion: 23,

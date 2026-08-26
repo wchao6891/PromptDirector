@@ -1359,7 +1359,9 @@ function createCaseCard(entry) {
         bindVideoHoverPreview(wrap, { loadBlob: () => getMediaBlob(mainVisual.id) });
       }
       card.append(wrap);
-    } else card.append(createVideoLinkCover(entry, mainVisual));
+    } else card.append(mainVisual.storageMode === "managed"
+      ? createLocalVideoCaseCover(entry, mainVisual)
+      : createVideoLinkCover(entry, mainVisual));
   } else if (mainVisual?.kind === "document") {
     card.append(mainVisual.mimeType === "application/pdf" ? createPdfCaseCover(entry, mainVisual) : createTextCaseCover(entry, mainVisual));
   } else if (mainVisual?.kind === "audio") {
@@ -1481,6 +1483,19 @@ function assetFormatLabel(asset) {
 function mediaMetadataText(asset) {
   return [asset?.durationMs ? formatMediaTime(asset.durationMs) : "", assetFormatLabel(asset), asset?.byteSize ? formatBytes(asset.byteSize) : ""]
     .filter(Boolean).join(" · ");
+}
+
+function createLocalVideoCaseCover(entry, asset) {
+  const cover = el("div", "case-asset-cover case-local-video-cover");
+  cover.append(
+    rawTextEl("span", "case-text-kind", `${t("本地视频")} · ${assetFormatLabel(asset)}`),
+    rawTextEl("strong", "case-text-title", asset.sourceTitle || entry.title || t("本地视频")),
+    rawTextEl("p", "case-asset-meta", mediaMetadataText(asset)),
+    rawTextEl("p", "case-text-excerpt", t(asset.playbackCapability === "external"
+      ? "浏览器无法预览，打开详情可用系统播放器"
+      : "打开查看本地视频"))
+  );
+  return cover;
 }
 
 async function mediaObjectUrl(assetId) {

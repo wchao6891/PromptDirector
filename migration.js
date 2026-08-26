@@ -228,6 +228,20 @@ function normalizeAnalysisMeta(value) {
     ? Object.fromEntries(["promptTokens", "completionTokens", "totalTokens", "cacheHitTokens", "cacheMissTokens"]
       .map((key) => [key, Math.max(0, Number(value.usage[key]) || 0)]))
     : undefined;
+  const normalizationDiagnostics = (Array.isArray(value.normalizationDiagnostics) ? value.normalizationDiagnostics : [])
+    .map((item) => ({
+      field: String(item?.field ?? "").trim(),
+      ...(String(item?.message ?? "").trim() ? { message: String(item.message).trim() } : {}),
+      ...(String(item?.code ?? "").trim() ? { code: String(item.code).trim() } : {}),
+      ...(Number(item?.count) > 0 ? { count: Number(item.count) } : {})
+    }))
+    .filter((item) => item.field);
+  const attempts = value.attempts && typeof value.attempts === "object"
+    ? {
+        serviceRequests: Math.max(0, Number(value.attempts.serviceRequests) || 0),
+        outputCorrectionRequests: Math.max(0, Number(value.attempts.outputCorrectionRequests) || 0)
+      }
+    : undefined;
   return {
     ...(textFingerprint ? { textFingerprint } : {}),
     textRevision,
@@ -235,7 +249,9 @@ function normalizeAnalysisMeta(value) {
     model: String(value.model ?? "").trim(),
     analyzedAt: String(value.analyzedAt ?? "").trim(),
     profileFingerprint: String(value.profileFingerprint ?? "").trim(),
-    ...(usage ? { usage } : {})
+    ...(usage ? { usage } : {}),
+    ...(normalizationDiagnostics.length ? { normalizationDiagnostics } : {}),
+    ...(attempts ? { attempts } : {})
   };
 }
 

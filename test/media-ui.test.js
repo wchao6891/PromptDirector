@@ -91,6 +91,11 @@ test("video cards resolve a saved local poster and referenced video details stay
   const card = source.slice(source.indexOf("function createCaseCard"), source.indexOf("function renderProjectFilters"));
   assert.match(card, /posterAssetForVideo/);
   assert.match(card, /dataset\.visualId/);
+  assert.match(card, /mainVisual\.storageMode === "managed"\s*\? createLocalVideoCaseCover\(entry, mainVisual\)/);
+  const localVideoCover = source.slice(source.indexOf("function createLocalVideoCaseCover"), source.indexOf("function createVideoLinkCover"));
+  assert.match(localVideoCover, /本地视频/);
+  assert.match(localVideoCover, /浏览器无法预览，打开详情可用系统播放器/);
+  assert.doesNotMatch(localVideoCover, /视频来源|reference/);
   assert.match(source, /is-video-reference/);
   assert.match(source, /releaseDetailControllers/);
   assert.match(source, /removeEventListener\("message", onMessage\)/);

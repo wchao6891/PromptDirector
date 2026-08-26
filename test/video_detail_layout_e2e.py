@@ -12,9 +12,13 @@ def video_asset(asset_id: str, captured_at: str) -> dict:
         "usage": "content",
         "storageMode": "managed",
         "mimeType": "video/mp4",
+        "sourceTitle": f"{asset_id}.mp4",
+        "sourceFormat": "mp4",
+        "byteSize": 4,
         "width": 720,
         "height": 1280,
         "durationMs": 10_000,
+        "playbackCapability": "external",
         "capturedAt": captured_at,
         "reviewStatus": "verified",
     }
@@ -85,6 +89,9 @@ def main() -> None:
 
         library = session.open_page("library.html", wait_until="networkidle")
         expect(library.locator(".case-card")).to_have_count(1)
+        expect(library.locator(".case-local-video-cover")).to_contain_text("本地视频 · MP4")
+        expect(library.locator(".case-local-video-cover")).to_contain_text("浏览器无法预览，打开详情可用系统播放器")
+        expect(library.locator(".case-video-link-cover")).to_have_count(0)
         library.locator(".case-card").click()
         expect(library.locator(".detail-visual-thumb")).to_have_count(2)
         library.locator(".detail-visual-thumb").nth(1).click()
