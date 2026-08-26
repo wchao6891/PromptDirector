@@ -19,3 +19,29 @@ test("the only release verification gate runs source tests and browser E2E befor
 test("installed-package acceptance can point the shared browser harness at an unpacked artifact", () => {
   assert.match(e2eSupport, /PROMPTDIRECTOR_E2E_EXTENSION_DIR/);
 });
+
+test("release verification cannot bypass the historical data compatibility gate", () => {
+  const scripts = packageJson.scripts;
+  assert.equal(scripts["check:compat"], "node tools/check-data-compatibility.mjs");
+  assert.match(scripts["verify:source"], /npm run check:compat/);
+});
+
+test("release verification rehearses an installed-profile upgrade with the final fixed-id package", () => {
+  const scripts = packageJson.scripts;
+  assert.equal(scripts["test:upgrade"], "node tools/run-release-upgrade-e2e.mjs");
+  assert.match(scripts["verify:release"], /npm run package/);
+  assert.match(scripts["verify:release"], /npm run test:upgrade/);
+  assert.ok(scripts["verify:release"].indexOf("npm run package") < scripts["verify:release"].indexOf("npm run test:upgrade"));
+});
+
+test("GitHub runs source contracts and packaged Chromium journeys before main can advance", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/release-safety.yml", import.meta.url), "utf8");
+  assert.match(workflow, /pull_request:/);
+  assert.match(workflow, /push:[\s\S]*branches:[\s\S]*main/);
+  assert.match(workflow, /fetch-depth:\s*0/);
+  assert.match(workflow, /npm run verify:source/);
+  assert.match(workflow, /npm run test:e2e/);
+  assert.match(workflow, /npm run package:release/);
+  assert.match(workflow, /npm run package/);
+  assert.match(workflow, /npm run test:upgrade/);
+});

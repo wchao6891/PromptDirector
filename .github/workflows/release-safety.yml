@@ -1,0 +1,71 @@
+name: Release safety
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-contracts:
+    name: Source and compatibility contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out complete release history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:source
+
+  browser-package:
+    name: Chromium journeys and packaged upgrade
+    needs: source-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out complete release history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Use Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Install the pinned Chromium test runtime
+        run: |
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run package:release
+      - run: npm run package
+      - run: npm run test:upgrade
+      - name: Verify both Chrome archives
+        run: |
+          unzip -t "dist/PromptDirector-$(node -p \"require('./package.json').version\").zip"
+          unzip -t "dist/PromptDirector-$(node -p \"require('./package.json').version\")-FIXED-ID-DEV.zip"
+      - name: Preserve the exact tested packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: promptdirector-tested-packages-${{ github.sha }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14

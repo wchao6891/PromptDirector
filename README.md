@@ -39,9 +39,9 @@ npm install
 npm run verify
 ```
 
-`npm run verify` 是唯一正式发布门槛：先完成源码、资源与单元测试，再跑完整浏览器 E2E，全部通过后才生成商店包；任一阶段失败都不会进入打包。只需快速检查源码时可运行 `npm run verify:source`。`npm run package` 生成保留固定身份的本地安装包；`npm run package:release` 生成移除 `key` 的 Chrome Web Store 上传包。两者包含相同的运行代码，只有安装身份用途不同。正式身份缺失时命令会明确失败，避免用户资料被错误扩展 ID 隔离。
+`npm run verify` 是唯一正式发布门槛：先完成源码、资源、历史数据兼容与单元测试，再跑完整浏览器 E2E；全部通过后生成商店包和固定 ID 本地包，并用上一正式版资料执行同一 Chrome Profile 的最终包升级演练。任一阶段失败都不会通过门禁。只需快速检查源码时可运行 `npm run verify:source`，只检查历史数据合同可运行 `npm run check:compat`。`npm run package` 生成保留固定身份的本地安装包；`npm run package:release` 生成移除 `key` 的 Chrome Web Store 上传包。两者包含相同的运行代码，只有安装身份用途不同。正式身份缺失时命令会明确失败，避免用户资料被错误扩展 ID 隔离。
 
-当前浏览器兼容边界和已确认但延期的增强记录在 [已知限制](docs/KNOWN_LIMITATIONS.md)。
+已发布数据的长期支持规则、权威夹具和升级门禁见[数据兼容说明](docs/DATA_COMPATIBILITY.md)。当前浏览器兼容边界和已确认但延期的增强记录在[已知限制](docs/KNOWN_LIMITATIONS.md)。
 
 ## 参与与许可
 

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 28,
+  "taxonomy": { "version": 28, "revision": 1, "nodes": [] },
+  "facetCatalog": { "version": 3, "taxonomyVersion": 1, "revision": 1, "facets": [], "nodes": [] },
+  "classificationRules": [],
+  "organizerState": {
+    "version": 7,
+    "collections": [{
+      "id": "fixture:schema-28:project",
+      "name": "Schema 28 project",
+      "parentId": null,
+      "order": 0,
+      "entryIds": ["fixture:schema-28:active"]
+    }]
+  },
+  "compoundCases": [],
+  "trashState": {
+    "version": 1,
+    "items": [{
+      "id": "trash:entry:fixture-schema-28",
+      "kind": "entry",
+      "targetId": "fixture:schema-28:trash",
+      "deletedAt": "2026-08-26T00:00:00.000Z",
+      "snapshot": {
+        "id": "fixture:schema-28:trash",
+        "schemaVersion": 28,
+        "title": "Schema 28 trashed case",
+        "text": "trashed prompt",
+        "savedAt": "2026-08-25T00:00:00.000Z",
+        "classification": { "pathIds": ["content:prompt:image"], "status": "confirmed", "source": "manual" },
+        "facetAssignments": [],
+        "analysisCandidates": [],
+        "analysisBreakdown": [],
+        "customLabels": ["user-trash-tag"],
+        "mediaAssets": []
+      },
+      "relationships": { "collections": [] }
+    }]
+  },
+  "entries": [{
+    "id": "fixture:schema-28:active",
+    "schemaVersion": 28,
+    "title": "Schema 28 active case",
+    "text": "active prompt",
+    "savedAt": "2026-08-25T00:00:00.000Z",
+    "classification": { "pathIds": ["content:prompt:image"], "status": "confirmed", "source": "manual" },
+    "facetAssignments": [],
+    "analysisCandidates": [],
+    "analysisBreakdown": [],
+    "customLabels": ["user-active-tag"],
+    "mediaAssets": []
+  }]
+}
