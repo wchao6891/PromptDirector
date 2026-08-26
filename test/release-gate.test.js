@@ -20,6 +20,10 @@ test("installed-package acceptance can point the shared browser harness at an un
   assert.match(e2eSupport, /PROMPTDIRECTOR_E2E_EXTENSION_DIR/);
 });
 
+test("the shared browser harness has a deterministic default UI language across operating systems", () => {
+  assert.match(e2eSupport, /--lang=zh-CN/);
+});
+
 test("release verification cannot bypass the historical data compatibility gate", () => {
   const scripts = packageJson.scripts;
   assert.equal(scripts["check:compat"], "node tools/check-data-compatibility.mjs");
