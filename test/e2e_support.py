@@ -92,6 +92,7 @@ def launch_context(
         viewport=viewport,
         permissions=["clipboard-read", "clipboard-write"],
         args=[
+            "--lang=zh-CN",
             f"--disable-extensions-except={extension_dir}",
             f"--load-extension={extension_dir}",
         ],
