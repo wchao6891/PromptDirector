@@ -7,6 +7,7 @@ import {
   mediaStorageWriteError,
   normalizeDerivedMedia,
   normalizeDerivedMetadata,
+  validatePortableAssetBlob,
   validateMediaBlob
 } from "../media-store.js";
 
@@ -22,6 +23,11 @@ test("media storage accepts images videos audio documents and inert creator sour
     assert.equal(error.code, "unsupported_format");
     return true;
   });
+});
+
+test("a parser-validated portable attachment may retain unknown original bytes", () => {
+  assert.doesNotThrow(() => validatePortableAssetBlob(new Blob(["source"], { type: "application/octet-stream" })));
+  assert.throws(() => validatePortableAssetBlob(new Blob([])), /媒体文件无效/);
 });
 
 test("derived document data remains a rebuildable cache with bounded metadata", () => {

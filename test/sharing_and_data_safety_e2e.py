@@ -32,10 +32,44 @@ def main() -> None:
     entries[1]["primaryMediaId"] = "share-image-two"
     entries[1]["note"] = "不应公开的私人笔记"
     entries[1]["metadataLabels"] = ["作者：测试作者", "权利：本人原创", "秘密：sk-private"]
+    trashed_entry = base_entry("trash-one", "回收站案例", "需要跨电脑恢复。", "content:prompt:image", 3)
+    trashed_entry["mediaAssets"] = [{
+        "id": "trash-image",
+        "kind": "image",
+        "storageMode": "managed",
+        "mimeType": "image/png",
+        "width": 8,
+        "height": 8,
+    }]
+    trashed_entry["primaryMediaId"] = "trash-image"
+    trash_state = {
+        "version": 1,
+        "items": [{
+            "id": "trash:entry:trash-one",
+            "kind": "entry",
+            "targetId": "trash-one",
+            "deletedAt": "2026-08-26T00:00:00.000Z",
+            "snapshot": trashed_entry,
+            "relationships": {"collections": [{"id": "collection:trash", "index": 0}]},
+        }, {
+            "id": "trash:collection:collection:trash",
+            "kind": "collection",
+            "targetId": "collection:trash",
+            "deletedAt": "2026-08-26T00:00:00.000Z",
+            "snapshot": {
+                "id": "collection:trash",
+                "name": "回收站项目",
+                "parentId": None,
+                "order": 0,
+                "entryIds": ["trash-one"],
+            },
+            "relationships": {},
+        }],
+    }
     with extension_session("prompt-director-share-") as session:
         setup = session.open_page("collector.html")
         current_schema = setup.evaluate("async () => (await import(chrome.runtime.getURL('taxonomy.js'))).SCHEMA_VERSION")
-        session.seed_storage(setup, {"schemaVersion": current_schema, "entries": entries})
+        session.seed_storage(setup, {"schemaVersion": current_schema, "entries": entries, "trashState": trash_state})
         setup.evaluate(
             """async () => {
               const {saveMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
@@ -51,12 +85,42 @@ def main() -> None:
               await saveMediaBlob('share-poster', imageBlob, {checkCapacity: false});
               await saveMediaBlob('share-video', new Blob(['fixture-video'], {type: 'video/mp4'}), {checkCapacity: false});
               await saveMediaBlob('share-document', new Blob(['%PDF-1.4 fixture'], {type: 'application/pdf'}), {checkCapacity: false});
+              await saveMediaBlob('trash-image', imageBlob, {checkCapacity: false});
+              const opfsRoot = await navigator.storage.getDirectory();
+              const linkedHandle = await opfsRoot.getFileHandle('linked-original.zzz', {create: true});
+              const writable = await linkedHandle.createWritable();
+              await writable.write(new Blob(['linked-original-bytes'], {type: 'application/octet-stream'}));
+              await writable.close();
+              const linkedFile = await linkedHandle.getFile();
+              const {saveLocalAssetHandle} = await import(chrome.runtime.getURL('local-asset-store.js'));
+              await saveLocalAssetHandle('linked-local-image', linkedHandle, linkedFile);
+              const stored = await chrome.storage.local.get('entries');
+              const linkedEntry = {
+                schemaVersion: 24,
+                id: 'linked-one',
+                title: '本机链接素材案例',
+                text: '备份时必须复制原件。',
+                url: 'https://fixture.invalid/linked-one',
+                savedAt: '2026-08-02T08:04:00.000Z',
+                classification: {pathIds: ['content:prompt:image'], status: 'confirmed', source: 'manual'},
+                facetAssignments: [], analysisCandidates: [], analysisBreakdown: [], rejectedCandidateKeys: [],
+                negativeTerms: [], customLabels: [], timeNotes: [],
+                mediaAssets: [{
+                  id: 'linked-local-image', recordType: 'local-asset-reference', kind: 'attachment', usage: 'content',
+                  storageMode: 'reference', mimeType: linkedFile.type, byteSize: linkedFile.size,
+                  sourceTitle: linkedFile.name, sourceFormat: 'zzz', formatCategory: 'local-link',
+                  relativePath: linkedFile.name, sourceLastModified: linkedFile.lastModified, linkStatus: 'linked',
+                  importFailure: {code: 'unsupported_format', message: '不支持的素材格式', forceAllowed: false}
+                }],
+                primaryMediaId: 'linked-local-image'
+              };
+              await chrome.storage.local.set({entries: [...stored.entries, linkedEntry]});
             }"""
         )
         setup.wait_for_function(
             """async () => {
               const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
-              return state?.entries?.length === 2;
+              return state?.entries?.length === 3;
             }"""
         )
         library = session.open_page("library.html", wait_until="networkidle")
@@ -174,7 +238,166 @@ def main() -> None:
         expect(library.locator("#create-folder-backup")).to_be_visible()
         expect(library.locator("#restore-folder-backup")).to_be_visible()
         assert library.locator("#create-portable-backup").count() == 0
-        print({"shared_entries": 2, "curated_submission": True, "private_drafts_removed": True, "data_safety": True, "offline_preview": True, "mobile_width": 390, "screenshots": str(screenshots)})
+        library.evaluate(
+            """() => {
+              class MemoryFileHandle {
+                constructor(name) { this.kind = 'file'; this.name = name; this.blob = new Blob([]); }
+                async getFile() { return new File([this.blob], this.name, {type: this.blob.type}); }
+                async createWritable() {
+                  let pending = this.blob;
+                  return {
+                    write: async (value) => { pending = value instanceof Blob ? value : new Blob([value]); },
+                    close: async () => { this.blob = pending; },
+                    abort: async () => undefined
+                  };
+                }
+              }
+              class MemoryDirectoryHandle {
+                constructor(name) { this.kind = 'directory'; this.name = name; this.files = new Map(); this.directories = new Map(); }
+                async requestPermission() { return 'granted'; }
+                async getFileHandle(name, options = {}) {
+                  if (!this.files.has(name) && options.create) this.files.set(name, new MemoryFileHandle(name));
+                  if (!this.files.has(name)) throw new DOMException('Not found', 'NotFoundError');
+                  return this.files.get(name);
+                }
+                async getDirectoryHandle(name, options = {}) {
+                  if (!this.directories.has(name) && options.create) this.directories.set(name, new MemoryDirectoryHandle(name));
+                  if (!this.directories.has(name)) throw new DOMException('Not found', 'NotFoundError');
+                  return this.directories.get(name);
+                }
+                async *entries() {
+                  for (const item of this.directories) yield item;
+                  for (const item of this.files) yield item;
+                }
+              }
+              window.__installBackupRoot = () => {
+                window.__backupRoot = new MemoryDirectoryHandle('chosen-parent');
+                Object.defineProperty(window, 'showDirectoryPicker', {
+                  value: async () => window.__backupRoot,
+                  configurable: true
+                });
+              };
+              window.__installBackupRoot();
+            }"""
+        )
+        library.locator("#create-folder-backup").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("完整备份已完成", timeout=15_000)
+        backup_result = library.evaluate(
+            """async () => {
+              const folder = [...window.__backupRoot.directories.values()][0];
+              const libraryJson = JSON.parse(await (await folder.files.get('library.json').getFile()).text());
+              const completion = JSON.parse(await (await folder.files.get('complete.json').getFile()).text());
+              const trashEntry = libraryJson.trashState.items.find((item) => item.kind === 'entry');
+              const linkedEntry = libraryJson.entries.find((entry) => entry.id === 'linked-one');
+              return {
+                completeExists: folder.files.has('complete.json'),
+                trashCases: completion.trashCaseCount,
+                trashProjects: completion.trashProjectCount,
+                manifestPaths: completion.files.map((item) => item.path),
+                trashAsset: trashEntry.snapshot.mediaAssets[0],
+                linkedAsset: linkedEntry.mediaAssets[0]
+              };
+            }"""
+        )
+        assert backup_result["completeExists"] is True, backup_result
+        assert backup_result["trashCases"] == 1 and backup_result["trashProjects"] == 1, backup_result
+        assert "library.json" in backup_result["manifestPaths"], backup_result
+        assert backup_result["trashAsset"]["storageMode"] == "managed", backup_result
+        assert backup_result["trashAsset"]["assetPath"] in backup_result["manifestPaths"], backup_result
+        assert backup_result["linkedAsset"]["storageMode"] == "managed", backup_result
+        assert backup_result["linkedAsset"]["assetPath"] in backup_result["manifestPaths"], backup_result
+        assert "recordType" not in backup_result["linkedAsset"], backup_result
+
+        library.evaluate(
+            """async () => {
+              window.__portableBackupFolder = [...window.__backupRoot.directories.values()][0];
+              const media = await import(chrome.runtime.getURL('media-store.js'));
+              for (const id of ['share-image-one', 'share-image-two', 'share-poster', 'share-video', 'share-document', 'trash-image', 'linked-local-image']) {
+                await media.deleteMediaBlob(id);
+              }
+              const {deleteLocalAssetHandle} = await import(chrome.runtime.getURL('local-asset-store.js'));
+              await deleteLocalAssetHandle('linked-local-image');
+              await chrome.storage.local.set({
+                entries: [],
+                trashState: {version: 1, items: []},
+                organizerState: {version: 7, collections: []},
+                compoundCases: [],
+                composerSessions: [],
+                creativeRuns: [],
+                creativeSkills: {version: 1, items: []}
+              });
+              Object.defineProperty(window, 'showDirectoryPicker', {
+                value: async () => window.__portableBackupFolder,
+                configurable: true
+              });
+            }"""
+        )
+        library.locator("#restore-folder-backup").click()
+        restore_dialog = library.locator("#promptdirector-app-dialog")
+        expect(restore_dialog).to_be_visible(timeout=15_000)
+        expect(restore_dialog).to_contain_text("恢复资料库备份")
+        restore_dialog.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("媒体文件校验并恢复完成", timeout=15_000)
+        restored_state = library.evaluate(
+            """async () => {
+              const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+              const media = await import(chrome.runtime.getURL('media-store.js'));
+              return {
+                entryIds: state.entries.map((entry) => entry.id).sort(),
+                trashKinds: state.trashState.items.map((item) => item.kind).sort(),
+                activeImageBytes: (await media.getMediaBlob('share-image-one'))?.size || 0,
+                trashImageBytes: (await media.getMediaBlob('trash-image'))?.size || 0,
+                linkedImageBytes: (await media.getMediaBlob('linked-local-image'))?.size || 0,
+                linkedStorageMode: state.entries.find((entry) => entry.id === 'linked-one')?.mediaAssets?.[0]?.storageMode || ''
+              };
+            }"""
+        )
+        assert restored_state["entryIds"] == ["linked-one", "share-one", "share-two"], restored_state
+        assert restored_state["trashKinds"] == ["collection", "entry"], restored_state
+        assert restored_state["activeImageBytes"] > 0 and restored_state["trashImageBytes"] > 0, restored_state
+        assert restored_state["linkedImageBytes"] > 0 and restored_state["linkedStorageMode"] == "managed", restored_state
+
+        library.evaluate(
+            """async () => {
+              const stored = await chrome.storage.local.get('entries');
+              const linked = {
+                ...stored.entries[0],
+                id: 'unreadable-linked-case',
+                title: '失效本机链接',
+                mediaAssets: [{
+                  id: 'unreadable-linked-asset',
+                  recordType: 'local-asset-reference',
+                  kind: 'attachment',
+                  storageMode: 'reference',
+                  mimeType: 'application/octet-stream',
+                  byteSize: 12,
+                  sourceTitle: 'missing.zzz',
+                  sourceFormat: 'zzz',
+                  formatCategory: 'local-link',
+                  relativePath: 'missing.zzz',
+                  linkStatus: 'relink-required',
+                  importFailure: {
+                    code: 'unsupported_format',
+                    message: '不支持的素材格式',
+                    forceAllowed: false
+                  }
+                }],
+                primaryMediaId: 'unreadable-linked-asset'
+              };
+              await chrome.storage.local.set({entries: [...stored.entries, linked]});
+              window.__installBackupRoot();
+            }"""
+        )
+        library.locator("#create-folder-backup").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("未写入完成标记", timeout=15_000)
+        failed_backup = library.evaluate(
+            """() => {
+              const folder = [...window.__backupRoot.directories.values()][0];
+              return {created: Boolean(folder), completeExists: Boolean(folder?.files.has('complete.json'))};
+            }"""
+        )
+        assert failed_backup == {"created": True, "completeExists": False}, failed_backup
+        print({"shared_entries": 2, "curated_submission": True, "private_drafts_removed": True, "data_safety": True, "folder_backup": backup_result, "cross_machine_restore": restored_state, "unreadable_source_no_marker": failed_backup, "offline_preview": True, "mobile_width": 390, "screenshots": str(screenshots)})
 
 
 if __name__ == "__main__":

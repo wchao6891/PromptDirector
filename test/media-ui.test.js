@@ -120,8 +120,11 @@ test("complete folder backup writes a completion marker after library metadata",
   const backup = source.slice(source.indexOf("async function createCompleteFolderBackup"), source.indexOf("async function restoreCompleteFolderBackup"));
   assert.ok(backup.indexOf('"library.json"') < backup.indexOf('"complete.json"'));
   assert.match(backup, /await writeDirectoryFile\(directory, assetPath, blob\)/);
-  assert.match(backup, /byteSize:\s*blob\.size/);
-  assert.match(backup, /folderAssetPath\(entry\.id, asset, blob\.type \|\| asset\.mimeType\)/);
+  assert.match(backup, /portableManagedBackupAsset\(asset, blob, assetPath, await sha256Blob\(blob\)\)/);
+  assert.match(backup, /materializeEntry\(item\.snapshot, `trash-entry-/);
+  assert.match(backup, /buildFolderBackupCompletion\(writtenFiles/);
+  assert.match(backup, /verifyFolderBackupCompletion\(completion, writtenFiles\)/);
+  assert.ok(backup.indexOf("parseCompleteFolderBackup(writtenLibrary, writtenFiles") < backup.indexOf('"complete.json"'));
   assert.match(source, /"application\/rtf":\s*"rtf"/);
 });
 

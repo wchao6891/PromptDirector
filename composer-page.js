@@ -45,6 +45,7 @@ import {
 } from "./composer-service.js";
 import { applyComposerServiceResult, planComposerSession } from "./composer-turn-core.js";
 import { createComposerImageWorkspace } from "./composer-image-workspace.js";
+import { createComposerAnalysisTaskBridge } from "./composer-analysis-task-bridge.js";
 import { composerAssemblyLayers } from "./composer-agent.js";
 import { retrieveComposerSources } from "./composer-retrieval.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
@@ -131,7 +132,9 @@ const imageWorkspace = createComposerImageWorkspace({
 });
 let composerSession = null;
 let activeOperation = null;
-let imageAnalysisPending = false;
+const composerAnalysisTaskBridge = createComposerAnalysisTaskBridge({
+  sendMessage: (message) => chrome.runtime.sendMessage(message)
+});
 let referenceDraftSelections = new Map();
 let referenceDraftOrder = [];
 let referencePreviewAssetIds = new Map();
@@ -225,19 +228,17 @@ function bindEvents() {
   elements.composerAssemblyOpen.addEventListener("click", openAssemblyDialog);
   elements.composerAssemblyClose.addEventListener("click", () => elements.composerAssemblyDialog.close());
   elements.composerImageBlockerChooseService.addEventListener("click", () => {
-    if (imageAnalysisPending) return;
     elements.composerImageBlocker.close();
     openComposerModelMenu();
   });
-  elements.composerImageBlockerAnalyze.addEventListener("click", safely(analyzeBlockedTempReferences));
-  elements.composerImageBlocker.addEventListener("cancel", (event) => {
-    if (imageAnalysisPending) event.preventDefault();
-  });
+  elements.composerImageBlockerAnalyze.addEventListener("click", safely(handleBlockedReferenceAnalysisAction));
+  elements.composerImageBlocker.addEventListener("close", safely(detachBlockedReferenceAnalysis));
   elements.composerReferenceClose.addEventListener("click", closeReferenceWorkspace);
   elements.composerReferenceCancel.addEventListener("click", closeReferenceWorkspace);
   elements.composerReferenceSearch.addEventListener("input", renderCasePicker);
   document.addEventListener("visibilitychange", () => {
     document.body.classList.toggle("composer-page-paused", document.hidden);
+    if (!document.hidden && composerAnalysisTaskBridge.snapshot().attached) safely(refreshBlockedReferenceAnalysis)();
   });
   elements.composerReferenceProjectFilter.addEventListener("change", renderCasePicker);
   elements.composerReferenceClear.addEventListener("click", () => {
@@ -256,7 +257,12 @@ function bindEvents() {
     if (event.key === "Escape") closeComposerModelMenu();
   });
   addEventListener("beforeunload", () => {
+    composerAnalysisTaskBridge.detach().catch(() => undefined);
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
+  });
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type !== "ANALYSIS_TASK_UPDATED") return;
+    safely(() => acceptBlockedReferenceAnalysisUpdate(message))();
   });
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
@@ -1024,6 +1030,7 @@ function showImageTempReferenceBlock() {
   if (!block.blocked) return false;
   const serviceLabel = currentImageAnalysisServiceLabel();
   elements.composerImageBlockerDescription.textContent = t("本轮有 {count} 张尚未分析的参考图片，但 {service} 只能读取文字。可切换到视觉创作服务；也可调用当前图片分析服务（{analysisService}），预计发起 {count} 次额外请求，费用由服务商按你的账号计费。", { count: block.imageCount, service: service.shortLabel, analysisService: serviceLabel });
+  renderImageBlockerTaskState();
   elements.composerImageBlocker.showModal();
   return true;
 }
@@ -1052,8 +1059,15 @@ function currentImageAnalysisServiceLabel() {
     : `${fallbackProvider.label} · 未配置模型`;
 }
 
-async function analyzeBlockedTempReferences() {
-  if (!composerSession || imageAnalysisPending) return;
+async function handleBlockedReferenceAnalysisAction() {
+  const task = composerAnalysisTaskBridge.snapshot();
+  if (task.attached && analysisTaskIsActive(task.status)) return stopBlockedReferenceAnalysis();
+  if (task.canRetry) return retryBlockedReferenceAnalysis();
+  return startBlockedReferenceAnalysis();
+}
+
+async function startBlockedReferenceAnalysis() {
+  if (!composerSession) return;
   const references = composerSession.referenceSnapshots.filter((reference) =>
     unreadReferenceImageAssets(reference).length
   );
@@ -1061,33 +1075,126 @@ async function analyzeBlockedTempReferences() {
     elements.composerImageBlocker.close();
     return sendComposerTurn();
   }
-  imageAnalysisPending = true;
-  setImageBlockerPending(true);
-  elements.composerImageBlockerDescription.textContent = t("正在通过当前图片分析服务处理 {count} 张图片。完成前不会发送本轮消息，也不会更换创作模型。", { count: references.length });
+  const imageCount = references.reduce((total, reference) => total + unreadReferenceImageAssets(reference).length, 0);
+  elements.composerImageBlockerDescription.textContent = t("正在创建图片分析任务，共 {count} 张。关闭此窗口只会取消本页自动继续，不会停止后台任务。", { count: imageCount });
+  const starting = composerAnalysisTaskBridge.start({
+    sessionId: composerSession.id,
+    tempReferenceIds: references.map((reference) => reference.entryId),
+    outputLocale: composerAnalysisOutputLocale()
+  });
+  renderImageBlockerTaskState();
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "ANALYZE_TEMP_REFERENCES",
-      sessionId: composerSession.id,
-      tempReferenceIds: references.map((reference) => reference.entryId),
-      outputLocale: elements.composerOutputLanguage.value === "en"
-        ? "en"
-        : elements.composerOutputLanguage.value === "zh-CN" ? "zh-CN" : currentLocale() === "en" ? "en" : "zh-CN"
-    });
-    applyTempReferenceResponse(response, "临时图片分析失败");
-    renderComposer();
-    elements.composerImageBlocker.close();
-    composerFeedback(`已完成 ${references.length} 项参考图片分析，正在继续本轮创作`);
-    await sendComposerTurn();
+    await handleBlockedReferenceAnalysisState(await starting);
   } catch (error) {
-    elements.composerImageBlockerDescription.textContent = `${error.message || "临时图片分析失败"}。本轮输入和附件均已保留，请重试、切换视觉创作服务或取消。`;
-  } finally {
-    imageAnalysisPending = false;
-    setImageBlockerPending(false);
+    await composerAnalysisTaskBridge.detach().catch(() => undefined);
+    renderImageBlockerTaskState();
+    elements.composerImageBlockerDescription.textContent = `${error.message || "无法创建图片分析任务"}。本轮输入和附件均已保留，未自动重试。`;
   }
 }
 
-function setImageBlockerPending(pending) {
-  elements.composerImageBlocker.querySelectorAll("button").forEach((button) => { button.disabled = pending; });
+async function stopBlockedReferenceAnalysis() {
+  const previous = composerAnalysisTaskBridge.snapshot();
+  elements.composerImageBlockerDescription.textContent = t("正在请求停止图片分析。关闭窗口仍只会断开本页，不代表停止成功。");
+  renderImageBlockerTaskState({ ...previous, status: "stop-requested" });
+  try {
+    const stopped = await composerAnalysisTaskBridge.stop();
+    renderImageBlockerTaskState(stopped);
+    elements.composerImageBlockerDescription.textContent = previous.status === "queued"
+      ? t("任务已在发出服务请求前停止，本轮不会自动发送。")
+      : t("已请求停止任务。本轮不会自动发送；若服务商此前已接收请求，仍可能产生费用。可关闭窗口，或明确确认后重新分析。");
+  } catch (error) {
+    renderImageBlockerTaskState();
+    elements.composerImageBlockerDescription.textContent = `${error.message || "停止请求未确认"}。任务执行状态未知，本轮不会自动发送，也不会自动重试。`;
+  }
+}
+
+async function retryBlockedReferenceAnalysis() {
+  const confirmed = await confirmAppAction({
+    title: t("重新发起图片分析？"),
+    description: t("上一轮请求可能已经被服务商接收。重新分析会创建新的执行尝试，并可能再次计费；旧尝试的结果不会写回本轮。"),
+    confirmLabel: t("确认重新分析")
+  });
+  if (!confirmed) return;
+  elements.composerImageBlockerDescription.textContent = t("正在创建新的图片分析尝试。完成前不会发送本轮消息。");
+  const retrying = composerAnalysisTaskBridge.retry({ confirmed: true });
+  renderImageBlockerTaskState();
+  try {
+    await handleBlockedReferenceAnalysisState(await retrying);
+  } catch (error) {
+    await composerAnalysisTaskBridge.detach().catch(() => undefined);
+    renderImageBlockerTaskState();
+    elements.composerImageBlockerDescription.textContent = `${error.message || "无法重新创建图片分析任务"}。本轮输入和附件均已保留，未自动重试。`;
+  }
+}
+
+async function detachBlockedReferenceAnalysis() {
+  await composerAnalysisTaskBridge.detach();
+}
+
+async function refreshBlockedReferenceAnalysis() {
+  if (!composerAnalysisTaskBridge.snapshot().attached) return;
+  await handleBlockedReferenceAnalysisState(await composerAnalysisTaskBridge.refresh());
+}
+
+async function acceptBlockedReferenceAnalysisUpdate(message) {
+  if (!composerAnalysisTaskBridge.snapshot().attached) return;
+  if (!composerAnalysisTaskBridge.acceptUpdate(message)) return;
+  await handleBlockedReferenceAnalysisState(composerAnalysisTaskBridge.snapshot());
+}
+
+async function handleBlockedReferenceAnalysisState(task) {
+  if (!task.attached) return;
+  renderImageBlockerTaskState(task);
+  if (task.status === "completed") {
+    const result = composerAnalysisTaskBridge.consumeCompletion();
+    if (!result) return;
+    applyTempReferenceResponse(result, "临时图片分析失败");
+    renderComposer();
+    elements.composerImageBlocker.close();
+    composerFeedback(t("图片分析已完成，正在继续本轮创作"));
+    await sendComposerTurn();
+    return;
+  }
+  if (task.executionState === "execution_state_unknown") {
+    elements.composerImageBlockerDescription.textContent = t("浏览器后台曾中断，上一轮是否执行完成无法确认。系统不会自动重试或发送本轮；如要重试，请明确确认，新的尝试可能再次计费。");
+    return;
+  }
+  if (task.status === "failed") {
+    elements.composerImageBlockerDescription.textContent = t("图片分析未完成。本轮输入和附件均已保留，系统不会自动重试或发送；可确认后重新分析。");
+    return;
+  }
+  if (task.status === "stopped") {
+    elements.composerImageBlockerDescription.textContent = t("图片分析已停止，本轮不会自动发送。可关闭窗口，或明确确认后重新分析。");
+    return;
+  }
+  if (task.status === "queued") {
+    elements.composerImageBlockerDescription.textContent = t("图片分析正在等待执行，尚未开始服务请求。关闭窗口只会取消本页自动继续；点击“停止分析”才会请求停止任务。");
+    return;
+  }
+  if (["running", "stop-requested"].includes(task.status)) {
+    elements.composerImageBlockerDescription.textContent = task.status === "stop-requested"
+      ? t("正在请求停止图片分析。本轮不会自动发送。")
+      : t("图片分析正在执行。关闭窗口只会取消本页自动继续；点击“停止分析”才会请求停止任务。服务商已接收的请求仍可能计费。");
+  }
+}
+
+function renderImageBlockerTaskState(task = composerAnalysisTaskBridge.snapshot()) {
+  const active = task.attached && analysisTaskIsActive(task.status);
+  elements.composerImageBlockerChooseService.disabled = active;
+  elements.composerImageBlockerAnalyze.disabled = task.status === "stop-requested";
+  elements.composerImageBlockerAnalyze.textContent = active
+    ? t("停止分析")
+    : task.canRetry ? t("重新分析") : t("调用图片分析并继续");
+}
+
+function analysisTaskIsActive(status) {
+  return ["starting", "queued", "running", "stop-requested"].includes(status);
+}
+
+function composerAnalysisOutputLocale() {
+  return elements.composerOutputLanguage.value === "en"
+    ? "en"
+    : elements.composerOutputLanguage.value === "zh-CN" ? "zh-CN" : currentLocale() === "en" ? "en" : "zh-CN";
 }
 
 async function retryComposerTurn() {

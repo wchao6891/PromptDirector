@@ -1,0 +1,32 @@
+{
+  "format": "prompt-case-library",
+  "version": 5,
+  "schemaVersion": 27,
+  "organizerState": {
+    "version": 7,
+    "collections": [{
+      "id": "fixture:v5:project",
+      "name": "Reconstructed project",
+      "parentId": null,
+      "order": 0,
+      "entryIds": ["fixture:v5"]
+    }]
+  },
+  "entries": [{
+    "id": "fixture:v5",
+    "schemaVersion": 27,
+    "title": "Reconstructed v5 case",
+    "text": "v5 prompt",
+    "savedAt": "2026-01-05T00:00:00.000Z",
+    "mediaAssets": [{
+      "id": "fixture:v5:image",
+      "kind": "image",
+      "storageMode": "managed",
+      "assetPath": "images/fixture-v5.webp",
+      "sourceFormat": "webp",
+      "mimeType": "image/webp",
+      "byteSize": 5
+    }],
+    "primaryMediaId": "fixture:v5:image"
+  }]
+}

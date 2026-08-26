@@ -6,6 +6,7 @@ import {
   createCollection,
   deleteCollection,
   mergeOrganizerState,
+  mergeOrganizerStateWithMap,
   normalizeOrganizerState,
   planCollectionAndEntriesDeletion,
   reorderCollections,
@@ -56,6 +57,22 @@ test("organizer merge remaps entry ids and merges same-name collections", () => 
     collections: [{ id: "collection:remote", name: "项目", order: 0, entryIds: ["source"] }]
   }, { source: "imported" });
   assert.deepEqual(merged.collections[0].entryIds, ["local", "imported"]);
+});
+
+test("organizer merge exposes the actual destination id for every imported project", () => {
+  const result = mergeOrganizerStateWithMap({
+    collections: [{ id: "collection:local", name: "项目", order: 0, entryIds: ["local"] }]
+  }, {
+    collections: [
+      { id: "collection:remote", name: "项目", order: 0, entryIds: ["source"] },
+      { id: "collection:local", name: "另一个项目", order: 1, entryIds: ["second"] }
+    ]
+  }, { source: "imported", second: "imported-second" });
+
+  assert.equal(result.collectionIdMap["collection:remote"], "collection:local");
+  assert.notEqual(result.collectionIdMap["collection:local"], "collection:local");
+  assert.deepEqual(result.state.collections[0].entryIds, ["local", "imported"]);
+  assert.equal(result.state.collections.find((item) => item.id === result.collectionIdMap["collection:local"]).entryIds[0], "imported-second");
 });
 
 test("receiver-local project creation time is assigned only to newly imported projects", () => {

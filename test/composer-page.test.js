@@ -152,7 +152,12 @@ test("composer temporary references share one attachment entry and block text-on
   assert.match(composerJs, /type:\s*"ADD_TEMP_REFERENCES"/);
   assert.match(composerJs, /type:\s*"REMOVE_TEMP_REFERENCE"/);
   assert.match(composerJs, /type:\s*"SAVE_TEMP_REFERENCE_AS_CASE"/);
-  assert.match(composerJs, /type:\s*"ANALYZE_TEMP_REFERENCES"/);
+  assert.match(composerJs, /createComposerAnalysisTaskBridge/);
+  assert.match(composerJs, /detachBlockedReferenceAnalysis/);
+  assert.match(composerJs, /stopBlockedReferenceAnalysis/);
+  assert.match(composerJs, /retryBlockedReferenceAnalysis/);
+  assert.doesNotMatch(composerJs, /type:\s*"ANALYZE_TEMP_REFERENCES"/);
+  assert.doesNotMatch(composerJs, /if \(imageAnalysisPending\) event\.preventDefault\(\)/);
   assert.match(composerJs, /composerPasteFiles\(event\.clipboardData\)/);
   assert.match(composerJs, /if \(!files\.length\) return;\s*event\.preventDefault\(\)/s);
   const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));

@@ -5,7 +5,7 @@ import {
   collectionEntryIds,
   collectionSubtreeIds,
   createDefaultOrganizerState,
-  mergeOrganizerState,
+  mergeOrganizerStateWithMap,
   normalizeOrganizerState
 } from "./organizer.js";
 import { normalizeComposerSessions, normalizeComposerSettings } from "./composer.js";
@@ -13,18 +13,20 @@ import { normalizeCreativeExperimentSettings, normalizeCreativeRuns } from "./cr
 import { mergeCreativeSkillsState, normalizeCreativeSkillsState } from "./creative-skills.js";
 import { formatBytes, portableLibraryLimits } from "./resource-limits.js";
 import { normalizeEntryVisuals } from "./visuals.js";
-import { normalizeEntryMedia } from "./media.js";
+import { normalizeEntryMedia, removeEntryMedia } from "./media.js";
 import { expandLogicalCaseIds, normalizeCompoundCases } from "./compound-cases.js";
-import { isFixedTagTree, migrateLegacyFacetState } from "./tag-taxonomy.js";
-import { migrateLibraryState } from "./migration.js";
-import { LIBRARY_PACKAGE_FORMAT, isSupportedLibraryPackageVersion } from "./library-package-format.js";
+import { prepareLibraryPackageDraft } from "./library-package-migrations.js";
 import { remapArticleDocumentAssets } from "./article-document.js";
+import { caseSemanticFingerprint } from "./library-semantic-identity.js";
+import { normalizeTrashState } from "./trash.js";
 import { boundedMediaBlobFromResponse, isSupportedDocumentMimeType } from "./bounded-media.js";
 import {
   assetFormatForExtension,
   fileExtension,
   isReportedMimeCompatible
 } from "./asset-formats.js";
+
+const AI_ASSIGNMENT_SOURCES = new Set(["deepseek_text", "local_image_review", "vision_model"]);
 
 export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}) {
   const preparedFiles = new Map(files);
@@ -39,15 +41,18 @@ export async function parseCompleteFolderBackup(value, files = new Map(), limits
     });
     preparedFiles.set(path, verified);
   }
-  return parseLibraryPackage(value, preparedFiles, limitsValue);
+  return parseLibraryPackage(value, preparedFiles, { ...limitsValue, salvageInvalidMedia: false });
 }
 
 export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) {
   const limits = portableLibraryLimits(limitsValue);
   const skipMediaByteValidation = limitsValue?.skipMediaByteValidation === true;
-  if (!value || value.format !== LIBRARY_PACKAGE_FORMAT || !isSupportedLibraryPackageVersion(value.version) || !Array.isArray(value.entries)) {
-    throw new Error("这个 ZIP 不是受支持的 PromptDirector 分享包");
-  }
+  const salvageInvalidMedia = limitsValue?.salvageInvalidMedia === true;
+  const prepared = prepareLibraryPackageDraft(value);
+  const importDiagnostics = [...prepared.diagnostics];
+  const importStats = { ...prepared.stats, droppedMediaFiles: 0 };
+  const packageVersion = prepared.sourceVersion;
+  value = prepared.draft;
   if (value.entries.length > limits.maxEntries) {
     throw new Error(`案例数量超过 ${limits.maxEntries} 条上限`);
   }
@@ -73,17 +78,17 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
   const assets = new Map();
   const images = new Map();
   const skillAssets = new Map();
-  if (value.version >= 4) {
+  if (packageVersion >= 4 && !salvageInvalidMedia) {
     for (const entry of data.entries) {
       for (const asset of Array.isArray(entry?.mediaAssets) ? entry.mediaAssets : []) {
         if (asset?.storageMode === "reference") continue;
-        validatePortableMediaDescriptor(asset, clean(asset?.assetPath), value.version);
+        validatePortableMediaDescriptor(asset, clean(asset?.assetPath), packageVersion);
       }
     }
   }
   data.entries = data.entries.map((entry) => {
     const normalized = normalizeEntryVisuals(entry);
-    if (value.version >= 4) {
+    if (packageVersion >= 4) {
       const normalizedIds = new Set(normalized.mediaAssets.map((asset) => asset.id));
       const missingAsset = (Array.isArray(entry?.mediaAssets) ? entry.mediaAssets : [])
         .find((asset) => asset?.storageMode !== "reference" && clean(asset?.id) && !normalizedIds.has(clean(asset.id)));
@@ -93,44 +98,164 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
     normalized.metadataLabels = uniqueNames(entry?.metadataLabels);
     return normalized;
   });
-  if (!isFixedTagTree(data.facetCatalog)) {
-    const migrated = migrateLegacyFacetState(data.entries, data.facetCatalog);
-    data.facetCatalog = migrated.catalog;
-    data.entries = migrated.entries;
-  }
-  for (const entry of data.entries) {
+  for (let entryIndex = 0; entryIndex < data.entries.length; entryIndex += 1) {
+    let entry = data.entries[entryIndex];
     const id = clean(entry?.id);
     if (!id || ids.has(id)) throw new Error("案例包包含无效或重复的案例编号");
     ids.add(id);
     entry.id = id;
+    const entryAssets = new Map();
+    const droppedAssetIds = [];
     for (const asset of entry.mediaAssets) {
       if (visualIds.has(asset.id)) throw new Error("案例包包含重复的媒体编号");
       visualIds.add(asset.id);
       if (asset.storageMode === "reference") continue;
       const path = clean(asset.assetPath);
-      const format = validatePortableMediaDescriptor(asset, path, value.version);
+      let format;
+      try {
+        format = validatePortableMediaDescriptor(asset, path, packageVersion);
+      } catch (error) {
+        if (!salvageInvalidMedia) throw error;
+        droppedAssetIds.push(asset.id);
+        importStats.droppedMediaDescriptors += 1;
+        importDiagnostics.push({
+          code: "media_descriptor_dropped",
+          severity: "media",
+          action: "dropped",
+          entryId: entry.id,
+          assetId: asset.id,
+          reason: "invalid_descriptor"
+        });
+        continue;
+      }
       const blob = files.get(path);
-      if (!(blob instanceof Blob) || !blobMatchesKind(blob, asset, format, value.version)) {
-        throw new Error(asset.kind === "image"
-          ? `“${entry.title || "未命名案例"}”的截图缺失`
-          : `“${entry.title || "未命名案例"}”的媒体文件缺失或类型不符`);
+      const failure = portableMediaFileFailure(entry, asset, blob, format, packageVersion, limits, skipMediaByteValidation);
+      if (failure) {
+        if (!salvageInvalidMedia) throw new Error(failure.message);
+        droppedAssetIds.push(asset.id);
+        importStats.droppedMediaFiles += 1;
+        importDiagnostics.push({
+          code: "media_file_dropped",
+          severity: "media",
+          action: "dropped",
+          entryId: entry.id,
+          assetId: asset.id,
+          path,
+          reason: failure.reason
+        });
+        continue;
+      }
+      entryAssets.set(asset.id, blob);
+    }
+    for (const assetId of droppedAssetIds) entry = removeEntryMedia(entry, assetId);
+    const retainedAssetIds = new Set(entry.mediaAssets.map((asset) => asset.id));
+    if (droppedAssetIds.length) {
+      entry.facetAssignments = (entry.facetAssignments ?? []).flatMap((assignment) => {
+        const visualId = clean(assignment?.visualId);
+        if (!visualId || retainedAssetIds.has(visualId)) return [assignment];
+        if (!AI_ASSIGNMENT_SOURCES.has(assignment?.source)) {
+          const { visualId: _visualId, ...portableAssignment } = assignment;
+          return [portableAssignment];
+        }
+        importStats.droppedAiAssignments += 1;
+        importDiagnostics.push({
+          code: "ai_assignment_dropped",
+          severity: "metadata",
+          action: "dropped",
+          entryId: entry.id,
+          reason: "missing_media"
+        });
+        return [];
+      });
+    }
+    data.entries[entryIndex] = entry;
+    for (const [assetId, blob] of entryAssets) {
+      if (!retainedAssetIds.has(assetId)) continue;
+      assets.set(assetId, blob);
+      if (entry.mediaAssets.find((asset) => asset.id === assetId)?.kind === "image") images.set(assetId, blob);
+    }
+  }
+  if (salvageInvalidMedia) {
+    data.entries = data.entries.filter((entry) => {
+      if (hasRecoverableCaseContent(entry)) return true;
+      ids.delete(entry.id);
+      importStats.keptCases = Math.max(0, importStats.keptCases - 1);
+      importStats.skippedCases += 1;
+      importDiagnostics.push({
+        code: "case_skipped_after_media_loss",
+        severity: "case",
+        action: "skipped",
+        entryId: entry.id,
+        reason: "no_usable_content"
+      });
+      return false;
+    });
+  }
+  data.compoundCases = normalizeCompoundCases(data.compoundCases, data.entries);
+  data.trashState = normalizeTrashState(data.trashState);
+  for (const item of data.trashState.items) {
+    if (item.kind !== "entry" && item.kind !== "media") continue;
+    const entry = item.kind === "entry"
+      ? normalizeEntryMedia(item.snapshot)
+      : normalizeEntryMedia({
+          id: clean(item.relationships?.entryId) || `trash-media:${item.targetId}`,
+          title: clean(item.snapshot?.sourceTitle) || "回收站媒体",
+          mediaAssets: item.snapshot?.mediaAssets ?? [],
+          primaryMediaId: ""
+        });
+    const trashMediaIds = new Set(entry.mediaAssets.map((asset) => asset.id));
+    if (item.kind === "entry") {
+      entry.facetAssignments = dropDanglingAiAssignments(entry.facetAssignments, {
+        facetIds: packageFacetIds,
+        nodeIds: packageNodeIds,
+        mediaIds: trashMediaIds,
+        entryId: entry.id,
+        importDiagnostics,
+        importStats
+      });
+    } else {
+      item.snapshot.facetAssignments = dropDanglingAiAssignments(item.snapshot?.facetAssignments, {
+        facetIds: packageFacetIds,
+        nodeIds: packageNodeIds,
+        mediaIds: trashMediaIds,
+        entryId: clean(item.relationships?.entryId) || item.targetId,
+        importDiagnostics,
+        importStats
+      });
+      item.relationships.facetAssignments = dropDanglingAiAssignments(item.relationships?.facetAssignments, {
+        facetIds: packageFacetIds,
+        nodeIds: packageNodeIds,
+        mediaIds: trashMediaIds,
+        entryId: clean(item.relationships?.entryId) || item.targetId,
+        importDiagnostics,
+        importStats
+      });
+    }
+    for (const asset of entry.mediaAssets) {
+      if (visualIds.has(asset.id)) throw new Error("完整备份包含重复的媒体编号");
+      visualIds.add(asset.id);
+      if (asset.storageMode === "reference") continue;
+      const path = clean(asset.assetPath);
+      const format = validatePortableMediaDescriptor(asset, path, packageVersion);
+      const blob = files.get(path);
+      if (!(blob instanceof Blob) || !blobMatchesKind(blob, asset, format, packageVersion)) {
+        throw new Error(`回收站中的“${entry.title || "未命名案例"}”缺少媒体文件或类型不符`);
       }
       if (asset.kind === "image" && blob.size > limits.maxImageBytes) {
-        throw new Error(`“${entry.title || "未命名案例"}”的图片超过 ${formatBytes(limits.maxImageBytes)} 上限`);
+        throw new Error(`回收站中的图片超过 ${formatBytes(limits.maxImageBytes)} 上限`);
       }
       if (asset.kind !== "image" && blob.size > limits.maxFileBytes) {
-        throw new Error(`“${entry.title || "未命名案例"}”的媒体超过 ${formatBytes(limits.maxFileBytes)} 小型分享包上限，请使用完整资料夹备份`);
+        throw new Error(`回收站中的媒体超过 ${formatBytes(limits.maxFileBytes)} 上限`);
       }
-      if (!skipMediaByteValidation && value.version >= 3 && asset.byteSize && asset.byteSize !== blob.size) {
-        throw new Error(
-          `“${entry.title || "未命名案例"}”的媒体大小校验失败：期望 ${asset.byteSize} bytes，实际 ${blob.size} bytes（${path}）`
-        );
+      if (!skipMediaByteValidation && packageVersion >= 3 && asset.byteSize && asset.byteSize !== blob.size) {
+        throw new Error(`回收站中的媒体大小校验失败：${path}`);
       }
       assets.set(asset.id, blob);
       if (asset.kind === "image") images.set(asset.id, blob);
     }
+    if (item.kind === "entry") item.snapshot = entry;
+    else item.snapshot.mediaAssets = entry.mediaAssets;
   }
-  data.compoundCases = normalizeCompoundCases(data.compoundCases, data.entries);
   data.organizerState = normalizeOrganizerState(data.organizerState, [...ids]);
   data.composerSettings = normalizeComposerSettings(data.composerSettings);
   data.composerSessions = normalizeComposerSessions(data.composerSessions);
@@ -201,36 +326,16 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
       skillAssets.set(file.assetId, blob);
     }
   }
-  const migrated = migrateLibraryState({
-    schemaVersion: packageSchemaVersion(data),
-    entries: data.entries,
-    compoundCases: data.compoundCases,
-    taxonomy: data.taxonomy,
-    facetCatalog: data.facetCatalog,
-    classificationRules: data.classificationRules,
-    organizerState: data.organizerState
-  }).state;
   return {
     ...data,
     schemaVersion: SCHEMA_VERSION,
-    entries: migrated.entries,
-    compoundCases: migrated.compoundCases,
-    taxonomy: migrated.taxonomy,
-    facetCatalog: migrated.facetCatalog,
-    classificationRules: migrated.classificationRules,
-    organizerState: migrated.organizerState,
+    sourcePackageVersion: packageVersion,
+    importDiagnostics,
+    importStats,
     assets,
     images,
     skillAssets
   };
-}
-
-function packageSchemaVersion(value = {}) {
-  if (Number.isInteger(value.schemaVersion)) return value.schemaVersion;
-  const versions = (value.entries ?? [])
-    .map((entry) => Number(entry?.schemaVersion))
-    .filter(Number.isInteger);
-  return versions.length ? Math.min(...versions) : 0;
 }
 
 export function selectLibraryPackage(state = {}, entryIds = []) {
@@ -345,9 +450,15 @@ function sanitizeSharedEntry(entry) {
 }
 
 export function mergeLibraryPackage(current = {}, importedValue = {}, options = {}) {
+  const priorImportEvidence = parsedImportEvidence(importedValue);
   const imported = parseLibraryPackage(importedValue, packageImagePlaceholders(importedValue), {
     skipMediaByteValidation: true
   });
+  if (priorImportEvidence) {
+    imported.importDiagnostics = mergeImportDiagnostics(priorImportEvidence.diagnostics, imported.importDiagnostics);
+    imported.importStats = mergeImportStats(priorImportEvidence.stats, imported.importStats);
+  }
+  const importedTrashAssets = trashMediaAssets(imported.trashState);
   const importMetadata = localImportMetadata(options);
   const empty = !(current.entries ?? []).length && options.preserveLibraryConfiguration !== true;
   if (empty) {
@@ -356,6 +467,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       state: {
         ...structuredClone(current),
         entries: imported.entries.map((entry) => withLocalImportMetadata(withoutArchivePath(entry), importMetadata)),
+        trashState: imported.trashState,
         settings: imported.settings,
         taxonomy: imported.taxonomy,
         facetCatalog: imported.facetCatalog,
@@ -373,7 +485,14 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       visualIdMap: Object.fromEntries([
         ...imported.entries.flatMap((entry) => entry.mediaAssets.map((visual) => [visual.id, visual.id])),
         ...imported.creativeRuns.flatMap((run) => run.outputs.map((output) => [output.visual.id, output.visual.id])),
-        ...temporaryReferenceAssets(imported.composerSessions).map((asset) => [asset.assetId, asset.assetId])
+        ...temporaryReferenceAssets(imported.composerSessions).map((asset) => [asset.assetId, asset.assetId]),
+        ...importedTrashAssets.map((asset) => [asset.id, asset.id])
+      ]),
+      createdVisualIdMap: Object.fromEntries([
+        ...imported.entries.flatMap((entry) => entry.mediaAssets.map((visual) => [visual.id, visual.id])),
+        ...imported.creativeRuns.flatMap((run) => run.outputs.map((output) => [output.visual.id, output.visual.id])),
+        ...temporaryReferenceAssets(imported.composerSessions).map((asset) => [asset.assetId, asset.assetId]),
+        ...importedTrashAssets.map((asset) => [asset.id, asset.id])
       ]),
       skillIdMap: skillMerge.skillIdMap,
       packageAssetIdMap: skillMerge.packageAssetIdMap,
@@ -382,6 +501,9 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       importedRunCount: imported.creativeRuns.length,
       importedOutputCount: imported.creativeRuns.reduce((sum, run) => sum + run.outputs.length, 0),
       importedCount: imported.entries.length,
+      createdEntryIds: imported.entries.map((entry) => entry.id),
+      importDiagnostics: imported.importDiagnostics,
+      importStats: imported.importStats,
       remappedCount: 0,
       skippedCount: 0
     };
@@ -405,12 +527,30 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   ]);
   const entryIdMap = {};
   const visualIdMap = { ...(options.visualIdMap ?? {}) };
+  const createdVisualIdMap = {};
   const organizerEntryIdMap = {};
   let importedCount = 0;
+  const createdEntryIds = [];
   let remappedCount = 0;
   let skippedCount = 0;
   for (const source of imported.entries) {
     const idCollision = usedEntryIds.has(source.id);
+    const sourceFingerprint = caseSemanticFingerprint(source);
+    const identical = sourceFingerprint && next.entries.find((entry) =>
+      (entry.id === source.id || clean(entry.importSource?.entryId) === source.id) &&
+      caseSemanticFingerprint(entry) === sourceFingerprint
+    );
+    if (identical) {
+      skippedCount += 1;
+      entryIdMap[source.id] = identical.id;
+      organizerEntryIdMap[source.id] = identical.id;
+      const sourceAssets = normalizeEntryMedia(source).mediaAssets;
+      const existingAssets = normalizeEntryMedia(identical).mediaAssets;
+      for (let index = 0; index < sourceAssets.length; index += 1) {
+        if (existingAssets[index]) visualIdMap[sourceAssets[index].id] = existingAssets[index].id;
+      }
+      continue;
+    }
     if (idCollision && options.skipExistingEntryIds === true) {
       skippedCount += 1;
       organizerEntryIdMap[source.id] = source.id;
@@ -426,6 +566,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     if (usedEntryIds.has(targetId)) throw new Error("导入期间案例库发生变化，请重试");
     const entry = withoutArchivePath(structuredClone(source));
     Object.assign(entry, importMetadata);
+    entry.importSource = { entryId: source.id };
     entry.id = targetId;
     const sourceContentId = entry.classification?.pathIds?.[0];
     const targetContentId = taxonomyMerge.idMap[sourceContentId];
@@ -443,6 +584,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
         : preferredVisualId;
       usedVisualIds.add(targetVisualId);
       visualIdMap[visual.id] = targetVisualId;
+      createdVisualIdMap[visual.id] = targetVisualId;
       return { ...visual, id: targetVisualId };
     });
     entry.primaryMediaId = visualIdMap[entry.primaryMediaId] ?? entry.primaryMediaId;
@@ -472,6 +614,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     });
     next.entries.push(entry);
     usedEntryIds.add(targetId);
+    createdEntryIds.push(targetId);
     entryIdMap[source.id] = targetId;
     organizerEntryIdMap[source.id] = targetId;
     importedCount += 1;
@@ -481,12 +624,13 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     if (!importedEntry?.creationMeta?.sourceEntryIds) continue;
     importedEntry.creationMeta.sourceEntryIds = importedEntry.creationMeta.sourceEntryIds.map((id) => organizerEntryIdMap[id] ?? id);
   }
-  next.organizerState = mergeOrganizerState(
+  const organizerMerge = mergeOrganizerStateWithMap(
     next.organizerState,
     imported.organizerState,
     organizerEntryIdMap,
     options.preserveLibraryConfiguration === true ? { createdAt: importMetadata.libraryAddedAt } : {}
   );
+  next.organizerState = organizerMerge.state;
   const usedCompoundIds = new Set([
     ...next.entries.map((entry) => entry.id),
     ...next.compoundCases.map((item) => item.id)
@@ -517,6 +661,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     const targetAssetId = usedVisualIds.has(asset.assetId) ? uniqueId("temp-reference", usedVisualIds) : asset.assetId;
     usedVisualIds.add(targetAssetId);
     visualIdMap[asset.assetId] = targetAssetId;
+    createdVisualIdMap[asset.assetId] = targetAssetId;
   }
   const composerMerge = mergeComposerSessions(
     next.composerSessions,
@@ -538,12 +683,33 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     options.runIdMap
   );
   next.creativeRuns = creativeMerge.runs;
+  for (const run of imported.creativeRuns) {
+    for (const output of run.outputs) {
+      const sourceId = output.visual.id;
+      if (visualIdMap[sourceId]) createdVisualIdMap[sourceId] = visualIdMap[sourceId];
+    }
+  }
   const skillMerge = mergeCreativeSkillsState(next.creativeSkills, imported.creativeSkills, options);
   next.creativeSkills = skillMerge.state;
+  const trashMerge = mergeImportedTrashState(next.trashState, imported.trashState, {
+    activeEntryIds: next.entries.map((entry) => entry.id),
+    activeCollectionIds: next.organizerState.collections.map((collection) => collection.id),
+    activeCompoundIds: [
+      ...next.entries.map((entry) => entry.id),
+      ...next.compoundCases.map((compound) => compound.id)
+    ],
+    activeVisualIds: [...usedVisualIds],
+    entryIdMap: organizerEntryIdMap,
+    collectionIdMap: organizerMerge.collectionIdMap
+  });
+  next.trashState = trashMerge.trashState;
+  Object.assign(visualIdMap, trashMerge.visualIdMap);
+  Object.assign(createdVisualIdMap, trashMerge.visualIdMap);
   return {
     state: next,
     entryIdMap,
     visualIdMap,
+    createdVisualIdMap,
     sessionIdMap: composerMerge.sessionIdMap,
     runIdMap: creativeMerge.runIdMap,
     compoundIdMap,
@@ -554,6 +720,11 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     importedRunCount: imported.creativeRuns.length,
     importedOutputCount: imported.creativeRuns.reduce((sum, run) => sum + run.outputs.length, 0),
     importedCount,
+    createdEntryIds,
+    importDiagnostics: imported.importDiagnostics,
+    importStats: imported.importStats,
+    trashEntryIdMap: trashMerge.entryIdMap,
+    trashCollectionIdMap: trashMerge.collectionIdMap,
     remappedCount,
     skippedCount
   };
@@ -668,6 +839,146 @@ function mergeVocabulary(target, sourceValue) {
   return { facetIds, nodeIds };
 }
 
+function mergeImportedTrashState(currentValue, importedValue, context = {}) {
+  const current = normalizeTrashState(currentValue);
+  const imported = normalizeTrashState(importedValue);
+  if (!imported.items.length) {
+    return { trashState: current, entryIdMap: {}, collectionIdMap: {}, visualIdMap: {} };
+  }
+  const usedEntryIds = new Set([
+    ...(context.activeEntryIds ?? []),
+    ...current.items.filter((item) => item.kind === "entry").map((item) => item.targetId)
+  ]);
+  const usedCollectionIds = new Set([
+    ...(context.activeCollectionIds ?? []),
+    ...current.items.filter((item) => item.kind === "collection").map((item) => item.targetId)
+  ]);
+  const usedVisualIds = new Set(context.activeVisualIds ?? []);
+  for (const item of current.items) {
+    if (item.kind === "entry") {
+      for (const asset of normalizeEntryMedia(item.snapshot).mediaAssets) usedVisualIds.add(asset.id);
+    }
+    if (item.kind === "media") {
+      for (const asset of normalizeEntryMedia({ mediaAssets: item.snapshot?.mediaAssets ?? [] }).mediaAssets) usedVisualIds.add(asset.id);
+    }
+  }
+  const collectionIdMap = { ...(context.collectionIdMap ?? {}) };
+  for (const item of imported.items.filter((candidate) => candidate.kind === "collection")) {
+    const sourceId = item.targetId;
+    const targetId = usedCollectionIds.has(sourceId) ? uniqueId("collection", usedCollectionIds) : sourceId;
+    usedCollectionIds.add(targetId);
+    collectionIdMap[sourceId] = targetId;
+  }
+  const entryIdMap = { ...(context.entryIdMap ?? {}) };
+  for (const item of imported.items.filter((candidate) => candidate.kind === "entry")) {
+    const sourceId = item.targetId;
+    const targetId = usedEntryIds.has(sourceId) ? uniqueId("entry", usedEntryIds) : sourceId;
+    usedEntryIds.add(targetId);
+    entryIdMap[sourceId] = targetId;
+  }
+  const compoundIds = new Set(context.activeCompoundIds ?? []);
+  const compoundIdMap = {};
+  for (const item of imported.items) {
+    for (const compound of item.relationships?.compoundCases ?? []) {
+      const sourceId = clean(compound?.id);
+      if (!sourceId || compoundIdMap[sourceId]) continue;
+      const targetId = compoundIds.has(sourceId) ? uniqueId("compound", compoundIds) : sourceId;
+      compoundIds.add(targetId);
+      compoundIdMap[sourceId] = targetId;
+    }
+  }
+  const visualIdMap = {};
+  const moved = imported.items.map((sourceItem) => {
+    const item = structuredClone(sourceItem);
+    if (item.kind === "collection") {
+      const targetId = collectionIdMap[item.targetId];
+      item.targetId = targetId;
+      item.id = `trash:collection:${targetId}`;
+      item.snapshot.id = targetId;
+      item.snapshot.parentId = collectionIdMap[item.snapshot.parentId] ?? item.snapshot.parentId ?? null;
+      item.snapshot.entryIds = (item.snapshot.entryIds ?? []).map((id) => entryIdMap[id] ?? id);
+      return item;
+    }
+    if (item.kind === "entry") {
+      const targetId = entryIdMap[item.targetId];
+      const remapped = remapTrashedEntrySnapshot(item.snapshot, targetId, usedVisualIds);
+      Object.assign(visualIdMap, remapped.visualIdMap);
+      item.targetId = targetId;
+      item.id = `trash:entry:${targetId}`;
+      item.snapshot = remapped.entry;
+      item.relationships.collections = (item.relationships.collections ?? []).map((membership) => ({
+        ...membership,
+        id: collectionIdMap[membership.id] ?? membership.id
+      }));
+      item.relationships.compoundCases = (item.relationships.compoundCases ?? []).map((compound) => ({
+        ...compound,
+        id: compoundIdMap[compound.id] ?? compound.id,
+        memberEntryIds: (compound.memberEntryIds ?? []).map((id) => entryIdMap[id] ?? id),
+        coverVisualId: remapped.visualIdMap[compound.coverVisualId] ?? compound.coverVisualId
+      }));
+      return item;
+    }
+    const parentEntryId = entryIdMap[item.relationships?.entryId] ?? item.relationships?.entryId;
+    const remapped = remapTrashedEntrySnapshot({
+      id: parentEntryId || `trash-media:${item.targetId}`,
+      mediaAssets: item.snapshot?.mediaAssets ?? [],
+      primaryMediaId: ""
+    }, parentEntryId || `trash-media:${item.targetId}`, usedVisualIds);
+    Object.assign(visualIdMap, remapped.visualIdMap);
+    const targetId = remapped.visualIdMap[item.targetId] ?? item.targetId;
+    item.targetId = targetId;
+    item.id = ["trash", "media", parentEntryId, targetId].filter(Boolean).join(":");
+    item.snapshot.mediaAssets = remapped.entry.mediaAssets;
+    item.relationships.entryId = parentEntryId;
+    item.relationships.positions = (item.relationships.positions ?? []).map((position) => ({
+      ...position,
+      id: remapped.visualIdMap[position.id] ?? position.id
+    }));
+    item.relationships.primaryMediaId = remapped.visualIdMap[item.relationships.primaryMediaId] ?? item.relationships.primaryMediaId;
+    return item;
+  });
+  return {
+    trashState: normalizeTrashState({ items: [...current.items, ...moved] }),
+    entryIdMap: Object.fromEntries(imported.items.filter((item) => item.kind === "entry").map((item) => [item.targetId, entryIdMap[item.targetId]])),
+    collectionIdMap,
+    visualIdMap
+  };
+}
+
+function remapTrashedEntrySnapshot(entryValue, targetEntryId, usedVisualIds) {
+  const entry = normalizeEntryMedia(entryValue);
+  const visualIdMap = {};
+  entry.mediaAssets = entry.mediaAssets.map((asset) => {
+    const preferredId = asset.id === entry.id && targetEntryId !== entry.id ? targetEntryId : asset.id;
+    const targetId = usedVisualIds.has(preferredId) ? uniqueId("visual", usedVisualIds) : preferredId;
+    usedVisualIds.add(targetId);
+    visualIdMap[asset.id] = targetId;
+    return { ...asset, id: targetId };
+  });
+  entry.id = targetEntryId;
+  entry.primaryMediaId = visualIdMap[entry.primaryMediaId] ?? entry.primaryMediaId;
+  entry.articleDocument = remapArticleDocumentAssets(entry.articleDocument, visualIdMap);
+  entry.mediaAssets = entry.mediaAssets.map((asset) => ({
+    ...asset,
+    ...(asset.posterAssetId ? { posterAssetId: visualIdMap[asset.posterAssetId] ?? asset.posterAssetId } : {}),
+    ...(asset.derivedFromAssetId ? { derivedFromAssetId: visualIdMap[asset.derivedFromAssetId] ?? asset.derivedFromAssetId } : {})
+  }));
+  entry.timeNotes = (entry.timeNotes ?? []).map((note) => ({
+    ...note,
+    assetId: visualIdMap[note.assetId] ?? note.assetId,
+    ...(note.frameAssetId ? { frameAssetId: visualIdMap[note.frameAssetId] ?? note.frameAssetId } : {})
+  }));
+  entry.mediaPrompts = (entry.mediaPrompts ?? []).map((prompt) => ({
+    ...prompt,
+    assetId: visualIdMap[prompt.assetId] ?? prompt.assetId
+  }));
+  entry.facetAssignments = (entry.facetAssignments ?? []).map((assignment) => ({
+    ...assignment,
+    ...(assignment.visualId ? { visualId: visualIdMap[assignment.visualId] ?? assignment.visualId } : {})
+  }));
+  return { entry, visualIdMap };
+}
+
 function packageImagePlaceholders(value) {
   const entryImages = (value?.entries ?? []).flatMap((entryValue) => {
     const entry = normalizeEntryMedia(entryValue);
@@ -691,7 +1002,18 @@ function packageImagePlaceholders(value) {
         : [])
       : [])
   );
-  return new Map([...entryImages, ...creativeAssets, ...skillFiles, ...tempFiles]);
+  const trashAssets = trashMediaAssets(value?.trashState).flatMap((asset) => asset.assetPath
+    ? [[asset.assetPath, new Blob(["placeholder"], { type: mediaType(asset.assetPath, asset.kind, asset.mimeType) })]]
+    : []);
+  return new Map([...entryImages, ...creativeAssets, ...skillFiles, ...tempFiles, ...trashAssets]);
+}
+
+function trashMediaAssets(trashStateValue) {
+  return normalizeTrashState(trashStateValue).items.flatMap((item) => {
+    if (item.kind === "entry") return normalizeEntryMedia(item.snapshot).mediaAssets;
+    if (item.kind === "media") return normalizeEntryMedia({ mediaAssets: item.snapshot?.mediaAssets ?? [] }).mediaAssets;
+    return [];
+  });
 }
 
 function withoutArchivePath(entry) {
@@ -791,6 +1113,35 @@ function validCreativeResultPath(path, kind) {
   return /^(?:images|creative-results)\/[A-Za-z0-9._/-]+\.(?:png|jpe?g|webp)$/i.test(path);
 }
 
+function portableMediaFileFailure(entry, asset, blob, format, packageVersion, limits, skipMediaByteValidation) {
+  const title = entry.title || "未命名案例";
+  if (!(blob instanceof Blob)) {
+    return {
+      reason: "missing_file",
+      message: asset.kind === "image" ? `“${title}”的截图缺失` : `“${title}”的媒体文件缺失或类型不符`
+    };
+  }
+  if (!blobMatchesKind(blob, asset, format, packageVersion)) {
+    return { reason: "type_mismatch", message: `“${title}”的媒体文件缺失或类型不符` };
+  }
+  if (asset.kind === "image" && blob.size > limits.maxImageBytes) {
+    return { reason: "too_large", message: `“${title}”的图片超过 ${formatBytes(limits.maxImageBytes)} 上限` };
+  }
+  if (asset.kind !== "image" && blob.size > limits.maxFileBytes) {
+    return {
+      reason: "too_large",
+      message: `“${title}”的媒体超过 ${formatBytes(limits.maxFileBytes)} 小型分享包上限，请使用完整资料夹备份`
+    };
+  }
+  if (!skipMediaByteValidation && packageVersion >= 3 && asset.byteSize && asset.byteSize !== blob.size) {
+    return {
+      reason: "byte_size_mismatch",
+      message: `“${title}”的媒体大小校验失败：期望 ${asset.byteSize} bytes，实际 ${blob.size} bytes（${clean(asset.assetPath)}）`
+    };
+  }
+  return null;
+}
+
 function blobMatchesKind(blob, asset, format, packageVersion) {
   if (typeof asset === "string") {
     if (asset === "image") return clean(blob.type).startsWith("image/");
@@ -810,7 +1161,12 @@ function blobMatchesKind(blob, asset, format, packageVersion) {
 
 function completeBackupDocumentPaths(value = {}) {
   const paths = new Map();
-  for (const entry of Array.isArray(value?.entries) ? value.entries : []) {
+  const trashEntries = (Array.isArray(value?.trashState?.items) ? value.trashState.items : []).flatMap((item) => {
+    if (item?.kind === "entry") return [item.snapshot];
+    if (item?.kind === "media") return [{ mediaAssets: item.snapshot?.mediaAssets ?? [] }];
+    return [];
+  });
+  for (const entry of [...(Array.isArray(value?.entries) ? value.entries : []), ...trashEntries]) {
     const mediaAssets = Array.isArray(entry?.mediaAssets)
       ? entry.mediaAssets
       : Array.isArray(entry?.visuals) ? entry.visuals : [];
@@ -831,6 +1187,75 @@ function completeBackupDocumentPaths(value = {}) {
     }
   }
   return paths;
+}
+
+function hasRecoverableCaseContent(entry = {}) {
+  if ([entry.title, entry.text, entry.note, entry.url].some((value) => clean(value))) return true;
+  if ((entry.mediaAssets ?? []).some((asset) => asset && typeof asset === "object")) return true;
+  return (entry.articleDocument?.blocks ?? []).some((block) => clean(block?.text) || clean(block?.assetId));
+}
+
+function dropDanglingAiAssignments(values, context) {
+  return (Array.isArray(values) ? values : []).flatMap((assignment) => {
+    if (!AI_ASSIGNMENT_SOURCES.has(assignment?.source)) return [assignment];
+    const missingVocabulary = !context.facetIds.has(clean(assignment?.facetId)) ||
+      !context.nodeIds.has(clean(assignment?.nodeId));
+    const visualId = clean(assignment?.visualId);
+    const missingMedia = Boolean(visualId) && !context.mediaIds.has(visualId);
+    if (!missingVocabulary && !missingMedia) return [assignment];
+    context.importStats.droppedAiAssignments += 1;
+    context.importDiagnostics.push({
+      code: "ai_assignment_dropped",
+      severity: "metadata",
+      action: "dropped",
+      entryId: context.entryId,
+      reason: missingVocabulary ? "missing_vocabulary" : "missing_media"
+    });
+    return [];
+  });
+}
+
+function parsedImportEvidence(value) {
+  if (!Number.isInteger(value?.sourcePackageVersion) || !Array.isArray(value?.importDiagnostics) ||
+      !value?.importStats || typeof value.importStats !== "object") return null;
+  return {
+    diagnostics: structuredClone(value.importDiagnostics),
+    stats: structuredClone(value.importStats)
+  };
+}
+
+function mergeImportDiagnostics(previous, current) {
+  const result = [];
+  const seen = new Set();
+  for (const diagnostic of [...previous, ...current]) {
+    if (!diagnostic || typeof diagnostic !== "object") continue;
+    const key = JSON.stringify(diagnostic);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(structuredClone(diagnostic));
+  }
+  return result;
+}
+
+function mergeImportStats(previous, current) {
+  const dropped = {};
+  for (const key of ["droppedAiAssignments", "droppedMediaDescriptors", "droppedMediaFiles"]) {
+    dropped[key] = nonNegativeStat(previous?.[key]) + nonNegativeStat(current?.[key]);
+  }
+  return {
+    ...current,
+    inputCases: Number.isSafeInteger(previous?.inputCases)
+      ? nonNegativeStat(previous.inputCases)
+      : nonNegativeStat(current?.inputCases),
+    keptCases: nonNegativeStat(current?.keptCases),
+    skippedCases: nonNegativeStat(previous?.skippedCases) + nonNegativeStat(current?.skippedCases),
+    ...dropped
+  };
+}
+
+function nonNegativeStat(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
 }
 
 function uniqueId(prefix, used) {

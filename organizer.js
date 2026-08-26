@@ -255,6 +255,10 @@ export function removeEntriesFromOrganizer(stateValue, entryIds) {
 }
 
 export function mergeOrganizerState(currentValue, importedValue, entryIdMap = {}, options = {}) {
+  return mergeOrganizerStateWithMap(currentValue, importedValue, entryIdMap, options).state;
+}
+
+export function mergeOrganizerStateWithMap(currentValue, importedValue, entryIdMap = {}, options = {}) {
   const current = structuredClone(normalizeOrganizerState(currentValue));
   const imported = normalizeOrganizerState(importedValue);
   const remap = (ids) => uniqueIds(ids).map((id) => cleanId(entryIdMap[id])).filter(Boolean);
@@ -282,7 +286,10 @@ export function mergeOrganizerState(currentValue, importedValue, entryIdMap = {}
     });
     collectionIdMap.set(source.id, id);
   }
-  return normalizeOrganizerState(current);
+  return {
+    state: normalizeOrganizerState(current),
+    collectionIdMap: Object.fromEntries(collectionIdMap)
+  };
 }
 
 function normalizeCollection(value = {}) {

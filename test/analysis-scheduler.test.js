@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { coalesceAnalysisRequest, runScheduledAnalysisWithRetries, scheduleAnalysis } from "../analysis-scheduler.js";
+import {
+  coalesceAnalysisRequest,
+  createAnalysisScheduler,
+  runScheduledAnalysisWithRetries,
+  scheduleAnalysis
+} from "../analysis-scheduler.js";
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -69,4 +74,113 @@ test("shared work honors the lowest active job snapshot instead of the last call
     ...Array.from({ length: 6 }, () => scheduleAnalysis("shared-snapshot-limit", 6, () => task(false)))
   ]);
   assert.equal(maximumWhileLowLimitActive, 2);
+});
+
+test("interactive work outranks queued batch work while preserving no-preemption for the running item", async () => {
+  const scheduler = createAnalysisScheduler({ concurrency: 1, agingMs: 10 });
+  const events = [];
+  let release;
+
+  const blocker = scheduler.schedule(async () => {
+    events.push("background_import:started");
+    await new Promise((resolve) => { release = resolve; });
+    events.push("background_import:finished");
+    return "blocker";
+  }, { priority: "background_import" });
+
+  await delay(5);
+
+  const laterInteractive = scheduler.schedule(async () => {
+    events.push("interactive:started");
+    return "interactive";
+  }, { priority: "interactive" });
+
+  await delay(0);
+  assert.deepEqual(events, ["background_import:started"]);
+  release();
+  assert.equal(await blocker.promise, "blocker");
+  assert.equal(await laterInteractive.promise, "interactive");
+  assert.equal(events[0], "background_import:started");
+  assert.ok(events.includes("interactive:started"));
+  assert.ok(events.indexOf("background_import:started") < events.indexOf("interactive:started"));
+});
+
+test("same-priority work stays FIFO and queued cancel prevents execution", async () => {
+  const scheduler = createAnalysisScheduler({ concurrency: 1, agingMs: 10 });
+  const starts = [];
+  let release;
+
+  const blocker = scheduler.schedule(async () => {
+    starts.push("blocker:start");
+    await new Promise((resolve) => { release = resolve; });
+  }, { priority: "user_batch" });
+
+  await delay(5);
+  const first = scheduler.schedule(async () => {
+    starts.push("first");
+    return "first";
+  }, { priority: "user_batch" });
+  const second = scheduler.schedule(async () => {
+    starts.push("second");
+    return "second";
+  }, { priority: "user_batch" });
+
+  assert.equal(second.cancel(), true);
+  release();
+  await blocker.promise;
+  assert.equal(await first.promise, "first");
+  await assert.rejects(() => second.promise, /取消/);
+  assert.deepEqual(starts, ["blocker:start", "first"]);
+});
+
+test("aging lets a long-waiting lower-priority task overtake a newer higher-priority task", async () => {
+  const scheduler = createAnalysisScheduler({ concurrency: 1, agingMs: 10 });
+  const starts = [];
+  let release;
+
+  const blocker = scheduler.schedule(async () => {
+    starts.push("blocker:start");
+    await new Promise((resolve) => { release = resolve; });
+  }, { priority: "interactive" });
+
+  await delay(5);
+  const background = scheduler.schedule(async () => {
+    starts.push("background_import");
+    return "background";
+  }, { priority: "background_import" });
+
+  await delay(25);
+  const userBatch = scheduler.schedule(async () => {
+    starts.push("user_batch");
+    return "user";
+  }, { priority: "user_batch" });
+
+  release();
+  await blocker.promise;
+  assert.equal(await background.promise, "background");
+  assert.equal(await userBatch.promise, "user");
+  assert.deepEqual(starts, ["blocker:start", "background_import", "user_batch"]);
+});
+
+test("the production shared provider queue starts interactive work before queued background imports", async () => {
+  const starts = [];
+  const releases = [];
+  const blockers = [0, 1].map((index) => scheduleAnalysis("shared-priority", 2, async () => {
+    starts.push(`blocker:${index}`);
+    await new Promise((resolve) => releases.push(resolve));
+  }, { priority: "background_import" }));
+  await delay(0);
+  const background = scheduleAnalysis("shared-priority", 2, async () => {
+    starts.push("queued-background");
+  }, { priority: "background_import" });
+  const interactive = scheduleAnalysis("shared-priority", 2, async () => {
+    starts.push("interactive");
+  }, { priority: "interactive" });
+
+  releases.shift()();
+  await delay(0);
+  assert.equal(starts[2], "interactive");
+  releases.shift()();
+  await Promise.all([...blockers, background, interactive]);
+  assert.deepEqual(starts.slice(2), ["interactive", "queued-background"]);
 });

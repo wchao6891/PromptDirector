@@ -295,6 +295,22 @@ test("image reference modes default to conditioned and unlock text-only modes fo
     imageReferenceMode: "text_only"
   }).imageReferenceMode, "conditioned");
 
+  const legacyDescription = imageReferenceModeAvailability([{
+    entryId: "legacy-described-image",
+    alias: "@参考旧图",
+    referenceKind: "vision",
+    referenceText: "一座被薄雾包围的古代庭院，青绿色冷光。",
+    imageRefs: [{ visualId: "image-v1", mimeType: "image/webp" }],
+    assets: [{
+      assetId: "image-v1",
+      analysisVersion: 1,
+      imageFingerprint: "a".repeat(64),
+      analysisImageFingerprint: "a".repeat(64),
+      reconstructionPrompt: ""
+    }]
+  }]);
+  assert.deepEqual(legacyDescription, { canDisableImages: true, missingAssetIds: [] });
+
   const mixed = imageReferenceModeAvailability([
     promptBackedReference,
     {

@@ -16,6 +16,7 @@ import { normalizeCreativeSkillsState } from "./creative-skills.js";
 import { entryPalette, normalizeEntryVisuals, primaryVisionDescription } from "./visuals.js";
 import { normalizeCompoundCases } from "./compound-cases.js";
 import { CURRENT_LIBRARY_PACKAGE_VERSION, LIBRARY_PACKAGE_FORMAT } from "./library-package-format.js";
+import { normalizeTrashState } from "./trash.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({
   libraryTitle: "视觉创作灵感库",
@@ -243,6 +244,7 @@ export function renderLibraryJson(
     entries: Array.isArray(entries) ? entries : []
   };
   if (composerState && typeof composerState === "object") {
+    if (composerState.trashState) payload.trashState = normalizeTrashState(composerState.trashState);
     payload.composerSettings = normalizeComposerSettings(composerState.composerSettings);
     payload.composerSessions = normalizeComposerSessions(composerState.composerSessions);
     payload.creativeExperimentSettings = normalizeCreativeExperimentSettings(composerState.creativeExperimentSettings);

@@ -1,0 +1,22 @@
+{
+  "format": "prompt-case-library",
+  "version": 4,
+  "schemaVersion": 24,
+  "entries": [{
+    "id": "fixture:v4",
+    "schemaVersion": 24,
+    "title": "Reconstructed v4 case",
+    "text": "v4 prompt",
+    "savedAt": "2026-01-04T00:00:00.000Z",
+    "mediaAssets": [{
+      "id": "fixture:v4:image",
+      "kind": "image",
+      "storageMode": "managed",
+      "assetPath": "images/fixture-v4.jpg",
+      "sourceFormat": "jpeg",
+      "mimeType": "image/jpeg",
+      "byteSize": 5
+    }],
+    "primaryMediaId": "fixture:v4:image"
+  }]
+}

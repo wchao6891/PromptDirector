@@ -73,7 +73,8 @@ test("share package import sizes only this user-selected package by its real fil
   assert.match(imported, /maxFileBytes:\s*file\.size/);
   assert.match(imported, /maxImageBytes:\s*file\.size/);
   assert.match(imported, /readZipBlob\(file, packageLimits\)/);
-  assert.match(imported, /parseLibraryPackage\(library, files, packageLimits\)/);
+  assert.match(imported, /salvageOptions = \{ \.\.\.packageLimits, salvageInvalidMedia: true \}/);
+  assert.match(imported, /parseLibraryPackage\(library, files, salvageOptions\)/);
 });
 
 test("complete folder restore derives its media budget from the selected verified backup", () => {

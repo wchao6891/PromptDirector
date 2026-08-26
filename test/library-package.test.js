@@ -213,7 +213,7 @@ test("v4 mixed creative-asset ZIP restores image video audio subtitle PSD and fo
   ]);
 });
 
-test("v4 package rejects asset paths whose registered extension kind or MIME disagrees", () => {
+test("v4 package reports and drops a mismatched media descriptor without losing recoverable case text", () => {
   const data = packageData([], catalog());
   data.version = 4;
   data.entries = [{
@@ -223,9 +223,17 @@ test("v4 package rejects asset paths whose registered extension kind or MIME dis
       sourceFormat: "psd", mimeType: "font/otf", byteSize: 4, assetPath: "attachments/mismatch/fake.psd"
     }]
   }];
-  assert.throws(() => parseLibraryPackage(data, new Map([[
+  const parsed = parseLibraryPackage(data, new Map([[
     "attachments/mismatch/fake.psd", new Blob(["fake"], { type: "application/octet-stream" })
-  ]])), /扩展名、媒体类型和 MIME 不一致/);
+  ]]));
+  assert.equal(parsed.entries.length, 1);
+  assert.deepEqual(parsed.entries[0].mediaAssets, []);
+  assert.equal(parsed.entries[0].text, "prompt mismatch");
+  assert.deepEqual(parsed.importDiagnostics.map(({ code, entryId, assetId }) => ({ code, entryId, assetId })), [{
+    code: "media_descriptor_dropped",
+    entryId: "mismatch",
+    assetId: "fake-psd"
+  }]);
 });
 
 test("v4 package restores an unknown local source only as an inert managed attachment", () => {
@@ -409,6 +417,220 @@ test("empty-library import restores cases, settings, vocabulary and source rules
   assert.deepEqual(result.state.organizerState.collections[0].entryIds, ["one"]);
 });
 
+test("empty-library restore preserves trashed cases and projects from a complete backup", () => {
+  const data = packageData([], catalog());
+  const deletedEntry = { ...entry("deleted"), hasScreenshot: false };
+  delete deletedEntry.screenshotPath;
+  data.trashState = {
+    version: 1,
+    items: [
+      {
+        id: "trash:entry:deleted",
+        kind: "entry",
+        targetId: "deleted",
+        deletedAt: "2026-08-25T00:00:00.000Z",
+        snapshot: deletedEntry,
+        relationships: { collections: [{ id: "collection:deleted", index: 0 }] }
+      },
+      {
+        id: "trash:collection:collection:deleted",
+        kind: "collection",
+        targetId: "collection:deleted",
+        deletedAt: "2026-08-25T00:00:00.000Z",
+        snapshot: { id: "collection:deleted", name: "已删除项目", parentId: null, order: 0, entryIds: ["deleted"] },
+        relationships: {}
+      }
+    ]
+  };
+
+  const result = mergeLibraryPackage({ entries: [] }, data);
+
+  assert.deepEqual(result.state.trashState.items.map(({ kind, targetId }) => ({ kind, targetId })), [
+    { kind: "entry", targetId: "deleted" },
+    { kind: "collection", targetId: "collection:deleted" }
+  ]);
+  const restoredSnapshot = result.state.trashState.items[0].snapshot;
+  assert.equal(restoredSnapshot.id, "deleted");
+  assert.equal(restoredSnapshot.text, "prompt deleted");
+  assert.deepEqual(restoredSnapshot.mediaAssets, []);
+});
+
+test("complete-folder parsing validates and exposes media stored inside a trashed case", async () => {
+  const data = packageData([], catalog());
+  const path = "images/trash-entry-deleted/deleted-image.webp";
+  data.trashState = {
+    version: 1,
+    items: [{
+      id: "trash:entry:deleted",
+      kind: "entry",
+      targetId: "deleted",
+      deletedAt: "2026-08-25T00:00:00.000Z",
+      snapshot: {
+        ...entry("deleted"),
+        hasScreenshot: undefined,
+        screenshotPath: undefined,
+        mediaAssets: [{
+          id: "deleted-image",
+          kind: "image",
+          storageMode: "managed",
+          mimeType: "image/webp",
+          sourceFormat: "webp",
+          byteSize: 13,
+          assetPath: path
+        }],
+        primaryMediaId: "deleted-image"
+      },
+      relationships: {}
+    }]
+  };
+  const parsed = await parseCompleteFolderBackup(data, new Map([[
+    path,
+    new Blob(["trashed-image"], { type: "image/webp" })
+  ]]), { skipMediaByteValidation: true });
+
+  assert.equal(parsed.assets.get("deleted-image")?.size, 13);
+  assert.equal(parsed.trashState.items[0].snapshot.mediaAssets[0].assetPath, path);
+  const preview = mergeLibraryPackage({ entries: [] }, data);
+  assert.equal(preview.createdVisualIdMap["deleted-image"], "deleted-image");
+});
+
+test("non-empty restore remaps trashed case and project identities instead of dropping them", () => {
+  const data = packageData([], catalog());
+  const trashedEntry = { ...entry("deleted"), hasScreenshot: false };
+  delete trashedEntry.screenshotPath;
+  data.trashState = {
+    version: 1,
+    items: [
+      {
+        id: "trash:entry:deleted",
+        kind: "entry",
+        targetId: "deleted",
+        deletedAt: "2026-08-25T00:00:00.000Z",
+        snapshot: trashedEntry,
+        relationships: { collections: [{ id: "collection:deleted", index: 0 }] }
+      },
+      {
+        id: "trash:collection:collection:deleted",
+        kind: "collection",
+        targetId: "collection:deleted",
+        deletedAt: "2026-08-25T00:00:00.000Z",
+        snapshot: { id: "collection:deleted", name: "备份里的已删除项目", parentId: null, order: 0, entryIds: ["deleted"] },
+        relationships: {}
+      }
+    ]
+  };
+  const current = {
+    entries: [entry("deleted")],
+    trashState: { version: 1, items: [] },
+    taxonomy: createDefaultTaxonomy(),
+    facetCatalog: catalog(),
+    classificationRules: [],
+    settings: {},
+    organizerState: {
+      collections: [{ id: "collection:deleted", name: "本地同名编号项目", parentId: null, order: 0, entryIds: ["deleted"] }]
+    },
+    compoundCases: []
+  };
+
+  const result = mergeLibraryPackage(current, data);
+  const restoredEntry = result.state.trashState.items.find((item) => item.kind === "entry");
+  const restoredProject = result.state.trashState.items.find((item) => item.kind === "collection");
+
+  assert.ok(restoredEntry);
+  assert.ok(restoredProject);
+  assert.notEqual(restoredEntry.targetId, "deleted");
+  assert.equal(restoredEntry.snapshot.id, restoredEntry.targetId);
+  assert.notEqual(restoredProject.targetId, "collection:deleted");
+  assert.equal(restoredProject.snapshot.id, restoredProject.targetId);
+  assert.deepEqual(restoredProject.snapshot.entryIds, [restoredEntry.targetId]);
+  assert.equal(restoredEntry.relationships.collections[0].id, restoredProject.targetId);
+});
+
+test("restored trash relationships follow the imported project into its actual merged destination", () => {
+  const data = packageData([entry("remote")], catalog());
+  data.organizerState = {
+    collections: [{ id: "collection:remote", name: "共享项目", order: 0, entryIds: ["remote"] }]
+  };
+  const deletedEntry = { ...entry("deleted"), hasScreenshot: false };
+  delete deletedEntry.screenshotPath;
+  data.trashState = {
+    version: 1,
+    items: [{
+      id: "trash:entry:deleted",
+      kind: "entry",
+      targetId: "deleted",
+      deletedAt: "2026-08-25T00:00:00.000Z",
+      snapshot: deletedEntry,
+      relationships: { collections: [{ id: "collection:remote", index: 1 }] }
+    }]
+  };
+  const current = {
+    entries: [entry("local")],
+    trashState: { version: 1, items: [] },
+    taxonomy: createDefaultTaxonomy(),
+    facetCatalog: catalog(),
+    classificationRules: [],
+    settings: {},
+    organizerState: {
+      collections: [{ id: "collection:local", name: "共享项目", order: 0, entryIds: ["local"] }]
+    },
+    compoundCases: []
+  };
+
+  const result = mergeLibraryPackage(current, data);
+  const restoredEntry = result.state.trashState.items.find((item) => item.kind === "entry");
+
+  assert.deepEqual(result.state.organizerState.collections[0].entryIds, ["local", "remote"]);
+  assert.equal(restoredEntry.relationships.collections[0].id, "collection:local");
+});
+
+test("restored trash compound relationships cannot reuse an active compound identity", () => {
+  const data = packageData([], catalog());
+  const deletedEntries = ["deleted-one", "deleted-two"].map((id) => {
+    const snapshot = { ...entry(id), hasScreenshot: false };
+    delete snapshot.screenshotPath;
+    return {
+      id: `trash:entry:${id}`,
+      kind: "entry",
+      targetId: id,
+      deletedAt: "2026-08-25T00:00:00.000Z",
+      snapshot,
+      relationships: {
+        compoundCases: [{
+          id: "compound:active",
+          title: "已删除组合",
+          memberEntryIds: ["deleted-one", "deleted-two"],
+          coverVisualId: ""
+        }]
+      }
+    };
+  });
+  data.trashState = { version: 1, items: deletedEntries };
+  const current = {
+    entries: [entry("local-one"), entry("local-two")],
+    trashState: { version: 1, items: [] },
+    taxonomy: createDefaultTaxonomy(),
+    facetCatalog: catalog(),
+    classificationRules: [],
+    settings: {},
+    organizerState: { collections: [] },
+    compoundCases: [{
+      id: "compound:active",
+      title: "本地组合",
+      memberEntryIds: ["local-one", "local-two"],
+      coverVisualId: "local-one"
+    }]
+  };
+
+  const result = mergeLibraryPackage(current, data);
+  const restored = result.state.trashState.items.filter((item) => item.kind === "entry");
+  const restoredCompoundIds = new Set(restored.flatMap((item) => item.relationships.compoundCases.map((compound) => compound.id)));
+
+  assert.equal(restoredCompoundIds.size, 1);
+  assert.equal(restoredCompoundIds.has("compound:active"), false);
+  assert.deepEqual(restored[0].relationships.compoundCases[0].memberEntryIds, restored.map((item) => item.targetId));
+});
+
 test("single curated saves preserve an empty user's library configuration", () => {
   const data = packageData([entry("curated-one")], catalog());
   data.settings = { libraryTitle: "精选案例 Vol.1", outputPath: "精选案例.zip" };
@@ -494,7 +716,7 @@ test("a colliding case id imports as a new case instead of silently keeping a st
   assert.equal(restored.facetAssignments.some((item) => item.source === "vision_model"), true);
 });
 
-test("import aborts instead of silently dropping an assignment whose vocabulary node is missing", () => {
+test("import drops a dangling AI assignment while preserving the recoverable case", () => {
   const incoming = entry("broken-label");
   incoming.facetAssignments = [{
     facetId: "facet:mood",
@@ -502,13 +724,17 @@ test("import aborts instead of silently dropping an assignment whose vocabulary 
     status: "confirmed",
     source: "vision_model"
   }];
-  assert.throws(() => mergeLibraryPackage({
+  const result = mergeLibraryPackage({
     entries: [entry("local")],
     taxonomy: createDefaultTaxonomy(),
     facetCatalog: catalog(),
     classificationRules: [],
     settings: {}
-  }, packageData([incoming], catalog())), /标签|词表|不完整/);
+  }, packageData([incoming], catalog()));
+  assert.equal(result.importedCount, 1);
+  const restored = result.state.entries.find((item) => item.id === "broken-label");
+  assert.ok(restored);
+  assert.deepEqual(restored.facetAssignments, []);
 });
 
 test("package import keeps source time but assigns one receiver-local added time and batch", () => {

@@ -4,6 +4,11 @@ import { primaryVisionDescription } from "./visuals.js";
 import { entryMediaAssets } from "./media.js";
 import { TEMP_REFERENCE_SOURCE_TYPES } from "./temp-references.js";
 import { normalizeLocalRelativePath } from "./local-media.js";
+import {
+  hasCompleteReferenceAnalysis,
+  referenceHasPromptText,
+  referenceHasUsableLegacyDescription
+} from "./reference-readiness.js";
 import { validReconstructionPrompt } from "./image-prompt.js";
 import {
   COMPOSER_AGENT_VERSION,
@@ -334,21 +339,14 @@ export function createComposerSession(input = {}) {
 export function imageReferenceModeAvailability(referenceSnapshots = []) {
   const missingAssetIds = [];
   for (const reference of Array.isArray(referenceSnapshots) ? referenceSnapshots : []) {
-    const promptBacked = Boolean(
-      String(reference?.originalText ?? "").trim()
-      || (["prompt", "prompt_vision"].includes(reference?.referenceKind)
-        && String(reference?.referenceText ?? "").trim())
-    );
+    const promptBacked = referenceHasPromptText(reference);
     const assets = new Map((Array.isArray(reference?.assets) ? reference.assets : []).map((item) => [item.assetId, item]));
     for (const imageRef of Array.isArray(reference?.imageRefs) ? reference.imageRefs : []) {
       if (promptBacked) continue;
       const assetId = String(imageRef?.visualId ?? "").trim();
       const asset = assets.get(assetId);
-      const fingerprintMatches = Boolean(asset?.imageFingerprint && asset?.analysisImageFingerprint
-        && asset.imageFingerprint === asset.analysisImageFingerprint);
-      if (!asset || asset.analysisVersion !== 2 || !asset.analysisFingerprint || !asset.reconstructionPrompt || !fingerprintMatches) {
-        if (assetId && !missingAssetIds.includes(assetId)) missingAssetIds.push(assetId);
-      }
+      if (referenceHasUsableLegacyDescription(reference, asset) || hasCompleteReferenceAnalysis(asset)) continue;
+      if (assetId && !missingAssetIds.includes(assetId)) missingAssetIds.push(assetId);
     }
   }
   return { canDisableImages: missingAssetIds.length === 0, missingAssetIds };

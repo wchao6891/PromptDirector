@@ -9,9 +9,17 @@ import {
   getMediaBlob,
   saveDerivedMetadata,
   saveDerivedMedia,
-  saveMediaBlob
+  saveMediaBlob,
+  savePortableAssetBlob
 } from "./media-store.js";
 import { parseCompleteFolderBackup, parseLibraryPackage, projectPackageEntryIds } from "./library-package.js";
+import { filesWithoutInvalidEntryMedia, findInvalidImportedImageIds } from "./library-import-media.js";
+import { caseSemanticFingerprint } from "./library-semantic-identity.js";
+import {
+  buildFolderBackupCompletion,
+  verifyFolderBackupCompletion
+} from "./library-export-plan.js";
+import { buildLibraryImportReport, importReportDescription } from "./library-import-dialog.js";
 import { parseCreativeExperimentPackage } from "./creative-experiment-package.js";
 import { readZipBlob } from "./zip.js";
 import {
@@ -142,10 +150,12 @@ import {
 } from "./capture-permissions.js";
 import {
   LOCAL_ASSET_FILE_ACCEPT,
+  LOCAL_ASSET_REFERENCE_RECORD_TYPE,
   createUnsupportedLocalAssetReference,
   extractLocalDocumentText,
   findExactMediaDuplicate,
-  prepareLocalMedia as prepareSharedLocalMedia
+  prepareLocalMedia as prepareSharedLocalMedia,
+  sha256Blob
 } from "./local-media.js";
 import {
   LOCAL_ASSET_LINK_STATUS,
@@ -1445,7 +1455,7 @@ function createSourceFileCaseCover(entry, asset) {
     rawTextEl("p", "case-asset-path", asset.relativePath || t("本机资料")),
     rawTextEl("p", "case-asset-meta", mediaMetadataText(asset))
   );
-  if (asset.recordType === "local-asset-reference") {
+  if (asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE) {
     cover.append(rawTextEl("span", "case-local-link-badge", t("本机链接")));
   }
   return cover;
@@ -2379,7 +2389,7 @@ async function prepareShareLocalAssetRecords() {
     const idSet = new Set(requestedIds);
     const linked = entries.filter((entry) => idSet.has(entry.id)).flatMap((entry) =>
       entryMediaAssets(entry)
-        .filter((asset) => asset.recordType === "local-asset-reference")
+        .filter((asset) => asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE)
         .map((asset) => ({ entry, asset }))
     );
     const records = await Promise.all(linked.map(async (item) => ({
@@ -2930,29 +2940,44 @@ async function createCompleteFolderBackup() {
     const resolvedEntries = [];
     let mediaCount = 0;
     let byteSize = 0;
-    for (const entryValue of response.entries ?? []) {
+    const materializeAsset = async (entry, asset, scopeId = entry.id) => {
+      if (asset.storageMode === "reference" && asset.recordType !== LOCAL_ASSET_REFERENCE_RECORD_TYPE) return asset;
+      const blob = asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE
+        ? await localAssetReferenceBackupBlob(entry, asset)
+        : await getMediaBlob(asset.id);
+      if (!(blob instanceof Blob)) throw new Error(`“${entry.title || "未命名案例"}”的媒体缺失，完整备份已停止`);
+      const assetPath = folderAssetPath(scopeId, asset, blob.type || asset.mimeType);
+      showDataSafetyFeedback(`正在写入第 ${mediaCount + 1} 项媒体 · ${formatBytes(byteSize + blob.size)}`);
+      await writeDirectoryFile(directory, assetPath, blob);
+      mediaCount += 1;
+      byteSize += blob.size;
+      return portableManagedBackupAsset(asset, blob, assetPath, await sha256Blob(blob));
+    };
+    const materializeEntry = async (entryValue, scopeId = "") => {
       const entry = normalizeEntryMedia(entryValue);
       const mediaAssets = [];
       for (const asset of entry.mediaAssets) {
-        if (asset.storageMode === "reference") {
-          mediaAssets.push(asset);
-          continue;
-        }
-        const blob = await getMediaBlob(asset.id);
-        if (!blob) throw new Error(`“${entry.title || "未命名案例"}”的媒体缺失，完整备份已停止`);
-        const assetPath = folderAssetPath(entry.id, asset, blob.type || asset.mimeType);
-        showDataSafetyFeedback(`正在写入第 ${mediaCount + 1} 项媒体 · ${formatBytes(byteSize + blob.size)}`);
-        await writeDirectoryFile(directory, assetPath, blob);
-        mediaAssets.push({
-          ...asset,
-          mimeType: blob.type || asset.mimeType,
-          byteSize: blob.size,
-          assetPath
-        });
-        mediaCount += 1;
-        byteSize += blob.size;
+        mediaAssets.push(await materializeAsset(entry, asset, scopeId || entry.id));
       }
-      resolvedEntries.push({ ...entry, mediaAssets });
+      return { ...entry, mediaAssets };
+    };
+    for (const entryValue of response.entries ?? []) {
+      resolvedEntries.push(await materializeEntry(entryValue));
+    }
+    const trashState = structuredClone(response.trashState ?? { version: 1, items: [] });
+    for (const item of trashState.items ?? []) {
+      if (item.kind === "entry") {
+        item.snapshot = await materializeEntry(item.snapshot, `trash-entry-${item.targetId}`);
+      } else if (item.kind === "media") {
+        const pseudoEntry = {
+          id: item.relationships?.entryId || `trash-media-${item.targetId}`,
+          title: item.snapshot?.sourceTitle || "回收站媒体",
+          mediaAssets: item.snapshot?.mediaAssets ?? [],
+          primaryMediaId: ""
+        };
+        const materialized = await materializeEntry(pseudoEntry, `trash-media-${pseudoEntry.id}`);
+        item.snapshot.mediaAssets = materialized.mediaAssets;
+      }
     }
     const creativeRuns = [];
     for (const run of response.creativeRuns ?? []) {
@@ -3003,6 +3028,7 @@ async function createCompleteFolderBackup() {
       resolvedEntries, response.settings, response.taxonomy, response.facetCatalog,
       response.classificationRules, response.organizerState,
       {
+        trashState,
         composerSettings: response.composerSettings,
         composerSessions,
         creativeExperimentSettings: response.creativeExperimentSettings,
@@ -3012,10 +3038,34 @@ async function createCompleteFolderBackup() {
       response.compoundCases
     );
     await writeDirectoryFile(directory, "library.json", new Blob([libraryJson], { type: "application/json" }));
-    await writeDirectoryFile(directory, "complete.json", new Blob([JSON.stringify({
-      format: "prompt-director-folder-backup", version: 1, createdAt: new Date().toISOString(),
-      caseCount: resolvedEntries.length, mediaCount, byteSize
-    }, null, 2)], { type: "application/json" }));
+    const writtenFiles = await readDirectoryFiles(directory);
+    const writtenLibraryFile = writtenFiles.get("library.json");
+    if (!(writtenLibraryFile instanceof Blob)) throw new Error("无法回读刚写入的 library.json");
+    const writtenLibrary = JSON.parse(await writtenLibraryFile.text());
+    const writtenMediaSizes = [...backupMediaPaths(writtenLibrary)].map((path) => writtenFiles.get(path)?.size ?? 0);
+    const writtenTotalBytes = writtenMediaSizes.reduce((sum, size) => sum + size, 0);
+    const largestWrittenMedia = Math.max(1, ...writtenMediaSizes);
+    const verified = await parseCompleteFolderBackup(writtenLibrary, writtenFiles, {
+      ...PORTABLE_LIBRARY_LIMITS,
+      maxArchiveBytes: Math.max(1, writtenTotalBytes),
+      maxFileBytes: largestWrittenMedia,
+      maxImageBytes: largestWrittenMedia,
+      maxVideoBytes: largestWrittenMedia
+    });
+    await validateImportedImageDimensions(verified.images);
+    assertFolderBackupRoundtrip(resolvedEntries, trashState, verified);
+    const trashCaseCount = trashState.items.filter((item) => item.kind === "entry").length;
+    const trashProjectCount = trashState.items.filter((item) => item.kind === "collection").length;
+    const completion = await buildFolderBackupCompletion(writtenFiles, {
+      createdAt: new Date().toISOString(),
+      caseCount: resolvedEntries.length,
+      trashCaseCount,
+      trashProjectCount,
+      mediaCount,
+      byteSize
+    });
+    await verifyFolderBackupCompletion(completion, writtenFiles);
+    await writeDirectoryFile(directory, "complete.json", new Blob([JSON.stringify(completion, null, 2)], { type: "application/json" }));
     showDataSafetyFeedback(`完整备份已完成 · ${resolvedEntries.length} 个案例 · ${mediaCount} 项媒体 · ${formatBytes(byteSize)}`);
   } catch (error) {
     if (error?.name !== "AbortError") showDataSafetyFeedback(`${error.message}；未写入完成标记的资料夹不会被当作有效备份`, true);
@@ -3029,6 +3079,7 @@ async function restoreCompleteFolderBackup() {
   if (typeof window.showDirectoryPicker !== "function") return showDataSafetyFeedback("当前浏览器不支持资料夹恢复，请使用最新版 Chrome", true);
   const savedIds = [];
   let applyStarted = false;
+  let applySucceeded = false;
   setDataSafetyBusy(true);
   try {
     const directory = await window.showDirectoryPicker({ mode: "read" });
@@ -3039,9 +3090,10 @@ async function restoreCompleteFolderBackup() {
     let completion;
     try { completion = JSON.parse(await marker.text()); }
     catch { throw new Error("complete.json 已损坏，无法确认备份完整性"); }
-    if (completion?.format !== "prompt-director-folder-backup" || completion.version !== 1) {
+    if (completion?.format !== "prompt-director-folder-backup" || ![1, 2].includes(completion.version)) {
       throw new Error("完整备份标记无效");
     }
+    if (completion.version === 2) await verifyFolderBackupCompletion(completion, files);
     let library;
     try { library = JSON.parse(await libraryFile.text()); }
     catch { throw new Error("library.json 已损坏，无法恢复"); }
@@ -3068,40 +3120,53 @@ async function restoreCompleteFolderBackup() {
     showDataSafetyFeedback(`预检完成 · ${parsed.entries.length} 个案例 · ${parsed.assets.size} 项本地媒体 · ${formatBytes(totalBytes)}`);
     const preview = await chrome.runtime.sendMessage({ type: "PREVIEW_LIBRARY_IMPORT", library: restoredLibrary });
     if (!preview?.ok) throw new Error(preview?.message || "无法检查资料夹备份");
+    const createdMediaIds = Object.keys(preview.createdVisualIdMap ?? {});
+    const createdMediaBytes = createdMediaIds.reduce((sum, sourceId) => sum + (parsed.assets.get(sourceId)?.size ?? 0), 0);
+    const report = buildLibraryImportReport(preview, {
+      mediaCount: createdMediaIds.length + Object.keys(preview.packageAssetIdMap ?? {}).length,
+      byteLabel: formatBytes(createdMediaBytes)
+    });
+    showDataSafetyFeedback(`${report.summary} · ${report.status === "partial" ? "发现可恢复问题，详情见确认框" : "检查通过"}`);
     const approved = await confirmAppAction({
       title: "恢复资料库备份？",
-      description: `将恢复 ${preview.importedCount || 0} 个新案例、${preview.importedSkillCount || 0} 个 Skill 和 ${parsed.assets.size + parsed.skillAssets.size} 项本地文件（${formatBytes(totalBytes)}）。${preview.remappedCount ? `其中 ${preview.remappedCount} 个同源案例会作为新副本导入。` : ""}已有内容不会被覆盖。`,
+      description: `${importReportDescription(report)}已有内容不会被覆盖。`,
       confirmLabel: "开始恢复"
     });
     if (!approved) {
       showDataSafetyFeedback("已取消恢复，资料库没有变化");
       return;
     }
-    for (const [sourceId, targetId] of Object.entries(preview.visualIdMap ?? {})) {
+    const operationId = createLibraryImportOperationId();
+    for (const [sourceId, targetId] of Object.entries(preview.createdVisualIdMap ?? {})) {
       const blob = parsed.assets.get(sourceId);
       if (!blob) continue;
-      await saveMediaBlob(targetId, blob);
+      await savePortableAssetBlob(targetId, blob);
       savedIds.push(targetId);
     }
     for (const [sourceId, targetId] of Object.entries(preview.packageAssetIdMap ?? {})) {
       const blob = parsed.skillAssets.get(sourceId);
       if (!blob) continue;
-      await saveMediaBlob(targetId, blob);
+      await savePortableAssetBlob(targetId, blob);
       savedIds.push(targetId);
     }
     applyStarted = true;
-    const response = await chrome.runtime.sendMessage({
+    const response = await applyLibraryImportWithReceipt({
       type: "APPLY_LIBRARY_IMPORT", library: restoredLibrary,
+      operationId,
+      planToken: preview.planToken,
       entryIdMap: preview.entryIdMap, compoundIdMap: preview.compoundIdMap,
       visualIdMap: preview.visualIdMap, sessionIdMap: preview.sessionIdMap, runIdMap: preview.runIdMap,
       skillIdMap: preview.skillIdMap, packageAssetIdMap: preview.packageAssetIdMap
     });
     if (!response?.ok) throw new Error(response?.message || "资料夹恢复失败");
+    applySucceeded = true;
     await refreshLibrary();
     showDataSafetyFeedback(`${response.message} · 媒体文件校验并恢复完成`);
     await renderDataSafetyStatus();
   } catch (error) {
-    const retained = applyStarted ? await importedEntryIds(savedIds) : new Set();
+    const retained = applySucceeded
+      ? new Set(savedIds)
+      : applyStarted ? await committedMediaIds(savedIds) : new Set();
     await Promise.allSettled(savedIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
     if (error?.name !== "AbortError") showDataSafetyFeedback(error.message, true);
   } finally {
@@ -3118,6 +3183,7 @@ async function importSharedLibraryPackage() {
   }
   const savedIds = [];
   let applyStarted = false;
+  let applySucceeded = false;
   setDataSafetyBusy(true);
   try {
     showDataSafetyFeedback(`正在检查 ${file.name}`);
@@ -3137,39 +3203,50 @@ async function importSharedLibraryPackage() {
     let library;
     try { library = JSON.parse(await libraryFile.text()); }
     catch { throw new Error("分享包中的 library.json 已损坏"); }
-    const parsed = parseLibraryPackage(library, files, packageLimits);
-    await validateImportedImageDimensions(parsed.images);
+    const salvageOptions = { ...packageLimits, salvageInvalidMedia: true };
+    let parsed = parseLibraryPackage(library, files, salvageOptions);
+    const invalidImageIds = await findInvalidImportedImageIds(parsed.images, validateImportedImage);
+    if (invalidImageIds.size) {
+      const salvageFiles = filesWithoutInvalidEntryMedia(library, files, invalidImageIds);
+      parsed = parseLibraryPackage(library, salvageFiles, salvageOptions);
+      await validateImportedImageDimensions(parsed.images);
+    }
     const importLibrary = { ...parsed };
     delete importLibrary.assets;
     delete importLibrary.images;
-    const totalBytes = [...parsed.assets.values()].reduce((sum, blob) => sum + blob.size, 0);
+    delete importLibrary.skillAssets;
     const preview = await chrome.runtime.sendMessage({
       type: "PREVIEW_LIBRARY_IMPORT",
       library: importLibrary,
       preserveLibraryConfiguration: true
     });
     if (!preview?.ok) throw new Error(preview?.message || "无法检查分享包");
-    showDataSafetyFeedback(
-      `预检完成 · 新增 ${preview.importedCount || 0} 个案例 · ${parsed.assets.size} 项媒体 · ${formatBytes(totalBytes)}`
-    );
+    const createdMediaIds = Object.keys(preview.createdVisualIdMap ?? {});
+    const createdMediaBytes = createdMediaIds.reduce((sum, sourceId) => sum + (parsed.assets.get(sourceId)?.size ?? 0), 0);
+    const report = buildLibraryImportReport(preview, {
+      mediaCount: createdMediaIds.length,
+      byteLabel: formatBytes(createdMediaBytes)
+    });
+    showDataSafetyFeedback(`${report.summary} · ${report.status === "partial" ? "发现可恢复问题，详情见确认框" : "检查通过"}`);
     const approved = await confirmAppAction({
       title: "导入分享包？",
-      description: `将导入 ${preview.importedCount || 0} 个新案例和 ${parsed.assets.size} 项本地媒体` +
-        `${preview.remappedCount ? `；其中 ${preview.remappedCount} 个同源案例会作为新副本导入` : ""}` +
-        `${preview.skippedCount ? `，跳过 ${preview.skippedCount} 个已有案例` : ""}。现有资料不会被覆盖。`,
+      description: `${importReportDescription(report)}现有资料不会被覆盖。`,
       confirmLabel: "开始导入"
     });
     if (!approved) return showDataSafetyFeedback("已取消导入，资料库没有变化");
-    for (const [sourceId, targetId] of Object.entries(preview.visualIdMap ?? {})) {
+    const operationId = createLibraryImportOperationId();
+    for (const [sourceId, targetId] of Object.entries(preview.createdVisualIdMap ?? {})) {
       const blob = parsed.assets.get(sourceId);
       if (!blob) continue;
-      await saveMediaBlob(targetId, blob);
+      await savePortableAssetBlob(targetId, blob);
       savedIds.push(targetId);
     }
     applyStarted = true;
-    const response = await chrome.runtime.sendMessage({
+    const response = await applyLibraryImportWithReceipt({
       type: "APPLY_LIBRARY_IMPORT",
       library: importLibrary,
+      operationId,
+      planToken: preview.planToken,
       entryIdMap: preview.entryIdMap,
       compoundIdMap: preview.compoundIdMap,
       visualIdMap: preview.visualIdMap,
@@ -3178,16 +3255,35 @@ async function importSharedLibraryPackage() {
       preserveLibraryConfiguration: true
     });
     if (!response?.ok) throw new Error(response?.message || "分享包导入失败");
+    applySucceeded = true;
     await refreshLibrary();
     showDataSafetyFeedback(`${response.message} · 分享包媒体已校验`);
     await renderDataSafetyStatus();
   } catch (error) {
-    const retained = applyStarted ? await importedEntryIds(savedIds) : new Set();
+    const retained = applySucceeded
+      ? new Set(savedIds)
+      : applyStarted ? await committedMediaIds(savedIds) : new Set();
     await Promise.allSettled(savedIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
     showDataSafetyFeedback(error.message || "分享包导入失败", true);
   } finally {
     elements.libraryPackageFile.value = "";
     setDataSafetyBusy(false);
+  }
+}
+
+function createLibraryImportOperationId() {
+  return `library-import:${crypto.randomUUID()}`;
+}
+
+async function applyLibraryImportWithReceipt(message) {
+  try {
+    return await chrome.runtime.sendMessage(message);
+  } catch (firstError) {
+    try {
+      return await chrome.runtime.sendMessage(message);
+    } catch {
+      throw firstError;
+    }
   }
 }
 
@@ -3201,8 +3297,105 @@ function backupMediaPaths(library) {
       .map((file) => file.archivePath).filter(Boolean)),
     ...(library?.composerSessions ?? []).flatMap((session) => (session.referenceSnapshots ?? [])
       .filter((reference) => reference?.sourceType === "temporary")
-      .flatMap((reference) => (reference.assetRefs ?? []).map((asset) => asset.archivePath).filter(Boolean)))
+      .flatMap((reference) => (reference.assetRefs ?? []).map((asset) => asset.archivePath).filter(Boolean))),
+    ...(library?.trashState?.items ?? []).flatMap((item) => {
+      if (item?.kind === "entry") {
+        return (item.snapshot?.mediaAssets ?? item.snapshot?.visuals ?? [])
+          .map((asset) => asset.assetPath || asset.screenshotPath).filter(Boolean);
+      }
+      if (item?.kind === "media") {
+        return (item.snapshot?.mediaAssets ?? [])
+          .map((asset) => asset.assetPath || asset.screenshotPath).filter(Boolean);
+      }
+      return [];
+    })
   ]);
+}
+
+function assertFolderBackupRoundtrip(entriesValue, trashStateValue, parsed) {
+  const expectedEntries = Array.isArray(entriesValue) ? entriesValue : [];
+  if (parsed.entries.length !== expectedEntries.length) throw new Error("完整备份自检失败：案例数量不一致");
+  const parsedEntries = new Map(parsed.entries.map((entry) => [entry.id, entry]));
+  for (const entry of expectedEntries) {
+    const restored = parsedEntries.get(entry.id);
+    if (!restored || caseSemanticFingerprint(entry) !== caseSemanticFingerprint(restored)) {
+      throw new Error(`完整备份自检失败：“${entry.title || entry.id}”回读后内容不一致`);
+    }
+  }
+  const expectedTrash = Array.isArray(trashStateValue?.items) ? trashStateValue.items : [];
+  const actualTrash = Array.isArray(parsed.trashState?.items) ? parsed.trashState.items : [];
+  if (actualTrash.length !== expectedTrash.length) throw new Error("完整备份自检失败：回收站数量不一致");
+  const actualById = new Map(actualTrash.map((item) => [item.id, item]));
+  for (const expected of expectedTrash) {
+    const actual = actualById.get(expected.id);
+    if (!actual || actual.kind !== expected.kind || actual.targetId !== expected.targetId) {
+      throw new Error("完整备份自检失败：回收站关系不一致");
+    }
+    if (stableBackupValue(expected.relationships) !== stableBackupValue(actual.relationships)) {
+      throw new Error("完整备份自检失败：回收站关联关系不一致");
+    }
+    if (expected.kind === "entry" && caseSemanticFingerprint(expected.snapshot) !== caseSemanticFingerprint(actual.snapshot)) {
+      throw new Error(`完整备份自检失败：回收站案例“${expected.snapshot?.title || expected.targetId}”内容不一致`);
+    }
+    if (expected.kind === "collection" && stableBackupValue(expected.snapshot) !== stableBackupValue(actual.snapshot)) {
+      throw new Error(`完整备份自检失败：回收站项目“${expected.snapshot?.name || expected.targetId}”内容不一致`);
+    }
+    if (expected.kind === "media" && stableBackupValue(expected.snapshot) !== stableBackupValue(actual.snapshot)) {
+      throw new Error(`完整备份自检失败：回收站媒体“${expected.targetId}”内容不一致`);
+    }
+  }
+}
+
+function stableBackupValue(value) {
+  if (Array.isArray(value)) return `[${value.map(stableBackupValue).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableBackupValue(value[key])}`).join(",")}}`;
+}
+
+async function localAssetReferenceBackupBlob(entry, asset) {
+  const record = await getLocalAssetHandleRecord(asset.id);
+  if (!record) throw new Error(`“${asset.sourceTitle || entry.title || "未命名素材"}”的本机链接已丢失，完整备份已停止`);
+  let inspection = await inspectLocalAssetHandle(record, asset);
+  if (inspection.status === LOCAL_ASSET_LINK_STATUS.NEEDS_PERMISSION) {
+    if (typeof record.handle.requestPermission !== "function") {
+      throw new Error(`“${asset.sourceTitle || entry.title || "未命名素材"}”需要重新授权，完整备份已停止`);
+    }
+    const permission = await record.handle.requestPermission({ mode: "read" });
+    if (permission !== "granted") {
+      throw new Error(`没有获得“${asset.sourceTitle || entry.title || "未命名素材"}”的读取权限，完整备份已停止`);
+    }
+    inspection = await inspectLocalAssetHandle(record, asset);
+  }
+  if (![LOCAL_ASSET_LINK_STATUS.READY, LOCAL_ASSET_LINK_STATUS.CHANGED].includes(inspection.status) || !(inspection.file instanceof Blob)) {
+    throw new Error(`“${asset.sourceTitle || entry.title || "未命名素材"}”无法读取，完整备份已停止`);
+  }
+  return inspection.file;
+}
+
+function portableManagedBackupAsset(asset, blob, assetPath, contentHash) {
+  const {
+    recordType: _recordType,
+    linkStatus: _linkStatus,
+    importFailure: _importFailure,
+    sourceLastModified: _sourceLastModified,
+    linkedAt: _linkedAt,
+    localPath: _localPath,
+    absolutePath: _absolutePath,
+    fileHandle: _fileHandle,
+    handle: _handle,
+    reference: _reference,
+    relativePath: _relativePath,
+    ...portable
+  } = asset;
+  return {
+    ...portable,
+    storageMode: "managed",
+    ...(asset.kind === "attachment" ? { formatCategory: "other-source" } : {}),
+    mimeType: blob.type || asset.mimeType || "application/octet-stream",
+    byteSize: blob.size,
+    contentHash,
+    assetPath
+  };
 }
 
 function skillFolderPath(portableId, assetId, packagePath) {
@@ -3245,8 +3438,16 @@ async function readDirectoryFiles(directory, prefix = "") {
 }
 
 function folderAssetPath(entryId, asset, mimeType) {
-  const directory = asset.kind === "video" ? "videos" : asset.kind === "document" ? "documents" : "images";
-  return `${directory}/${safeFolderPart(entryId)}/${safeFolderPart(asset.id)}.${folderExtension(mimeType, asset.kind)}`;
+  const directories = {
+    image: "images",
+    video: "videos",
+    audio: "audio",
+    document: "documents",
+    attachment: "attachments"
+  };
+  const directory = directories[asset.kind];
+  if (!directory) throw new Error("媒体类型无效，完整备份已停止");
+  return `${directory}/${safeFolderPart(entryId)}/${safeFolderPart(asset.id)}.${folderExtension(mimeType, asset.kind, asset.sourceFormat)}`;
 }
 
 function safeFolderPart(value) {
@@ -3255,14 +3456,16 @@ function safeFolderPart(value) {
   return safe;
 }
 
-function folderExtension(mimeType, kind) {
+function folderExtension(mimeType, kind, sourceFormat = "") {
   const known = {
     "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "video/mp4": "mp4", "video/webm": "webm",
     "video/quicktime": "mov", "video/x-matroska": "mkv", "video/x-msvideo": "avi", "application/pdf": "pdf",
     "application/rtf": "rtf", "text/rtf": "rtf", "application/x-rtf": "rtf",
     "text/plain": "txt", "text/markdown": "md", "text/html": "html"
   };
-  return known[mimeType] || (kind === "video" ? "video" : kind === "document" ? "bin" : "webp");
+  const preserved = String(sourceFormat ?? "").trim().toLocaleLowerCase("en-US").replace(/^\./, "");
+  if (kind === "attachment" && /^[a-z0-9]+$/u.test(preserved)) return preserved;
+  return known[mimeType] || (kind === "video" ? "video" : ["document", "attachment"].includes(kind) ? "bin" : kind === "audio" ? "audio" : "webp");
 }
 
 async function importCreativeExperimentArchive() {
@@ -3316,14 +3519,22 @@ async function importCreativeExperimentArchive() {
   }
 }
 
-async function importedEntryIds(ids) {
+async function committedMediaIds(ids) {
   try {
     const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
     if (!response?.ok) return new Set(ids);
     const targets = new Set(ids);
     const retained = [
       ...(response.entries ?? []).flatMap((entry) => entry.mediaAssets ?? entry.visuals ?? []).map((asset) => asset.id),
-      ...(response.creativeSkills?.items ?? []).flatMap((skill) => skill.packageFiles ?? []).map((file) => file.assetId)
+      ...(response.creativeSkills?.items ?? []).flatMap((skill) => skill.packageFiles ?? []).map((file) => file.assetId),
+      ...(response.creativeRuns ?? []).flatMap((run) => run.outputs ?? []).map((output) => output.visual?.id),
+      ...(response.composerSessions ?? []).flatMap((session) => session.referenceSnapshots ?? [])
+        .flatMap((reference) => reference.assetRefs ?? []).map((asset) => asset.assetId),
+      ...(response.trashState?.items ?? []).flatMap((item) => {
+        if (item?.kind === "entry") return item.snapshot?.mediaAssets ?? item.snapshot?.visuals ?? [];
+        if (item?.kind === "media") return item.snapshot?.mediaAssets ?? [];
+        return [];
+      }).map((asset) => asset.id)
     ];
     return new Set(retained.filter((id) => targets.has(id)));
   } catch {
@@ -3333,9 +3544,13 @@ async function importedEntryIds(ids) {
 
 async function validateImportedImageDimensions(images) {
   for (const image of images.values()) {
-    const metadata = await readImageDimensions(image);
-    assertImageDimensions(metadata.width, metadata.height);
+    await validateImportedImage(image);
   }
+}
+
+async function validateImportedImage(image) {
+  const metadata = await readImageDimensions(image);
+  assertImageDimensions(metadata.width, metadata.height);
 }
 
 async function hydrateCardImage(image) {
@@ -4537,7 +4752,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
     });
     return image;
   }
-  if (asset.recordType === "local-asset-reference") return createLocalAssetReferenceViewer(asset, entry);
+  if (asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE) return createLocalAssetReferenceViewer(asset, entry);
   if (asset.storageMode === "reference") return createReferencedMediaViewer(asset, entry);
   const blob = await getMediaBlob(asset.id);
   if (!blob) return textEl("div", "detail-placeholder", "本地媒体文件缺失；请从完整备份恢复");
@@ -5685,7 +5900,7 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
   renderImportProjectOptions(rootName);
   const visionProvider = visionSettings.activeProvider === "compatible" ? visionSettings.compatible : visionSettings.openai;
   const canAutoAnalyze = Boolean(visionSettings.consent && visionProvider?.configured);
-  elements.importAutoAnalyze.checked = canAutoAnalyze && Boolean(visionSettings.autoAnalyzeImports);
+  elements.importAutoAnalyze.checked = false;
   elements.importAutoAnalyze.disabled = !canAutoAnalyze;
   elements.importAutoAnalyze.title = elements.importAutoAnalyze.disabled ? "先在设置的 AI 服务中配置并授权图片分析" : "";
   elements.importPreparing.hidden = false;
@@ -6154,7 +6369,7 @@ async function discardPendingLocalImport() {
   pendingLocalImport = null;
   await Promise.allSettled(staged.flatMap((item) => [item.assetId, item.posterAssetId].filter(Boolean)).map(deleteMediaBlob));
   await Promise.allSettled(staged
-    .filter((item) => item.recordType === "local-asset-reference")
+    .filter((item) => item.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE)
     .map((item) => deleteLocalAssetHandle(item.assetId)));
 }
 

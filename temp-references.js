@@ -1,4 +1,9 @@
 import { detectLocalMediaFile, extractLocalDocumentText } from "./local-media.js";
+import {
+  hasCompleteReferenceAnalysis,
+  referenceHasPromptText,
+  referenceHasUsableLegacyDescription
+} from "./reference-readiness.js";
 
 export const TEMP_REFERENCE_SOURCE_TYPES = Object.freeze({
   library: "library",
@@ -100,25 +105,23 @@ export function imageTempReferenceBlock(referenceSnapshots, service) {
 export function unreadReferenceImageAssets(reference) {
   const analyzedAssets = new Map((Array.isArray(reference?.assets) ? reference.assets : [])
     .map((item) => [String(item?.assetId ?? "").trim(), item]));
-  const promptBacked = Boolean(
-    String(reference?.originalText ?? "").trim()
-    || (["prompt", "prompt_vision"].includes(reference?.referenceKind)
-      && String(reference?.referenceText ?? "").trim())
-  );
+  const promptBacked = referenceHasPromptText(reference);
   if (promptBacked || (String(reference?.referenceText ?? "").trim() && !analyzedAssets.size)) return [];
   const assets = [];
   const seen = new Set();
   for (const asset of Array.isArray(reference?.assetRefs) ? reference.assetRefs : []) {
     const assetId = String(asset?.assetId ?? "").trim();
     if (asset?.kind !== "image" || !assetId || seen.has(assetId)) continue;
-    if (hasCompleteReferenceAnalysis(analyzedAssets.get(assetId))) continue;
+    if (hasCompleteReferenceAnalysis(analyzedAssets.get(assetId)) ||
+        referenceHasUsableLegacyDescription(reference, analyzedAssets.get(assetId))) continue;
     seen.add(assetId);
     assets.push({ ...asset, assetId });
   }
   for (const image of Array.isArray(reference?.imageRefs) ? reference.imageRefs : []) {
     const assetId = String(image?.visualId ?? "").trim();
     if (!assetId || seen.has(assetId)) continue;
-    if (hasCompleteReferenceAnalysis(analyzedAssets.get(assetId))) continue;
+    if (hasCompleteReferenceAnalysis(analyzedAssets.get(assetId)) ||
+        referenceHasUsableLegacyDescription(reference, analyzedAssets.get(assetId))) continue;
     seen.add(assetId);
     assets.push({
       assetId,
@@ -128,15 +131,6 @@ export function unreadReferenceImageAssets(reference) {
     });
   }
   return assets;
-}
-
-function hasCompleteReferenceAnalysis(value) {
-  return Boolean(value
-    && Number(value.analysisVersion) === 2
-    && String(value.analysisFingerprint ?? "").trim()
-    && String(value.reconstructionPrompt ?? "").trim()
-    && String(value.imageFingerprint ?? "").trim()
-    && value.imageFingerprint === value.analysisImageFingerprint);
 }
 
 export function tempReferenceAssetIds(reference) {

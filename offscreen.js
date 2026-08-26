@@ -8,6 +8,7 @@ import {
   renderMarkdown
 } from "./lib.js";
 import { createZipBlob } from "./zip.js";
+import { createVerifiedLibraryZip } from "./library-export-zip.js";
 import { sha256Hex } from "./sync-crypto.js";
 import {
   CURATED_SUBMISSION_MAX_FILE_BYTES,
@@ -332,7 +333,7 @@ async function cropLoadedScreenshot(image, entryId, selection) {
   };
 }
 
-async function createArchiveUrl({
+export async function createArchiveUrl({
   entries, settings, taxonomy, facetCatalog, classificationRules, organizerState,
   composerSettings, composerSessions, creativeExperimentSettings, creativeRuns,
   creativeSkills, compoundCases, uiPreferences, locale: localeValue, sharing = false,
@@ -414,24 +415,25 @@ async function createArchiveUrl({
     name: archiveMarkdownFilename(settings),
     data: renderMarkdown(resolvedEntries, settings, taxonomy, facetCatalog, { locale })
   });
+  const libraryJson = renderLibraryJson(
+    resolvedEntries,
+    settings,
+    taxonomy,
+    facetCatalog,
+    classificationRules,
+    organizerState,
+    sharing ? null : {
+      composerSettings,
+      composerSessions,
+      creativeExperimentSettings,
+      creativeRuns: resolvedCreativeRuns,
+      creativeSkills: resolvedCreativeSkills
+    },
+    compoundCases
+  );
   files.splice(1, 0, {
     name: "library.json",
-    data: renderLibraryJson(
-      resolvedEntries,
-      settings,
-      taxonomy,
-      facetCatalog,
-      classificationRules,
-      organizerState,
-      sharing ? null : {
-        composerSettings,
-        composerSessions,
-        creativeExperimentSettings,
-        creativeRuns: resolvedCreativeRuns,
-        creativeSkills: resolvedCreativeSkills
-      },
-      compoundCases
-    )
+    data: libraryJson
   });
   if (sharing) {
     const [foundationCss, iconSprite, masonrySource] = await Promise.all([
@@ -458,7 +460,7 @@ async function createArchiveUrl({
       { name: SHARE_PREVIEW_MASONRY_FILENAME, data: renderSharePreviewMasonryJs(masonrySource) }
     );
   }
-  const archive = await createZipBlob(files);
+  const archive = await createVerifiedLibraryZip(files, libraryJson);
   const url = URL.createObjectURL(archive);
   blobUrls.add(url);
   return { ok: true, url, imageCount, fileCount: files.length, byteSize: archive.size };

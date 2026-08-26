@@ -1,0 +1,22 @@
+{
+  "format": "prompt-case-library",
+  "version": 3,
+  "schemaVersion": 5,
+  "entries": [{
+    "id": "fixture:v3",
+    "schemaVersion": 5,
+    "title": "Reconstructed v3 case",
+    "text": "v3 prompt",
+    "savedAt": "2026-01-03T00:00:00.000Z",
+    "mediaAssets": [{
+      "id": "fixture:v3:image",
+      "kind": "image",
+      "storageMode": "managed",
+      "assetPath": "images/fixture-v3.webp",
+      "sourceFormat": "webp",
+      "mimeType": "image/webp",
+      "byteSize": 5
+    }],
+    "primaryMediaId": "fixture:v3:image"
+  }]
+}

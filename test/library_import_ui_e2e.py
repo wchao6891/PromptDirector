@@ -159,7 +159,7 @@ def main() -> None:
             expect(duplicate_row).to_contain_text("精确重复")
             expect(new_row.locator("input")).to_be_checked()
             expect(new_row.locator("input")).to_be_disabled()
-            expect(library.locator("#import-auto-analyze")).to_be_checked()
+            expect(library.locator("#import-auto-analyze")).not_to_be_checked()
             expect(library.locator("#import-project")).to_have_attribute("role", "combobox")
             library.locator("#import-project").click()
             expect(library.locator(".project-combobox-option")).to_have_count(12)
@@ -191,7 +191,7 @@ def main() -> None:
             assert {item["name"] for item in payload["stagedAssets"]} == {"duplicate.txt", "new-note.md", "notes.rtf"}, payload
             assert all(item.get("stagedAssetId") for item in payload["items"]), payload
             assert {item["keepDuplicate"] for item in payload["items"]} == {False, True}, payload
-            assert payload["options"] == {"autoAnalyze": True}, payload
+            assert payload["options"] == {"autoAnalyze": False}, payload
 
             expect(library.locator("#import-undo")).to_be_visible()
             expect(library.locator("#import-view-project")).to_be_visible()

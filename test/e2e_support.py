@@ -11,7 +11,10 @@ from typing import Iterator
 from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1]
+SOURCE_EXTENSION_DIR = Path(__file__).resolve().parents[1]
+EXTENSION_DIR = Path(
+    os.environ.get("PROMPTDIRECTOR_E2E_EXTENSION_DIR", str(SOURCE_EXTENSION_DIR))
+).resolve()
 AI_TASK_IDS = (
     "textTags",
     "skillExtraction",

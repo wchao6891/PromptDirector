@@ -84,6 +84,21 @@ import {
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import { buildAutomaticVisionJob } from "./automatic-vision.js";
 import { coalesceAnalysisRequest, runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
+import {
+  completeAnalysisAttempt,
+  failAnalysisAttempt,
+  retryAnalysisAttempt,
+  startAnalysisAttempt,
+  stopAnalysisTask
+} from "./analysis-tasks.js";
+import {
+  analysisTaskById,
+  createOrJoinAnalysisTask,
+  detachAnalysisTaskConsumer,
+  normalizeAnalysisTaskRegistry,
+  recoverInterruptedAnalysisTasks,
+  replaceAnalysisTask
+} from "./analysis-task-registry.js";
 import { findPersistedVisionAnalysis } from "./vision-analysis-cache.js";
 import {
   analysisRevisionMeta,
@@ -181,10 +196,17 @@ import {
   selectLibraryPackage,
   selectProjectPackage
 } from "./library-package.js";
+import {
+  claimLibraryImportTransaction,
+  createLibraryImportPlanToken,
+  failLibraryImportTransaction,
+  succeedLibraryImportTransaction
+} from "./library-import-transaction.js";
 import { mergeCuratedLibraryPackage } from "./curated-import.js";
 import { prepareCuratedSubmissionState } from "./curated-submission.js";
 import {
   createCollection,
+  collectionEntryIds,
   collectionPathLabel,
   collectionSelectorLabelsById,
   moveCollection,
@@ -372,6 +394,8 @@ const STORAGE_KEYS = Object.freeze({
   visionAnalysisUndo: "visionAnalysisUndo",
   automaticVisionBatchJob: "automaticVisionBatchJob",
   batchJob: "batchJob",
+  analysisTasks: "analysisTasks",
+  libraryImportTransactions: "libraryImportTransactions",
   libraryMaintenanceJob: "libraryMaintenanceJob",
   legacyAnalysisBatchJob: "analysisBatchJob",
   analysisBatchUndo: "analysisBatchUndo",
@@ -451,9 +475,11 @@ let analysisBatchRunnerActive = false;
 let analysisBatchRunnerTimer = 0;
 let importRunnerActive = false;
 let importRunnerTimer = 0;
+const analysisTaskRunners = new Map();
 const LIBRARY_MAINTENANCE_ALARM = "prompt-director-library-maintenance";
 const AUTOMATIC_VISION_ALARM = "prompt-director-automatic-vision";
 const ANALYSIS_BATCH_ALARM = "prompt-director-analysis-batch";
+const ANALYSIS_TASK_ALARM = "prompt-director-analysis-task";
 const IMPORT_JOB_ALARM = "prompt-director-local-import";
 const MAINTENANCE_SLICE_TARGET_MS = 250;
 const captureRuntime = createCaptureWorkspace({
@@ -495,11 +521,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ANALYSIS_BATCH_ALARM) scheduleAnalysisBatchRunner();
   if (alarm.name === IMPORT_JOB_ALARM) scheduleImportRunner();
 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === ANALYSIS_TASK_ALARM) return runQueuedAnalysisTasks();
+});
 scheduleLibraryMaintenanceRunner();
 scheduleAutomaticVisionRunner();
 scheduleAnalysisBatchRunner();
 recoverCreativeJobs().catch((error) => console.error("PromptDirector creative job recovery failed", error));
 enqueue(recoverImportJobs).catch((error) => console.error("PromptDirector local import recovery failed", error));
+enqueue(recoverAnalysisTasks).catch((error) => console.error("PromptDirector analysis task recovery failed", error));
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   handleContextMenuCapture(info, tab, {
@@ -775,8 +805,16 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => removeTempReferenceAction(message));
     case "SAVE_TEMP_REFERENCE_AS_CASE":
       return enqueue(async () => saveTempReferenceAsCaseAction(message));
-    case "ANALYZE_TEMP_REFERENCES":
-      return analyzeTempReferencesAction(message);
+    case "START_OR_JOIN_ANALYSIS_TASK":
+      return startOrJoinAnalysisTaskAction(message);
+    case "GET_ANALYSIS_TASK":
+      return enqueue(async () => getAnalysisTaskAction(message.taskId));
+    case "DETACH_ANALYSIS_CONSUMER":
+      return enqueue(async () => detachAnalysisConsumerAction(message));
+    case "STOP_ANALYSIS_TASK":
+      return stopAnalysisTaskAction(message);
+    case "RETRY_ANALYSIS_TASK":
+      return retryAnalysisTaskAction(message);
     case "CREATE_CREATIVE_SKILL":
       return enqueue(async () => createCreativeSkillAction(message));
     case "SAVE_CREATIVE_SKILL_VERSION":
@@ -824,7 +862,8 @@ async function handleMessage(message, interaction = {}) {
           message.outputLocale,
           message.batchJobId,
           message.bypassCache === true,
-          message.assignment
+          message.assignment,
+          "interactive"
         );
       } catch (error) {
         return {
@@ -3681,6 +3720,178 @@ async function saveTempReferenceAsCaseAction(message) {
   return { ok: true, message: "临时引用已保存为案例", entry, session, summaries: sessions.map(sessionSummary) };
 }
 
+async function startOrJoinAnalysisTaskAction(message) {
+  const created = await enqueue(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const result = createOrJoinAnalysisTask(stored[STORAGE_KEYS.analysisTasks], message, {
+      taskId: `analysis-task:${crypto.randomUUID()}`
+    });
+    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: result.state }, { markSyncDirty: false });
+    return result;
+  });
+  if (created.created) scheduleAnalysisTaskRun(created.task.id);
+  return analysisTaskResponse(created.task);
+}
+
+async function getAnalysisTaskAction(taskId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const task = analysisTaskById(stored[STORAGE_KEYS.analysisTasks], taskId);
+  if (!task) return { ok: false, message: "没有找到图片分析任务" };
+  return analysisTaskResponse(task);
+}
+
+async function detachAnalysisConsumerAction(message) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const detached = detachAnalysisTaskConsumer(
+    stored[STORAGE_KEYS.analysisTasks],
+    message.taskId,
+    message.consumerId,
+    message.clientRequestId
+  );
+  await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: detached.state }, { markSyncDirty: false });
+  return analysisTaskResponse(detached.task);
+}
+
+async function stopAnalysisTaskAction(message) {
+  const stopped = await enqueue(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    const current = analysisTaskById(state, message.taskId);
+    if (!current) throw new Error("没有找到图片分析任务");
+    const task = stopAnalysisTask(current);
+    const next = replaceAnalysisTask(state, task);
+    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
+    return task;
+  });
+  analysisTaskRunners.get(stopped.id)?.controller.abort();
+  await notifyAnalysisTaskUpdated(stopped);
+  return analysisTaskResponse(stopped);
+}
+
+async function retryAnalysisTaskAction(message) {
+  if (message.confirmDuplicateCharge !== true) throw new Error("重新分析前必须确认可能再次计费");
+  const retried = await enqueue(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    const current = analysisTaskById(state, message.taskId);
+    if (!current) throw new Error("没有找到图片分析任务");
+    const previousAttemptId = current.attempts.at(-1)?.id ?? "";
+    if (String(message.previousAttemptId ?? "").trim() !== previousAttemptId) {
+      throw new Error("图片分析任务已经变化，请刷新后再重试");
+    }
+    const task = retryAnalysisAttempt(current, {
+      attemptId: `analysis-attempt:${crypto.randomUUID()}`,
+      confirmed: true
+    });
+    task.consumerIds = [...new Set([...task.consumerIds, String(message.consumerId ?? "").trim()].filter(Boolean))];
+    task.clientRequestIds = [...new Set([...task.clientRequestIds, String(message.clientRequestId ?? "").trim()].filter(Boolean))];
+    const next = replaceAnalysisTask(state, task);
+    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
+    return task;
+  });
+  scheduleAnalysisTaskRun(retried.id, retried.activeAttemptId);
+  return analysisTaskResponse(retried);
+}
+
+function scheduleAnalysisTaskRun(taskId, preparedAttemptId = "") {
+  if (analysisTaskRunners.has(taskId)) return;
+  chrome.alarms.create(ANALYSIS_TASK_ALARM, { when: Date.now() + 50 });
+  void runAnalysisTask(taskId, preparedAttemptId);
+}
+
+async function runQueuedAnalysisTasks() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+  for (const task of state.items.filter((item) => item.status === "queued")) scheduleAnalysisTaskRun(task.id);
+}
+
+async function runAnalysisTask(taskId, preparedAttemptId = "") {
+  if (analysisTaskRunners.has(taskId)) return;
+  const claimed = await enqueue(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    const current = analysisTaskById(state, taskId);
+    if (!current) return null;
+    let task = current;
+    if (task.status === "queued") {
+      task = startAnalysisAttempt(task, { attemptId: `analysis-attempt:${crypto.randomUUID()}` });
+    } else if (!preparedAttemptId || task.status !== "running" || task.activeAttemptId !== preparedAttemptId) {
+      return null;
+    }
+    const next = replaceAnalysisTask(state, task);
+    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
+    return task;
+  });
+  if (!claimed) return;
+  const controller = new AbortController();
+  analysisTaskRunners.set(taskId, { attemptId: claimed.activeAttemptId, controller });
+  let actionResult;
+  try {
+    actionResult = await analyzeTempReferencesAction({
+      ...claimed.request,
+      taskId: claimed.id,
+      attemptId: claimed.activeAttemptId,
+      priority: claimed.priority,
+      signal: controller.signal
+    });
+  } catch (error) {
+    actionResult = { ok: false, message: userMessage(error) };
+  }
+  let settled;
+  try {
+    settled = await enqueue(async () => {
+      const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+      const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+      const current = analysisTaskById(state, taskId);
+      if (!current || current.activeAttemptId !== claimed.activeAttemptId || current.status !== "running") return current;
+      const task = actionResult?.ok
+        ? completeAnalysisAttempt(current, { attemptId: claimed.activeAttemptId, result: actionResult })
+        : failAnalysisAttempt(current, { attemptId: claimed.activeAttemptId, error: actionResult?.message || "图片分析失败" });
+      const next = replaceAnalysisTask(state, task);
+      await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
+      return task;
+    });
+  } finally {
+    analysisTaskRunners.delete(taskId);
+  }
+  if (settled) await notifyAnalysisTaskUpdated(settled);
+}
+
+async function recoverAnalysisTasks() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const current = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+  const recovered = recoverInterruptedAnalysisTasks(current);
+  if (JSON.stringify(current) !== JSON.stringify(recovered)) {
+    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: recovered }, { markSyncDirty: false });
+    for (const task of recovered.items.filter((item) => item.executionState === "execution_state_unknown")) {
+      await notifyAnalysisTaskUpdated(task);
+    }
+  }
+  for (const task of recovered.items.filter((item) => item.status === "queued")) scheduleAnalysisTaskRun(task.id);
+}
+
+async function analysisTaskAttemptIsActive(taskId, attemptId) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const task = analysisTaskById(stored[STORAGE_KEYS.analysisTasks], taskId);
+  return Boolean(task && task.status === "running" && task.executionState === "running" && task.activeAttemptId === attemptId);
+}
+
+function analysisTaskResponse(task) {
+  const attempt = task?.activeAttemptId
+    ? task.attempts.find((item) => item.id === task.activeAttemptId)
+    : task?.attempts?.at(-1);
+  return {
+    ok: true,
+    task,
+    attemptId: attempt?.id ?? "",
+    ...(attempt?.result ? { result: attempt.result } : {})
+  };
+}
+
+async function notifyAnalysisTaskUpdated(task) {
+  await chrome.runtime.sendMessage({ type: "ANALYSIS_TASK_UPDATED", ...analysisTaskResponse(task) }).catch(() => undefined);
+}
+
 async function analyzeTempReferencesAction(message) {
   try {
     const sessionId = String(message.sessionId ?? "").trim();
@@ -3708,6 +3919,7 @@ async function analyzeTempReferencesAction(message) {
     const settledReferences = await Promise.allSettled(references.map(async (reference) => {
       const imageAssets = unreadReferenceImageAssets(reference);
       const assetResults = await Promise.all(imageAssets.map(async (asset) => {
+        if (message.signal?.aborted) throw new DOMException("图片分析已停止", "AbortError");
         const blob = await getTempReferenceVisionBlob(asset);
         if (!blob) throw new Error(`参考图片已经失效：${asset.name || "未命名图片"}`);
         const { result, fingerprint } = await analyzeVisionBlobWithScheduler({
@@ -3715,7 +3927,8 @@ async function analyzeTempReferencesAction(message) {
           catalog: stored[STORAGE_KEYS.facetCatalog],
           locale,
           configuration,
-          entries: stored[STORAGE_KEYS.entries]
+          entries: stored[STORAGE_KEYS.entries],
+          priority: message.priority
         });
         return {
           description: result.description,
@@ -3744,6 +3957,9 @@ async function analyzeTempReferencesAction(message) {
     if (!analyzed.length) throw new Error(failures[0]?.message || "临时图片分析失败");
 
     return await enqueue(async () => {
+      if (message.taskId && !await analysisTaskAttemptIsActive(message.taskId, message.attemptId)) {
+        return { ok: false, message: "这次图片分析已经停止或失效，结果没有写入" };
+      }
       const latestStored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
       const latestSessions = normalizeComposerSessions(latestStored[STORAGE_KEYS.composerSessions]);
       const latestSession = latestSessions.find((item) => item.id === sessionId);
@@ -4689,7 +4905,7 @@ function canonicalAiTaskId(value) {
   return map[id] || id;
 }
 
-async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "", bypassCache = false, assignmentOverride = null) {
+async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "", bypassCache = false, assignmentOverride = null, priority = "user_batch") {
     const state = await readState();
     const entry = findEntry(state, entryId);
     const visualId = String(visualIdValue ?? "").trim() || primaryVisual(entry)?.id;
@@ -4708,7 +4924,8 @@ async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobI
       configuration,
       previousAnalysis: visual.visionAnalysis,
       entries: state.entries,
-      bypassCache
+      bypassCache,
+      priority
     });
 
     return await enqueue(async () => {
@@ -4788,7 +5005,7 @@ function configurationForAssignment(configuration, taskId, assignmentOverride) {
   };
 }
 
-async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredCanvas, configuration, previousAnalysis, entries = [], bypassCache = false }) {
+async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredCanvas, configuration, previousAnalysis, entries = [], bypassCache = false, priority = "user_batch" }) {
   const fingerprint = await imageFingerprint(blob);
   const assignment = configuration.assignments.imageAnalysis;
   const settings = resolveVisionTaskSettings("imageAnalysis", configuration);
@@ -4818,6 +5035,7 @@ async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredC
     result = await coalesceAnalysisRequest(requestKey, () => runScheduledAnalysisWithRetries({
       key: schedulerKey,
       concurrency: assignment.concurrency,
+      priority,
       task: async () => {
         return analyzeImageWithVision({
           imageDataUrl: await blobToDataUrl(blob),
@@ -5946,7 +6164,8 @@ async function runPersistedVisionBatchSlice(jobId) {
         prepared.job.outputLocale,
         prepared.job.id,
         prepared.job.reanalyze,
-        prepared.job
+        prepared.job,
+        "user_batch"
       );
     } catch (error) {
       result = {
@@ -6062,7 +6281,7 @@ async function runAutomaticVisionItem() {
     await Promise.all(claimed.claims.map(async (claim) => {
       let result;
       try {
-        result = await analyzeEntryImage(claim.entryId, claim.visualId, job.outputLocale, job.id, false, job);
+        result = await analyzeEntryImage(claim.entryId, claim.visualId, job.outputLocale, job.id, false, job, "background_import");
       } catch (error) {
         result = { ok: false, message: userMessage(error), status: Number(error?.status) || 0, usage: error?.usage };
       }
@@ -6823,13 +7042,18 @@ function previewLibraryImport(state, library, options = {}) {
   const result = mergeLibraryPackage(state, library, options);
   return {
     ok: true,
+    planToken: createLibraryImportPlanToken(state, library),
     entryIdMap: result.entryIdMap,
     compoundIdMap: result.compoundIdMap,
     visualIdMap: result.visualIdMap,
+    createdVisualIdMap: result.createdVisualIdMap,
     sessionIdMap: result.sessionIdMap,
     runIdMap: result.runIdMap,
     skillIdMap: result.skillIdMap,
     packageAssetIdMap: result.packageAssetIdMap,
+    createdEntryIds: result.createdEntryIds,
+    importDiagnostics: result.importDiagnostics,
+    importStats: result.importStats,
     importedCount: result.importedCount,
     remappedCount: result.remappedCount,
     skippedCount: result.skippedCount,
@@ -6841,33 +7065,73 @@ function previewLibraryImport(state, library, options = {}) {
 }
 
 async function applyLibraryImport(state, message) {
-  const result = mergeLibraryPackage(state, message.library, {
-    entryIdMap: message.entryIdMap,
-    compoundIdMap: message.compoundIdMap,
-    visualIdMap: message.visualIdMap,
-    sessionIdMap: message.sessionIdMap,
-    runIdMap: message.runIdMap,
-    skillIdMap: message.skillIdMap,
-    packageAssetIdMap: message.packageAssetIdMap,
-    preserveLibraryConfiguration: message.preserveLibraryConfiguration === true
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+  const claim = claimLibraryImportTransaction(stored[STORAGE_KEYS.libraryImportTransactions], {
+    operationId: message.operationId,
+    planToken: message.planToken,
+    stateValue: state,
+    sourceValue: message.library
   });
+  if (claim.replayed) return claim.result;
+  if (!claim.acquired) {
+    throw Object.assign(new Error("这次导入仍在提交中，请稍后重试"), {
+      code: "IMPORT_TRANSACTION_PENDING"
+    });
+  }
   await commitLocalChanges({
-    ...storagePayload(result.state),
-    [STORAGE_KEYS.settings]: normalizeSettings(result.state.settings ?? state.settings),
-    [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(result.state.composerSettings ?? state.composerSettings),
-    [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(result.state.composerSessions ?? state.composerSessions),
-    [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
-      result.state.creativeExperimentSettings ?? state.creativeExperimentSettings
-    ),
-    [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.state.creativeRuns ?? state.creativeRuns),
-    [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills)
-  });
-  const importedEntryIds = Object.values(result.entryIdMap);
+    [STORAGE_KEYS.libraryImportTransactions]: claim.state
+  }, { markSyncDirty: false });
+
+  let result;
+  let response;
+  try {
+    result = mergeLibraryPackage(state, message.library, {
+      entryIdMap: message.entryIdMap,
+      compoundIdMap: message.compoundIdMap,
+      visualIdMap: message.visualIdMap,
+      sessionIdMap: message.sessionIdMap,
+      runIdMap: message.runIdMap,
+      skillIdMap: message.skillIdMap,
+      packageAssetIdMap: message.packageAssetIdMap,
+      preserveLibraryConfiguration: message.preserveLibraryConfiguration === true
+    });
+    response = libraryImportResponse(result);
+    const completed = succeedLibraryImportTransaction(claim.state, claim.receipt, response);
+    await commitLocalChanges({
+      ...storagePayload(result.state),
+      [STORAGE_KEYS.settings]: normalizeSettings(result.state.settings ?? state.settings),
+      [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(result.state.composerSettings ?? state.composerSettings),
+      [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(result.state.composerSessions ?? state.composerSessions),
+      [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
+        result.state.creativeExperimentSettings ?? state.creativeExperimentSettings
+      ),
+      [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.state.creativeRuns ?? state.creativeRuns),
+      [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills),
+      [STORAGE_KEYS.libraryImportTransactions]: completed.state
+    });
+  } catch (error) {
+    const failed = failLibraryImportTransaction(claim.state, claim.receipt);
+    await commitLocalChanges({
+      [STORAGE_KEYS.libraryImportTransactions]: failed
+    }, { markSyncDirty: false }).catch(() => undefined);
+    throw error;
+  }
+
+  const importedEntryIds = result.createdEntryIds;
   if (importedEntryIds.length) {
     const importedEntryIdSet = new Set(importedEntryIds);
-    await enqueueAutomaticLibraryMaintenance(result.state.entries.filter((entry) => importedEntryIdSet.has(entry.id)));
+    await enqueueAutomaticLibraryMaintenance(
+      result.state.entries.filter((entry) => importedEntryIdSet.has(entry.id))
+    ).catch((error) => console.error("Imported library maintenance could not be queued", error));
   }
-  if (importedEntryIds.length) await queueAutomaticVisionAnalysis(importedEntryIds);
+  if (importedEntryIds.length && message.autoAnalyze === true) {
+    await queueAutomaticVisionAnalysis(importedEntryIds)
+      .catch((error) => console.error("Imported library analysis could not be queued", error));
+  }
+  return response;
+}
+
+function libraryImportResponse(result) {
   return {
     ok: true,
     message: result.importedCount || result.importedRunCount || result.importedSkillCount

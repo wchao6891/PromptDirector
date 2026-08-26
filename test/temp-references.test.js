@@ -167,6 +167,26 @@ test("a partial temporary-image analysis remains eligible for completion", () =>
   }), []);
 });
 
+test("a fingerprint-bound legacy description is usable without requesting another image analysis", () => {
+  const reference = {
+    referenceKind: "vision",
+    referenceText: "被青绿色薄雾包围的古代庭院。",
+    imageRefs: [{ visualId: "legacy-image", mimeType: "image/webp" }],
+    assets: [{
+      assetId: "legacy-image",
+      imageFingerprint: "legacy-hash",
+      analysisImageFingerprint: "legacy-hash",
+      analysisVersion: 1,
+      reconstructionPrompt: ""
+    }]
+  };
+  assert.deepEqual(unreadReferenceImageAssets(reference), []);
+  assert.deepEqual(unreadReferenceImageAssets({
+    ...reference,
+    assets: [{ ...reference.assets[0], analysisImageFingerprint: "other-image" }]
+  }).map((item) => item.assetId), ["legacy-image"]);
+});
+
 test("text, Markdown, and HTML attachments expose readable text without script content", async () => {
   const parser = (html) => ({
     body: {

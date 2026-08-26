@@ -300,6 +300,30 @@ test("restoring a child without its missing parent moves it to root and reports 
   assert.match(restored.warnings[0].reason, /恢复到根级/);
 });
 
+test("restoring a legacy root project without parentId reclaims its original sibling position", () => {
+  const restored = restoreTrashItems({
+    entries: [],
+    organizerState: {
+      collections: [{ id: "collection:outside", name: "Outside", parentId: null, order: 0, entryIds: [] }]
+    },
+    trashState: {
+      items: [{
+        id: "trash:collection:collection:root",
+        kind: "collection",
+        targetId: "collection:root",
+        deletedAt: "2026-08-24T00:00:00Z",
+        snapshot: { id: "collection:root", name: "Root", order: 0, entryIds: [] },
+        relationships: {}
+      }]
+    }
+  }, ["trash:collection:collection:root"]);
+
+  assert.deepEqual(restored.organizerState.collections.map(({ id, parentId, order }) => ({ id, parentId, order })), [
+    { id: "collection:root", parentId: null, order: 0 },
+    { id: "collection:outside", parentId: null, order: 1 }
+  ]);
+});
+
 test("moving a case to trash keeps its labels and exact project memberships without ghost references", () => {
   const source = {
     trashState: createDefaultTrashState(),
@@ -338,6 +362,90 @@ test("moving a case to trash keeps its labels and exact project memberships with
 
   const repeated = moveEntriesToTrash(moved, ["one"], { deletedAt: "2026-08-23T00:00:00Z" });
   assert.deepEqual(repeated, { ...moved, movedItemIds: [] });
+});
+
+test("moving a project with its cases rejects an existing case trash target without changing the source", () => {
+  const source = {
+    trashState: {
+      version: TRASH_VERSION,
+      items: [{
+        id: "trash:entry:one",
+        kind: "entry",
+        targetId: "one",
+        deletedAt: "2026-08-21T00:00:00Z",
+        snapshot: { id: "one", title: "较早删除的案例" },
+        relationships: {}
+      }]
+    },
+    entries: [
+      { id: "one", title: "当前案例一" },
+      { id: "two", title: "当前案例二" },
+      { id: "outside", title: "树外案例" }
+    ],
+    organizerState: {
+      collections: [
+        { id: "collection:a", name: "项目 A", order: 0, entryIds: ["one", "two"] },
+        { id: "collection:outside", name: "树外项目", order: 1, entryIds: ["outside", "one"] }
+      ]
+    },
+    compoundCases: [{
+      id: "compound:a",
+      title: "组合",
+      memberEntryIds: ["one", "two"],
+      coverVisualId: "",
+      customLabels: [],
+      createdAt: "2026-08-20T00:00:00Z",
+      updatedAt: "2026-08-20T00:00:00Z"
+    }]
+  };
+  const before = structuredClone(source);
+  const serializedBefore = JSON.stringify(source);
+
+  assert.throws(
+    () => moveCollectionWithEntriesToTrash(source, "collection:a", { deletedAt: "2026-08-22T06:00:00Z" }),
+    (error) => {
+      assert.equal(error.code, "TRASH_TARGET_CONFLICT");
+      assert.match(error.message, /回收站.*冲突/);
+      assert.deepEqual(error.conflictingTrashIds, ["trash:entry:one"]);
+      return true;
+    }
+  );
+  assert.deepEqual(source, before);
+  assert.equal(JSON.stringify(source), serializedBefore);
+});
+
+test("moving a project with its cases rejects a trash target collision anywhere in the project subtree", () => {
+  const source = {
+    trashState: {
+      version: TRASH_VERSION,
+      items: [{
+        id: "trash:collection:collection:child",
+        kind: "collection",
+        targetId: "collection:child",
+        deletedAt: "2026-08-21T00:00:00Z",
+        snapshot: { id: "collection:child", name: "较早删除的子项目", parentId: "collection:root", order: 0, entryIds: [] },
+        relationships: {}
+      }]
+    },
+    entries: [{ id: "root-case" }, { id: "child-case" }],
+    organizerState: {
+      collections: [
+        { id: "collection:root", name: "Root", parentId: null, order: 0, entryIds: ["root-case"] },
+        { id: "collection:child", name: "Child", parentId: "collection:root", order: 0, entryIds: ["child-case"] }
+      ]
+    }
+  };
+  const before = structuredClone(source);
+
+  assert.throws(
+    () => moveCollectionWithEntriesToTrash(source, "collection:root", { deletedAt: "2026-08-22T06:00:00Z" }),
+    (error) => {
+      assert.equal(error.code, "TRASH_TARGET_CONFLICT");
+      assert.deepEqual(error.conflictingTrashIds, ["trash:collection:collection:child"]);
+      return true;
+    }
+  );
+  assert.deepEqual(source, before);
 });
 
 test("moving a project with its cases preserves project and compound relationships until permanent deletion", () => {
@@ -382,6 +490,97 @@ test("moving a project with its cases preserves project and compound relationshi
   assert.deepEqual(restored.organizerState.collections[0].entryIds, ["one", "two"]);
   assert.deepEqual(restored.compoundCases[0].memberEntryIds, ["one", "two"]);
   assert.deepEqual(restored.trashState.items, []);
+});
+
+test("a project subtree with shared and compound cases can be restored and deleted again", () => {
+  const source = {
+    trashState: createDefaultTrashState(),
+    entries: [
+      {
+        id: "shared",
+        title: "共享案例",
+        mediaAssets: [{ id: "image:shared", kind: "image", storageMode: "managed", capturedAt: "2026-08-20T00:00:00Z" }]
+      },
+      {
+        id: "child-only",
+        title: "子项目案例",
+        mediaAssets: [{ id: "image:child", kind: "image", storageMode: "managed", capturedAt: "2026-08-20T00:00:00Z" }]
+      },
+      { id: "outside", title: "树外案例" }
+    ],
+    organizerState: {
+      collections: [
+        { id: "collection:root", name: "Root", parentId: null, order: 0, entryIds: ["shared"] },
+        { id: "collection:child", name: "Child", parentId: "collection:root", order: 0, entryIds: ["child-only", "shared"] },
+        { id: "collection:outside", name: "Outside", parentId: null, order: 1, entryIds: ["outside", "shared"] }
+      ]
+    },
+    compoundCases: [{
+      id: "compound:shared-child",
+      title: "共享组合",
+      memberEntryIds: ["shared", "child-only"],
+      coverVisualId: "image:shared",
+      customLabels: ["组合"],
+      createdAt: "2026-08-20T00:00:00Z",
+      updatedAt: "2026-08-20T00:00:00Z"
+    }]
+  };
+  const before = structuredClone(source);
+
+  const moved = moveCollectionWithEntriesToTrash(source, "collection:root", {
+    deletedAt: "2026-08-22T06:00:00Z"
+  });
+  assert.deepEqual(source, before);
+  assert.deepEqual(moved.entries.map((entry) => entry.id), ["outside"]);
+  assert.deepEqual(moved.organizerState.collections.map((collection) => ({ id: collection.id, entryIds: collection.entryIds })), [
+    { id: "collection:outside", entryIds: ["outside"] }
+  ]);
+  assert.deepEqual(moved.compoundCases, []);
+  assert.deepEqual(moved.movedItemIds, [
+    "trash:entry:shared",
+    "trash:entry:child-only",
+    "trash:collection:collection:root",
+    "trash:collection:collection:child"
+  ]);
+  assert.equal(new Set(moved.movedItemIds).size, moved.movedItemIds.length);
+  assert.deepEqual([...new Set(moved.trashState.items.slice(-4).map((item) => item.deletedAt))], ["2026-08-22T06:00:00.000Z"]);
+  assert.deepEqual(
+    moved.trashState.items.find((item) => item.id === "trash:entry:shared").relationships.collections,
+    [
+      { id: "collection:root", index: 0 },
+      { id: "collection:child", index: 1 },
+      { id: "collection:outside", index: 1 }
+    ]
+  );
+
+  const restored = restoreTrashItems(moved, moved.movedItemIds);
+  assert.deepEqual(restored.trashState.items, []);
+  assert.deepEqual(restored.entries.map((entry) => entry.id), ["outside", "shared", "child-only"]);
+  const restoredCollections = new Map(restored.organizerState.collections.map((collection) => [collection.id, collection]));
+  assert.deepEqual(
+    ["collection:root", "collection:child", "collection:outside"].map((id) => {
+      const collection = restoredCollections.get(id);
+      return { id, parentId: collection.parentId, order: collection.order, entryIds: collection.entryIds };
+    }),
+    [
+      { id: "collection:root", parentId: null, order: 0, entryIds: ["shared"] },
+      { id: "collection:child", parentId: "collection:root", order: 0, entryIds: ["child-only", "shared"] },
+      { id: "collection:outside", parentId: null, order: 1, entryIds: ["outside", "shared"] }
+    ]
+  );
+  assert.deepEqual(restored.compoundCases.map((compound) => ({ id: compound.id, memberEntryIds: compound.memberEntryIds })), [
+    { id: "compound:shared-child", memberEntryIds: ["shared", "child-only"] }
+  ]);
+
+  const movedAgain = moveCollectionWithEntriesToTrash(restored, "collection:root", {
+    deletedAt: "2026-08-23T06:00:00Z"
+  });
+  assert.deepEqual(movedAgain.movedItemIds, moved.movedItemIds);
+  assert.deepEqual(movedAgain.entries.map((entry) => entry.id), ["outside"]);
+  assert.deepEqual(movedAgain.organizerState.collections.map((collection) => ({ id: collection.id, entryIds: collection.entryIds })), [
+    { id: "collection:outside", entryIds: ["outside"] }
+  ]);
+  assert.deepEqual(movedAgain.compoundCases, []);
 });
 
 test("media trash restores visual-derived labels and permanent cleanup protects active shared blobs", () => {

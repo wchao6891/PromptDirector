@@ -225,3 +225,33 @@ test("library JSON is machine-readable and references screenshots without base64
   assert.equal(json.includes("base64,"), false);
   assert.ok(Array.isArray(parsed.facetCatalog.facets));
 });
+
+test("complete library JSON can carry recoverable trash cases and projects", () => {
+  const trashState = {
+    version: 1,
+    items: [
+      {
+        id: "trash:entry:deleted",
+        kind: "entry",
+        targetId: "deleted",
+        deletedAt: "2026-08-25T00:00:00.000Z",
+        snapshot: { id: "deleted", title: "已删除案例", text: "仍需灾备" },
+        relationships: {}
+      },
+      {
+        id: "trash:collection:collection:deleted",
+        kind: "collection",
+        targetId: "collection:deleted",
+        deletedAt: "2026-08-25T00:00:00.000Z",
+        snapshot: { id: "collection:deleted", name: "已删除项目", parentId: null, order: 0, entryIds: [] },
+        relationships: {}
+      }
+    ]
+  };
+  const parsed = JSON.parse(renderLibraryJson(
+    [], {}, createDefaultTaxonomy(), createDefaultFacetCatalog(), [], {},
+    { trashState }, []
+  ));
+
+  assert.deepEqual(parsed.trashState, trashState);
+});

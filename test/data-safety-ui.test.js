@@ -77,6 +77,7 @@ test("share-package import is separate from the two backup actions while sync st
 test("share-package import preserves local configuration and accepts historical package versions", async () => {
   const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
   const parser = await readFile(new URL("../library-package.js", import.meta.url), "utf8");
+  const migrations = await readFile(new URL("../library-package-migrations.js", import.meta.url), "utf8");
   const format = await readFile(new URL("../library-package-format.js", import.meta.url), "utf8");
   const action = library.slice(
     library.indexOf("async function importSharedLibraryPackage"),
@@ -85,7 +86,8 @@ test("share-package import preserves local configuration and accepts historical 
   assert.match(action, /PREVIEW_LIBRARY_IMPORT/);
   assert.match(action, /APPLY_LIBRARY_IMPORT/);
   assert.equal((action.match(/preserveLibraryConfiguration:\s*true/g) ?? []).length, 2);
-  assert.match(parser, /isSupportedLibraryPackageVersion\(value\.version\)/);
+  assert.match(parser, /prepareLibraryPackageDraft\(value\)/);
+  assert.match(migrations, /isSupportedLibraryPackageVersion\(value\.version\)/);
   assert.match(format, /SUPPORTED_LIBRARY_PACKAGE_VERSIONS\s*=\s*Object\.freeze\(\[1, 2, 3, 4, 5\]\)/);
 });
 
@@ -99,4 +101,15 @@ test("data safety cannot be dismissed accidentally while a storage operation is 
   assert.match(bindings, /elements\.settingsDialog\.addEventListener\("cancel"/);
   assert.match(bindings, /dataSafetyOperationActive[^\n]*event\.preventDefault\(\)/);
   assert.match(library, /elements\.settingsClose\.disabled\s*=\s*active/);
+});
+
+test("folder backup self-check covers project and media trash snapshots plus their relationships", async () => {
+  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const roundtrip = library.slice(
+    library.indexOf("function assertFolderBackupRoundtrip"),
+    library.indexOf("async function localAssetReferenceBackupBlob")
+  );
+  assert.match(roundtrip, /expected\.kind === "collection"/);
+  assert.match(roundtrip, /expected\.kind === "media"/);
+  assert.match(roundtrip, /expected\.relationships/);
 });

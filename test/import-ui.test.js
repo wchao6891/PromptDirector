@@ -116,6 +116,7 @@ test("duplicate choice and import start preserve the complete background job con
   assert.match(js, /stagedAssetId:\s*item\.id/);
   assert.match(js, /keepDuplicate:\s*item\.keepDuplicate\s*===\s*true/);
   assert.match(js, /options:\s*\{\s*autoAnalyze:\s*elements\.importAutoAnalyze\.checked\s*===\s*true\s*\}/);
+  assert.match(js, /elements\.importAutoAnalyze\.checked\s*=\s*false/);
 });
 
 test("project suggestions stay editable and import uses the shared multi-tag editor", () => {
@@ -153,4 +154,29 @@ test("active import restoration and every terminal job action stay wired", () =>
   assert.match(js, /importLastJob\.addEventListener\("click",\s*\(\) => void openLatestImportJob\(\)\)/);
   assert.match(js, /importLastJob\.hidden\s*=\s*!latestImportJob/);
   assert.match(js, /selectedCollectionId\s*=\s*collectionId;[\s\S]*?renderGallery\(\);[\s\S]*?importDialog\.close\(\)/);
+});
+
+test("folder restore and ZIP import retry one response loss with the same operation receipt", () => {
+  assert.match(js, /function createLibraryImportOperationId/);
+  assert.match(js, /async function applyLibraryImportWithReceipt/);
+  assert.equal(js.match(/const operationId\s*=\s*createLibraryImportOperationId\(\)/g)?.length, 2);
+  assert.equal(js.match(/applyLibraryImportWithReceipt\(\{[\s\S]{0,180}?operationId,/g)?.length, 2);
+  assert.match(js, /await chrome\.runtime\.sendMessage\(message\)[\s\S]*await chrome\.runtime\.sendMessage\(message\)/);
+});
+
+test("shared ZIP import salvages individual media failures while complete folder restore stays strict", () => {
+  const sharedImport = js.slice(js.indexOf("async function importSharedLibraryPackage"), js.indexOf("function createLibraryImportOperationId"));
+  const folderRestore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function importSharedLibraryPackage"));
+  assert.match(sharedImport, /salvageInvalidMedia:\s*true/);
+  assert.match(sharedImport, /findInvalidImportedImageIds/);
+  assert.match(sharedImport, /filesWithoutInvalidEntryMedia/);
+  assert.match(sharedImport, /parseLibraryPackage\(library,\s*salvageFiles/);
+  assert.doesNotMatch(folderRestore, /salvageInvalidMedia:\s*true/);
+});
+
+test("a committed import never deletes restored non-case media during later UI refresh failure", () => {
+  assert.equal(js.match(/let applySucceeded\s*=\s*false/g)?.length, 2);
+  assert.equal(js.match(/applySucceeded\s*=\s*true/g)?.length, 2);
+  assert.match(js, /creativeRuns[\s\S]*composerSessions[\s\S]*trashState/);
+  assert.match(js, /applySucceeded\s*\?\s*new Set\(savedIds\)/);
 });

@@ -25,14 +25,17 @@ export function migrateLibraryState(stored = {}) {
   let entries = (Array.isArray(stored.entries) ? stored.entries : []).map((entry) =>
     migrateEntry(entry, classificationRules, taxonomy, resetRequired, legacyNodes, legacyFacetNodes)
   );
+  let trashState = normalizeTrashState(stored.trashState);
   let facetCatalog;
   let facetTreeMigrated = false;
   if (resetRequired) {
     facetCatalog = createDefaultFacetCatalog();
   } else if (!isFixedTagTree(sourceFacetCatalog)) {
-    const migrated = migrateLegacyFacetState(entries, sourceFacetCatalog, { preserveDeepSeek: true });
+    const targets = legacyFacetMigrationTargets(entries, trashState);
+    const migrated = migrateLegacyFacetState(targets.entries, sourceFacetCatalog, { preserveDeepSeek: true });
     facetCatalog = migrated.catalog;
-    entries = migrated.entries;
+    entries = migrated.entries.slice(0, entries.length);
+    trashState = applyLegacyTrashFacetMigration(trashState, targets.bindings, migrated.entries);
     facetTreeMigrated = true;
   } else {
     facetCatalog = sourceFacetCatalog;
@@ -45,7 +48,7 @@ export function migrateLibraryState(stored = {}) {
       facetCatalog,
       classificationRules,
       entries,
-      trashState: normalizeTrashState(stored.trashState),
+      trashState,
       compoundCases: normalizeCompoundCases(stored.compoundCases, entries),
       organizerState: normalizeOrganizerState(stored.organizerState, entries.map((entry) => entry.id))
     },
@@ -54,6 +57,48 @@ export function migrateLibraryState(stored = {}) {
     resetPerformed: resetRequired && hasExistingLibrary(stored),
     facetTreeMigrated
   };
+}
+
+function legacyFacetMigrationTargets(entries, trashState) {
+  const migrationEntries = [...entries];
+  const bindings = [];
+  for (const item of trashState.items) {
+    if (item.kind === "entry") {
+      bindings.push({ kind: "entry", itemId: item.id, index: migrationEntries.length });
+      migrationEntries.push(item.snapshot);
+      continue;
+    }
+    if (item.kind !== "media") continue;
+    for (const containerName of ["snapshot", "relationships"]) {
+      const container = item[containerName];
+      if (!Array.isArray(container?.facetAssignments)) continue;
+      bindings.push({ kind: "media", itemId: item.id, containerName, index: migrationEntries.length });
+      migrationEntries.push({
+        id: `${item.id}:${containerName}`,
+        facetAssignments: container.facetAssignments,
+        customLabels: container.customLabels ?? []
+      });
+    }
+  }
+  return { entries: migrationEntries, bindings };
+}
+
+function applyLegacyTrashFacetMigration(trashState, bindings, migratedEntries) {
+  const items = structuredClone(trashState.items);
+  const byId = new Map(items.map((item) => [item.id, item]));
+  for (const binding of bindings) {
+    const item = byId.get(binding.itemId);
+    const migrated = migratedEntries[binding.index];
+    if (!item || !migrated) continue;
+    if (binding.kind === "entry") {
+      item.snapshot = migrated;
+      continue;
+    }
+    const container = item[binding.containerName];
+    container.facetAssignments = migrated.facetAssignments;
+    if (migrated.customLabels?.length) container.customLabels = migrated.customLabels;
+  }
+  return normalizeTrashState({ items });
 }
 
 export function needsMigration(stored = {}) {

@@ -1,0 +1,35 @@
+{
+  "description": "Deterministic compatibility fixtures reconstructed from retained release code. They are not copies of the user's unavailable failure archives.",
+  "packages": {
+    "v1": {
+      "provenanceType": "reconstructed-from-earliest-retained-import-contract",
+      "sourceCommit": "e57b4d9",
+      "sourceRelease": "1.18.4",
+      "originalFailureArchive": false
+    },
+    "v2": {
+      "provenanceType": "reconstructed-from-earliest-retained-import-contract",
+      "sourceCommit": "e57b4d9",
+      "sourceRelease": "1.18.4",
+      "originalFailureArchive": false
+    },
+    "v3": {
+      "provenanceType": "reconstructed-from-release-code",
+      "sourceCommit": "e57b4d9",
+      "sourceRelease": "1.18.4",
+      "originalFailureArchive": false
+    },
+    "v4": {
+      "provenanceType": "reconstructed-from-release-code",
+      "sourceCommit": "2d68026",
+      "sourceRelease": "1.18.13",
+      "originalFailureArchive": false
+    },
+    "v5": {
+      "provenanceType": "reconstructed-from-release-code",
+      "sourceCommit": "d129daa",
+      "sourceRelease": "1.19.0",
+      "originalFailureArchive": false
+    }
+  }
+}

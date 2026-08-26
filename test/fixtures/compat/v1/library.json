@@ -1,0 +1,15 @@
+{
+  "format": "prompt-case-library",
+  "version": 1,
+  "schemaVersion": 5,
+  "entries": [{
+    "id": "fixture:v1",
+    "schemaVersion": 5,
+    "title": "Reconstructed v1 case",
+    "text": "v1 prompt",
+    "savedAt": "2026-01-01T00:00:00.000Z",
+    "hasScreenshot": true,
+    "screenshotPath": "images/fixture-v1.webp",
+    "screenshotMimeType": "image/webp"
+  }]
+}

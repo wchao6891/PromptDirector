@@ -87,6 +87,19 @@ export function moveCollectionWithEntriesToTrash(contextValue = {}, collectionId
 
   const subtreeCollectionIds = collectionSubtreeIds(organizerState, collection.id);
   const subtreeEntryIds = collectionEntryIds(organizerState, collection.id, { subtree: true });
+  const activeEntryIds = new Set(entries.map((entry) => clean(entry?.id)));
+  const targetTrashIds = [
+    ...subtreeEntryIds.filter((id) => activeEntryIds.has(id)).map((id) => trashItemId("entry", id)),
+    ...subtreeCollectionIds.map((id) => trashItemId("collection", id))
+  ];
+  const existingTrashIds = new Set(normalizeTrashState(contextValue.trashState).items.map((item) => item.id));
+  const conflictingTrashIds = targetTrashIds.filter((id) => existingTrashIds.has(id));
+  if (conflictingTrashIds.length) {
+    throw Object.assign(new Error("回收站目标冲突，未执行删除"), {
+      code: "TRASH_TARGET_CONFLICT",
+      conflictingTrashIds
+    });
+  }
   const entriesMoved = moveEntriesToTrash({ ...contextValue, organizerState }, subtreeEntryIds, options);
   const collectionMoved = moveCollectionsToTrash({
     ...contextValue,
@@ -324,12 +337,28 @@ function restoreCollectionItems(items, organizerState, restorableEntryIds) {
     if (originalParentId && !availableIds.has(originalParentId)) {
       acceptedItem.snapshot.parentId = null;
       warnings.push({ itemId: acceptedItem.item.id, reason: "原父项目不存在，已恢复到根级", missingParentId: originalParentId });
+    } else {
+      acceptedItem.snapshot.parentId = originalParentId || null;
     }
+  }
+  const collectionsByParent = new Map();
+  for (const collection of structuredClone(organizerState.collections)) {
+    const siblings = collectionsByParent.get(collection.parentId) ?? [];
+    siblings.push(collection);
+    collectionsByParent.set(collection.parentId, siblings);
+  }
+  const restoredSnapshots = accepted.map(({ snapshot }) => snapshot).filter(Boolean)
+    .toSorted((left, right) => clean(left.parentId).localeCompare(clean(right.parentId)) || safeIndex(left.order) - safeIndex(right.order));
+  for (const snapshot of restoredSnapshots) {
+    const siblings = collectionsByParent.get(snapshot.parentId) ?? [];
+    siblings.splice(Math.min(safeIndex(snapshot.order), siblings.length), 0, snapshot);
+    siblings.forEach((collection, order) => { collection.order = order; });
+    collectionsByParent.set(snapshot.parentId, siblings);
   }
   return {
     organizerState: normalizeOrganizerState({
       ...organizerState,
-      collections: [...organizerState.collections, ...accepted.map(({ snapshot }) => snapshot).filter(Boolean)]
+      collections: [...collectionsByParent.values()].flat()
     }),
     restoredItemIds: accepted.map(({ item }) => item.id),
     unresolved,

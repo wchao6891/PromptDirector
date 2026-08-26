@@ -17,6 +17,16 @@ let databasePromise;
 export async function saveMediaBlob(assetId, blob, options = {}) {
   validateAssetId(assetId);
   validateMediaBlob(blob);
+  return writeMediaBlob(assetId, blob, options);
+}
+
+export async function savePortableAssetBlob(assetId, blob, options = {}) {
+  validateAssetId(assetId);
+  validatePortableAssetBlob(blob);
+  return writeMediaBlob(assetId, blob, options);
+}
+
+async function writeMediaBlob(assetId, blob, options = {}) {
   if (options.checkCapacity !== false) {
     const estimate = await storageEstimate(options.estimateStorage);
     assertStorageCapacity(estimate, blob.size);
@@ -231,12 +241,16 @@ export function assertStorageCapacity(estimate = {}, incomingBytes = 0) {
 }
 
 export function validateMediaBlob(blob) {
-  if (!(blob instanceof Blob) || !blob.size) {
-    throw assetImportError(ASSET_IMPORT_FAILURE_CODES.INVALID_FILE, "媒体文件无效");
-  }
+  validatePortableAssetBlob(blob);
   const type = String(blob.type || "").toLocaleLowerCase("en-US");
   if (!(type.startsWith("image/") || type.startsWith("video/") || assetFormatsForMimeType(type).length)) {
     throw assetImportError(ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT, "暂不支持这种媒体格式");
+  }
+}
+
+export function validatePortableAssetBlob(blob) {
+  if (!(blob instanceof Blob) || !blob.size) {
+    throw assetImportError(ASSET_IMPORT_FAILURE_CODES.INVALID_FILE, "媒体文件无效");
   }
 }
 
