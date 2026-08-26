@@ -20,14 +20,15 @@ def wait_for_initial_gallery_batch(page, total: int) -> int:
     return count
 
 
-def save_pending_classification(page) -> None:
-    page.locator(".pending-classification-inline select").select_option("content:image-case")
-    page.evaluate(
-        """() => new Promise(resolve => requestAnimationFrame(
-          () => requestAnimationFrame(resolve)
-        ))"""
-    )
-    button = page.locator(".pending-classification-inline button")
+def save_pending_classification(page, entry_id: str) -> None:
+    drawer = page.locator("#detail-drawer")
+    expect(drawer).to_have_attribute("data-entry-id", entry_id)
+    panel = page.locator(".pending-classification-inline")
+    expect(panel).to_be_visible()
+    select = panel.locator("select")
+    select.select_option("content:image-case")
+    expect(select).to_have_value("content:image-case")
+    button = panel.locator("button")
     expect(button).to_be_enabled()
     button.click()
 
@@ -309,20 +310,24 @@ def main() -> None:
                 library.evaluate("scrollTo(0, 0)")
 
                 library.locator(".case-card[data-entry-id='pending-2']").click()
-                save_pending_classification(library)
+                save_pending_classification(library, "pending-2")
                 expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", "pending-2")
                 expect(library.locator("#detail-drawer")).to_have_class("detail-drawer open")
                 library.locator("#detail-close").click()
 
                 library.locator("#pending-filter").check()
-                library.locator(".case-card").first.click()
+                first_pending_card = library.locator(".case-card").first
+                first_pending_id = first_pending_card.get_attribute("data-entry-id")
+                assert first_pending_id
+                first_pending_card.click()
                 expect(library.locator(".pending-classification-inline")).to_be_visible()
                 library.screenshot(path="/tmp/prompt-director-132-pending-inline.png")
-                first_id = library.locator("#detail-drawer").get_attribute("data-entry-id")
-                save_pending_classification(library)
-                expect(library.locator("#detail-drawer")).not_to_have_attribute("data-entry-id", first_id)
+                save_pending_classification(library, first_pending_id)
+                expect(library.locator("#detail-drawer")).not_to_have_attribute("data-entry-id", first_pending_id)
                 expect(library.locator(".pending-classification-inline")).to_be_visible()
-                save_pending_classification(library)
+                second_pending_id = library.locator("#detail-drawer").get_attribute("data-entry-id")
+                assert second_pending_id and second_pending_id != first_pending_id
+                save_pending_classification(library, second_pending_id)
                 expect(library.locator("#detail-drawer")).not_to_have_class("open")
                 expect(library.locator("#feedback")).to_contain_text("待确认已处理完")
 
