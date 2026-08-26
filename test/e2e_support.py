@@ -90,9 +90,9 @@ def launch_context(
         channel=os.environ.get("PROMPTDIRECTOR_E2E_CHANNEL", "chromium"),
         accept_downloads=accept_downloads,
         viewport=viewport,
+        locale="zh-CN",
         permissions=["clipboard-read", "clipboard-write"],
         args=[
-            "--lang=zh-CN",
             f"--disable-extensions-except={extension_dir}",
             f"--load-extension={extension_dir}",
         ],
