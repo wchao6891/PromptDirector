@@ -46,6 +46,10 @@ def main() -> None:
               });
             }"""
         )
+        setup.wait_for_function(
+            """() => chrome.runtime.sendMessage({type: 'GET_STATE'})
+              .then(state => state.entries?.some(entry => entry.id === 'sync-case'))"""
+        )
 
         first = setup.evaluate("async () => chrome.runtime.sendMessage({type: 'SYNC_NOW'})")
         assert first["ok"] is True and first["upToDate"] is False, first
