@@ -48,4 +48,7 @@ test("GitHub runs source contracts and packaged Chromium journeys before main ca
   assert.match(workflow, /npm run package:release/);
   assert.match(workflow, /npm run package/);
   assert.match(workflow, /npm run test:upgrade/);
+  assert.match(workflow, /PROMPTDIRECTOR_PACKAGE_VERSION="\$\(node -p 'require\("\.\/package\.json"\)\.version'\)"/);
+  assert.match(workflow, /unzip -t "dist\/PromptDirector-\$\{PROMPTDIRECTOR_PACKAGE_VERSION\}\.zip"/);
+  assert.match(workflow, /unzip -t "dist\/PromptDirector-\$\{PROMPTDIRECTOR_PACKAGE_VERSION\}-FIXED-ID-DEV\.zip"/);
 });
