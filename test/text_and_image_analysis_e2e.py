@@ -52,7 +52,8 @@ def main() -> None:
             TINY_PNG,
         )
         library = session.open_page("library.html", wait_until="networkidle")
-        library.locator("#open-settings").click()
+        if not library.locator("#settings-dialog").is_visible():
+            library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
         library.locator("#preview-analysis-batch").click()
         expect(library.locator("#analysis-batch-summary")).to_contain_text("1 次请求")
