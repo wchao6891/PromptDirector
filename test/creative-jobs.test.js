@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import {
   createCreativeJob,
@@ -8,6 +9,8 @@ import {
   retryCreativeJob,
   updateCreativeJob
 } from "../creative-jobs.js";
+
+const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
 
 function request(overrides = {}) {
   return {
@@ -73,6 +76,17 @@ test("startup marks stale active jobs interrupted without automatically retrying
   assert.equal(recovered.items[0].error.kind, "interrupted");
   assert.equal(recovered.items[0].error.retryable, true);
   assert.equal(recovered.items.length, 1);
+});
+
+test("startup normalization never rewrites an unchanged creative job from a stale sibling snapshot", () => {
+  const start = background.indexOf("const creativeRuns = normalizeCreativeRuns");
+  const end = background.indexOf("const storedBatchJob = normalizeAnalysisBatchJob", start);
+  const normalization = background.slice(start, end);
+
+  assert.match(normalization, /const creativeNormalizationUpdate = Object\.fromEntries/);
+  assert.match(normalization, /Object\.entries\(normalizedCreativeStorage\)/);
+  assert.match(normalization, /filter\(\(\[key, value\]\) => JSON\.stringify\(stored\[key\]\) !== JSON\.stringify\(value\)\)/);
+  assert.match(normalization, /commitLocalChanges\(creativeNormalizationUpdate/);
 });
 
 test("an interrupted local edit can be retried explicitly with its retained mask reference", () => {
