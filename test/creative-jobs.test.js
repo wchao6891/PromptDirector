@@ -89,6 +89,27 @@ test("startup normalization never rewrites an unchanged creative job from a stal
   assert.match(normalization, /commitLocalChanges\(creativeNormalizationUpdate/);
 });
 
+test("startup recovery re-reads and commits interrupted jobs inside the shared write queue", () => {
+  const start = background.indexOf("async function recoverCreativeJobs()");
+  const end = background.indexOf("function waitForDownload", start);
+  const recovery = background.slice(start, end);
+
+  assert.match(recovery, /await enqueue\(async \(\) => \{/);
+  assert.match(recovery, /const latest = await chrome\.storage\.local\.get/);
+  assert.match(recovery, /const active = activeCreativeJob\(creativeJobs\)/);
+  assert.match(recovery, /await commitLocalChanges\(\{[\s\S]*creativeJobs[\s\S]*composerSessions/);
+});
+
+test("installation migration shares the write queue with startup recovery", () => {
+  const start = background.indexOf("chrome.runtime.onInstalled.addListener");
+  const end = background.indexOf("chrome.runtime.onUpdateAvailable.addListener", start);
+  const installation = background.slice(start, end);
+
+  assert.match(installation, /enqueue\(async \(\) => \{/);
+  assert.match(installation, /const state = await readState\(\)/);
+  assert.match(installation, /await migrateLegacyScreenshots\(state\.entries\)/);
+});
+
 test("an interrupted local edit can be retried explicitly with its retained mask reference", () => {
   const created = createCreativeJob(undefined, request({
     imageEdit: {
