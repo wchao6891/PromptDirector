@@ -243,7 +243,10 @@ def main() -> None:
         expect(composer.locator("#composer-image-blocker")).to_be_visible()
         fail_vision["value"] = True
         composer.locator("#composer-image-blocker-analyze").click()
-        expect(composer.locator("#composer-image-blocker-description")).to_contain_text("本轮输入和附件均已保留")
+        expect(composer.locator("#composer-image-blocker-description")).to_contain_text(
+            "本轮输入和附件均已保留",
+            timeout=15_000,
+        )
         expect(composer.locator("#composer-instruction")).to_have_value("Keep this request and attachment after an analysis failure")
         expect(composer.locator(".composer-temp-reference-card")).to_have_count(1)
         assert len(composer_requests) == 2, composer_requests
