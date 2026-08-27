@@ -42,3 +42,17 @@ test("normal result linking and advanced visual evaluation are separate backgrou
   assert.match(commitBlock, /createCreativeRun/);
   assert.match(commitBlock, /analyzeCommittedCreativeOutputs/);
 });
+
+test("Composer reconciles creative storage changes that arrive during its first render", async () => {
+  const composer = await readFile(new URL("composer-page.js", root), "utf8");
+  const startup = composer.slice(composer.indexOf("bindEvents();"), composer.indexOf("function bindEvents()"));
+  const storageListener = composer.slice(
+    composer.indexOf("chrome.storage.onChanged.addListener"),
+    composer.indexOf("async function refreshCreativeResultState")
+  );
+
+  assert.match(startup, /composerInitializationComplete = true/);
+  assert.match(startup, /creativeStateRefreshPending[\s\S]*await refreshCreativeResultState\(\)/);
+  assert.match(storageListener, /if \(!composerInitializationComplete\)[\s\S]*creativeStateRefreshPending = true/);
+  assert.match(storageListener, /else safely\(refreshCreativeResultState\)\(\)/);
+});

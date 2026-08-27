@@ -119,6 +119,8 @@ let composerSearchIndex = [];
 let composerDocumentTextByEntryId = new Map();
 let reuseRetrievedSourcesNextTurn = false;
 let creativeStateRefreshRevision = 0;
+let composerInitializationComplete = false;
+let creativeStateRefreshPending = false;
 let initialProjectFilterId = "";
 
 const imageWorkspace = createComposerImageWorkspace({
@@ -155,7 +157,13 @@ const imageObserver = new IntersectionObserver((items) => {
 bindEvents();
 try {
   await initializeComposer();
+  composerInitializationComplete = true;
+  if (creativeStateRefreshPending) {
+    creativeStateRefreshPending = false;
+    await refreshCreativeResultState();
+  }
 } catch (error) {
+  composerInitializationComplete = true;
   composerFeedback(error.message || t("无法读取创作资料"), true);
 }
 
@@ -267,7 +275,10 @@ function bindEvents() {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
     if (changes.aiProviderRegistry || changes.aiTaskAssignments || changes.aiPreferences) safely(refreshComposerServiceSettings)();
-    if (changes.creativeRuns || changes.creativeJobs || changes.composerSessions || changes.entries || changes.compoundCases || changes.creativeExperimentSettings || changes.creativeSkills) safely(refreshCreativeResultState)();
+    if (changes.creativeRuns || changes.creativeJobs || changes.composerSessions || changes.entries || changes.compoundCases || changes.creativeExperimentSettings || changes.creativeSkills) {
+      if (!composerInitializationComplete) creativeStateRefreshPending = true;
+      else safely(refreshCreativeResultState)();
+    }
   });
 }
 
