@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import tempfile
-import time
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
@@ -70,20 +69,29 @@ def main() -> None:
             second_id = extension_id(second)
             composer = second.new_page()
             composer.goto(f"chrome-extension://{second_id}/composer.html?session=recovery-session")
-            deadline = time.monotonic() + 8
-            jobs = None
-            while time.monotonic() < deadline:
-                jobs = composer.evaluate("() => chrome.storage.local.get('creativeJobs').then(value => value.creativeJobs)")
-                if jobs and jobs["items"][0]["status"] == "interrupted":
-                    break
-                composer.wait_for_timeout(100)
+            composer.wait_for_function(
+                """async () => {
+                  const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+                  const session = await chrome.runtime.sendMessage({
+                    type: 'GET_COMPOSER_SESSION',
+                    sessionId: 'recovery-session'
+                  });
+                  const job = state.creativeJobs?.items?.find((item) => item.id === 'recovery-job');
+                  return job?.status === 'interrupted'
+                    && job.error?.retryable === true
+                    && session?.ok === true
+                    && session.session?.lastFailure?.retryable === true;
+                }""",
+                timeout=15_000,
+            )
+            jobs = composer.evaluate("() => chrome.storage.local.get('creativeJobs').then(value => value.creativeJobs)")
 
             assert jobs and len(jobs["items"]) == 1, jobs
             interrupted = jobs["items"][0]
             assert interrupted["status"] == "interrupted", interrupted
             assert interrupted["error"]["retryable"] is True, interrupted
             assert not interrupted.get("retryOf"), interrupted
-            expect(composer.get_by_role("button", name="重试本轮", exact=True)).to_be_visible()
+            expect(composer.get_by_role("button", name="重试本轮", exact=True)).to_be_visible(timeout=15_000)
             serialized = str(jobs)
             assert "apiKey" not in serialized and "data:image" not in serialized
 
