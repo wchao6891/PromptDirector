@@ -88,6 +88,27 @@ def main() -> None:
 
             assert jobs and len(jobs["items"]) == 1, jobs
             interrupted = jobs["items"][0]
+            if interrupted["status"] != "interrupted":
+                diagnostics = []
+                for _ in range(5):
+                    diagnostics.append(composer.evaluate(
+                        """async () => {
+                          const stored = await chrome.storage.local.get(['creativeJobs', 'composerSessions']);
+                          const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+                          const session = await chrome.runtime.sendMessage({
+                            type: 'GET_COMPOSER_SESSION', sessionId: 'recovery-session'
+                          });
+                          return {
+                            storedJob: stored.creativeJobs?.items?.[0],
+                            storedFailure: stored.composerSessions?.find(item => item.id === 'recovery-session')?.lastFailure,
+                            publicJob: state.creativeJobs?.items?.[0],
+                            publicFailure: session.session?.lastFailure,
+                            timeline: document.querySelector('#composer-timeline')?.innerText || ''
+                          };
+                        }"""
+                    ))
+                    composer.wait_for_timeout(200)
+                raise AssertionError({"interrupted": interrupted, "diagnostics": diagnostics})
             assert interrupted["status"] == "interrupted", interrupted
             assert interrupted["error"]["retryable"] is True, interrupted
             assert not interrupted.get("retryOf"), interrupted

@@ -491,15 +491,17 @@ const captureRuntime = createCaptureWorkspace({
   resolveSourceContext: resolveCaptureSourceContext
 });
 
-chrome.runtime.onInstalled.addListener(async (details) => {
-  await extensionUpdateLifecycle.handleInstalled(details);
-  await restrictLocalStorageAccess();
-  await syncContextMenus();
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+chrome.runtime.onInstalled.addListener((details) => {
+  enqueue(async () => {
+    await extensionUpdateLifecycle.handleInstalled(details);
+    await restrictLocalStorageAccess();
+    await syncContextMenus();
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
 
-  const state = await readState();
-  await commitLocalChanges({ [STORAGE_KEYS.settings]: state.settings }, { markSyncDirty: false });
-  await migrateLegacyScreenshots(state.entries);
+    const state = await readState();
+    await commitLocalChanges({ [STORAGE_KEYS.settings]: state.settings }, { markSyncDirty: false });
+    await migrateLegacyScreenshots(state.entries);
+  }).catch((error) => console.error("PromptDirector installation setup failed", error));
 });
 
 chrome.runtime.onUpdateAvailable.addListener((details) => {
@@ -7580,19 +7582,29 @@ async function recoverCreativeJobs() {
       // Continue to the explicit interrupted state below when the resumable runner cannot restart.
     }
   }
-  const interrupted = interruptActiveCreativeJobs(creativeJobs);
-  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
-  const sourceSession = sessions.find((item) => item.id === active.sessionId) ?? active.request.session;
-  const session = setComposerFailure(sourceSession, {
-    userMessageId: active.userMessageId,
-    phase: active.phase === "planning" ? "planning" : "streaming",
-    kind: "storage",
-    message: "浏览器曾在任务完成前退出，结果状态未知，请手动重试",
-    retryable: true
-  });
-  await commitLocalChanges({
-    [STORAGE_KEYS.creativeJobs]: interrupted,
-    [STORAGE_KEYS.composerSessions]: upsertSessionList(sessions, session)
+  const recoveryJobId = active.id;
+  await enqueue(async () => {
+    const latest = await chrome.storage.local.get([
+      STORAGE_KEYS.creativeJobs,
+      STORAGE_KEYS.composerSessions
+    ]);
+    const creativeJobs = normalizeCreativeJobsState(latest[STORAGE_KEYS.creativeJobs]);
+    const active = activeCreativeJob(creativeJobs);
+    if (!active || active.id !== recoveryJobId) return;
+    const interrupted = interruptActiveCreativeJobs(creativeJobs);
+    const sessions = normalizeComposerSessions(latest[STORAGE_KEYS.composerSessions]);
+    const sourceSession = sessions.find((item) => item.id === active.sessionId) ?? active.request.session;
+    const session = setComposerFailure(sourceSession, {
+      userMessageId: active.userMessageId,
+      phase: active.phase === "planning" ? "planning" : "streaming",
+      kind: "storage",
+      message: "浏览器曾在任务完成前退出，结果状态未知，请手动重试",
+      retryable: true
+    });
+    await commitLocalChanges({
+      [STORAGE_KEYS.creativeJobs]: interrupted,
+      [STORAGE_KEYS.composerSessions]: upsertSessionList(sessions, session)
+    });
   });
 }
 
