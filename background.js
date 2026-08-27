@@ -2914,16 +2914,18 @@ async function readState() {
     }
     await chrome.storage.local.remove(STORAGE_KEYS.legacyAnalysisBatchJob);
   }
-  if (JSON.stringify(stored[STORAGE_KEYS.creativeRuns] ?? []) !== JSON.stringify(creativeRuns) ||
-      JSON.stringify(stored[STORAGE_KEYS.creativeJobs] ?? {}) !== JSON.stringify(creativeJobs) ||
-      JSON.stringify(stored[STORAGE_KEYS.creativeExperimentSettings] ?? {}) !== JSON.stringify(creativeExperimentSettings) ||
-      JSON.stringify(stored[STORAGE_KEYS.activeCreativeResult] ?? null) !== JSON.stringify(activeCreativeResult)) {
-    await commitLocalChanges({
-      [STORAGE_KEYS.creativeRuns]: creativeRuns,
-      [STORAGE_KEYS.creativeJobs]: creativeJobs,
-      [STORAGE_KEYS.creativeExperimentSettings]: creativeExperimentSettings,
-      [STORAGE_KEYS.activeCreativeResult]: activeCreativeResult
-    }, { markSyncDirty: false });
+  const normalizedCreativeStorage = {
+    [STORAGE_KEYS.creativeRuns]: creativeRuns,
+    [STORAGE_KEYS.creativeJobs]: creativeJobs,
+    [STORAGE_KEYS.creativeExperimentSettings]: creativeExperimentSettings,
+    [STORAGE_KEYS.activeCreativeResult]: activeCreativeResult
+  };
+  const creativeNormalizationUpdate = Object.fromEntries(
+    Object.entries(normalizedCreativeStorage)
+      .filter(([key, value]) => JSON.stringify(stored[key]) !== JSON.stringify(value))
+  );
+  if (Object.keys(creativeNormalizationUpdate).length) {
+    await commitLocalChanges(creativeNormalizationUpdate, { markSyncDirty: false });
   }
   const storedBatchJob = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   const textBatchSummary = storedBatchJob?.kind === "text_tags"
