@@ -121,22 +121,28 @@ test("fixed-ratio gallery covers crop mismatched source images inside the card",
   assert.match(css, /\.case-image-wrap-fixed \.case-shot\s*\{[^}]*height:\s*100%;[^}]*object-fit:\s*cover/);
 });
 
-test("complete folder backup writes a completion marker after library metadata", () => {
+test("folder backup preflights every resource before choosing a folder and writes its marker last", () => {
   const backup = source.slice(source.indexOf("async function createCompleteFolderBackup"), source.indexOf("async function restoreCompleteFolderBackup"));
-  assert.ok(backup.indexOf('"library.json"') < backup.indexOf('"complete.json"'));
-  assert.match(backup, /await writeDirectoryFile\(directory, assetPath, blob\)/);
-  assert.match(backup, /portableManagedBackupAsset\(asset, blob, assetPath, await sha256Blob\(blob\)\)/);
+  const pickerCall = backup.indexOf("const parent = await window.showDirectoryPicker");
+  assert.ok(backup.indexOf("GET_FOLDER_BACKUP_STATE") < pickerCall);
+  assert.ok(backup.indexOf("inspectLibraryTransfer({") < pickerCall);
+  assert.match(backup, /plannedFiles\.set\(assetPath, blob\)/);
+  assert.match(backup, /portableManagedBackupAsset\(asset, blob, assetPath, await sha256Blob\(blob\), portableFormat\)/);
   assert.match(backup, /materializeEntry\(item\.snapshot, `trash-entry-/);
-  assert.match(backup, /buildFolderBackupCompletion\(writtenFiles/);
-  assert.match(backup, /verifyFolderBackupCompletion\(completion, writtenFiles\)/);
-  assert.ok(backup.indexOf("parseCompleteFolderBackup(writtenLibrary, writtenFiles") < backup.indexOf('"complete.json"'));
-  assert.match(source, /"application\/rtf":\s*"rtf"/);
+  assert.match(backup, /buildFolderBackupWritePlan\(\{/);
+  assert.match(backup, /for \(const \[path, blob\] of writePlan\.files\)/);
+  assert.match(backup, /verifyFolderBackupCompletion\(writePlan\.marker, writtenFiles\)/);
+  assert.ok(backup.indexOf("for (const [path, blob] of writePlan.files)") < backup.indexOf("writePlan.markerPath"));
+  assert.match(backup, /inspectPlannedBackup\(LIBRARY_TRANSFER_SOURCES\.COMPLETE_BACKUP\)/);
+  assert.match(backup, /inspectPlannedBackup\(LIBRARY_TRANSFER_SOURCES\.RESCUE_BACKUP,/);
+  assert.match(backup, /resolvePortableAssetFormat\(/);
+  assert.doesNotMatch(source, /function folderExtension\(|const known = \{[\s\S]*?"image\/png"/);
 });
 
 test("complete folder restore validates aggregate and real per-media sizes before preview", () => {
   const restore = source.slice(source.indexOf("async function restoreCompleteFolderBackup"), source.indexOf("function backupMediaPaths"));
   const aggregateValidation = restore.indexOf("completion.mediaCount !== backupPaths.size");
-  const packageParsing = restore.indexOf("parseCompleteFolderBackup(library, files");
+  const packageParsing = restore.indexOf("inspectLibraryTransfer({");
   assert.ok(aggregateValidation >= 0 && aggregateValidation < packageParsing);
   assert.match(restore, /PREVIEW_LIBRARY_IMPORT[^}]*library:\s*restoredLibrary/);
   assert.match(restore, /APPLY_LIBRARY_IMPORT[^}]*library:\s*restoredLibrary/);

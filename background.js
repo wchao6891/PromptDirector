@@ -192,16 +192,25 @@ import {
 } from "./image-transaction.js";
 import { createEntrySaveUndo, normalizeLastSaveUndo, restoreScreenshotSaveEntry } from "./save-history.js";
 import {
-  mergeLibraryPackage,
   selectLibraryPackage,
   selectProjectPackage
 } from "./library-package.js";
 import {
+  LIBRARY_TRANSFER_MODES,
+  LIBRARY_TRANSFER_SOURCES,
+  planLibraryTransfer
+} from "./library-transfer.js";
+import {
   claimLibraryImportTransaction,
-  createLibraryImportPlanToken,
   failLibraryImportTransaction,
   succeedLibraryImportTransaction
 } from "./library-import-transaction.js";
+import {
+  createLibraryReplacementRecoveryPoint,
+  normalizeLibraryReplacementRecoveryPoint,
+  obsoleteRecoveryAssetIds,
+  swapLibraryReplacementRecoveryPoint
+} from "./library-recovery-point.js";
 import { mergeCuratedLibraryPackage } from "./curated-import.js";
 import { prepareCuratedSubmissionState } from "./curated-submission.js";
 import {
@@ -396,6 +405,7 @@ const STORAGE_KEYS = Object.freeze({
   batchJob: "batchJob",
   analysisTasks: "analysisTasks",
   libraryImportTransactions: "libraryImportTransactions",
+  libraryReplacementRecoveryPoint: "libraryReplacementRecoveryPoint",
   libraryMaintenanceJob: "libraryMaintenanceJob",
   legacyAnalysisBatchJob: "analysisBatchJob",
   analysisBatchUndo: "analysisBatchUndo",
@@ -598,6 +608,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueueCapture(async () => captureWorkspace());
     case "GET_DATA_SAFETY_STATUS":
       return enqueue(async () => dataSafetyStatus(await readState()));
+    case "RESTORE_LIBRARY_REPLACEMENT_POINT":
+      return enqueue(async () => restoreLibraryReplacementPoint(await readState()));
     case "GET_SYNC_RUN_STATUS":
       return Promise.resolve({ ok: true, syncStatus: manualSyncController.status() });
     case "CANCEL_SYNC": {
@@ -737,7 +749,12 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => applyCreativeExperimentImport(await readState(), message));
     case "PREVIEW_LIBRARY_IMPORT":
       return enqueue(async () => previewLibraryImport(await readState(), message.library, {
-        preserveLibraryConfiguration: message.preserveLibraryConfiguration === true
+        preserveLibraryConfiguration: message.preserveLibraryConfiguration === true,
+        sourceType: message.sourceType,
+        mode: message.mode,
+        conflictResolutions: message.conflictResolutions,
+        importReport: message.importReport,
+        resourceIndex: message.resourceIndex
       }));
     case "APPLY_LIBRARY_IMPORT":
       return enqueue(async () => applyLibraryImport(await readState(), message));
@@ -2956,6 +2973,9 @@ async function readState() {
     importStaging,
     creativeSkills,
     activeCreativeResult,
+    libraryReplacementRecoveryPoint: normalizeLibraryReplacementRecoveryPoint(
+      stored[STORAGE_KEYS.libraryReplacementRecoveryPoint]
+    ),
     syncSettings,
     syncStatus: await publicSyncStatus(syncSettings),
     visionUndoEntryIds: Object.keys(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}),
@@ -7043,10 +7063,19 @@ async function applyCreativeExperimentImport(state, message) {
 }
 
 function previewLibraryImport(state, library, options = {}) {
-  const result = mergeLibraryPackage(state, library, options);
+  const result = planLibraryTransfer({
+    currentState: state,
+    inspection: transferInspectionMessage(library, options),
+    options
+  });
   return {
     ok: true,
-    planToken: createLibraryImportPlanToken(state, library),
+    planToken: result.planToken,
+    plan: result.context,
+    mode: result.context.mode,
+    conflicts: result.conflicts,
+    rollback: result.rollback,
+    resourceWrites: result.resourceWrites,
     entryIdMap: result.entryIdMap,
     compoundIdMap: result.compoundIdMap,
     visualIdMap: result.visualIdMap,
@@ -7074,7 +7103,8 @@ async function applyLibraryImport(state, message) {
     operationId: message.operationId,
     planToken: message.planToken,
     stateValue: state,
-    sourceValue: message.library
+    sourceValue: message.library,
+    planValue: message.plan
   });
   if (claim.replayed) return claim.result;
   if (!claim.acquired) {
@@ -7089,30 +7119,57 @@ async function applyLibraryImport(state, message) {
   let result;
   let response;
   try {
-    result = mergeLibraryPackage(state, message.library, {
-      entryIdMap: message.entryIdMap,
-      compoundIdMap: message.compoundIdMap,
-      visualIdMap: message.visualIdMap,
-      sessionIdMap: message.sessionIdMap,
-      runIdMap: message.runIdMap,
-      skillIdMap: message.skillIdMap,
-      packageAssetIdMap: message.packageAssetIdMap,
-      preserveLibraryConfiguration: message.preserveLibraryConfiguration === true
+    result = planLibraryTransfer({
+      currentState: state,
+      inspection: transferInspectionMessage(message.library, {
+        sourceType: message.plan?.sourceType,
+        importReport: message.plan?.importReport,
+        resourceIndex: {
+          mediaAssetIds: (message.plan?.resourceWrites ?? [])
+            .filter((item) => item.resourceType === "media").map((item) => item.sourceId),
+          skillAssetIds: (message.plan?.resourceWrites ?? [])
+            .filter((item) => item.resourceType === "skill").map((item) => item.sourceId)
+        }
+      }),
+      options: { preferredPlan: message.plan }
     });
+    if (result.planToken !== message.planToken) {
+      throw Object.assign(new Error("导入计划已经变化，请重新检查"), { code: "IMPORT_PLAN_STALE" });
+    }
     response = libraryImportResponse(result);
     const completed = succeedLibraryImportTransaction(claim.state, claim.receipt, response);
-    await commitLocalChanges({
-      ...storagePayload(result.state),
-      [STORAGE_KEYS.settings]: normalizeSettings(result.state.settings ?? state.settings),
-      [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(result.state.composerSettings ?? state.composerSettings),
-      [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(result.state.composerSessions ?? state.composerSessions),
+    const exactReplace = result.context.mode === LIBRARY_TRANSFER_MODES.EXACT_REPLACE;
+    const previousRecoveryPoint = normalizeLibraryReplacementRecoveryPoint(state.libraryReplacementRecoveryPoint);
+    const recoveryPoint = exactReplace
+      ? createLibraryReplacementRecoveryPoint(folderBackupState(state), {
+          retainedAssetIds: result.rollback.retainedAssetIds
+        })
+      : previousRecoveryPoint;
+    const update = {
+      ...storagePayload(result.targetState),
+      [STORAGE_KEYS.settings]: normalizeSettings(result.targetState.settings ?? state.settings),
+      [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(result.targetState.composerSettings ?? state.composerSettings),
+      [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(result.targetState.composerSessions ?? state.composerSessions),
       [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
-        result.state.creativeExperimentSettings ?? state.creativeExperimentSettings
+        result.targetState.creativeExperimentSettings ?? state.creativeExperimentSettings
       ),
-      [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.state.creativeRuns ?? state.creativeRuns),
-      [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills),
-      [STORAGE_KEYS.libraryImportTransactions]: completed.state
-    });
+      [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.targetState.creativeRuns ?? state.creativeRuns),
+      [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.targetState.creativeSkills ?? state.creativeSkills),
+      [STORAGE_KEYS.libraryImportTransactions]: completed.state,
+      ...(exactReplace ? { [STORAGE_KEYS.libraryReplacementRecoveryPoint]: recoveryPoint } : {})
+    };
+    await commitLocalChanges(update);
+    if (exactReplace) {
+      const obsoleteAssetIds = obsoleteRecoveryAssetIds(
+        previousRecoveryPoint,
+        [...collectRetainedLocalAssetIds(result.targetState)],
+        recoveryPoint
+      );
+      await deleteMediaBlobs(obsoleteAssetIds).catch((error) => {
+        console.error("Obsolete library recovery media cleanup failed", error);
+      });
+      response = { ...response, recoveryPointCreatedAt: recoveryPoint.createdAt };
+    }
   } catch (error) {
     const failed = failLibraryImportTransaction(claim.state, claim.receipt);
     await commitLocalChanges({
@@ -7125,7 +7182,7 @@ async function applyLibraryImport(state, message) {
   if (importedEntryIds.length) {
     const importedEntryIdSet = new Set(importedEntryIds);
     await enqueueAutomaticLibraryMaintenance(
-      result.state.entries.filter((entry) => importedEntryIdSet.has(entry.id))
+      result.targetState.entries.filter((entry) => importedEntryIdSet.has(entry.id))
     ).catch((error) => console.error("Imported library maintenance could not be queued", error));
   }
   if (importedEntryIds.length && message.autoAnalyze === true) {
@@ -7135,13 +7192,54 @@ async function applyLibraryImport(state, message) {
   return response;
 }
 
+async function restoreLibraryReplacementPoint(state) {
+  const point = normalizeLibraryReplacementRecoveryPoint(state.libraryReplacementRecoveryPoint);
+  if (!point) return { ok: false, message: "当前没有可回退的资料库状态" };
+  const currentManagedState = folderBackupState(state);
+  const swapped = swapLibraryReplacementRecoveryPoint(currentManagedState, point, {
+    retainedAssetIds: [...collectRetainedLocalAssetIds(currentManagedState)]
+  });
+  await commitLocalChanges({
+    ...storagePayload(swapped.targetState),
+    [STORAGE_KEYS.settings]: normalizeSettings(swapped.targetState.settings ?? state.settings),
+    [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(swapped.targetState.composerSettings),
+    [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(swapped.targetState.composerSessions),
+    [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
+      swapped.targetState.creativeExperimentSettings
+    ),
+    [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(swapped.targetState.creativeRuns),
+    [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(swapped.targetState.creativeSkills),
+    [STORAGE_KEYS.libraryReplacementRecoveryPoint]: swapped.recoveryPoint
+  });
+  return {
+    ok: true,
+    message: "已回退到上一次精确替换前的资料库；刚才的状态已保存为新的回退点",
+    recoveryPointCreatedAt: swapped.recoveryPoint.createdAt
+  };
+}
+
+function transferInspectionMessage(library, options = {}) {
+  return {
+    sourceType: Object.values(LIBRARY_TRANSFER_SOURCES).includes(options.sourceType)
+      ? options.sourceType
+      : LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+    state: library,
+    report: options.importReport ?? {
+      status: Array.isArray(library?.importDiagnostics) && library.importDiagnostics.length ? "partial" : "ready",
+      diagnostics: Array.isArray(library?.importDiagnostics) ? library.importDiagnostics : [],
+      stats: library?.importStats && typeof library.importStats === "object" ? library.importStats : {}
+    },
+    resourceIndex: options.resourceIndex ?? { mediaAssetIds: [], skillAssetIds: [] }
+  };
+}
+
 function libraryImportResponse(result) {
   return {
     ok: true,
     message: result.importedCount || result.importedRunCount || result.importedSkillCount
       ? `已导入 ${result.importedCount} 个案例、${result.importedRunCount} 次创作运行和 ${result.importedSkillCount} 个 Skill${result.remappedCount ? `；其中 ${result.remappedCount} 个同源案例作为新副本导入，未覆盖旧数据` : ""}${result.skippedCount || result.skippedSkillCount ? `，跳过 ${result.skippedCount} 个已有案例和 ${result.skippedSkillCount} 个已有 Skill` : ""}`
       : `没有新增内容，${result.skippedCount} 个案例已经存在`,
-    count: result.state.entries.length,
+    count: result.targetState.entries.length,
     importedCount: result.importedCount,
     remappedCount: result.remappedCount,
     skippedCount: result.skippedCount,
@@ -7337,11 +7435,16 @@ async function performManualSynchronization(start) {
       };
     }
     if (result.upToDate) {
+      const pendingCleanupCount = Math.max(0, Number(result.cleanupPendingCount) || 0);
       return {
         ...result,
         ok: true,
         libraryChanged: false,
-        message: "两端没有变化，没有写入同步文件夹"
+        message: pendingCleanupCount
+          ? `两端资料已经一致；${pendingCleanupCount} 项本机过期媒体将在下次同步继续清理`
+          : result.effects?.localMediaDeleted
+            ? "两端资料没有变化；已完成本机过期媒体清理"
+            : "两端没有变化，没有写入同步文件夹"
       };
     }
     return {
@@ -7379,7 +7482,31 @@ function syncResultMessage(result = {}) {
     summary.deleted ? `删除 ${summary.deleted} 项` : "",
     summary.conflicts ? `保留 ${summary.conflicts} 个冲突副本` : ""
   ].filter(Boolean).join("，");
-  return changes ? `手动同步完成：${changes}` : "手动同步完成";
+  const pendingCleanupCount = Math.max(0, Number(result.cleanupPendingCount) || 0);
+  const cleanup = pendingCleanupCount
+    ? `；${pendingCleanupCount} 项本机过期媒体将在下次同步继续清理`
+    : "";
+  const skippedMediaCount = Math.max(0, Number(result.skippedMediaCount) || 0);
+  const salvage = skippedMediaCount
+    ? `；已跳过并清理 ${skippedMediaCount} 项本机缺失媒体，其他资料已继续同步`
+    : "";
+  const skippedMediaDetails = syncSkippedMediaLabels(result.skippedMedia);
+  const details = skippedMediaDetails.length ? `；缺失项：${skippedMediaDetails.join("、")}` : "";
+  return `${changes ? `手动同步完成：${changes}` : "手动同步完成"}${salvage}${details}${cleanup}`;
+}
+
+function syncSkippedMediaLabels(itemsValue) {
+  const labels = (Array.isArray(itemsValue) ? itemsValue : []).map((item) => {
+    const owner = cleanSyncMessagePart(item?.ownerTitle);
+    const source = cleanSyncMessagePart(item?.sourceTitle);
+    if (owner && source && owner !== source) return `${owner} / ${source}`;
+    return owner || source || cleanSyncMessagePart(item?.assetId);
+  }).filter(Boolean);
+  return [...new Set(labels)];
+}
+
+function cleanSyncMessagePart(value) {
+  return String(value ?? "").replace(/[；;\r\n]+/gu, " ").trim();
 }
 
 function notifySyncProgress(progress = {}) {
@@ -7449,6 +7576,8 @@ async function dataSafetyStatus(state) {
     mediaCount: media.length,
     videoCount: media.filter((asset) => asset.kind === "video").length,
     documentCount: media.filter((asset) => asset.kind === "document").length,
+    canRestoreReplacementPoint: Boolean(state.libraryReplacementRecoveryPoint),
+    replacementPointCreatedAt: state.libraryReplacementRecoveryPoint?.createdAt || "",
     syncStatus: state.syncStatus
   };
 }
@@ -7472,6 +7601,7 @@ async function publicSyncStatus(settingsValue) {
     lastErrorCode: settings.lastErrorCode,
     localDirty: meta.localDirty,
     dirtyAssetCount: meta.dirtyAssetIds.length,
+    pendingCleanupAssetCount: meta.pendingCleanupAssetIds.length,
     ...run
   };
 }

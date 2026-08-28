@@ -70,8 +70,12 @@ test("share-package import is separate from the two backup actions while sync st
   assert.match(panel, /<details id="sync-settings"/);
   assert.match(panel, /<summary[^>]*data-i18n="跨设备同步"/);
   assert.equal((panel.match(/class="data-safety-primary-actions"/g) ?? []).length, 1);
-  const primaryActions = panel.slice(panel.indexOf('class="data-safety-primary-actions"'), panel.indexOf('<details id="sync-settings"'));
+  const primaryActions = panel.slice(
+    panel.indexOf('class="data-safety-primary-actions"'),
+    panel.indexOf("</div>", panel.indexOf('class="data-safety-primary-actions"'))
+  );
   assert.equal((primaryActions.match(/<button\b/g) ?? []).length, 2, "资料库备份与恢复只能保留两个常驻动作");
+  assert.match(panel, /id="restore-library-replacement-point"[^>]*hidden/);
 });
 
 test("share-package import preserves local configuration and accepts historical package versions", async () => {
@@ -85,7 +89,8 @@ test("share-package import preserves local configuration and accepts historical 
   );
   assert.match(action, /PREVIEW_LIBRARY_IMPORT/);
   assert.match(action, /APPLY_LIBRARY_IMPORT/);
-  assert.equal((action.match(/preserveLibraryConfiguration:\s*true/g) ?? []).length, 2);
+  assert.equal((action.match(/preserveLibraryConfiguration:\s*true/g) ?? []).length, 1);
+  assert.match(action, /plan:\s*preview\.plan/);
   assert.match(parser, /prepareLibraryPackageDraft\(value\)/);
   assert.match(migrations, /isSupportedLibraryPackageVersion\(value\.version\)/);
   assert.match(format, /SUPPORTED_LIBRARY_PACKAGE_VERSIONS\s*=\s*Object\.freeze\(\[1, 2, 3, 4, 5\]\)/);
@@ -112,4 +117,24 @@ test("folder backup self-check covers project and media trash snapshots plus the
   assert.match(roundtrip, /expected\.kind === "collection"/);
   assert.match(roundtrip, /expected\.kind === "media"/);
   assert.match(roundtrip, /expected\.relationships/);
+});
+
+test("folder restore exposes safe merge and exact replace with aggregate capacity and a reversible recovery point", async () => {
+  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const restore = library.slice(
+    library.indexOf("async function restoreCompleteFolderBackup"),
+    library.indexOf("async function importSharedLibraryPackage")
+  );
+
+  assert.match(restore, /LIBRARY_TRANSFER_MODES\.SAFE_MERGE/);
+  assert.match(restore, /LIBRARY_TRANSFER_MODES\.EXACT_REPLACE/);
+  assert.match(restore, /libraryTransferWriteBytes\(/);
+  assert.match(restore, /navigator\.storage\.estimate\(\)/);
+  assert.match(restore, /assertStorageCapacity\(/);
+  assert.match(restore, /conflictResolutions/);
+  assert.match(restore, /showAppDialog\(/);
+  assert.match(html, /id="restore-library-replacement-point"/);
+  assert.match(library, /RESTORE_LIBRARY_REPLACEMENT_POINT/);
+  assert.match(library, /canRestoreReplacementPoint/);
 });

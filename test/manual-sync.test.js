@@ -195,6 +195,172 @@ test("cancel is rejected after the atomic commit point has started", async () =>
   assert.equal(fixture.controller.status().state, "success");
 });
 
+test("remote deletion removes an orphaned local blob only after the business commit succeeds", async () => {
+  const fixture = await syncedTwoEntryFixture();
+  await addRemoteDeletionOfFirstEntry(fixture);
+  fixture.failCommit = true;
+  fixture.resetCounts();
+
+  await assert.rejects(
+    fixture.controller.start({ vault: fixture.vault, settings: fixture.settings }),
+    /commit failed/
+  );
+  assert.equal(fixture.media.has("asset:one"), true);
+  assert.equal(fixture.counts().mediaDeletes, 0);
+});
+
+test("failed orphan cleanup is persisted and retried by the next unchanged manual sync", async () => {
+  const fixture = await syncedTwoEntryFixture();
+  await addRemoteDeletionOfFirstEntry(fixture);
+  fixture.failDeleteIds = new Set(["asset:one"]);
+  fixture.resetCounts();
+
+  const first = await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+
+  assert.equal(first.ok, true);
+  assert.equal(fixture.state.entries.some((item) => item.id === "one"), false);
+  assert.equal(fixture.media.has("asset:one"), true);
+  assert.deepEqual(fixture.meta.pendingCleanupAssetIds, ["asset:one"]);
+
+  fixture.failDeleteIds = new Set();
+  fixture.resetCounts();
+  const retry = await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+
+  assert.equal(retry.upToDate, true);
+  assert.equal(fixture.media.has("asset:one"), false);
+  assert.deepEqual(fixture.meta.pendingCleanupAssetIds, []);
+  assert.equal(fixture.counts().mediaDeletes, 1);
+  assert.equal(fixture.counts().snapshotWrites, 0);
+});
+
+test("replacement recovery media is protected from sync orphan cleanup", async () => {
+  const fixture = await syncedTwoEntryFixture();
+  fixture.state.libraryReplacementRecoveryPoint = {
+    version: 1,
+    id: "recovery:one",
+    createdAt: "2026-08-23T00:00:00.000Z",
+    state: state([entry("one", "asset:one")]),
+    retainedAssetIds: ["asset:one"]
+  };
+  await addRemoteDeletionOfFirstEntry(fixture);
+  fixture.resetCounts();
+
+  const result = await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+
+  assert.equal(result.ok, true);
+  assert.equal(fixture.state.entries.some((item) => item.id === "one"), false);
+  assert.equal(fixture.media.has("asset:one"), true);
+  assert.deepEqual(fixture.meta.pendingCleanupAssetIds, []);
+  assert.equal(fixture.counts().mediaDeletes, 0);
+});
+
+test("different device ids with complete identical meaning converge to one case and keep both projects", async () => {
+  const fixture = await createFixture();
+  fixture.state.entries[0].title = "Same";
+  fixture.state.entries[0].text = "Same";
+  fixture.state.entries[0].mediaAssets[0].contentHash = "d".repeat(64);
+  fixture.state.organizerState.collections.push({ id: "project:local", name: "Local", entryIds: ["one"] });
+  await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+
+  const remoteDuplicate = entry("remote", "asset:remote");
+  remoteDuplicate.title = "Same";
+  remoteDuplicate.text = "Same";
+  remoteDuplicate.mediaAssets[0].contentHash = "d".repeat(64);
+  const remotePrepared = state([structuredClone(fixture.state.entries[0]), remoteDuplicate]);
+  remotePrepared.organizerState.collections = [
+    { id: "project:local", name: "Local", entryIds: ["one"] },
+    { id: "project:remote", name: "Remote", entryIds: ["remote"] }
+  ];
+  remotePrepared.entries[0].mediaAssets[0].syncObjectId = fixture.meta.assetRefs["asset:one"].objectId;
+  remotePrepared.entries[0].mediaAssets[0].syncContentType = "image/webp";
+  remotePrepared.entries[1].mediaAssets[0].syncObjectId = "b".repeat(64);
+  remotePrepared.entries[1].mediaAssets[0].syncContentType = "image/webp";
+  fixture.remoteSnapshots.push(await createRevisionSnapshot(remotePrepared, {
+    deviceId: "device-b",
+    logicalClock: fixture.meta.logicalClock + 1,
+    baseSnapshot: {
+      format: "prompt-director-sync-state",
+      version: 2,
+      records: fixture.meta.records
+    }
+  }));
+  fixture.resetCounts();
+
+  const result = await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(fixture.state.entries.map((item) => item.id), ["one"]);
+  assert.deepEqual(fixture.state.organizerState.collections.map((project) => project.entryIds), [["one"], ["one"]]);
+  assert.equal(fixture.counts().objectReads, 0);
+  assert.equal(fixture.media.has("asset:remote"), false);
+});
+
+test("one missing unsynced media item is reported and removed without blocking healthy cases", async () => {
+  const fixture = await createFixture();
+  await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+  fixture.state.entries.push(entry("broken", "asset:broken"), entry("healthy", "asset:healthy"));
+  fixture.media.set("asset:healthy", new Blob(["healthy"], { type: "image/webp" }));
+  fixture.meta.localDirty = true;
+  fixture.meta.dirtyAssetIds = ["asset:broken", "asset:healthy"];
+  fixture.resetCounts();
+
+  const result = await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.skippedMediaCount, 1);
+  assert.deepEqual(result.skippedMedia.map((item) => item.assetId), ["asset:broken"]);
+  assert.equal(fixture.state.entries.find((item) => item.id === "broken").text, "broken");
+  assert.deepEqual(fixture.state.entries.find((item) => item.id === "broken").mediaAssets, []);
+  assert.deepEqual(fixture.state.entries.find((item) => item.id === "healthy").mediaAssets.map((asset) => asset.id), ["asset:healthy"]);
+  assert.equal(fixture.counts().objectWrites, 1);
+  assert.equal(fixture.counts().snapshotWrites, 1);
+});
+
+test("a media storage read error still stops sync without committing partial salvage", async () => {
+  const fixture = await createFixture();
+  await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+  fixture.state.entries.push(entry("io-error", "asset:io-error"));
+  fixture.media.set("asset:io-error", new Blob(["still-present"], { type: "image/webp" }));
+  fixture.meta.localDirty = true;
+  fixture.meta.dirtyAssetIds = ["asset:io-error"];
+  fixture.failReadIds = new Set(["asset:io-error"]);
+  fixture.resetCounts();
+
+  await assert.rejects(
+    fixture.controller.start({ vault: fixture.vault, settings: fixture.settings }),
+    /media read failed/
+  );
+
+  assert.equal(fixture.state.entries.some((item) => item.id === "io-error"), true);
+  assert.equal(fixture.counts().snapshotWrites, 0);
+  assert.equal(fixture.counts().metadataWrites, 0);
+});
+
+async function syncedTwoEntryFixture() {
+  const fixture = await createFixture();
+  fixture.state.entries.push(entry("two", "asset:two"));
+  fixture.media.set("asset:two", new Blob(["two"], { type: "image/webp" }));
+  fixture.meta.localDirty = true;
+  fixture.meta.dirtyAssetIds = ["asset:two"];
+  await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+  return fixture;
+}
+
+async function addRemoteDeletionOfFirstEntry(fixture) {
+  const remotePrepared = state([entry("two", "asset:two")]);
+  remotePrepared.entries[0].mediaAssets[0].syncObjectId = fixture.meta.assetRefs["asset:two"].objectId;
+  remotePrepared.entries[0].mediaAssets[0].syncContentType = "image/webp";
+  fixture.remoteSnapshots.push(await createRevisionSnapshot(remotePrepared, {
+    deviceId: "device-b",
+    logicalClock: fixture.meta.logicalClock + 1,
+    baseSnapshot: {
+      format: "prompt-director-sync-state",
+      version: 2,
+      records: fixture.meta.records
+    }
+  }));
+}
+
 async function createFixture() {
   let count = emptyCounts();
   let stateValue = state([entry("one", "asset:one")]);
@@ -215,6 +381,9 @@ async function createFixture() {
   let resumeCommit;
   let commitStartedResolve;
   let commitStarted = new Promise((resolve) => { commitStartedResolve = resolve; });
+  let failCommit = false;
+  let failDeleteIds = new Set();
+  let failReadIds = new Set();
 
   const controller = createManualSyncController({
     readState: async () => {
@@ -233,6 +402,7 @@ async function createFixture() {
     },
     readMedia: async (id) => {
       count.mediaReads += 1;
+      if (failReadIds.has(id)) throw new Error("media read failed");
       return media.get(id) ?? null;
     },
     writeMedia: async (id, blob) => {
@@ -241,6 +411,7 @@ async function createFixture() {
     },
     deleteMedia: async (id) => {
       count.mediaDeletes += 1;
+      if (failDeleteIds.has(id)) throw new Error("delete failed");
       media.delete(id);
     },
     writeObject: async (_vault, blob, { signal } = {}) => {
@@ -268,6 +439,7 @@ async function createFixture() {
         commitStartedResolve();
         await new Promise((resolve) => { resumeCommit = resolve; });
       }
+      if (failCommit) throw new Error("commit failed");
       count.metadataWrites += 1;
       stateValue = structuredClone(nextState);
       metaValue = structuredClone(meta);
@@ -295,6 +467,9 @@ async function createFixture() {
   Object.defineProperty(fixture, "pauseObjectRead", { set(value) { pauseObjectRead = value; } });
   Object.defineProperty(fixture, "pauseSnapshotList", { set(value) { pauseSnapshotList = value; } });
   Object.defineProperty(fixture, "pauseCommit", { set(value) { pauseCommit = value; } });
+  Object.defineProperty(fixture, "failCommit", { set(value) { failCommit = value; } });
+  Object.defineProperty(fixture, "failDeleteIds", { set(value) { failDeleteIds = value; } });
+  Object.defineProperty(fixture, "failReadIds", { set(value) { failReadIds = value; } });
   Object.defineProperty(fixture, "commitStarted", { get() { return commitStarted; } });
   fixture.resumeCommit = () => resumeCommit?.();
   return fixture;

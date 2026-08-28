@@ -93,6 +93,42 @@ def main() -> None:
         assert after_noop["snapshotCount"] == after_edit_sync["snapshotCount"], after_noop
         assert after_noop["meta"] == after_edit_sync["meta"], after_noop
 
+        # One missing local media item is isolated, named to the user, and does not block healthy data.
+        setup.evaluate(
+            """async () => {
+              const stored = await chrome.storage.local.get(['entries', 'syncMeta']);
+              const missing = {
+                ...stored.entries[0],
+                id: 'sync-missing-case',
+                title: '缺图同步案例',
+                text: '正文必须继续同步。',
+                mediaAssets: [{
+                  id: 'sync-missing-asset', kind: 'image', usage: 'content', storageMode: 'managed',
+                  mimeType: 'image/webp', byteSize: 10, sourceTitle: 'missing.webp'
+                }],
+                primaryMediaId: 'sync-missing-asset'
+              };
+              await chrome.storage.local.set({
+                entries: [...stored.entries, missing],
+                syncMeta: {
+                  ...stored.syncMeta,
+                  localDirty: true,
+                  dirtyAssetIds: [...new Set([...(stored.syncMeta?.dirtyAssetIds || []), 'sync-missing-asset'])]
+                }
+              });
+            }"""
+        )
+        salvaged = setup.evaluate("async () => chrome.runtime.sendMessage({type: 'SYNC_NOW'})")
+        assert salvaged["ok"] is True and salvaged["upToDate"] is False, salvaged
+        assert salvaged["skippedMediaCount"] == 1, salvaged
+        assert salvaged["skippedMedia"][0]["ownerTitle"] == "缺图同步案例", salvaged
+        assert "缺图同步案例 / missing.webp" in salvaged["message"], salvaged
+        salvaged_state = setup.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
+        missing_case = next(item for item in salvaged_state["entries"] if item["id"] == "sync-missing-case")
+        assert missing_case["text"] == "正文必须继续同步。" and missing_case["mediaAssets"] == [], missing_case
+        after_salvage = setup.evaluate("async () => window.__manualSyncProbe()")
+        assert after_salvage["snapshotCount"] == after_noop["snapshotCount"] + 1, after_salvage
+
         # A damaged formal snapshot blocks success; an atomic .partial is never treated as state.
         setup.evaluate(
             """async () => {
@@ -114,7 +150,7 @@ def main() -> None:
         assert damaged["ok"] is False and "损坏" in damaged["message"], damaged
         damaged_state = setup.evaluate("async () => window.__manualSyncProbe()")
         assert damaged_state["settings"]["lastErrorCode"] == "sync_snapshot_corrupt", damaged_state
-        assert damaged_state["snapshotCount"] == after_noop["snapshotCount"] + 1, damaged_state
+        assert damaged_state["snapshotCount"] == after_salvage["snapshotCount"] + 1, damaged_state
         assert damaged_state["status"]["state"] == "error", damaged_state
         assert damaged_state["status"]["runningCount"] == 0, damaged_state
         assert damaged_state["status"]["pendingCount"] == 0, damaged_state
@@ -123,9 +159,10 @@ def main() -> None:
             "manual_only": True,
             "no_op_zero_snapshot": True,
             "pending_local_changes": True,
+            "missing_media_isolated_and_named": True,
             "damaged_snapshot_blocked": True,
             "terminal_quiet": True,
-            "snapshot_count": after_noop["snapshotCount"],
+            "snapshot_count": after_salvage["snapshotCount"],
         })
 
 

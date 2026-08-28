@@ -8,7 +8,8 @@ import {
   assetFormatForExtension,
   assetKindFromFileMetadata,
   extensionsForAssetKind,
-  isReportedMimeCompatible
+  isReportedMimeCompatible,
+  resolvePortableAssetFormat
 } from "../asset-formats.js";
 
 test("asset format registry is the unique source for supported kinds extensions and picker values", () => {
@@ -49,4 +50,45 @@ test("generic browser MIME values are allowed only when a registered extension e
   assert.equal(isReportedMimeCompatible(photoshop, "application/octet-stream"), true);
   assert.equal(assetKindFromFileMetadata({ name: "source.psd", type: "application/octet-stream" }), "attachment");
   assert.equal(assetKindFromFileMetadata({ name: "unknown.bin", type: "application/octet-stream" }), "");
+});
+
+test("portable asset format resolves registered audio extensions for full backup and ZIP export", () => {
+  for (const [mimeType, extension] of [
+    ["audio/wav", "wav"],
+    ["audio/mpeg", "mp3"],
+    ["audio/mp4", "m4a"]
+  ]) {
+    const resolved = resolvePortableAssetFormat(
+      { id: `audio:${extension}`, kind: "audio", mimeType },
+      new Blob([extension], { type: mimeType })
+    );
+    assert.deepEqual(
+      { directory: resolved.directory, extension: resolved.extension, mimeType: resolved.mimeType },
+      { directory: "audio", extension, mimeType }
+    );
+  }
+});
+
+test("portable asset format round-trips every registered kind without a second format table", () => {
+  const expectedDirectories = {
+    image: "images",
+    video: "videos",
+    audio: "audio",
+    document: "documents",
+    attachment: "attachments"
+  };
+  for (const definition of ASSET_FORMAT_REGISTRY) {
+    const extension = definition.extensions[0];
+    const mimeType = definition.mimeTypes[0];
+    const resolved = resolvePortableAssetFormat({
+      id: `asset:${definition.id}`,
+      kind: definition.kind,
+      sourceFormat: extension,
+      mimeType
+    }, new Blob([definition.id], { type: mimeType }));
+    assert.equal(resolved.directory, expectedDirectories[definition.kind], definition.id);
+    assert.equal(resolved.extension, extension, definition.id);
+    assert.equal(assetFormatForExtension(resolved.extension)?.id, definition.id, definition.id);
+    assert.equal(isReportedMimeCompatible(definition, resolved.mimeType), true, definition.id);
+  }
 });

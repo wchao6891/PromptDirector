@@ -246,7 +246,10 @@ def main() -> None:
                 async createWritable() {
                   let pending = this.blob;
                   return {
-                    write: async (value) => { pending = value instanceof Blob ? value : new Blob([value]); },
+                    write: async (value) => {
+                      if (window.__backupWriteFailureName === this.name) throw new Error('simulated write failure');
+                      pending = value instanceof Blob ? value : new Blob([value]);
+                    },
                     close: async () => { this.blob = pending; },
                     abort: async () => undefined
                   };
@@ -311,21 +314,90 @@ def main() -> None:
         library.evaluate(
             """async () => {
               window.__portableBackupFolder = [...window.__backupRoot.directories.values()][0];
-              const media = await import(chrome.runtime.getURL('media-store.js'));
-              for (const id of ['share-image-one', 'share-image-two', 'share-poster', 'share-video', 'share-document', 'trash-image', 'linked-local-image']) {
-                await media.deleteMediaBlob(id);
-              }
-              const {deleteLocalAssetHandle} = await import(chrome.runtime.getURL('local-asset-store.js'));
-              await deleteLocalAssetHandle('linked-local-image');
-              await chrome.storage.local.set({
-                entries: [],
-                trashState: {version: 1, items: []},
-                organizerState: {version: 7, collections: []},
-                compoundCases: [],
-                composerSessions: [],
-                creativeRuns: [],
-                creativeSkills: {version: 1, items: []}
+              const cloneDirectory = async (source) => {
+                const target = new source.constructor(source.name + '-degraded');
+                for await (const [name, handle] of source.entries()) {
+                  if (handle.kind === 'directory') target.directories.set(name, await cloneDirectory(handle));
+                  else {
+                    const file = await handle.getFile();
+                    const copy = new handle.constructor(name);
+                    copy.blob = new Blob([await file.arrayBuffer()], {type: file.type});
+                    target.files.set(name, copy);
+                  }
+                }
+                return target;
+              };
+              const fileHandleAt = async (root, path) => {
+                const parts = path.split('/');
+                const name = parts.pop();
+                let directory = root;
+                for (const part of parts) directory = await directory.getDirectoryHandle(part);
+                return directory.getFileHandle(name);
+              };
+              window.__degradedBackupFolder = await cloneDirectory(window.__portableBackupFolder);
+              const completeHandle = await window.__degradedBackupFolder.getFileHandle('complete.json');
+              const completion = JSON.parse(await (await completeHandle.getFile()).text());
+              const brokenDescriptor = completion.files.find((item) => item.path.includes('images/share-two/'));
+              const brokenHandle = await fileHandleAt(window.__degradedBackupFolder, brokenDescriptor.path);
+              const previousSize = brokenDescriptor.byteSize;
+              brokenHandle.blob = new Blob(['not-a-decodable-image'], {type: 'image/png'});
+              brokenDescriptor.byteSize = brokenHandle.blob.size;
+              const digest = await crypto.subtle.digest('SHA-256', await brokenHandle.blob.arrayBuffer());
+              brokenDescriptor.sha256 = [...new Uint8Array(digest)]
+                .map((value) => value.toString(16).padStart(2, '0')).join('');
+              completion.byteSize += brokenDescriptor.byteSize - previousSize;
+              completeHandle.blob = new Blob([JSON.stringify(completion, null, 2)], {type: 'application/json'});
+              window.__clearPortableLibrary = async () => {
+                const media = await import(chrome.runtime.getURL('media-store.js'));
+                for (const id of ['share-image-one', 'share-image-two', 'share-poster', 'share-video', 'share-document', 'trash-image', 'linked-local-image']) {
+                  await media.deleteMediaBlob(id);
+                }
+                const {deleteLocalAssetHandle} = await import(chrome.runtime.getURL('local-asset-store.js'));
+                await deleteLocalAssetHandle('linked-local-image');
+                await chrome.storage.local.set({
+                  entries: [], trashState: {version: 1, items: []},
+                  organizerState: {version: 7, collections: []}, compoundCases: [],
+                  composerSessions: [], creativeRuns: [], creativeSkills: {version: 1, items: []}
+                });
+              };
+              await window.__clearPortableLibrary();
+              Object.defineProperty(window, 'showDirectoryPicker', {
+                value: async () => window.__degradedBackupFolder,
+                configurable: true
               });
+            }"""
+        )
+        library.locator("#restore-folder-backup").click()
+        degraded_dialog = library.locator("#promptdirector-app-dialog")
+        expect(degraded_dialog).to_be_visible(timeout=15_000)
+        expect(degraded_dialog).to_contain_text("检查救援恢复方案")
+        assert degraded_dialog.locator("#promptdirector-app-dialog-mode").count() == 0
+        degraded_dialog.locator("button[type='submit']").click()
+        expect(degraded_dialog).to_contain_text("按救援方案恢复资料库")
+        expect(degraded_dialog).to_contain_text("丢弃损坏或缺失的媒体 1 项")
+        degraded_dialog.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("救援恢复已按预检方案完成", timeout=15_000)
+        degraded_state = library.evaluate(
+            """async () => {
+              const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+              const media = await import(chrome.runtime.getURL('media-store.js'));
+              const healthy = state.entries.find((entry) => entry.id === 'share-one');
+              const damaged = state.entries.find((entry) => entry.id === 'share-two');
+              return {
+                entryIds: state.entries.map((entry) => entry.id).sort(),
+                healthyMediaBytes: (await media.getMediaBlob(healthy?.mediaAssets?.[0]?.id))?.size || 0,
+                damagedText: damaged?.text || '',
+                damagedMediaCount: damaged?.mediaAssets?.length ?? -1
+              };
+            }"""
+        )
+        assert degraded_state["entryIds"] == ["linked-one", "share-one", "share-two"], degraded_state
+        assert degraded_state["healthyMediaBytes"] > 0, degraded_state
+        assert degraded_state["damagedText"] and degraded_state["damagedMediaCount"] == 0, degraded_state
+
+        library.evaluate(
+            """async () => {
+              await window.__clearPortableLibrary();
               Object.defineProperty(window, 'showDirectoryPicker', {
                 value: async () => window.__portableBackupFolder,
                 configurable: true
@@ -335,9 +407,11 @@ def main() -> None:
         library.locator("#restore-folder-backup").click()
         restore_dialog = library.locator("#promptdirector-app-dialog")
         expect(restore_dialog).to_be_visible(timeout=15_000)
-        expect(restore_dialog).to_contain_text("恢复资料库备份")
+        expect(restore_dialog).to_contain_text("选择资料库恢复方式")
         restore_dialog.locator("button[type='submit']").click()
-        expect(library.locator("#data-safety-feedback")).to_contain_text("媒体文件校验并恢复完成", timeout=15_000)
+        expect(restore_dialog).to_contain_text("安全合并资料库备份")
+        restore_dialog.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("完整恢复已按预检方案完成", timeout=15_000)
         restored_state = library.evaluate(
             """async () => {
               const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
@@ -356,6 +430,112 @@ def main() -> None:
         assert restored_state["trashKinds"] == ["collection", "entry"], restored_state
         assert restored_state["activeImageBytes"] > 0 and restored_state["trashImageBytes"] > 0, restored_state
         assert restored_state["linkedImageBytes"] > 0 and restored_state["linkedStorageMode"] == "managed", restored_state
+
+        library.evaluate(
+            """async () => {
+              const stored = await chrome.storage.local.get(['entries', 'settings']);
+              const localOnly = {
+                ...stored.entries[0],
+                id: 'local-before-exact',
+                title: '精确恢复前的本机案例',
+                text: '空间不足或取消时必须保留。',
+                mediaAssets: [],
+                primaryMediaId: ''
+              };
+              const {normalizeAiProviderRegistry} = await import(chrome.runtime.getURL('ai-provider-registry.js'));
+              const aiProviderRegistry = normalizeAiProviderRegistry({
+                providers: {deepseek: {apiKey: 'fixture-private-key', consent: true}}
+              });
+              await chrome.storage.local.set({
+                entries: [...stored.entries, localOnly],
+                settings: {...stored.settings, libraryTitle: '本机精确恢复前'},
+                aiProviderRegistry,
+                syncSettings: {sentinel: 'keep-local-sync'},
+                uiPreferences: {sentinel: 'keep-local-ui'}
+              });
+              window.__originalStorageEstimate = navigator.storage.estimate.bind(navigator.storage);
+              Object.defineProperty(navigator.storage, 'estimate', {
+                value: async () => ({quota: 1, usage: 1}),
+                configurable: true
+              });
+            }"""
+        )
+        library.locator("#restore-folder-backup").click()
+        capacity_dialog = library.locator("#promptdirector-app-dialog")
+        expect(capacity_dialog).to_be_visible(timeout=15_000)
+        capacity_dialog.locator("#promptdirector-app-dialog-mode").select_option("exact-replace")
+        capacity_dialog.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("本机可用空间不足", timeout=15_000)
+        capacity_state = library.evaluate(
+            """async () => {
+              const stored = await chrome.storage.local.get(['entries', 'libraryReplacementRecoveryPoint']);
+              return {
+                entryIds: stored.entries.map((entry) => entry.id),
+                hasRecoveryPoint: Boolean(stored.libraryReplacementRecoveryPoint)
+              };
+            }"""
+        )
+        assert "local-before-exact" in capacity_state["entryIds"], capacity_state
+        assert capacity_state["hasRecoveryPoint"] is False, capacity_state
+
+        library.evaluate(
+            """() => {
+              Object.defineProperty(navigator.storage, 'estimate', {
+                value: window.__originalStorageEstimate,
+                configurable: true
+              });
+            }"""
+        )
+        library.locator("#restore-folder-backup").click()
+        exact_choice = library.locator("#promptdirector-app-dialog")
+        expect(exact_choice).to_be_visible(timeout=15_000)
+        exact_choice.locator("#promptdirector-app-dialog-mode").select_option("exact-replace")
+        exact_choice.locator("button[type='submit']").click()
+        exact_confirm = library.locator("#promptdirector-app-dialog")
+        expect(exact_confirm).to_contain_text("将资料库恢复成备份当时状态")
+        expect(exact_confirm).to_contain_text("自动建立回退点")
+        exact_confirm.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("完整恢复已按预检方案完成", timeout=15_000)
+        expect(library.locator("#restore-library-replacement-point")).to_be_visible(timeout=15_000)
+        exact_state = library.evaluate(
+            """async () => {
+              const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+              const stored = await chrome.storage.local.get([
+                'aiProviderRegistry', 'syncSettings', 'uiPreferences', 'libraryReplacementRecoveryPoint'
+              ]);
+              return {
+                entryIds: state.entries.map((entry) => entry.id).sort(),
+                activeImageId: state.entries.find((entry) => entry.id === 'share-one')?.mediaAssets?.[0]?.id || '',
+                aiCredentialPreserved: stored.aiProviderRegistry?.providers?.deepseek?.apiKey === 'fixture-private-key',
+                syncSentinel: stored.syncSettings?.sentinel || '',
+                uiSentinel: stored.uiPreferences?.sentinel || '',
+                hasRecoveryPoint: Boolean(stored.libraryReplacementRecoveryPoint)
+              };
+            }"""
+        )
+        assert exact_state["entryIds"] == ["linked-one", "share-one", "share-two"], exact_state
+        assert exact_state["activeImageId"] != "share-image-one", exact_state
+        assert exact_state["aiCredentialPreserved"] is True, exact_state
+        assert exact_state["syncSentinel"] == "keep-local-sync", exact_state
+        assert exact_state["uiSentinel"] == "keep-local-ui", exact_state
+        assert exact_state["hasRecoveryPoint"] is True, exact_state
+
+        library.locator("#restore-library-replacement-point").click()
+        rollback_dialog = library.locator("#promptdirector-app-dialog")
+        expect(rollback_dialog).to_contain_text("回退上次精确恢复")
+        rollback_dialog.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("已回退到上一次精确替换前的资料库", timeout=15_000)
+        rollback_state = library.evaluate(
+            """async () => {
+              const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+              return {
+                entryIds: state.entries.map((entry) => entry.id).sort(),
+                activeImageId: state.entries.find((entry) => entry.id === 'share-one')?.mediaAssets?.[0]?.id || ''
+              };
+            }"""
+        )
+        assert "local-before-exact" in rollback_state["entryIds"], rollback_state
+        assert rollback_state["activeImageId"] == "share-image-one", rollback_state
 
         library.evaluate(
             """async () => {
@@ -384,20 +564,83 @@ def main() -> None:
                 }],
                 primaryMediaId: 'unreadable-linked-asset'
               };
-              await chrome.storage.local.set({entries: [...stored.entries, linked]});
+              const linkedTwo = {
+                ...linked,
+                id: 'unreadable-linked-case-two',
+                title: '第二个失效本机链接',
+                mediaAssets: [{
+                  ...linked.mediaAssets[0],
+                  id: 'unreadable-linked-asset-two',
+                  sourceTitle: 'missing-two.zzz',
+                  relativePath: 'missing-two.zzz'
+                }],
+                primaryMediaId: 'unreadable-linked-asset-two'
+              };
+              await chrome.storage.local.set({entries: [...stored.entries, linked, linkedTwo]});
               window.__installBackupRoot();
             }"""
         )
         library.locator("#create-folder-backup").click()
-        expect(library.locator("#data-safety-feedback")).to_contain_text("未写入完成标记", timeout=15_000)
-        failed_backup = library.evaluate(
-            """() => {
+        rescue_dialog = library.locator("#promptdirector-app-dialog")
+        expect(rescue_dialog).to_be_visible(timeout=15_000)
+        expect(rescue_dialog).to_contain_text("生成救援备份")
+        expect(rescue_dialog).to_contain_text("2 项无法完整写入")
+        assert library.evaluate("() => window.__backupRoot.directories.size") == 0
+        rescue_dialog.locator("button.button-secondary").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("没有创建任何资料夹", timeout=15_000)
+        assert library.evaluate("() => window.__backupRoot.directories.size") == 0
+
+        library.locator("#create-folder-backup").click()
+        rescue_dialog = library.locator("#promptdirector-app-dialog")
+        expect(rescue_dialog).to_be_visible(timeout=15_000)
+        rescue_dialog.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("救援备份已完成", timeout=15_000)
+        rescue_backup = library.evaluate(
+            """async () => {
               const folder = [...window.__backupRoot.directories.values()][0];
-              return {created: Boolean(folder), completeExists: Boolean(folder?.files.has('complete.json'))};
+              const marker = JSON.parse(await (await folder.files.get('rescue.json').getFile()).text());
+              const data = JSON.parse(await (await folder.files.get('library.json').getFile()).text());
+              const rescued = data.entries.find((entry) => entry.id === 'unreadable-linked-case');
+              return {
+                created: Boolean(folder),
+                completeExists: Boolean(folder?.files.has('complete.json')),
+                rescueExists: Boolean(folder?.files.has('rescue.json')),
+                markerFormat: marker.format,
+                issueCount: marker.issues.length,
+                rescuedMediaCount: rescued?.mediaAssets?.length ?? -1,
+                rescuedText: rescued?.text || ''
+              };
             }"""
         )
-        assert failed_backup == {"created": True, "completeExists": False}, failed_backup
-        print({"shared_entries": 2, "curated_submission": True, "private_drafts_removed": True, "data_safety": True, "folder_backup": backup_result, "cross_machine_restore": restored_state, "unreadable_source_no_marker": failed_backup, "offline_preview": True, "mobile_width": 390, "screenshots": str(screenshots)})
+        assert rescue_backup["created"] is True, rescue_backup
+        assert rescue_backup["completeExists"] is False and rescue_backup["rescueExists"] is True, rescue_backup
+        assert rescue_backup["markerFormat"] == "prompt-director-folder-rescue", rescue_backup
+        assert rescue_backup["issueCount"] >= 2, rescue_backup
+        assert rescue_backup["rescuedMediaCount"] == 0 and rescue_backup["rescuedText"], rescue_backup
+
+        library.evaluate(
+            """() => {
+              window.__installBackupRoot();
+              window.__backupWriteFailureName = 'library.json';
+            }"""
+        )
+        library.locator("#create-folder-backup").click()
+        rescue_dialog = library.locator("#promptdirector-app-dialog")
+        expect(rescue_dialog).to_be_visible(timeout=15_000)
+        rescue_dialog.locator("button[type='submit']").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("未写入完成标记", timeout=15_000)
+        interrupted_backup = library.evaluate(
+            """() => {
+              const folder = [...window.__backupRoot.directories.values()][0];
+              return {
+                created: Boolean(folder),
+                completeExists: Boolean(folder?.files.has('complete.json')),
+                rescueExists: Boolean(folder?.files.has('rescue.json'))
+              };
+            }"""
+        )
+        assert interrupted_backup == {"created": True, "completeExists": False, "rescueExists": False}, interrupted_backup
+        print({"shared_entries": 2, "curated_submission": True, "private_drafts_removed": True, "data_safety": True, "folder_backup": backup_result, "degraded_complete_rescue": degraded_state, "cross_machine_restore": restored_state, "capacity_guard": capacity_state, "exact_restore": exact_state, "rollback": rollback_state, "rescue_backup": rescue_backup, "interrupted_backup": interrupted_backup, "offline_preview": True, "mobile_width": 390, "screenshots": str(screenshots)})
 
 
 if __name__ == "__main__":

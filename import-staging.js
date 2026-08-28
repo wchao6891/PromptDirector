@@ -10,6 +10,7 @@ import {
   isReportedMimeCompatible
 } from "./asset-formats.js";
 import { ASSET_IMPORT_FAILURE_CODES } from "./resource-limits.js";
+import { libraryStoredAssetIds } from "./library-asset-inventory.js";
 
 const KINDS = new Set(SUPPORTED_ASSET_KINDS);
 
@@ -55,24 +56,7 @@ export function importStagingAssetIds(stateValue) {
 }
 
 export function collectRetainedLocalAssetIds(state = {}) {
-  return new Set([
-    ...(Array.isArray(state.entries) ? state.entries : [])
-      .flatMap((entry) => Array.isArray(entry?.mediaAssets) ? entry.mediaAssets.map((asset) => asset?.id) : []),
-    ...(Array.isArray(state.creativeRuns) ? state.creativeRuns : [])
-      .flatMap((run) => (Array.isArray(run?.outputs) ? run.outputs : []).map((output) => output?.visual?.id)),
-    ...(Array.isArray(state.creativeSkills?.items) ? state.creativeSkills.items : [])
-      .flatMap((skill) => (Array.isArray(skill?.packageFiles) ? skill.packageFiles : []).map((file) => file?.assetId)),
-    ...(Array.isArray(state.composerSessions) ? state.composerSessions : []).flatMap(temporarySessionAssetIds),
-    ...(Array.isArray(state.creativeJobs?.items) ? state.creativeJobs.items : [])
-      .flatMap((job) => temporarySessionAssetIds(job?.request?.session)),
-    ...importStagingAssetIds(state.importStaging)
-  ].map(clean).filter(Boolean));
-}
-
-function temporarySessionAssetIds(session) {
-  return (Array.isArray(session?.referenceSnapshots) ? session.referenceSnapshots : [])
-    .filter((reference) => reference?.sourceType === "temporary")
-    .flatMap((reference) => (Array.isArray(reference?.assetRefs) ? reference.assetRefs : []).map((asset) => asset?.assetId));
+  return libraryStoredAssetIds(state, { includeLocalOnly: true });
 }
 
 function normalizeStagedAsset(value) {

@@ -32,13 +32,7 @@ import { normalizeCreativeRuns } from "./creative-runs.js";
 import { buildCreativeExperimentPackage } from "./creative-experiment-package.js";
 import { runCreativeJob } from "./creative-job-runner.js";
 import { composerServiceErrorDetails } from "./composer-service.js";
-import {
-  assetFormatForExtension,
-  assetFormatsForMimeType,
-  canonicalMimeType,
-  fileExtension,
-  isReportedMimeCompatible
-} from "./asset-formats.js";
+import { resolvePortableAssetFormat } from "./asset-formats.js";
 import {
   LOCAL_ASSET_LINK_STATUS,
   getLocalAssetHandleRecord,
@@ -353,10 +347,10 @@ export async function createArchiveUrl({
       if (asset.storageMode === "reference") {
         if (sharing && asset.recordType === "local-asset-reference") {
           const blob = await readLinkedAssetForShare(asset, entry.title);
-          const extension = packageMediaExtension(asset, blob);
-          const assetPath = `${mediaDirectory(asset.kind)}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${extension}`;
+          const portableFormat = resolvePortableAssetFormat(asset, blob);
+          const assetPath = `${portableFormat.directory}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${portableFormat.extension}`;
           files.push({ name: assetPath, data: blob });
-          mediaAssets.push(portableManagedAsset(asset, blob, assetPath, extension));
+          mediaAssets.push(portableManagedAsset(asset, blob, assetPath, portableFormat));
           continue;
         }
         mediaAssets.push(asset);
@@ -364,14 +358,14 @@ export async function createArchiveUrl({
       }
       const blob = await getMediaBlob(asset.id);
       if (!blob) throw new Error(`“${entry.title || "未命名案例"}”的媒体文件缺失，请从完整备份恢复后再导出`);
-      const extension = packageMediaExtension(asset, blob);
-      const assetPath = `${mediaDirectory(asset.kind)}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${extension}`;
+      const portableFormat = resolvePortableAssetFormat(asset, blob);
+      const assetPath = `${portableFormat.directory}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${portableFormat.extension}`;
       files.push({ name: assetPath, data: blob });
       if (asset.kind === "image") {
         imagePaths.set(asset.id, assetPath);
         imageCount += 1;
       }
-      mediaAssets.push(portableManagedAsset(asset, blob, assetPath, extension));
+      mediaAssets.push(portableManagedAsset(asset, blob, assetPath, portableFormat));
     }
     resolvedEntries.push({ ...normalized, mediaAssets });
   }
@@ -479,10 +473,10 @@ async function createCuratedSubmissionUrls({
       if (asset.storageMode !== "managed") throw new Error(`“${entry.title || "未命名案例"}”包含未保存到本地的媒体`);
       const blob = await getMediaBlob(asset.id);
       if (!blob) throw new Error(`“${entry.title || "未命名案例"}”的媒体文件缺失`);
-      const extension = packageMediaExtension(asset, blob);
-      const assetPath = `${mediaDirectory(asset.kind)}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${extension}`;
+      const portableFormat = resolvePortableAssetFormat(asset, blob);
+      const assetPath = `${portableFormat.directory}/${safeAssetName(entry.id)}/${safeAssetName(asset.id)}.${portableFormat.extension}`;
       files.push({ name: assetPath, data: blob });
-      mediaAssets.push(portableManagedAsset(asset, blob, assetPath, extension));
+      mediaAssets.push(portableManagedAsset(asset, blob, assetPath, portableFormat));
       mediaCount += 1;
     }
     resolvedEntries.push({ ...normalized, mediaAssets });
@@ -602,66 +596,19 @@ function imageExtension(mimeType) {
   throw new Error(`不支持的截图格式：${mimeType || "未知"}`);
 }
 
-function mediaDirectory(kind) {
-  const directories = {
-    image: "images",
-    video: "videos",
-    audio: "audio",
-    document: "documents",
-    attachment: "attachments"
-  };
-  const directory = directories[kind];
-  if (!directory) throw new Error(`不支持的媒体类型：${kind || "未知"}`);
-  return directory;
-}
-
-export function packageMediaExtension(asset, blob) {
-  const candidates = [
-    cleanExtension(asset?.sourceFormat),
-    fileExtension(asset?.sourceTitle),
-    ...assetFormatsForMimeType(blob?.type).filter((item) => item.kind === asset?.kind).flatMap((item) => item.extensions),
-    ...assetFormatsForMimeType(asset?.mimeType).filter((item) => item.kind === asset?.kind).flatMap((item) => item.extensions)
-  ].filter(Boolean);
-  for (const extension of candidates) {
-    const format = assetFormatForExtension(extension);
-    if (format?.kind === asset?.kind && isReportedMimeCompatible(format, blob?.type || asset?.mimeType)) return extension;
-    if (!format && asset?.kind === "attachment" && /^[a-z0-9]+$/u.test(extension)) return extension;
-  }
-  const known = {
-    "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp",
-    "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
-    "video/x-matroska": "mkv", "video/x-msvideo": "avi",
-    "audio/mpeg": "mp3", "audio/wav": "wav", "audio/mp4": "m4a", "audio/aac": "aac",
-    "audio/flac": "flac", "audio/ogg": "ogg", "audio/opus": "opus",
-    "application/pdf": "pdf", "application/rtf": "rtf", "text/rtf": "rtf",
-    "text/plain": "txt", "text/markdown": "md", "text/html": "html", "text/vtt": "vtt"
-  };
-  const extension = known[blob?.type] || known[asset?.mimeType];
-  if (extension) return extension;
-  throw new Error(`“${asset?.sourceTitle || asset?.id || "未命名媒体"}”缺少可安全识别的文件扩展名`);
-}
-
-export function portableManagedAsset(asset, blob, assetPath, extension) {
+export function portableManagedAsset(asset, blob, assetPath, portableFormat) {
   const next = { ...asset };
   for (const field of [
     "recordType", "linkStatus", "importFailure", "sourceLastModified", "linkedAt",
     "localPath", "absolutePath", "fileHandle", "handle", "reference"
   ]) delete next[field];
-  const format = assetFormatForExtension(extension);
-  const reportedMimeType = String(blob?.type || asset?.mimeType || "").trim().toLocaleLowerCase("en-US");
-  const compatibleMimeType = [blob?.type, asset?.mimeType]
-    .map((value) => String(value ?? "").trim().toLocaleLowerCase("en-US"))
-    .find((value) => value && !["application/octet-stream", "application/x-unknown"].includes(value) &&
-      (!format || isReportedMimeCompatible(format, value)));
   next.storageMode = "managed";
   next.assetPath = assetPath;
   next.byteSize = blob.size;
-  next.mimeType = format
-    ? canonicalMimeType(format, compatibleMimeType || "")
-    : compatibleMimeType || reportedMimeType || "application/octet-stream";
-  next.sourceFormat = extension;
-  next.formatCategory = format?.category || "other-source";
-  next.playbackCapability = ["image", "video", "audio"].includes(asset.kind) ? "native" : "unknown";
+  next.mimeType = portableFormat.mimeType;
+  next.sourceFormat = portableFormat.extension;
+  next.formatCategory = portableFormat.formatCategory;
+  next.playbackCapability = portableFormat.playbackCapability;
   return next;
 }
 
@@ -685,10 +632,6 @@ export async function readLinkedAssetForShare(asset, entryTitle, dependencies = 
     throw new Error(`${label}当前不可读取，请重新链接后再分享`);
   }
   return inspection.file;
-}
-
-function cleanExtension(value) {
-  return String(value ?? "").trim().toLocaleLowerCase("en-US").replace(/^\./u, "");
 }
 
 function loadImage(dataUrl) {

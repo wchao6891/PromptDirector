@@ -20,6 +20,9 @@ import {
   writeSyncObject,
   writeSyncSnapshot
 } from "./sync-vault.js";
+import { libraryAssetCleanupCandidates, libraryStoredAssetIds } from "./library-asset-inventory.js";
+import { salvageMissingLibraryAssets } from "./library-asset-salvage.js";
+import { reconcileLibrarySemanticIdentity } from "./library-semantic-identity.js";
 
 const TERMINAL_STATES = new Set(["up-to-date", "success", "canceled", "error"]);
 
@@ -156,7 +159,19 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
       records: meta.records
     };
     const remotePreview = mergeRevisionSnapshots([...remoteSnapshots, unchangedLocal]);
-    if (sameRevisionRecords(remotePreview.records, meta.records)) {
+    const remoteIdentity = reconcileLibrarySemanticIdentity(remotePreview.state);
+    if (sameRevisionRecords(remotePreview.records, meta.records) && !remoteIdentity.changed) {
+      if (meta.pendingCleanupAssetIds.length) {
+        const current = await deps.readState();
+        const cleanup = await retryPendingCleanup({
+          state: current,
+          settings,
+          meta,
+          dependencies: deps,
+          effects
+        });
+        return upToDateResult(current, cleanup.meta, effects, cleanup.pendingCount);
+      }
       return upToDateResult(remotePreview.state, { ...meta, assetRefs: previousRefs }, effects);
     }
   }
@@ -170,8 +185,9 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
     baseSnapshot
   });
   const preview = mergeRevisionSnapshots([...remoteSnapshots, localSnapshot]);
+  const previewIdentity = reconcileLibrarySemanticIdentity(preview.state);
 
-  if (!meta.localDirty && !dirtyAssetIds.size && sameRevisionRecords(preview.records, meta.records)) {
+  if (!meta.localDirty && !dirtyAssetIds.size && !previewIdentity.changed && sameRevisionRecords(preview.records, meta.records)) {
     return upToDateResult(current, { ...meta, assetRefs: previousRefs }, effects);
   }
 
@@ -179,6 +195,7 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
   const missingAssets = collectSyncAssets(localPrepared).filter((asset) =>
     asset.storageMode !== "reference" && !asset.objectId
   );
+  const missingAssetIds = new Set();
   if (missingAssets.length) update({ phase: "uploading" });
   for (const [index, asset] of missingAssets.entries()) {
     requireNotAborted(signal);
@@ -186,7 +203,8 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
     const blob = await deps.readMedia(asset.id);
     requireNotAborted(signal);
     if (!(blob instanceof Blob) || !blob.size) {
-      throw new Error(`本机媒体 ${asset.id} 已缺失，同步已停止且资料未被修改`);
+      missingAssetIds.add(asset.id);
+      continue;
     }
     const objectId = await deps.writeObject(vault, blob, { signal });
     requireNotAborted(signal);
@@ -195,7 +213,10 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
   }
   if (missingAssets.length) deps.onProgress({ phase: "uploading", current: missingAssets.length, total: missingAssets.length });
 
-  localPrepared = attachSyncImageReferences(current, localRefs);
+  const salvage = salvageMissingLibraryAssets(current, missingAssetIds);
+  const skippedMedia = salvage.issues;
+  for (const assetId of missingAssetIds) delete localRefs[assetId];
+  localPrepared = attachSyncImageReferences(salvage.state, localRefs);
   localSnapshot = await createRevisionSnapshot(localPrepared, {
     deviceId: settings.deviceId,
     logicalClock: maximumClock + 1,
@@ -203,10 +224,13 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
   });
   update({ phase: "merging" });
   const merged = mergeRevisionSnapshots([...remoteSnapshots, localSnapshot]);
-  if (syncStateHasContent(current) && !syncStateHasContent(merged.state)) {
+  const identity = reconcileLibrarySemanticIdentity(merged.state);
+  const finalState = identity.state;
+  const finalImageRefs = reconcileImageReferences(merged.imageRefs, identity.assetIdMap, finalState);
+  if (!skippedMedia.length && syncStateHasContent(current) && !syncStateHasContent(finalState)) {
     throw new Error("同步结果异常为空，本机资料未被修改");
   }
-  const finalPrepared = attachSyncImageReferences(merged.state, merged.imageRefs);
+  const finalPrepared = attachSyncImageReferences(finalState, finalImageRefs);
   const finalSnapshot = await createRevisionSnapshot(finalPrepared, {
     deviceId: settings.deviceId,
     logicalClock: maximumClock + 2,
@@ -215,24 +239,37 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
   const changeSummary = summarizeRevisionChanges(meta.records, finalSnapshot.records, merged.conflicts);
   const appliedChangeSummary = summarizeRevisionChanges(localSnapshot.records, finalSnapshot.records, merged.conflicts);
 
-  if (sameRevisionRecords(finalSnapshot.records, meta.records)) {
+  if (!skippedMedia.length && sameRevisionRecords(finalSnapshot.records, meta.records)) {
+    let nextMeta = { ...meta, assetRefs: localRefs };
     if (meta.localDirty || dirtyAssetIds.size) {
       requireNotAborted(signal);
+      nextMeta = { ...nextMeta, localDirty: false, dirtyAssetIds: [] };
       await deps.commit({
         state: current,
         settings,
-        meta: { ...meta, assetRefs: localRefs, localDirty: false, dirtyAssetIds: [] },
+        meta: nextMeta,
         trackingOnly: true,
         changeSummary
       });
       effects.localMetadataCommitted = true;
     }
-    return upToDateResult(current, { ...meta, assetRefs: localRefs }, effects);
+    if (nextMeta.pendingCleanupAssetIds.length) {
+      const cleanup = await retryPendingCleanup({
+        state: current,
+        settings,
+        meta: nextMeta,
+        dependencies: deps,
+        effects
+      });
+      nextMeta = cleanup.meta;
+      return upToDateResult(current, nextMeta, effects, cleanup.pendingCount);
+    }
+    return upToDateResult(current, nextMeta, effects);
   }
 
   const replacements = remoteMediaReplacements({
     vault,
-    imageRefs: merged.imageRefs,
+    imageRefs: finalImageRefs,
     localRefs,
     readObject: deps.readObject,
     signal,
@@ -240,8 +277,12 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
   });
   update({ phase: "downloading", changeSummary });
   const lastSyncAt = deps.now();
-  const restoredMediaCount = countDifferentReferences(merged.imageRefs, localRefs);
-  effects.localBusinessChanged = hasChanges(appliedChangeSummary) || restoredMediaCount > 0;
+  const restoredMediaCount = countDifferentReferences(finalImageRefs, localRefs);
+  const cleanupAssetIds = libraryAssetCleanupCandidates(current, finalState, {
+    localOnlyState: current,
+    pendingAssetIds: meta.pendingCleanupAssetIds
+  });
+  effects.localBusinessChanged = skippedMedia.length > 0 || hasChanges(appliedChangeSummary) || restoredMediaCount > 0;
   const nextSettings = normalizeSyncSettings({
     ...settings,
     lastSyncAt,
@@ -260,14 +301,15 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
       await deps.writeSnapshot(vault, finalSnapshot, { retentionCount: settings.retentionCount });
       effects.snapshotWritten = true;
       await deps.commit({
-        state: merged.state,
+        state: finalState,
         settings: nextSettings,
         meta: {
           logicalClock: maximumClock + 2,
           records: finalSnapshot.records,
-          assetRefs: merged.imageRefs,
+          assetRefs: finalImageRefs,
           localDirty: false,
-          dirtyAssetIds: []
+          dirtyAssetIds: [],
+          pendingCleanupAssetIds: cleanupAssetIds
         },
         trackingOnly: false,
         changeSummary
@@ -276,13 +318,32 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
     }
   });
   effects.localMediaCommitted = restoredMediaCount;
+  const cleanup = await retryPendingCleanup({
+    state: {
+      ...finalState,
+      libraryReplacementRecoveryPoint: current.libraryReplacementRecoveryPoint,
+      creativeJobs: current.creativeJobs,
+      importStaging: current.importStaging
+    },
+    settings: nextSettings,
+    meta: {
+      logicalClock: maximumClock + 2,
+      records: finalSnapshot.records,
+      assetRefs: finalImageRefs,
+      localDirty: false,
+      dirtyAssetIds: [],
+      pendingCleanupAssetIds: cleanupAssetIds
+    },
+    dependencies: deps,
+    effects
+  });
 
   return {
     ok: true,
     upToDate: false,
     canceled: false,
-    entryCount: merged.state.entries?.length ?? 0,
-    mediaCount: Object.keys(merged.imageRefs).length,
+    entryCount: finalState.entries?.length ?? 0,
+    mediaCount: Object.keys(finalImageRefs).length,
     conflictCount: merged.conflicts.length,
     addedCount: changeSummary.added,
     updatedCount: changeSummary.updated,
@@ -290,8 +351,52 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
     changeSummary,
     appliedChangeSummary,
     lastSyncAt,
+    cleanupPendingCount: cleanup.pendingCount,
+    skippedMediaCount: skippedMedia.length,
+    skippedMedia,
     effects: structuredClone(effects)
   };
+}
+
+async function retryPendingCleanup({ state, settings, meta: metaValue, dependencies: deps, effects }) {
+  const meta = normalizeSyncMeta(metaValue);
+  const retained = libraryStoredAssetIds(state, { includeLocalOnly: true });
+  const candidates = meta.pendingCleanupAssetIds.filter((assetId) => !retained.has(assetId));
+  const results = await Promise.allSettled(candidates.map((assetId) => deps.deleteMedia(assetId)));
+  const failedIds = candidates.filter((_assetId, index) => results[index].status === "rejected");
+  const nextMeta = { ...meta, pendingCleanupAssetIds: failedIds };
+  effects.localMediaDeleted += candidates.length - failedIds.length;
+  effects.cleanupPendingCount = failedIds.length;
+  if (candidates.length || meta.pendingCleanupAssetIds.length !== failedIds.length) {
+    try {
+      await deps.commit({
+        state,
+        settings,
+        meta: nextMeta,
+        trackingOnly: true,
+        changeSummary: emptyChangeSummary()
+      });
+      effects.localMetadataCommitted = true;
+    } catch {
+      effects.cleanupTrackingPending = true;
+      return { meta, pendingCount: meta.pendingCleanupAssetIds.length };
+    }
+  }
+  return { meta: nextMeta, pendingCount: failedIds.length };
+}
+
+function reconcileImageReferences(referencesValue, assetIdMap = {}, state = {}) {
+  const references = referencesValue && typeof referencesValue === "object" ? referencesValue : {};
+  const retained = libraryStoredAssetIds(state);
+  const result = {};
+  for (const assetId of retained) {
+    if (references[assetId]) result[assetId] = structuredClone(references[assetId]);
+  }
+  for (const [sourceId, targetId] of Object.entries(assetIdMap)) {
+    if (!retained.has(targetId) || result[targetId] || !references[sourceId]) continue;
+    result[targetId] = structuredClone(references[sourceId]);
+  }
+  return result;
 }
 
 async function* remoteMediaReplacements({ vault, imageRefs, localRefs, readObject, signal, onProgress }) {
@@ -333,7 +438,7 @@ function revisionBase(records) {
   return { format: SYNC_SNAPSHOT_FORMAT, version: SYNC_SNAPSHOT_VERSION, records };
 }
 
-function upToDateResult(state, meta, effects) {
+function upToDateResult(state, meta, effects, cleanupPendingCount = 0) {
   return {
     ok: true,
     upToDate: true,
@@ -344,6 +449,7 @@ function upToDateResult(state, meta, effects) {
     addedCount: 0,
     updatedCount: 0,
     deletedCount: 0,
+    cleanupPendingCount,
     changeSummary: emptyChangeSummary(),
     effects: structuredClone(effects)
   };
@@ -409,7 +515,10 @@ function emptyEffects() {
     snapshotWritten: false,
     localMediaCommitted: 0,
     localBusinessChanged: false,
-    localMetadataCommitted: false
+    localMetadataCommitted: false,
+    localMediaDeleted: 0,
+    cleanupPendingCount: 0,
+    cleanupTrackingPending: false
   };
 }
 

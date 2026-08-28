@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  filesWithoutInvalidEntryMedia,
+  filesWithoutInvalidLibraryImages,
   findInvalidImportedImageIds
 } from "../library-import-media.js";
 
@@ -46,10 +46,47 @@ test("shared ZIP salvage removes only archive files belonging to undecodable ent
     }]
   };
 
-  const salvageFiles = filesWithoutInvalidEntryMedia(library, files, new Set(["image:bad"]));
+  const salvageFiles = filesWithoutInvalidLibraryImages(library, files, new Set(["image:bad"]));
 
   assert.equal(salvageFiles.has("images/bad.webp"), false);
   assert.equal(salvageFiles.get("images/good.webp"), files.get("images/good.webp"));
   assert.equal(salvageFiles.get("library.json"), files.get("library.json"));
   assert.equal(files.has("images/bad.webp"), true);
+});
+
+test("rescue validation removes undecodable images from every private backup scope", () => {
+  const paths = [
+    "images/active.webp",
+    "images/trash.webp",
+    "creative-results/run/result.webp",
+    "temp-references/session/temp.webp"
+  ];
+  const files = new Map(paths.map((path) => [path, new Blob([path], { type: "image/webp" })]));
+  const library = {
+    entries: [{ id: "case:active", mediaAssets: [{ id: "image:active", assetPath: paths[0] }] }],
+    trashState: {
+      items: [{
+        kind: "entry",
+        snapshot: { mediaAssets: [{ id: "image:trash", assetPath: paths[1] }] }
+      }]
+    },
+    creativeRuns: [{
+      outputs: [{ visual: { id: "image:creative", assetPath: paths[2] } }]
+    }],
+    composerSessions: [{
+      referenceSnapshots: [{
+        sourceType: "temporary",
+        assetRefs: [{ assetId: "image:temporary", archivePath: paths[3] }]
+      }]
+    }]
+  };
+
+  const salvageFiles = filesWithoutInvalidLibraryImages(
+    library,
+    files,
+    new Set(["image:active", "image:trash", "image:creative", "image:temporary"])
+  );
+
+  assert.deepEqual([...salvageFiles.keys()], []);
+  assert.equal(files.size, 4);
 });

@@ -179,6 +179,7 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
   const usedVersionIds = new Set(state.items.flatMap((item) => item.versions.map((version) => version.id)));
   const usedAssetIds = new Set(state.items.flatMap((item) => item.packageFiles.map((file) => file.assetId)));
   const skillIdMap = {};
+  const skillVersionIdMap = { ...(options.skillVersionIdMap ?? {}) };
   const packageAssetIdMap = { ...(options.packageAssetIdMap ?? {}) };
   let importedSkillCount = 0;
   let skippedSkillCount = 0;
@@ -201,8 +202,15 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
     skill.portableId = uniquePortableId(state, skill.portableId);
     skill.versions = skill.versions.map((version) => {
       const next = { ...version };
-      if (usedVersionIds.has(next.id)) next.id = uniqueEntityId("skill-version", usedVersionIds);
+      const sourceVersionId = next.id;
+      const preferredVersionId = cleanText(skillVersionIdMap[sourceVersionId]);
+      if (usedVersionIds.has(next.id)) {
+        next.id = preferredVersionId && !usedVersionIds.has(preferredVersionId)
+          ? preferredVersionId
+          : uniqueEntityId("skill-version", usedVersionIds);
+      }
       usedVersionIds.add(next.id);
+      skillVersionIdMap[sourceVersionId] = next.id;
       return next;
     });
     const currentVersionIndex = source.versions.findIndex((version) => version.id === source.currentVersionId);
@@ -219,7 +227,7 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
     state.items.push(skill);
     importedSkillCount += 1;
   }
-  return { state, skillIdMap, packageAssetIdMap, importedSkillCount, skippedSkillCount };
+  return { state, skillIdMap, skillVersionIdMap, packageAssetIdMap, importedSkillCount, skippedSkillCount };
 }
 
 function normalizeCreativeSkill(value) {

@@ -32,3 +32,20 @@ test("import report separates created, identical, repaired, and skipped results"
   ]);
   assert.equal(report.autoAnalysisNotice, "导入不会自动启动 AI 分析");
 });
+
+test("rescue report makes degraded integrity and ignored extra files visible before confirmation", () => {
+  const report = buildLibraryImportReport({
+    importedCount: 2,
+    importDiagnostics: [
+      { code: "backup_integrity_degraded", reason: "missing_complete_marker" },
+      { code: "extra_file_ignored", path: "unlisted.txt" }
+    ],
+    importStats: {}
+  });
+
+  assert.equal(report.status, "partial");
+  assert.deepEqual(report.lines, [
+    "完整性标记异常，本次只能按救援方案恢复",
+    "忽略清单外文件 1 项"
+  ]);
+});

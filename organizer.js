@@ -265,6 +265,9 @@ export function mergeOrganizerStateWithMap(currentValue, importedValue, entryIdM
   const receiverCreatedAt = normalizeTimestamp(options.createdAt);
 
   const collectionIdMap = new Map();
+  const preferredCollectionIds = options.collectionIdMap && typeof options.collectionIdMap === "object"
+    ? options.collectionIdMap
+    : {};
   for (const source of imported.collections) {
     const parentId = source.parentId ? collectionIdMap.get(source.parentId) ?? null : null;
     const existing = current.collections.find((item) => item.parentId === parentId && canonical(item.name) === canonical(source.name));
@@ -273,8 +276,11 @@ export function mergeOrganizerStateWithMap(currentValue, importedValue, entryIdM
       collectionIdMap.set(source.id, existing.id);
       continue;
     }
+    const preferredId = cleanId(preferredCollectionIds[source.id]);
     const id = current.collections.some((item) => item.id === source.id)
-      ? `collection:${globalThis.crypto.randomUUID()}`
+      ? preferredId && !current.collections.some((item) => item.id === preferredId)
+        ? preferredId
+        : `collection:${globalThis.crypto.randomUUID()}`
       : source.id;
     current.collections.push({
       ...source,

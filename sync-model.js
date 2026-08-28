@@ -1,6 +1,7 @@
 import { sha256Hex } from "./sync-crypto.js";
 import { SCHEMA_VERSION, createDefaultTaxonomy, normalizeTaxonomy } from "./taxonomy.js";
 import { createDefaultTrashState } from "./trash.js";
+import { libraryStoredAssets, storedAssetId } from "./library-asset-inventory.js";
 
 export const SYNC_SNAPSHOT_FORMAT = "prompt-director-sync-state";
 export const SYNC_SNAPSHOT_VERSION = 2;
@@ -70,7 +71,10 @@ export function normalizeSyncMeta(value = {}) {
     assetRefs,
     localDirty: value?.localDirty === true,
     dirtyAssetIds: [...new Set((Array.isArray(value?.dirtyAssetIds) ? value.dirtyAssetIds : [])
-      .map(cleanId).filter(Boolean))]
+      .map(cleanId).filter(Boolean))],
+    pendingCleanupAssetIds: [...new Set((Array.isArray(value?.pendingCleanupAssetIds)
+      ? value.pendingCleanupAssetIds
+      : []).map(cleanId).filter(Boolean))].sort()
   };
 }
 
@@ -104,7 +108,7 @@ export function syncErrorDetails(value) {
 
 export function collectSyncImageReferences(stateValue = {}) {
   const references = {};
-  for (const asset of stateStoredAssets(stateValue)) {
+  for (const asset of libraryStoredAssets(stateValue)) {
     const id = storedAssetId(asset);
     if (!id || !validSyncObjectId(asset?.syncObjectId)) continue;
     references[id] = {
@@ -118,7 +122,7 @@ export function collectSyncImageReferences(stateValue = {}) {
 export function collectSyncAssets(stateValue = {}) {
   const assets = [];
   const seen = new Set();
-  for (const asset of stateStoredAssets(stateValue)) {
+  for (const asset of libraryStoredAssets(stateValue)) {
     const id = storedAssetId(asset);
     if (!id || seen.has(id)) continue;
     seen.add(id);
@@ -179,7 +183,7 @@ export function summarizeRevisionChanges(beforeRecords = {}, afterRecords = {}, 
 
 export function attachSyncImageReferences(stateValue = {}, references = {}) {
   const state = structuredClone(stateValue);
-  for (const asset of stateStoredAssets(state)) {
+  for (const asset of libraryStoredAssets(state)) {
     const reference = references?.[storedAssetId(asset)];
     if (!validSyncObjectId(reference?.objectId)) continue;
     asset.syncObjectId = reference.objectId;
@@ -395,7 +399,7 @@ function restoreState(records) {
   for (const [key, record] of Object.entries(records)) {
     if (record.deletedAt || record.payload === null) continue;
     const [type] = splitKey(key);
-    const payload = stripSyncImageRefs(structuredClone(record.payload), imageRefs);
+    const payload = structuredClone(record.payload);
     if (type === "entry") state.entries.push(payload);
     else if (type === "content_type") state.taxonomy.nodes.push(payload);
     else if (type === "compound_case") state.compoundCases.push(payload);
@@ -425,93 +429,17 @@ function restoreState(records) {
     String(left.deletedAt ?? "").localeCompare(String(right.deletedAt ?? "")) ||
     String(left.id).localeCompare(String(right.id))
   );
-  return { state, imageRefs };
-}
-
-function stripSyncImageRefs(payload, imageRefs) {
-  for (const visual of payload?.mediaAssets ?? payload?.visuals ?? []) {
-    if (visual.syncObjectId) {
-      imageRefs[visual.id] = {
-        objectId: visual.syncObjectId,
-        contentType: visual.syncContentType || "application/octet-stream"
-      };
-      delete visual.syncObjectId;
-      delete visual.syncContentType;
-    }
-  }
-  for (const output of payload?.outputs ?? []) {
-    const visual = output?.visual;
-    if (visual?.syncObjectId) {
-      imageRefs[visual.id] = {
-        objectId: visual.syncObjectId,
-        contentType: visual.syncContentType || "application/octet-stream"
-      };
-      delete visual.syncObjectId;
-      delete visual.syncContentType;
-    }
-  }
-  for (const file of payload?.packageFiles ?? []) {
-    if (file?.syncObjectId) {
-      imageRefs[file.assetId] = {
-        objectId: file.syncObjectId,
-        contentType: file.syncContentType || file.mimeType || "application/octet-stream"
-      };
-      delete file.syncObjectId;
-      delete file.syncContentType;
-    }
-  }
-  for (const reference of payload?.referenceSnapshots ?? []) {
-    if (reference?.sourceType !== "temporary") continue;
-    for (const asset of reference.assetRefs ?? []) {
-      if (!asset?.syncObjectId) continue;
-      imageRefs[asset.assetId] = {
-        objectId: asset.syncObjectId,
-        contentType: asset.syncContentType || asset.mimeType || "application/octet-stream"
-      };
-      delete asset.syncObjectId;
-      delete asset.syncContentType;
-    }
-  }
-  for (const asset of trashItemStoredAssets(payload)) {
+  for (const asset of libraryStoredAssets(state)) {
     const assetId = storedAssetId(asset);
-    if (!assetId || !asset?.syncObjectId) continue;
+    if (!assetId || !validSyncObjectId(asset?.syncObjectId)) continue;
     imageRefs[assetId] = {
       objectId: asset.syncObjectId,
-      contentType: asset.syncContentType || asset.mimeType || "application/octet-stream"
+      contentType: cleanText(asset.syncContentType) || cleanText(asset.mimeType) || "application/octet-stream"
     };
     delete asset.syncObjectId;
     delete asset.syncContentType;
   }
-  return payload;
-}
-
-function stateStoredAssets(stateValue) {
-  return [
-    ...(Array.isArray(stateValue?.entries) ? stateValue.entries : [])
-      .flatMap((entry) => Array.isArray(entry?.mediaAssets) ? entry.mediaAssets : Array.isArray(entry?.visuals) ? entry.visuals : []),
-    ...(Array.isArray(stateValue?.creativeRuns) ? stateValue.creativeRuns : [])
-      .flatMap((run) => Array.isArray(run?.outputs) ? run.outputs.map((output) => output?.visual) : []),
-    ...(Array.isArray(stateValue?.creativeSkills?.items) ? stateValue.creativeSkills.items : [])
-      .flatMap((skill) => Array.isArray(skill?.packageFiles) ? skill.packageFiles : []),
-    ...(Array.isArray(stateValue?.composerSessions) ? stateValue.composerSessions : [])
-      .flatMap((session) => (Array.isArray(session?.referenceSnapshots) ? session.referenceSnapshots : [])
-        .filter((reference) => reference?.sourceType === "temporary")
-        .flatMap((reference) => Array.isArray(reference?.assetRefs) ? reference.assetRefs : [])),
-    ...(Array.isArray(stateValue?.trashState?.items) ? stateValue.trashState.items : [])
-      .flatMap(trashItemStoredAssets)
-  ].filter(Boolean);
-}
-
-function trashItemStoredAssets(item) {
-  if (!item || !["entry", "media"].includes(item.kind)) return [];
-  const snapshot = item.snapshot;
-  if (!snapshot || typeof snapshot !== "object") return [];
-  if (Array.isArray(snapshot.mediaAssets)) return snapshot.mediaAssets;
-  return Array.isArray(snapshot.visuals) ? snapshot.visuals : [];
-}
-
-function storedAssetId(asset) {
-  return cleanId(asset?.id ?? asset?.assetId);
+  return { state, imageRefs };
 }
 
 function validSyncObjectId(value) {

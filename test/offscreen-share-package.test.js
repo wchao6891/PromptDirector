@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  packageMediaExtension,
   portableManagedAsset,
   readLinkedAssetForShare
 } from "../offscreen.js";
+import { resolvePortableAssetFormat } from "../asset-formats.js";
 
 const linkedAsset = Object.freeze({
   id: "source:psd",
@@ -58,10 +58,10 @@ test("share export reports missing permission changed and missing local sources 
 
 test("linked source becomes a portable managed copy with accurate format and no machine state", () => {
   const blob = new Blob(["psd-source"], { type: "image/vnd.adobe.photoshop" });
-  const extension = packageMediaExtension(linkedAsset, blob);
-  const packaged = portableManagedAsset(linkedAsset, blob, "attachments/case/source.psd", extension);
+  const portableFormat = resolvePortableAssetFormat(linkedAsset, blob);
+  const packaged = portableManagedAsset(linkedAsset, blob, "attachments/case/source.psd", portableFormat);
 
-  assert.equal(extension, "psd");
+  assert.equal(portableFormat.extension, "psd");
   assert.equal(packaged.storageMode, "managed");
   assert.equal(packaged.assetPath, "attachments/case/source.psd");
   assert.equal(packaged.byteSize, blob.size);
@@ -81,10 +81,10 @@ test("unknown linked source stays an inert downloadable attachment in the packag
     sourceFormat: "customsource",
     mimeType: "application/octet-stream"
   };
-  const extension = packageMediaExtension(asset, blob);
-  const packaged = portableManagedAsset(asset, blob, `attachments/case/source.${extension}`, extension);
+  const portableFormat = resolvePortableAssetFormat(asset, blob);
+  const packaged = portableManagedAsset(asset, blob, `attachments/case/source.${portableFormat.extension}`, portableFormat);
 
-  assert.equal(extension, "customsource");
+  assert.equal(portableFormat.extension, "customsource");
   assert.equal(packaged.kind, "attachment");
   assert.equal(packaged.storageMode, "managed");
   assert.equal(packaged.formatCategory, "other-source");

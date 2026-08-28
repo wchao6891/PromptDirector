@@ -19,11 +19,13 @@ test("sync metadata keeps a durable local pending flag separate from changed med
     logicalClock: 2,
     localDirty: true,
     dirtyAssetIds: ["asset:one", "asset:one", ""],
+    pendingCleanupAssetIds: ["asset:old", "asset:old", ""],
     assetRefs: { "asset:one": { objectId: "a".repeat(64), contentType: "image/webp" } }
   });
 
   assert.equal(value.localDirty, true);
   assert.deepEqual(value.dirtyAssetIds, ["asset:one"]);
+  assert.deepEqual(value.pendingCleanupAssetIds, ["asset:old"]);
   assert.equal(value.assetRefs["asset:one"].objectId, "a".repeat(64));
 });
 
