@@ -5,7 +5,8 @@ function preset(value) {
     ...value,
     discovery: Object.freeze({ ...value.discovery }),
     capabilities: Object.freeze([...value.capabilities]),
-    catalogRequiredTasks: Object.freeze([...(value.catalogRequiredTasks ?? [])])
+    catalogRequiredTasks: Object.freeze([...(value.catalogRequiredTasks ?? [])]),
+    ...(value.mediaInput ? { mediaInput: Object.freeze({ ...value.mediaInput }) } : {})
   });
 }
 
@@ -19,6 +20,23 @@ export const AI_PROVIDER_PRESETS = Object.freeze([
     discovery: { adapter: "identity" },
     capabilities: [...TEXT_CAPABILITIES, "imageAnalysis"],
     structuredOutput: "json_object"
+  }),
+  preset({
+    id: "zhipu",
+    label: "智谱 GLM",
+    category: "official",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    protocol: "chat_completions",
+    discovery: { adapter: "identity" },
+    catalogCompleteness: "partial",
+    capabilities: [...TEXT_CAPABILITIES, "imageAnalysis", "videoAnalysis"],
+    structuredOutput: "prompt_only",
+    mediaInput: {
+      imageBase64: "raw",
+      localVideo: "unsupported",
+      preferPublicVideoUrl: true,
+      publicVideoUrl: "direct"
+    }
   }),
   preset({
     id: "openai",

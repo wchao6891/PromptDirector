@@ -12,6 +12,7 @@ import {
   appendPromptVersion,
   clearComposerFailure,
   composerInputUsage,
+  composerProfileForTaskAssignment,
   createComposerSession,
   createReferenceSnapshots,
   imageReferenceModeAvailability,
@@ -60,13 +61,22 @@ test("composer agent keeps one editable method per task without a harness contra
   assert.equal(resetComposerAgentInstruction(customAgent).agentInstruction.text, DEFAULT_AGENT_INSTRUCTION);
 });
 
-test("composer AI profile keeps DeepSeek choices strict and accepts configured visual models", () => {
+test("composer AI profile preserves dynamically assigned planning models across providers", () => {
   assert.deepEqual(normalizeComposerAiProfile(), DEFAULT_COMPOSER_AI_PROFILE);
   assert.deepEqual(normalizeComposerAiProfile({ model: "deepseek-v4-pro", thinking: true }), { serviceId: "deepseek", model: "deepseek-v4-pro", thinking: true });
-  assert.deepEqual(normalizeComposerAiProfile({ model: "custom", thinking: "yes" }), DEFAULT_COMPOSER_AI_PROFILE);
+  assert.deepEqual(normalizeComposerAiProfile({ model: "account-deepseek-planner", thinking: "yes" }), { serviceId: "deepseek", model: "account-deepseek-planner", thinking: false });
   assert.deepEqual(normalizeComposerAiProfile({ serviceId: "openai", model: "gpt-5-mini", thinking: true }), { serviceId: "openai", model: "gpt-5-mini", thinking: true });
   assert.deepEqual(normalizeComposerAiProfile({ serviceId: "compatible", model: "vision-pro", thinking: true }), { serviceId: "compatible", model: "vision-pro", thinking: true });
   assert.deepEqual(normalizeComposerAiProfile({ serviceId: "kimi", model: "account-planning-model" }), { serviceId: "kimi", model: "account-planning-model", thinking: false });
+  assert.deepEqual(normalizeComposerAiProfile({ serviceId: "zhipu", model: "glm-4.6v" }), { serviceId: "zhipu", model: "glm-4.6v", thinking: false });
+  assert.deepEqual(composerProfileForTaskAssignment(
+    { providerId: "zhipu", model: "glm-4.6v" },
+    { serviceId: "deepseek", model: "account-deepseek-planner", thinking: true }
+  ), { serviceId: "zhipu", model: "glm-4.6v", thinking: true });
+  assert.deepEqual(composerProfileForTaskAssignment(
+    { providerId: "custom-text", model: "local-planner" },
+    DEFAULT_COMPOSER_AI_PROFILE
+  ), { serviceId: "custom-text", model: "local-planner", thinking: false });
   assert.deepEqual(createComposerSession({ generationParameters: { size: "1536x1024", quality: "high", aspectRatio: "16:9", imageSize: "2K", secret: "drop" } }).generationParameters, {
     size: "1536x1024",
     quality: "high",

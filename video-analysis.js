@@ -10,7 +10,8 @@ export const GEMINI_VIDEO_API_ROOT = "https://generativelanguage.googleapis.com/
 export const GEMINI_FILE_POLL_INTERVAL_MS = 2_000;
 export const GEMINI_FILE_POLL_LIMIT = 150;
 const GEMINI_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/mpeg", "video/quicktime", "video/avi", "video/x-flv", "video/mpg", "video/webm", "video/wmv", "video/3gpp"]);
-const CHAT_COMPLETIONS_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/mpeg", "video/quicktime", "video/webm"]);
+const CHAT_COMPLETIONS_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/mpeg", "video/quicktime", "video/webm", "video/x-m4v"]);
+const EMBEDDED_VIDEO_PROVIDERS = new Set(["youtube", "vimeo", "bilibili", "douyin", "x"]);
 
 export function requireVideoAnalysisConfirmation(value) {
   if (value !== true) throw new Error("请从视频分析确认框开始本次付费媒体分析");
@@ -88,19 +89,17 @@ export async function analyzeVideoWithChatCompletions(input = {}, dependencies =
   if (!apiKey || !model) throw new Error(`${providerLabel} 视频分析尚未完成配置`);
   const prompt = videoAnalysisPrompt(input.mode, input.customQuestion);
   const onStage = typeof input.onStage === "function" ? input.onStage : () => {};
-  let videoUrl;
-  let sourceKind;
-  if (input.videoBlob instanceof Blob) {
+  const sourcePlan = chatCompletionsVideoSourcePlan(input);
+  let videoUrl = sourcePlan.videoUrl;
+  const sourceKind = sourcePlan.sourceKind;
+  if (sourceKind === "local-video") {
     if (!CHAT_COMPLETIONS_VIDEO_MIME_TYPES.has(input.videoBlob.type)) {
       throw new Error(`${providerLabel} 当前不支持 ${input.videoBlob.type || "未知格式"} 视频；请先转换为 MP4、WebM、MOV 或 MPEG`);
     }
-    sourceKind = "local-video";
     onStage("encoding");
-    videoUrl = await blobDataUrl(input.videoBlob);
-  } else {
-    videoUrl = safeHttpsUrl(input.youtubeUrl);
-    if (!videoUrl) throw new Error(`该视频链接不能安全发送给 ${providerLabel}，请改用 HTTPS 地址或附加本地视频文件`);
-    sourceKind = "public-video-url";
+    videoUrl = input.localVideo === "base64"
+      ? await blobBase64(input.videoBlob)
+      : await blobDataUrl(input.videoBlob);
   }
   onStage("analyzing");
   const endpoint = chatCompletionsEndpoint(input.endpoint, providerLabel);
@@ -140,6 +139,39 @@ export async function analyzeVideoWithChatCompletions(input = {}, dependencies =
     cost: Number.isFinite(Number(payload.usage?.cost)) ? Number(payload.usage.cost) : null,
     routing: clean(payload.provider) ? { provider: clean(payload.provider) } : null
   };
+}
+
+export function chatCompletionsVideoSourcePlan(input = {}) {
+  const providerLabel = clean(input.providerLabel) || "兼容视频服务";
+  const publicVideoUrl = safeHttpsUrl(input.videoUrl || input.youtubeUrl);
+  const hasLocalVideo = input.videoBlob instanceof Blob || input.hasLocalVideo === true;
+  const embeddedPage = input.referencePlaybackMode === "embed"
+    || EMBEDDED_VIDEO_PROVIDERS.has(clean(input.referenceProvider).toLocaleLowerCase("en-US"));
+  const directPublicUrlRequired = input.publicVideoUrl === "direct";
+  const assertUsablePublicUrl = () => {
+    if (directPublicUrlRequired && embeddedPage) {
+      throw new Error(`${providerLabel} 当前模型只确认了公网视频文件直链，不能分析 YouTube、Bilibili、抖音、X 或 Vimeo 播放页`);
+    }
+  };
+  if (input.preferPublicVideoUrl === true && publicVideoUrl) {
+    assertUsablePublicUrl();
+    return { videoUrl: publicVideoUrl, sourceKind: "public-video-url" };
+  }
+  if (hasLocalVideo) {
+    if (input.localVideo === "unsupported") {
+      throw new Error(`${providerLabel} 当前模型只确认了公网 HTTPS 视频文件直链，不能直接发送本地视频`);
+    }
+    const videoMimeType = clean(input.videoMimeType || input.videoBlob?.type).toLocaleLowerCase("en-US");
+    if (videoMimeType && !CHAT_COMPLETIONS_VIDEO_MIME_TYPES.has(videoMimeType)) {
+      throw new Error(`${providerLabel} 当前不能编码发送 ${videoMimeType} 视频；请先转换为 MP4、WebM、MOV、M4V 或 MPEG`);
+    }
+    return { videoUrl: "", sourceKind: "local-video" };
+  }
+  if (!publicVideoUrl) {
+    throw new Error(`该视频链接不能安全发送给 ${providerLabel}，请改用 HTTPS 地址或附加本地视频文件`);
+  }
+  assertUsablePublicUrl();
+  return { videoUrl: publicVideoUrl, sourceKind: "public-video-url" };
 }
 
 async function uploadGeminiVideo(blob, apiKey, fetchImpl) {
@@ -232,12 +264,16 @@ function safeHttpsUrl(value) {
 }
 
 async function blobDataUrl(blob) {
+  return `data:${blob.type};base64,${await blobBase64(blob)}`;
+}
+
+async function blobBase64(blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
   }
-  return `data:${blob.type};base64,${btoa(binary)}`;
+  return btoa(binary);
 }
 
 function chatCompletionsMessageText(value) {

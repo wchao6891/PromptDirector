@@ -22,7 +22,7 @@ def assert_panel_contains_children(panel, state: str) -> None:
           const outside = [...node.querySelectorAll('*')]
             .filter(child => {
               const style = getComputedStyle(child);
-              if (style.display === 'none' || style.visibility === 'hidden') return false;
+              if (style.display === 'none' || style.visibility === 'hidden' || child.getClientRects().length === 0) return false;
               const rect = child.getBoundingClientRect();
               return rect.left < panelRect.left - 1 || rect.right > panelRect.right + 1
                 || rect.top < panelRect.top - 1 || rect.bottom > panelRect.bottom + 1;

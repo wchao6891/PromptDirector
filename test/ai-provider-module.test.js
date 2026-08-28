@@ -40,6 +40,76 @@ test("DeepSeek identity-only discovery keeps models task-neutral and never guess
   assert.equal(result.cache.etag, '"models-v1"');
 });
 
+test("Zhipu discovery uses official GLM-4.6V capability facts while leaving unknown account models unverified", async () => {
+  const calls = [];
+  const module = createAiProviderModule({ fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return jsonResponse({ data: [{ id: "glm-4.6v" }, { id: "future-glm-video-model" }] });
+  } });
+
+  const result = await module.discoverModels({
+    id: "zhipu",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    apiKey: "zhipu-secret",
+    protocol: "chat_completions"
+  });
+
+  assert.equal(calls[0].url, "https://open.bigmodel.cn/api/paas/v4/models");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer zhipu-secret");
+  assert.equal(result.models[0].confidence, "declared");
+  assert.deepEqual(result.models[0].tasks, [
+    "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
+  ]);
+  assert.deepEqual(result.models[0].inputModalities, ["text", "image", "video", "file"]);
+  assert.deepEqual(result.models[0].supportedParameters, []);
+  assert.equal(result.models[1].confidence, "manual_unverified");
+  assert.deepEqual(result.models[1].tasks, []);
+  assert.equal(result.models[0].source, "provider_models+official_capabilities");
+
+  const official = getAiModelCapability("zhipu", "glm-4.6v");
+  assert.equal(official.source.url, "https://docs.bigmodel.cn/cn/guide/models/vlm/glm-4.6v");
+});
+
+test("Zhipu discovery classifies catalog-visible GLM-5.3-Flash as native multimodal", async () => {
+  const module = createAiProviderModule({ fetchImpl: async () => jsonResponse({ data: [{ id: "glm-5.3-flash" }] }) });
+  const result = await module.discoverModels({
+    id: "zhipu",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    apiKey: "zhipu-secret",
+    protocol: "chat_completions"
+  });
+  const model = result.models.find((item) => item.id === "glm-5.3-flash");
+  assert.equal(model.status, "available");
+  assert.equal(model.source, "provider_models+official_capabilities");
+  assert.equal(model.contextLength, 1_000_000);
+  assert.deepEqual(model.tasks, [
+    "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
+  ]);
+});
+
+test("Zhipu supplements a documented model omitted by its partial account catalog without claiming catalog access", async () => {
+  const module = createAiProviderModule({ fetchImpl: async () => jsonResponse({ data: [{ id: "glm-5" }] }) });
+  const profile = {
+    id: "zhipu",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    apiKey: "zhipu-secret",
+    protocol: "chat_completions"
+  };
+
+  const discovery = await module.discoverModels(profile);
+  const model = discovery.models.find((item) => item.id === "glm-4.6v");
+  assert.equal(model.status, "unverified");
+  assert.equal(model.source, "official_capabilities");
+  assert.deepEqual(model.tasks, [
+    "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
+  ]);
+
+  const verification = await module.verifyModelAccess(profile, "glm-4.6v");
+  assert.equal(verification.available, false);
+  assert.equal(verification.verification, "not_catalog_visible");
+  assert.deepEqual(verification.visibleModelIds, ["glm-5"]);
+});
+
 test("identity discovery automatically classifies standard declared modalities without using model names", async () => {
   const module = createAiProviderModule({ fetchImpl: async () => jsonResponse({ data: [
     {

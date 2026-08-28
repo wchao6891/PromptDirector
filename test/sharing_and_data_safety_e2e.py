@@ -449,16 +449,24 @@ def main() -> None:
               await chrome.storage.local.set({
                 entries: [...stored.entries, localOnly],
                 settings: {...stored.settings, libraryTitle: '本机精确恢复前'},
-                aiProviderRegistry,
                 syncSettings: {sentinel: 'keep-local-sync'},
                 uiPreferences: {sentinel: 'keep-local-ui'}
               });
+              const response = await chrome.runtime.sendMessage({
+                type: 'UPDATE_AI_PROVIDER_CONFIGURATION',
+                registry: aiProviderRegistry
+              });
+              if (!response?.ok) throw new Error(response?.message || 'AI 配置夹具写入失败');
               window.__originalStorageEstimate = navigator.storage.estimate.bind(navigator.storage);
               Object.defineProperty(navigator.storage, 'estimate', {
                 value: async () => ({quota: 1, usage: 1}),
                 configurable: true
               });
             }"""
+        )
+        library.wait_for_function(
+            """() => chrome.storage.local.get('aiProviderRegistry').then(stored =>
+              stored.aiProviderRegistry?.providers?.deepseek?.apiKey === 'fixture-private-key')"""
         )
         library.locator("#restore-folder-backup").click()
         capacity_dialog = library.locator("#promptdirector-app-dialog")

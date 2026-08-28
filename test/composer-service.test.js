@@ -209,6 +209,170 @@ test("Kimi creative planning uses the assigned model without falling back to ano
   assert.equal(planned.instruction, "保留核心冲突");
 });
 
+test("Zhipu creative planning is selectable from the registry and calls only its assigned GLM model", async () => {
+  const requests = [];
+  const zhipuSettings = visualSettings({
+    providerProfiles: {
+      zhipu: {
+        id: "zhipu",
+        label: "智谱 GLM",
+        endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        protocol: "chat_completions",
+        structuredOutput: "prompt_only",
+        mediaInput: { imageBase64: "raw", localVideo: "unsupported", preferPublicVideoUrl: true, publicVideoUrl: "direct" },
+        apiKey: "zhipu-secret",
+        consent: true,
+        capabilities: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"],
+        models: { creativePlanning: "glm-4.6v" },
+        discoveredModels: [{
+          id: "glm-4.6v",
+          tasks: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"]
+        }]
+      }
+    }
+  });
+  const catalog = composerServiceCatalog({}, zhipuSettings.vision);
+  assert.equal(catalog.find((item) => item.serviceId === "zhipu" && item.model === "glm-4.6v")?.planning, true);
+  assert.equal(catalog.find((item) => item.serviceId === "zhipu" && item.model === "glm-4.6v")?.reasoning, false);
+  const session = createComposerSession({
+    aiProfile: { serviceId: "zhipu", model: "glm-4.6v" },
+    messages: [{ role: "user", type: "request", content: "整理为广告创作方向" }]
+  });
+
+  const planned = await planComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings
+  }, zhipuSettings, {
+    fetchImpl: async (url, options) => {
+      requests.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+      return response({
+        model: "glm-4.6v",
+        choices: [{ message: { content: JSON.stringify({ route: "compose", status: "ready", instruction: "强化前三秒冲突" }) } }]
+      });
+    }
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://open.bigmodel.cn/api/paas/v4/chat/completions");
+  assert.equal(requests[0].headers.Authorization, "Bearer zhipu-secret");
+  assert.equal(requests[0].body.model, "glm-4.6v");
+  assert.equal(Object.hasOwn(requests[0].body, "response_format"), false);
+  assert.equal(planned.instruction, "强化前三秒冲突");
+
+  const imageSession = referenceSession("compatible");
+  imageSession.aiProfile = { serviceId: "zhipu", model: "glm-4.6v", thinking: true };
+  let imageRequest;
+  await executeComposerTurnWithService({
+    session: imageSession,
+    userMessage: "",
+    composerSettings: settings,
+    route: "compose",
+    instruction: "保持参考图构图"
+  }, zhipuSettings, preparedImages, {
+    stream: false,
+    fetchImpl: async (_url, options) => {
+      imageRequest = JSON.parse(options.body);
+      return response({ model: "glm-4.6v", choices: [{ message: { content: "保持三人关系与长焦层次" }, finish_reason: "stop" }] });
+    }
+  });
+  const imageParts = imageRequest.messages[1].content.filter((item) => item.type === "image_url");
+  assert.equal(imageParts.length, 3);
+  assert.deepEqual(imageParts[0], { type: "image_url", image_url: { url: "AAAA" } });
+  assert.equal(Object.hasOwn(imageRequest, "thinking"), false);
+  assert.equal(Object.hasOwn(imageRequest, "reasoning"), false);
+
+  const flashSettings = visualSettings({
+    providerProfiles: {
+      zhipu: {
+        ...zhipuSettings.vision.providerProfiles.zhipu,
+        models: { creativePlanning: "glm-5.3-flash" },
+        discoveredModels: [{
+          id: "glm-5.3-flash",
+          tasks: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"]
+        }]
+      }
+    }
+  });
+  const flashSession = referenceSession("compatible");
+  flashSession.aiProfile = { serviceId: "zhipu", model: "glm-5.3-flash" };
+  let flashRequest;
+  await executeComposerTurnWithService({
+    session: flashSession,
+    userMessage: "",
+    composerSettings: settings,
+    route: "compose",
+    instruction: "分析参考图后给出构图方案"
+  }, flashSettings, preparedImages, {
+    stream: false,
+    fetchImpl: async (_url, options) => {
+      flashRequest = JSON.parse(options.body);
+      return response({ model: "glm-5.3-flash", choices: [{ message: { content: "突出主体轮廓" }, finish_reason: "stop" }] });
+    }
+  });
+  const flashImage = flashRequest.messages[1].content.find((item) => item.type === "image_url");
+  assert.deepEqual(flashImage, {
+    type: "image_url",
+    image_url: { url: "data:image/png;base64,AAAA", detail: "high" }
+  });
+});
+
+test("video generation keeps Zhipu planning separate from the assigned generation provider", async () => {
+  const settingsValue = visualSettings({
+    providerProfiles: {
+      zhipu: {
+        id: "zhipu", label: "智谱 GLM",
+        endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        protocol: "chat_completions", apiKey: "zhipu-secret", consent: true,
+        capabilities: ["creativePlanning"],
+        models: { creativePlanning: "glm-4.6v" },
+        discoveredModels: [{ id: "glm-4.6v", tasks: ["creativePlanning"] }]
+      },
+      minimax: {
+        id: "minimax", label: "MiniMax",
+        endpoint: "https://api.minimaxi.com/v1",
+        protocol: "minimax_videos", apiKey: "minimax-secret", consent: true,
+        capabilities: ["videoGeneration"],
+        models: { videoGeneration: "hailuo-account-model" },
+        discoveredModels: [{
+          id: "hailuo-account-model", tasks: ["videoGeneration"],
+          inputModalities: ["text"], outputModalities: ["video"],
+          supportedResolutions: ["1080P"]
+        }]
+      }
+    }
+  });
+  const session = createComposerSession({
+    targetType: "video",
+    outputMode: "create_video",
+    aiProfile: { serviceId: "zhipu", model: "glm-4.6v" },
+    generationAiProfile: { serviceId: "minimax", model: "hailuo-account-model" },
+    generationParameters: { size: "1080P" },
+    messages: [{ role: "user", type: "request", content: "生成品牌片头" }]
+  });
+  const calls = [];
+  const result = await executeComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings, route: "compose", instruction: "标志从黑场聚合"
+  }, settingsValue, [], {
+    stream: false,
+    pollIntervalMs: 0,
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, body: options.body });
+      if (url === "https://open.bigmodel.cn/api/paas/v4/chat/completions") {
+        return response({ model: "glm-4.6v", choices: [{ message: { content: "黑场中标志快速聚合，镜头推进。" } }] });
+      }
+      if (url.endsWith("/video_generation") && options.method === "POST") return response({ task_id: "minimax-task" });
+      if (url.includes("/query/video_generation")) return response({ status: "Success", file_id: "minimax-file" });
+      if (url.includes("/files/retrieve")) return response({ file: { download_url: "https://cdn.example/result.mp4" } });
+      if (url === "https://cdn.example/result.mp4") return mediaResponse("video");
+      throw new Error(`unexpected ${url}`);
+    }
+  });
+
+  assert.equal(calls[0].url, "https://open.bigmodel.cn/api/paas/v4/chat/completions");
+  assert.match(String(calls.find((call) => call.url.endsWith("/video_generation"))?.body), /黑场中标志快速聚合/);
+  assert.equal(result.serviceId, "minimax");
+  assert.equal(result.requestModel, "hailuo-account-model");
+});
+
 test("an assigned provider without creative-planning capability fails instead of using DeepSeek", async () => {
   const providerSettings = visualSettings({
     providerProfiles: {

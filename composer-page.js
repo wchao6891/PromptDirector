@@ -4,6 +4,7 @@ import {
   clearComposerFailure,
   COMPOSER_INPUT_MAX_CHARACTERS,
   composerInputUsage,
+  composerProfileForTaskAssignment,
   createComposerSession,
   createReferenceSnapshots,
   imageReferenceModeAvailability,
@@ -410,8 +411,8 @@ async function createNewSession(referenceIds = [], focus = true) {
     targetPlatform: composerSettings.lastTargetPlatform,
     outputLanguage: composerSettings.outputLanguage,
     routeMode: "auto",
-    aiProfile: composerProfileForAssignment(composerAiTaskAssignments.creativePlanning, composerSettings.lastAiProfile),
-    generationAiProfile: composerProfileForAssignment(
+    aiProfile: composerProfileForTaskAssignment(composerAiTaskAssignments.creativePlanning, composerSettings.lastAiProfile),
+    generationAiProfile: composerProfileForTaskAssignment(
       composerAiTaskAssignments[targetType === "video" ? "videoGeneration" : "imageGeneration"],
       composerSettings.lastAiProfile
     ),
@@ -1569,20 +1570,26 @@ function renderComposerAiProfile() {
 
 function renderGenerationModelChoices(selectedProfile) {
   const generationMode = ["create_image", "create_video"].includes(composerSession?.outputMode);
-  for (const button of [elements.composerModelFlash, elements.composerModelPro, elements.composerModelOpenai, elements.composerModelCompatible, elements.composerModelXai]) {
-    button.hidden = generationMode;
-  }
-  elements.composerModelDynamic.hidden = !generationMode;
-  if (!generationMode) return elements.composerModelDynamic.replaceChildren();
-  const videoTask = composerSession.outputMode === "create_video";
-  const taskId = videoTask ? "videoGeneration" : "imageGeneration";
+  const videoTask = generationMode && composerSession.outputMode === "create_video";
+  const taskId = generationMode ? (videoTask ? "videoGeneration" : "imageGeneration") : "creativePlanning";
   const choices = Object.values(composerVisionSettings.providerProfiles ?? {}).flatMap((provider) => {
     const model = provider.models?.[taskId];
     if (!provider.credentialConfigured || !provider.consent || !provider.capabilities?.includes(taskId) || !model) return [];
-    const candidate = composerProfileForAssignment({ providerId: provider.id, model }, selectedProfile);
+    const candidate = composerProfileForTaskAssignment({ providerId: provider.id, model }, selectedProfile);
+    if (!generationMode) {
+      const service = composerServiceCatalog(composerAiSettings, composerVisionSettings)
+        .find((item) => item.serviceId === candidate.serviceId && item.model === candidate.model);
+      return service?.planning ? [{ provider, candidate }] : [];
+    }
     const capability = composerServiceCapabilities(candidate, composerVisionSettings)[videoTask ? "video" : "image"];
     return capability?.generate ? [{ provider, candidate }] : [];
   });
+  const staticFallback = !generationMode && choices.length === 0;
+  for (const button of [elements.composerModelFlash, elements.composerModelPro, elements.composerModelOpenai, elements.composerModelCompatible, elements.composerModelXai]) {
+    button.hidden = !staticFallback;
+  }
+  elements.composerModelDynamic.hidden = staticFallback;
+  if (staticFallback) return elements.composerModelDynamic.replaceChildren();
   elements.composerModelDynamic.replaceChildren(...choices.map(({ provider, candidate }) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1594,7 +1601,11 @@ function renderGenerationModelChoices(selectedProfile) {
     button.addEventListener("click", () => safely(() => updateComposerAiProfile(candidate))());
     return button;
   }));
-  if (!choices.length) elements.composerModelDynamic.append(rawTextEl("p", "composer-model-empty", t("没有已连接且支持当前生成任务的模型")));
+  if (!choices.length) elements.composerModelDynamic.append(rawTextEl(
+    "p",
+    "composer-model-empty",
+    t(generationMode ? "没有已连接且支持当前生成任务的模型" : "没有已连接且支持创作规划的模型")
+  ));
 }
 
 function renderImageGenerationSettings() {
@@ -1758,7 +1769,7 @@ function generationRouteProfile(videoTask) {
     ? composerVideoAvailability(current, composerVisionSettings, composerSession)
     : composerImageAvailability(current, composerVisionSettings, composerSession);
   if (currentAvailability.available) return current;
-  return composerProfileForAssignment(
+  return composerProfileForTaskAssignment(
     composerAiTaskAssignments[videoTask ? "videoGeneration" : "imageGeneration"],
     current
   );
@@ -1768,17 +1779,6 @@ function activeComposerProfile() {
   return normalizeComposerAiProfile(["create_image", "create_video"].includes(composerSession?.outputMode)
     ? composerSession?.generationAiProfile
     : composerSession?.aiProfile);
-}
-
-function composerProfileForAssignment(assignment, fallback) {
-  const providerId = String(assignment?.providerId ?? "");
-  const serviceId = providerId === "deepseek" ? "deepseek"
-    : providerId === "openai" ? "openai"
-      : providerId === "xai" ? "xai"
-        : providerId.startsWith("custom") ? "compatible"
-          : ["kimi", "gemini", "openrouter", "minimax", "volcengine"].includes(providerId) ? providerId : "";
-  if (!serviceId) return normalizeComposerAiProfile(fallback);
-  return normalizeComposerAiProfile({ serviceId, model: assignment?.model, thinking: fallback?.thinking === true });
 }
 
 async function updateImageGenerationParameters() {

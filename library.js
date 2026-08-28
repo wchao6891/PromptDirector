@@ -63,6 +63,8 @@ import {
   organizeDetailTagsWithDeepSeek
 } from "./deepseek.js";
 import { runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
+import { chatCompletionsVideoSourcePlan } from "./video-analysis.js";
+import { getAiModelCapability } from "./ai-model-capabilities.js";
 import {
   COMPOSER_METHOD_VERSION,
   DEFAULT_TASK_METHODS,
@@ -5002,10 +5004,37 @@ async function startVideoAnalysis(entry, asset) {
     showFeedback("请先允许所选 AI 服务接收本次明确提交的资料", true);
     return;
   }
-  const sourceKind = asset.storageMode === "managed" ? "本地视频文件（将上传）" : asset.reference?.provider === "youtube" ? "公共 YouTube URL" : "当前社媒引用链接";
+  const sourceUrl = asset.reference?.url || asset.sourceUrl;
+  const modelMediaInput = getAiModelCapability(provider.id, model)?.mediaInput ?? {};
+  const mediaInput = { ...(provider.mediaInput ?? {}), ...modelMediaInput };
+  let sourceKind = asset.storageMode === "managed"
+    ? "本地视频文件（将上传）"
+    : asset.reference?.provider === "youtube" ? "公共 YouTube URL" : "当前视频链接";
+  if (provider.protocol === "chat_completions") {
+    try {
+      const sourcePlan = chatCompletionsVideoSourcePlan({
+        providerLabel: provider.label,
+        videoUrl: sourceUrl,
+        hasLocalVideo: asset.storageMode === "managed",
+        videoByteSize: asset.byteSize,
+        referenceProvider: asset.reference?.provider,
+        referencePlaybackMode: asset.reference?.playbackMode,
+        localVideo: mediaInput.localVideo,
+        videoMimeType: asset.mimeType,
+        preferPublicVideoUrl: mediaInput.preferPublicVideoUrl,
+        publicVideoUrl: mediaInput.publicVideoUrl
+      });
+      sourceKind = sourcePlan.sourceKind === "local-video"
+        ? "本地视频文件（将编码发送）"
+        : mediaInput.publicVideoUrl === "direct" ? "公网视频文件直链" : "公共视频 URL";
+    } catch (error) {
+      showFeedback(error.message || "所选模型不能分析这个视频来源", true);
+      return;
+    }
+  }
   await showAppDialog({
     title: "分析视频",
-    description: `来源：${sourceKind} · 服务：${provider.label} · 模型：${model}。将发送视频或公开 YouTube URL 与本次问题；费用由服务商账户产生。`,
+    description: `来源：${sourceKind} · 服务：${provider.label} · 模型：${model}。将发送上述视频来源与本次问题；费用由服务商账户产生。`,
     fields: [
       { id: "mode", label: "分析方式", type: "select", value: "creative-breakdown", options: [
         { value: "creative-breakdown", label: "创意拆解" },
@@ -7965,6 +7994,7 @@ function providerConnectionLabel(profile = {}) {
 function providerCatalogLabel(profile = {}) {
   const models = profile.discoveredModels ?? [];
   const unavailable = models.filter((model) => model.status === "unavailable").length;
+  const unverified = models.filter((model) => model.status === "unverified").length;
   if (profile.discovery?.error) {
     return t("模型目录读取失败：{error}；保留 {count} 个模型{unavailable}", {
       error: translateUiMessage(profile.discovery.error),
@@ -7975,7 +8005,7 @@ function providerCatalogLabel(profile = {}) {
   if (!profile.discovery?.discoveredAt) return t("模型目录未读取");
   return t("模型目录已读取 · {count} 个模型 · 尚未执行模型调用验证{unavailable}", {
     count: models.length,
-    unavailable: unavailable ? t(" · {count} 个下架或当前不可用", { count: unavailable }) : ""
+    unavailable: `${unavailable ? t(" · {count} 个下架或当前不可用", { count: unavailable }) : ""}${unverified ? t(" · {count} 个来自官方能力说明，账号可用性待实测", { count: unverified }) : ""}`
   });
 }
 
@@ -7984,6 +8014,7 @@ function assignedModelState(profile, modelValue) {
   if (!profile || !model) return "";
   const discovered = (profile.discoveredModels ?? []).find((item) => item.id === model);
   if (discovered?.status === "unavailable") return t("（已下架或当前不可用）");
+  if (discovered?.status === "unverified") return t("（官方声明支持，账号可用性待实测）");
   if (profile.discovery?.discoveredAt && !discovered) return t("（当前目录不可用）");
   return "";
 }
@@ -8404,6 +8435,7 @@ function modelAssignmentHelp(profile, taskId, selectedValue) {
   const selected = String(selectedValue ?? "").trim();
   if (!selected) return "";
   const model = availableAiModelsForTask(taskId, profile).find((item) => item.id === selected);
+  if (model?.status === "unverified") return t("官方声明该模型支持此能力，但账号目录未列出；以真实执行结果为准");
   if (!model || ["declared", "protocol_inferred"].includes(model.assignmentEvidence)) return "";
   return t("当前模型未声明这项能力；是否可用以真实执行结果为准");
 }

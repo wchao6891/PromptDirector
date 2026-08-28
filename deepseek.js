@@ -54,7 +54,7 @@ export function deepSeekErrorDetails(error) {
   if (error instanceof TypeError && /fetch|network|load/i.test(String(error.message ?? ""))) {
     return { kind: "network", message: "网络连接失败，请检查服务地址、权限或网络后重试", retryable: true };
   }
-  return { kind: "unknown", message: error?.message || "DeepSeek 处理失败", retryable: false };
+  return { kind: "unknown", message: error?.message || "AI 服务处理失败", retryable: false };
 }
 
 export function normalizeAiSettings(value = {}) {
@@ -65,9 +65,14 @@ export function normalizeAiSettings(value = {}) {
     analysisModel: String(value.analysisModel ?? "").trim() || DEFAULT_ANALYSIS_MODEL,
     analysisInstructionsByLocale: normalizeAnalysisInstructions(value.analysisInstructionsByLocale),
     compatible: {
+      ...(String(value.compatible?.label ?? "").trim() ? { label: String(value.compatible.label).trim() } : {}),
       endpoint: String(value.compatible?.endpoint ?? "").trim(),
       model: String(value.compatible?.model ?? "").trim(),
-      apiKey: String(value.compatible?.apiKey ?? "").trim()
+      apiKey: String(value.compatible?.apiKey ?? "").trim(),
+      structuredOutput: value.compatible?.structuredOutput === "prompt_only" ? "prompt_only" : "json_object",
+      ...(positiveInteger(value.compatible?.structuredOutputTokenBudget)
+        ? { structuredOutputTokenBudget: positiveInteger(value.compatible.structuredOutputTokenBudget) }
+        : {})
     }
   };
 }
@@ -90,9 +95,13 @@ export function mergeAiSettings(currentValue = {}, incomingValue = {}) {
       en: incoming.analysisInstructionsByLocale?.en ?? current.analysisInstructionsByLocale.en
     },
     compatible: {
+      label: incoming.compatible?.label ?? current.compatible.label,
       endpoint: nextEndpoint,
       model: incoming.compatible?.model ?? current.compatible.model,
-      apiKey: incomingCompatibleKey || (credentialReset ? "" : current.compatible.apiKey)
+      apiKey: incomingCompatibleKey || (credentialReset ? "" : current.compatible.apiKey),
+      structuredOutput: incoming.compatible?.structuredOutput ?? current.compatible.structuredOutput,
+      structuredOutputTokenBudget: incoming.compatible?.structuredOutputTokenBudget
+        ?? current.compatible.structuredOutputTokenBudget
     }
   });
   if (incoming.clearApiKey) {
@@ -113,6 +122,7 @@ export function publicAiSettings(value = {}) {
     consent: settings.consent,
     analysisInstructionsByLocale: structuredClone(settings.analysisInstructionsByLocale),
     compatible: {
+      ...(settings.compatible.label ? { label: settings.compatible.label } : {}),
       endpoint: settings.compatible.endpoint,
       model: settings.compatible.model,
       configured: Boolean(settings.compatible.apiKey || isLoopbackEndpoint(settings.compatible.endpoint))
@@ -131,9 +141,10 @@ export async function analyzeTextWithDeepSeek(entry, catalogValue, settingsValue
 
 export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, settingsValue, fetchImpl = fetch, requestOptions = {}) {
   const settings = requireAiSettings(settingsValue, "分析");
+  const providerLabel = aiProvider(settings).label;
   const outputLocale = settingsValue?.outputLocale === "en" ? "en" : "zh-CN";
   const input = requestOptions.analysisInput || canonicalTextAnalysisInput(entry);
-  if (!input.text) throw new Error("这条案例没有文字，DeepSeek 文字分析会跳过");
+  if (!input.text) throw new Error(`这条案例没有文字，${providerLabel} 文字分析会跳过`);
   const systemMessages = [
     { role: "system", content: analysisSystemInstruction(outputLocale) },
     { role: "system", content: analysisTaxonomyPrompt(catalogValue, outputLocale) },
@@ -150,14 +161,15 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
     const requestStartedAt = Date.now();
     emitAnalysisDiagnostic(requestOptions, "request_started", { attempt });
     try {
-      result = await requestDeepSeek({
+      result = await requestDeepSeek(structuredRequestBody({
         model: settings.analysisModel,
-        response_format: { type: "json_object" },
         thinking: { type: "disabled" },
         temperature: 0.1,
-        max_tokens: 1000,
+        max_tokens: settings.activeProvider === "compatible"
+          ? settings.compatible.structuredOutputTokenBudget || 1000
+          : 1000,
         messages
-      }, settings, {
+      }, settings), settings, {
         fetchImpl,
         signal: requestOptions.signal,
         timeoutMs: outputAttempt
@@ -180,7 +192,7 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
     }
     usage = addNormalizedUsage(usage, result.usage);
     try {
-      const parsed = parseJsonObject(result.content, "DeepSeek 返回格式不正确，本次没有写入任何标签");
+      const parsed = parseJsonObject(result.content, `${providerLabel} 返回格式不正确，本次没有写入任何标签`);
       const tagCount = Array.isArray(parsed.tags) ? parsed.tags.length : null;
       emitAnalysisDiagnostic(requestOptions, "response_received", {
         attempt,
@@ -213,9 +225,8 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
 
 export async function summarizeVisualSetWithAi(input, settingsValue, options = {}) {
   const settings = requireAiSettings(settingsValue, "总结整组图片");
-  const result = await requestDeepSeek({
+  const result = await requestDeepSeek(structuredRequestBody({
     model: settings.analysisModel,
-    response_format: { type: "json_object" },
     thinking: { type: "disabled" },
     temperature: 0.1,
     max_tokens: 6000,
@@ -223,7 +234,7 @@ export async function summarizeVisualSetWithAi(input, settingsValue, options = {
       { role: "system", content: String(options.instruction ?? "").trim() },
       { role: "user", content: JSON.stringify(input) }
     ]
-  }, settings, {
+  }, settings), settings, {
     fetchImpl: options.fetchImpl ?? fetch,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
@@ -270,9 +281,8 @@ export async function analysisProfileFingerprint(settingsValue = {}, outputLocal
 
 export async function organizeDetailTagsWithDeepSeek(chunk, settingsValue, fetchImpl = fetch) {
   const settings = requireAiSettings(settingsValue, "整理三级标签");
-  const result = await requestDeepSeek({
+  const result = await requestDeepSeek(structuredRequestBody({
     model: settings.analysisModel,
-    response_format: { type: "json_object" },
     thinking: { type: "disabled" },
     temperature: 0,
     max_tokens: 4000,
@@ -283,7 +293,7 @@ export async function organizeDetailTagsWithDeepSeek(chunk, settingsValue, fetch
       },
       { role: "user", content: JSON.stringify(chunk) }
     ]
-  }, settings, { fetchImpl, timeoutMessage: "AI 整理超时，正式标签库没有改变" });
+  }, settings), settings, { fetchImpl, timeoutMessage: "AI 整理超时，正式标签库没有改变" });
   const parsed = parseJsonObject(result.content, "AI 整理结果格式无效，正式标签库没有改变");
   return {
     mappings: validateDetailOrganizationResponse(parsed, chunk),
@@ -294,12 +304,12 @@ export async function organizeDetailTagsWithDeepSeek(chunk, settingsValue, fetch
 
 export async function planComposerTurn(input, settingsValue, options = {}) {
   const settings = requireAiSettings(settingsValue, "生成");
+  const providerLabel = aiProvider(settings).label;
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
   assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
-  const body = withComposerProfile({
+  const body = withComposerProfile(structuredRequestBody({
     model: profile.model,
-    response_format: { type: "json_object" },
     messages: [
       { role: "system", content: compileAgentPlanningPrompt({
         settings: input.composerSettings,
@@ -310,15 +320,15 @@ export async function planComposerTurn(input, settingsValue, options = {}) {
       }) },
       { role: "user", content: JSON.stringify(request) }
     ]
-  }, profile);
+  }, settings), profile);
   assertComposerRequestBudget(body.messages);
   const result = await requestDeepSeek(body, settings, {
     fetchImpl: options.fetchImpl ?? fetch,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
-    timeoutMessage: "DeepSeek 规划超时，本次没有开始生成"
+    timeoutMessage: `${providerLabel} 规划超时，本次没有开始生成`
   });
-  const parsed = parseJsonObject(result.content, "DeepSeek 没有返回有效的 Agent 计划");
+  const parsed = parseJsonObject(result.content, `${providerLabel} 没有返回有效的 Agent 计划`);
   const latestUserMessage = [...request.messages].reverse().find((item) => item.role === "user")?.content ?? "";
   const planned = normalizePlannerResult(parsed, {
     route: request.routeMode === "auto" ? "compose" : request.routeMode,
@@ -337,6 +347,7 @@ export async function planComposerTurn(input, settingsValue, options = {}) {
 
 export async function streamComposedPrompt(input, settingsValue, options = {}) {
   const settings = requireAiSettings(settingsValue, "生成");
+  const provider = aiProvider(settings);
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
   assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
@@ -370,9 +381,9 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
   let streamed;
   try {
     const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, requestController.signal);
-    streamed = await readDeepSeekSse(response, options.onDelta);
+    streamed = await readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
   } catch (error) {
-    if (timedOut) throw new DeepSeekApiError("DeepSeek 流式输出超时，本次结果未保存", 408);
+    if (timedOut) throw new DeepSeekApiError(`${provider.label} 流式输出超时，本次结果未保存`, 408);
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -428,6 +439,7 @@ export async function executeAgentTurn(input, settingsValue, options = {}) {
 }
 
 async function streamAgentText({ settings, profile, systemInstruction, executionRequest, options }) {
+  const provider = aiProvider(settings);
   const body = withComposerProfile({
     model: profile.model,
     stream: true,
@@ -449,11 +461,11 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
   const timeoutId = timeoutMs === null ? null : setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
     const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, controller.signal);
-    const result = await readDeepSeekSse(response, options.onDelta);
-    if (!String(result.content ?? "").trim()) throw new DeepSeekApiError("DeepSeek 没有返回完整内容", 422);
+    const result = await readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
+    if (!String(result.content ?? "").trim()) throw new DeepSeekApiError(`${provider.label} 没有返回完整内容`, 422);
     return result;
   } catch (error) {
-    if (timedOut) throw new DeepSeekApiError("DeepSeek 流式输出超时，本次结果未保存", 408);
+    if (timedOut) throw new DeepSeekApiError(`${provider.label} 流式输出超时，本次结果未保存`, 408);
     throw error;
   } finally {
     if (timeoutId !== null) clearTimeout(timeoutId);
@@ -461,8 +473,8 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
   }
 }
 
-export async function readDeepSeekSse(response, onDelta = () => undefined) {
-  if (!response?.body?.getReader) throw new DeepSeekApiError("DeepSeek 没有返回流式内容", 503);
+export async function readDeepSeekSse(response, onDelta = () => undefined, providerLabel = "DeepSeek", apiKey = "") {
+  if (!response?.body?.getReader) throw new DeepSeekApiError(`${providerLabel} 没有返回流式内容`, 503);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -477,8 +489,8 @@ export async function readDeepSeekSse(response, onDelta = () => undefined) {
     if (!data) return;
     if (data === "[DONE]") { done = true; return; }
     let event;
-    try { event = JSON.parse(data); } catch { throw new DeepSeekApiError("DeepSeek 流式结果格式错误，本次结果未保存", 422); }
-    if (event?.error) throw new DeepSeekApiError(`DeepSeek 流式生成失败：${String(event.error.message ?? "服务返回错误")}`, Number(event.error.status) || 503);
+    try { event = JSON.parse(data); } catch { throw new DeepSeekApiError(`${providerLabel} 流式结果格式错误，本次结果未保存`, 422); }
+    if (event?.error) throw new DeepSeekApiError(`${providerLabel} 流式生成失败：${redactSecret(String(event.error.message ?? "服务返回错误"), apiKey)}`, Number(event.error.status) || 503);
     model = String(event.model ?? model);
     if (event.usage) usage = normalizeUsage(event.usage);
     const choice = event.choices?.[0];
@@ -502,10 +514,10 @@ export async function readDeepSeekSse(response, onDelta = () => undefined) {
   } finally {
     reader.releaseLock?.();
   }
-  if (finishReason === "length") throw new DeepSeekApiError("DeepSeek 输出被截断，本次结果未保存", 422);
-  if (finishReason === "content_filter") throw new DeepSeekApiError("DeepSeek 未能返回此内容，本次结果未保存", 422);
-  if (!done || finishReason !== "stop") throw new DeepSeekApiError("DeepSeek 流式输出意外中断，本次结果未保存", 503);
-  if (!content.trim()) throw new DeepSeekApiError("DeepSeek 没有返回完整提示词", 503);
+  if (finishReason === "length") throw new DeepSeekApiError(`${providerLabel} 输出被截断，本次结果未保存`, 422);
+  if (finishReason === "content_filter") throw new DeepSeekApiError(`${providerLabel} 未能返回此内容，本次结果未保存`, 422);
+  if (!done || finishReason !== "stop") throw new DeepSeekApiError(`${providerLabel} 流式输出意外中断，本次结果未保存`, 503);
+  if (!content.trim()) throw new DeepSeekApiError(`${providerLabel} 没有返回完整提示词`, 503);
   return { content, usage, model, finishReason };
 }
 
@@ -522,6 +534,12 @@ function requireAiSettings(value, action) {
     ? `请先确认：主动${action}时会把所选案例文字发送到 DeepSeek`
     : `请先确认：主动${action}时会把所选案例文字发送到所选 AI 服务`);
   return settings;
+}
+
+function structuredRequestBody(body, settings) {
+  return settings.activeProvider === "compatible" && settings.compatible.structuredOutput === "prompt_only"
+    ? body
+    : { ...body, response_format: { type: "json_object" } };
 }
 
 async function requestDeepSeek(body, settings, options = {}) {
@@ -543,10 +561,13 @@ async function requestDeepSeek(body, settings, options = {}) {
   let response;
   let payload = {};
   try {
+    const requestBody = settings.activeProvider === "compatible"
+      ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== "thinking"))
+      : body;
     response = await fetchImpl(provider.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}) },
-      body: JSON.stringify({ ...body, model: requestModel }),
+      body: JSON.stringify({ ...requestBody, model: requestModel }),
       signal: requestController.signal
     });
     try {
@@ -556,24 +577,24 @@ async function requestDeepSeek(body, settings, options = {}) {
       payload = {};
     }
   } catch (error) {
-    if (timedOut) throw new DeepSeekApiError(options.timeoutMessage || "DeepSeek 请求超时，本次没有保存", 408);
+    if (timedOut) throw new DeepSeekApiError(options.timeoutMessage || `${provider.label} 请求超时，本次没有保存`, 408);
     if (error?.name === "AbortError") throw error;
-    throw new DeepSeekApiError("无法连接 DeepSeek，请检查网络后重试", 0, { cause: error });
+    throw new DeepSeekApiError(`无法连接 ${provider.label}，请检查网络后重试`, 0, { cause: error });
   } finally {
     clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", onExternalAbort);
   }
   if (!response.ok) {
-    throw new DeepSeekApiError(apiError(payload, response.status), response.status, {
+    throw new DeepSeekApiError(apiError(payload, response.status, provider), response.status, {
       retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after"))
     });
   }
   const choice = payload?.choices?.[0];
   const finishReason = String(choice?.finish_reason ?? "");
   const content = choice?.message?.content;
-  if (!content) throw new DeepSeekApiError("DeepSeek 没有返回可用结果", 503);
-  if (!options.allowPartialContent && finishReason === "length") throw new DeepSeekApiError("DeepSeek 输出被截断，本次结果未应用", 422);
-  if (!options.allowPartialContent && finishReason === "content_filter") throw new DeepSeekApiError("DeepSeek 未能返回此内容，本次结果未应用", 422);
+  if (!content) throw new DeepSeekApiError(`${provider.label} 没有返回可用结果`, 503);
+  if (!options.allowPartialContent && finishReason === "length") throw new DeepSeekApiError(`${provider.label} 输出被截断，本次结果未应用`, 422);
+  if (!options.allowPartialContent && finishReason === "content_filter") throw new DeepSeekApiError(`${provider.label} 未能返回此内容，本次结果未应用`, 422);
   return {
     content,
     finishReason,
@@ -595,11 +616,11 @@ async function fetchDeepSeekStream(body, settings, fetchImpl, signal) {
     });
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    throw new DeepSeekApiError("无法连接 DeepSeek，请检查网络后重试", 0, { cause: error });
+    throw new DeepSeekApiError(`无法连接 ${provider.label}，请检查网络后重试`, 0, { cause: error });
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new DeepSeekApiError(apiError(payload, response.status), response.status);
+    throw new DeepSeekApiError(apiError(payload, response.status, provider), response.status);
   }
   return response;
 }
@@ -608,9 +629,9 @@ function aiProvider(settingsValue) {
   const settings = normalizeAiSettings(settingsValue);
   if (settings.activeProvider === "compatible") {
     const details = compatibleEndpoint(settings.compatible.endpoint);
-    return { endpoint: details.url, apiKey: settings.compatible.apiKey, model: settings.compatible.model, loopback: details.loopback };
+    return { endpoint: details.url, apiKey: settings.compatible.apiKey, model: settings.compatible.model, loopback: details.loopback, label: settings.compatible.label || "所选 AI 服务" };
   }
-  return { endpoint: DEEPSEEK_ENDPOINT, apiKey: settings.apiKey, model: settings.analysisModel, loopback: false };
+  return { endpoint: DEEPSEEK_ENDPOINT, apiKey: settings.apiKey, model: settings.analysisModel, loopback: false, label: "DeepSeek" };
 }
 
 function compatibleEndpoint(value) {
@@ -733,6 +754,11 @@ function finite(value) {
   return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
 }
 
+function positiveInteger(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : 0;
+}
+
 function retryAfterMilliseconds(value) {
   const seconds = Number(value);
   if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
@@ -740,11 +766,17 @@ function retryAfterMilliseconds(value) {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
-function apiError(payload, status) {
-  const detail = String(payload?.error?.message ?? "").trim();
-  if (status === 401) return "DeepSeek API Key 无效或已失效";
-  if (status === 402) return "DeepSeek 余额不足，请充值后继续";
-  if (status === 429) return "DeepSeek 请求过于频繁，请稍后重试";
-  if (status === 500 || status === 503) return "DeepSeek 服务暂时不可用，请稍后重试";
-  return `DeepSeek 分析失败${detail ? `：${detail}` : `（HTTP ${status}）`}`;
+function apiError(payload, status, provider = {}) {
+  const label = provider.label || "AI 服务";
+  const detail = redactSecret(String(payload?.error?.message ?? "").trim(), provider.apiKey);
+  if (status === 401) return `${label} API Key 无效或已失效`;
+  if (status === 402) return `${label} 余额不足，请充值后继续`;
+  if (status === 429) return `${label} 请求过于频繁，请稍后重试`;
+  if (status === 500 || status === 503) return `${label} 服务暂时不可用，请稍后重试`;
+  return `${label} 分析失败${detail ? `：${detail}` : `（HTTP ${status}）`}`;
+}
+
+function redactSecret(value, secretValue) {
+  const secret = String(secretValue ?? "").trim();
+  return secret ? String(value ?? "").split(secret).join("[已隐藏 API Key]") : String(value ?? "");
 }

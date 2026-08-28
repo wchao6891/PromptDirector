@@ -4,6 +4,7 @@ import {
   analyzeVideoWithChatCompletions,
   analyzeVideoWithGemini,
   analyzeVideoWithOpenRouter,
+  chatCompletionsVideoSourcePlan,
   publicYouTubeUrl,
   requireVideoAnalysisConfirmation,
   videoAnalysisPrompt
@@ -105,6 +106,109 @@ test("Kimi uses its configured Chat Completions endpoint and exposes provider-sp
   assert.equal(result.provider, "Kimi");
   assert.equal(result.model, "moonshot-account-video-202608");
   assert.equal(result.usage.totalTokens, 14);
+});
+
+test("GLM-4.6V prefers its documented public URL and rejects undocumented local-only input", async () => {
+  let body;
+  const result = await analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-4.6v",
+    mode: "content-summary",
+    preferPublicVideoUrl: true,
+    localVideo: "unsupported",
+    publicVideoUrl: "direct",
+    videoBlob: new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" }),
+    youtubeUrl: "https://assets.example/video.mp4"
+  }, {
+    fetchImpl: async (_url, options) => {
+      body = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "00:01 开场" } }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+
+  assert.equal(body.messages[0].content[1].video_url.url, "https://assets.example/video.mp4");
+  assert.equal(result.sourceKind, "public-video-url");
+  await assert.rejects(() => analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-4.6v",
+    mode: "content-summary",
+    preferPublicVideoUrl: true,
+    localVideo: "unsupported",
+    publicVideoUrl: "direct",
+    videoBlob: new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" })
+  }), /只确认了公网 HTTPS 视频文件直链/);
+});
+
+test("documented direct-video routes reject social playback pages before a paid request", async () => {
+  let fetchCalls = 0;
+  await assert.rejects(() => analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-5.3-flash",
+    mode: "content-summary",
+    videoUrl: "https://www.youtube.com/watch?v=abc",
+    referenceProvider: "youtube",
+    referencePlaybackMode: "embed",
+    preferPublicVideoUrl: true,
+    publicVideoUrl: "direct"
+  }, { fetchImpl: async () => { fetchCalls += 1; } }), /只确认了公网视频文件直链/);
+  assert.equal(fetchCalls, 0);
+});
+
+test("video source preflight exposes unsupported local input before confirmation", () => {
+  assert.throws(() => chatCompletionsVideoSourcePlan({
+    providerLabel: "智谱 GLM",
+    hasLocalVideo: true,
+    localVideo: "unsupported",
+    publicVideoUrl: "direct"
+  }), /不能直接发送本地视频/);
+});
+
+test("GLM-5.3-Flash sends an eligible local video as raw Base64", async () => {
+  let body;
+  const result = await analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-5.3-flash",
+    mode: "content-summary",
+    localVideo: "base64",
+    videoBlob: new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" })
+  }, { fetchImpl: async (_url, options) => {
+    body = JSON.parse(options.body);
+    return new Response(JSON.stringify({ choices: [{ message: { content: "00:01 开场" } }] }), {
+      status: 200, headers: { "content-type": "application/json" }
+    });
+  } });
+  assert.equal(body.messages[0].content[1].video_url.url, "AQID");
+  assert.equal(result.sourceKind, "local-video");
+});
+
+test("GLM local video preflight does not invent an unpublished 8 MB API limit", () => {
+  assert.deepEqual(chatCompletionsVideoSourcePlan({
+    providerLabel: "智谱 GLM",
+    hasLocalVideo: true,
+    videoByteSize: 9 * 1024 * 1024,
+    videoMimeType: "video/mp4",
+    localVideo: "base64",
+    publicVideoUrl: "direct"
+  }), { videoUrl: "", sourceKind: "local-video" });
+});
+
+test("local formats the Chat Completions adapter cannot encode are blocked before a paid request", () => {
+  assert.throws(() => chatCompletionsVideoSourcePlan({
+    providerLabel: "智谱 GLM",
+    hasLocalVideo: true,
+    videoMimeType: "video/unknown",
+    localVideo: "base64"
+  }), /不能编码发送/);
 });
 
 test("generic Chat Completions video errors name the selected provider without exposing its key", async () => {
