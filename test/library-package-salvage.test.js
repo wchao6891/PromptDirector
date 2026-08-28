@@ -5,6 +5,7 @@ import { createDefaultFacetCatalog } from "../facets.js";
 import { mergeLibraryPackage, parseCompleteFolderBackup, parseLibraryPackage } from "../library-package.js";
 import { SCHEMA_VERSION, createDefaultTaxonomy } from "../taxonomy.js";
 import { restoreTrashItems } from "../trash.js";
+import { createComposerSession } from "../composer.js";
 
 test("salvage mode drops one missing media file without blocking recoverable cases", () => {
   const source = packageValue([
@@ -131,6 +132,110 @@ test("salvage mode skips a media-only case when its last recoverable file is bro
     entryId: "case:media-only",
     reason: "no_usable_content"
   });
+});
+
+test("rescue mode isolates broken private resources without leaving placeholders", () => {
+  const source = packageValue([entry("case:healthy")]);
+  source.trashState = {
+    version: 1,
+    items: [{
+      id: "trash:entry:case:trashed",
+      kind: "entry",
+      targetId: "case:trashed",
+      deletedAt: "2026-08-27T00:00:00.000Z",
+      snapshot: entry("case:trashed", {
+        text: "仍可恢复的回收站正文",
+        mediaAssets: [image("image:trash-missing")],
+        primaryMediaId: "image:trash-missing"
+      }),
+      relationships: { collections: [] }
+    }]
+  };
+  source.composerSessions = [createComposerSession({
+    id: "session:rescue",
+    referenceSnapshots: [{
+      entryId: "temp-reference:rescue",
+      alias: "@参考1",
+      title: "缺失临时图片",
+      sourceType: "temporary",
+      referenceKind: "reference",
+      referenceText: "仍保留的文字参考",
+      imageRefs: [{ visualId: "temp-asset:missing", mimeType: "image/webp" }],
+      assetRefs: [{
+        assetId: "temp-asset:missing",
+        kind: "image",
+        mimeType: "image/webp",
+        name: "missing.webp",
+        byteSize: 5,
+        archivePath: "temp-references/session-rescue/missing.webp"
+      }]
+    }]
+  })];
+  source.creativeRuns = [{
+    id: "run:rescue",
+    sessionId: "session:rescue",
+    promptVersionId: "prompt:rescue",
+    promptText: "仍保留的历史提示词",
+    createdAt: "2026-08-27T00:00:00.000Z",
+    updatedAt: "2026-08-27T00:00:00.000Z",
+    outputs: [{
+      visual: {
+        id: "creative:missing",
+        kind: "image",
+        mimeType: "image/webp",
+        byteSize: 5,
+        capturedAt: "2026-08-27T00:00:00.000Z",
+        assetPath: "creative-results/run-rescue/missing.webp"
+      },
+      capturedAt: "2026-08-27T00:00:00.000Z",
+      signals: [{ type: "captured", at: "2026-08-27T00:00:00.000Z" }]
+    }]
+  }];
+  source.creativeSkills = {
+    version: 1,
+    items: [{
+      id: "skill:rescue",
+      callName: "救援方法",
+      portableId: "rescue-method",
+      description: "方法正文仍可恢复",
+      currentVersionId: "skill-version:rescue",
+      versions: [{
+        id: "skill-version:rescue",
+        createdAt: "2026-08-27T00:00:00.000Z",
+        reason: "imported",
+        source: "imported",
+        skillMarkdown: "# 救援方法",
+        references: [],
+        provenanceMarkdown: ""
+      }],
+      packageFiles: [{
+        path: "SKILL.md",
+        assetId: "skill-file:missing",
+        byteSize: 5,
+        mimeType: "text/markdown",
+        archivePath: "skills/rescue-method/skill-file-missing/SKILL.md"
+      }],
+      textModeConfirmed: false,
+      runtimeDependencies: [],
+      createdAt: "2026-08-27T00:00:00.000Z",
+      updatedAt: "2026-08-27T00:00:00.000Z"
+    }]
+  };
+
+  const parsed = parseLibraryPackage(source, new Map(), { salvageInvalidMedia: true });
+
+  assert.deepEqual(parsed.trashState.items[0].snapshot.mediaAssets, []);
+  assert.equal(parsed.trashState.items[0].snapshot.text, "仍可恢复的回收站正文");
+  assert.deepEqual(parsed.composerSessions[0].referenceSnapshots[0].assetRefs, []);
+  assert.deepEqual(parsed.composerSessions[0].referenceSnapshots[0].imageRefs, []);
+  assert.equal(parsed.composerSessions[0].referenceSnapshots[0].referenceText, "仍保留的文字参考");
+  assert.deepEqual(parsed.creativeRuns[0].outputs, []);
+  assert.equal(parsed.creativeRuns[0].promptText, "仍保留的历史提示词");
+  assert.deepEqual(parsed.creativeSkills.items[0].packageFiles, []);
+  assert.match(JSON.stringify(parsed.importDiagnostics), /trash_media_dropped/);
+  assert.match(JSON.stringify(parsed.importDiagnostics), /temporary_asset_dropped/);
+  assert.match(JSON.stringify(parsed.importDiagnostics), /creative_output_dropped/);
+  assert.match(JSON.stringify(parsed.importDiagnostics), /skill_file_dropped/);
 });
 
 test("complete folder backup parsing stays strict even if a caller requests ZIP media salvage", async () => {

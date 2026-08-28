@@ -299,7 +299,10 @@
               <button id="create-folder-backup" type="button" data-i18n="备份资料库">备份资料库</button>
               <button id="restore-folder-backup" class="button-secondary" type="button" data-i18n="恢复资料库">恢复资料库</button>
             </div>
-            <p class="data-safety-note" data-i18n="备份会把案例和本地媒体逐项写入资料夹；恢复前会先检查内容，不会覆盖现有资料。">备份会把案例和本地媒体逐项写入资料夹；恢复前会先检查内容，不会覆盖现有资料。</p>
+            <div class="data-safety-secondary-actions">
+              <button id="restore-library-replacement-point" class="quiet-danger" type="button" hidden data-i18n="回退上次精确恢复">回退上次精确恢复</button>
+            </div>
+            <p class="data-safety-note" data-i18n="备份会把案例和本地媒体逐项写入资料夹；恢复默认安全合并。只有完整备份可在明确选择并建立回退点后精确替换。">备份会把案例和本地媒体逐项写入资料夹；恢复默认安全合并。只有完整备份可在明确选择并建立回退点后精确替换。</p>
             <details id="sync-settings" class="sync-settings">
               <summary data-i18n="跨设备同步">跨设备同步</summary>
               <div class="sync-settings-body">

@@ -1,8 +1,14 @@
 export function buildLibraryImportReport(previewValue = {}, details = {}) {
   const preview = previewValue && typeof previewValue === "object" ? previewValue : {};
   const stats = preview.importStats && typeof preview.importStats === "object" ? preview.importStats : {};
+  const diagnostics = Array.isArray(preview.importDiagnostics) ? preview.importDiagnostics : [];
   const importedCount = count(preview.importedCount);
   const lines = [];
+  if (diagnostics.some((item) => item?.code === "backup_integrity_degraded")) {
+    lines.push("完整性标记异常，本次只能按救援方案恢复");
+  }
+  const extraFileCount = diagnostics.filter((item) => item?.code === "extra_file_ignored").length;
+  if (extraFileCount) lines.push(`忽略清单外文件 ${extraFileCount} 项`);
   if (count(preview.skippedCount)) lines.push(`完全相同，跳过 ${count(preview.skippedCount)} 个`);
   if (count(preview.remappedCount)) lines.push(`同一来源有新内容，保留副本 ${count(preview.remappedCount)} 个`);
   if (count(stats.droppedAiAssignments)) lines.push(`丢弃损坏的 AI 标签 ${count(stats.droppedAiAssignments)} 条`);
@@ -13,7 +19,7 @@ export function buildLibraryImportReport(previewValue = {}, details = {}) {
   if (count(preview.importedSkillCount)) recoveredExtras.push(`${count(preview.importedSkillCount)} 个 Skill`);
   if (count(details.mediaCount)) recoveredExtras.push(`${count(details.mediaCount)} 项本地文件${details.byteLabel ? `（${details.byteLabel}）` : ""}`);
   if (recoveredExtras.length) lines.push(`恢复 ${recoveredExtras.join("、")}`);
-  const partial = [
+  const partial = diagnostics.length > 0 || [
     preview.skippedCount,
     preview.remappedCount,
     stats.droppedAiAssignments,

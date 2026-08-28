@@ -164,14 +164,16 @@ test("folder restore and ZIP import retry one response loss with the same operat
   assert.match(js, /await chrome\.runtime\.sendMessage\(message\)[\s\S]*await chrome\.runtime\.sendMessage\(message\)/);
 });
 
-test("shared ZIP import salvages individual media failures while complete folder restore stays strict", () => {
+test("shared ZIP and degraded folders salvage individual failures while verified folders stay strict", () => {
   const sharedImport = js.slice(js.indexOf("async function importSharedLibraryPackage"), js.indexOf("function createLibraryImportOperationId"));
   const folderRestore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function importSharedLibraryPackage"));
-  assert.match(sharedImport, /salvageInvalidMedia:\s*true/);
-  assert.match(sharedImport, /findInvalidImportedImageIds/);
-  assert.match(sharedImport, /filesWithoutInvalidEntryMedia/);
-  assert.match(sharedImport, /parseLibraryPackage\(library,\s*salvageFiles/);
-  assert.doesNotMatch(folderRestore, /salvageInvalidMedia:\s*true/);
+  assert.match(sharedImport, /inspectLibraryTransfer\(\{[\s\S]*?sourceType:\s*LIBRARY_TRANSFER_SOURCES\.SHARE_PACKAGE/);
+  assert.match(folderRestore, /sourceType:\s*envelope\.mode === "complete"[\s\S]*LIBRARY_TRANSFER_SOURCES\.COMPLETE_BACKUP[\s\S]*LIBRARY_TRANSFER_SOURCES\.RESCUE_BACKUP/);
+  assert.match(folderRestore, /inspectFolderBackupEnvelope\(files\)/);
+  assert.match(folderRestore, /sourceReport:\s*envelope\.report/);
+  assert.match(sharedImport, /validateImage:\s*validateImportedImage/);
+  assert.match(folderRestore, /validateImage:\s*validateImportedImage/);
+  assert.doesNotMatch(sharedImport, /parseLibraryPackage|findInvalidImportedImageIds|filesWithoutInvalidEntryMedia/);
 });
 
 test("a committed import never deletes restored non-case media during later UI refresh failure", () => {

@@ -13,21 +13,22 @@ import { normalizeTrashState } from "./trash.js";
 import { caseSemanticFingerprint } from "./library-semantic-identity.js";
 import { normalizeCreativeSkillsState } from "./creative-skills.js";
 
-const PLAN_TOKEN_VERSION = "v2";
+const PLAN_TOKEN_VERSION = "v3";
 const DEFAULT_RECEIPT_TTL_MS = 30 * 60 * 1000;
 const RECEIPT_STATUSES = new Set(["pending", "completed"]);
 
-export function createLibraryImportPlanToken(stateValue = {}, sourceValue = {}) {
+export function createLibraryImportPlanToken(stateValue = {}, sourceValue = {}, planValue = {}) {
   const payload = stableJson({
     state: projectLibraryImportState(stateValue),
-    source: projectLibraryImportSource(sourceValue)
+    source: projectLibraryImportSource(sourceValue),
+    plan: cloneData(planValue)
   });
   return `import-plan:${PLAN_TOKEN_VERSION}:${fnv1a64(payload)}`;
 }
 
-export function assertLibraryImportPlanCurrent(tokenValue, stateValue = {}, sourceValue = {}) {
+export function assertLibraryImportPlanCurrent(tokenValue, stateValue = {}, sourceValue = {}, planValue = {}) {
   const token = String(tokenValue ?? "").trim();
-  if (token && token === createLibraryImportPlanToken(stateValue, sourceValue)) return;
+  if (token && token === createLibraryImportPlanToken(stateValue, sourceValue, planValue)) return;
   throw Object.assign(new Error("预览后资料库发生了变化，请重新检查再导入"), {
     code: "IMPORT_PLAN_STALE"
   });
@@ -82,7 +83,7 @@ export function claimLibraryImportTransaction(stateValue, request = {}, options 
     };
   }
 
-  assertLibraryImportPlanCurrent(planToken, request.stateValue, request.sourceValue);
+  assertLibraryImportPlanCurrent(planToken, request.stateValue, request.sourceValue, request.planValue);
 
   const receipt = normalizeLibraryImportTransaction({
     operationId,

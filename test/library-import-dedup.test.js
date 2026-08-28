@@ -141,7 +141,7 @@ test("reimporting an already remapped source version reuses that copy instead of
   assert.equal(third.entryIdMap["source-entry"], second.entryIdMap["source-entry"]);
 });
 
-test("different source identities remain separate even when their content is identical", () => {
+test("different source ids reuse one case when their complete semantic content is identical", () => {
   const first = mergeLibraryPackage(emptyLibrary(), portablePackage([
     portableEntry("source-a")
   ]));
@@ -149,10 +149,10 @@ test("different source identities remain separate even when their content is ide
     portableEntry("source-b")
   ]));
 
-  assert.equal(second.state.entries.length, 2);
-  assert.equal(second.importedCount, 1);
-  assert.equal(second.skippedCount, 0);
-  assert.equal(second.entryIdMap["source-b"], "source-b");
+  assert.equal(second.state.entries.length, 1);
+  assert.equal(second.importedCount, 0);
+  assert.equal(second.skippedCount, 1);
+  assert.equal(second.entryIdMap["source-b"], "source-a");
 });
 
 test("identical managed media is reused by content hash even though archive paths are receiver-local", () => {

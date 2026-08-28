@@ -32,6 +32,36 @@ test("plan tokens ignore sync status, undo, and job noise but still react to liv
   });
 });
 
+test("plan tokens bind the confirmed recovery choices and resource mappings", () => {
+  const source = makeImportSource();
+  const before = makeCurrentLibrary();
+  const plan = {
+    mode: "merge",
+    preserveLibraryConfiguration: true,
+    libraryAddedAt: "2026-08-27T08:00:00.000Z",
+    importBatchId: "library-import:bound-plan",
+    mappings: { entryIds: { source: "entry:copy" } },
+    resourceWrites: [{ sourceId: "image:source", targetId: "image:copy", resourceType: "media" }]
+  };
+  const token = createLibraryImportPlanToken(before, source, plan);
+
+  assert.doesNotThrow(() => assertLibraryImportPlanCurrent(token, before, source, plan));
+  assert.throws(() => assertLibraryImportPlanCurrent(token, before, source, {
+    ...plan,
+    preserveLibraryConfiguration: false
+  }), (error) => {
+    assert.equal(error.code, "IMPORT_PLAN_STALE");
+    return true;
+  });
+  assert.throws(() => assertLibraryImportPlanCurrent(token, before, source, {
+    ...plan,
+    resourceWrites: [{ sourceId: "image:source", targetId: "image:other", resourceType: "media" }]
+  }), (error) => {
+    assert.equal(error.code, "IMPORT_PLAN_STALE");
+    return true;
+  });
+});
+
 test("a completed apply is replayed for the same operationId and planToken without calling the writer again", () => {
   const source = makeImportSource();
   const before = makeCurrentLibrary();

@@ -78,6 +78,14 @@ const DEFINITIONS = [
 export const ASSET_FORMAT_REGISTRY = Object.freeze(DEFINITIONS);
 export const SUPPORTED_ASSET_KINDS = Object.freeze(["image", "video", "audio", "document", "attachment"]);
 
+const PORTABLE_ASSET_DIRECTORIES = Object.freeze({
+  image: "images",
+  video: "videos",
+  audio: "audio",
+  document: "documents",
+  attachment: "attachments"
+});
+
 const BY_EXTENSION = new Map();
 const BY_MIME_TYPE = new Map();
 for (const definition of ASSET_FORMAT_REGISTRY) {
@@ -135,6 +143,54 @@ export function extensionsForAssetKind(kind) {
   return Object.freeze(ASSET_FORMAT_REGISTRY
     .filter((definition) => definition.kind === kind)
     .flatMap((definition) => definition.extensions));
+}
+
+export function portableAssetDirectory(kindValue) {
+  const kind = String(kindValue ?? "").trim();
+  const directory = PORTABLE_ASSET_DIRECTORIES[kind];
+  if (!directory) throw new Error(`不支持的媒体类型：${kind || "未知"}`);
+  return directory;
+}
+
+export function resolvePortableAssetFormat(asset = {}, file = {}) {
+  const kind = String(asset.kind ?? "").trim();
+  const directory = portableAssetDirectory(kind);
+
+  const fileMimeType = normalizeMimeType(file?.type);
+  const assetMimeType = normalizeMimeType(asset?.mimeType);
+  const reportedMimeType = fileMimeType && !GENERIC_MIME_TYPES.has(fileMimeType)
+    ? fileMimeType
+    : assetMimeType;
+  const candidates = [
+    normalizeExtension(asset?.sourceFormat),
+    fileExtension(asset?.sourceTitle),
+    ...assetFormatsForMimeType(fileMimeType).filter((item) => item.kind === kind).flatMap((item) => item.extensions),
+    ...assetFormatsForMimeType(assetMimeType).filter((item) => item.kind === kind).flatMap((item) => item.extensions)
+  ].filter(Boolean);
+
+  for (const extension of [...new Set(candidates)]) {
+    const definition = assetFormatForExtension(extension);
+    if (definition?.kind === kind && isReportedMimeCompatible(definition, reportedMimeType)) {
+      return Object.freeze({
+        directory,
+        extension,
+        mimeType: canonicalMimeType(definition, reportedMimeType),
+        formatCategory: definition.category,
+        playbackCapability: ["image", "video", "audio"].includes(kind) ? "native" : "unknown"
+      });
+    }
+    if (!definition && kind === "attachment" && /^[a-z0-9]+$/u.test(extension)) {
+      return Object.freeze({
+        directory,
+        extension,
+        mimeType: reportedMimeType || "application/octet-stream",
+        formatCategory: "other-source",
+        playbackCapability: "unknown"
+      });
+    }
+  }
+
+  throw new Error(`“${asset?.sourceTitle || asset?.id || "未命名媒体"}”缺少可安全识别的文件扩展名`);
 }
 
 export function fileExtension(value) {

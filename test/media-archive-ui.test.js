@@ -73,17 +73,21 @@ test("share package import sizes only this user-selected package by its real fil
   assert.match(imported, /maxFileBytes:\s*file\.size/);
   assert.match(imported, /maxImageBytes:\s*file\.size/);
   assert.match(imported, /readZipBlob\(file, packageLimits\)/);
-  assert.match(imported, /salvageOptions = \{ \.\.\.packageLimits, salvageInvalidMedia: true \}/);
-  assert.match(imported, /parseLibraryPackage\(library, files, salvageOptions\)/);
+  assert.match(imported, /sourceType:\s*LIBRARY_TRANSFER_SOURCES\.SHARE_PACKAGE/);
+  assert.match(imported, /limits:\s*packageLimits/);
+  assert.match(imported, /validateImage:\s*validateImportedImage/);
 });
 
-test("complete folder restore derives its media budget from the selected verified backup", () => {
+test("folder restore derives its media budget before strict or rescue inspection", () => {
   const restore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function importSharedLibraryPackage"));
   assert.match(restore, /largestMediaBytes = Math\.max\(1, \.\.\.backupMediaSizes\)/);
   assert.match(restore, /maxFileBytes: largestMediaBytes/);
   assert.match(restore, /maxImageBytes: largestMediaBytes/);
   assert.match(restore, /maxVideoBytes: largestMediaBytes/);
-  assert.match(restore, /parseCompleteFolderBackup\(library, files, restoreLimits\)/);
+  assert.match(restore, /inspectFolderBackupEnvelope\(files\)/);
+  assert.match(restore, /sourceType:\s*envelope\.mode === "complete"[\s\S]*LIBRARY_TRANSFER_SOURCES\.COMPLETE_BACKUP[\s\S]*LIBRARY_TRANSFER_SOURCES\.RESCUE_BACKUP/);
+  assert.match(restore, /limits:\s*restoreLimits/);
+  assert.match(restore, /validateImage:\s*validateImportedImage/);
   assert.doesNotMatch(restore, /maxFileBytes: Number\.MAX_SAFE_INTEGER/);
 });
 

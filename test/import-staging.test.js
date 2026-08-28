@@ -141,6 +141,7 @@ test("unsupported local link moves from staging to a case media record without a
 test("orphan cleanup retains assets referenced by sessions jobs cases and staging", () => {
   const retained = collectRetainedLocalAssetIds({
     entries: [{ mediaAssets: [{ id: "case:asset" }] }],
+    trashState: { items: [{ snapshot: { mediaAssets: [{ id: "trash:asset" }] } }] },
     creativeRuns: [{ outputs: [{ visual: { id: "result:asset" } }] }],
     creativeSkills: { items: [{ packageFiles: [{ assetId: "skill:asset" }] }] },
     composerSessions: [{ referenceSnapshots: [{
@@ -158,7 +159,7 @@ test("orphan cleanup retains assets referenced by sessions jobs cases and stagin
   });
 
   assert.deepEqual([...retained].sort(), [
-    "case:asset", "job:asset", "result:asset", "session:asset", "skill:asset", "staged:asset"
+    "case:asset", "job:asset", "result:asset", "session:asset", "skill:asset", "staged:asset", "trash:asset"
   ]);
 });
 
