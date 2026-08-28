@@ -83,6 +83,7 @@ export function publicAiProviderRegistry(value = {}) {
       endpoint: profile.endpoint,
       protocol: profile.protocol,
       structuredOutput: profile.structuredOutput,
+      mediaInput: structuredClone(profile.mediaInput),
       models: structuredClone(profile.models),
       capabilities: [...profile.capabilities],
       catalogRequiredTasks: [...profile.catalogRequiredTasks],
@@ -225,6 +226,7 @@ function provider(id, value = {}) {
     endpoint: clean(value?.endpoint) || preset?.endpoint || "",
     protocol: clean(value?.protocol) || preset?.protocol || "native",
     structuredOutput: normalizeStructuredOutput(preset?.structuredOutput ?? value?.structuredOutput),
+    mediaInput: normalizeMediaInput(preset?.mediaInput ?? value?.mediaInput),
     apiKey: clean(value?.apiKey),
     credentialConfigured: Object.hasOwn(value ?? {}, "apiKey")
       ? Boolean(clean(value?.apiKey) || isLoopback(value?.endpoint))
@@ -358,7 +360,17 @@ function modelAssignmentEvidence(taskId, model = {}, profile = null) {
 }
 
 function normalizeStructuredOutput(value) {
+  if (value === "prompt_only") return "prompt_only";
   return value === "json_object" ? "json_object" : "json_schema";
+}
+
+function normalizeMediaInput(value = {}) {
+  return {
+    imageBase64: value?.imageBase64 === "raw" ? "raw" : "data_url",
+    localVideo: ["unsupported", "base64"].includes(value?.localVideo) ? value.localVideo : "data_url",
+    preferPublicVideoUrl: value?.preferPublicVideoUrl === true,
+    publicVideoUrl: value?.publicVideoUrl === "direct" ? "direct" : "any_https"
+  };
 }
 
 function taskName(taskId) {

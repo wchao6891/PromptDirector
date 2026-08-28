@@ -133,6 +133,8 @@ def launch_context(
         assert not bootstrap_errors, f"扩展首次初始化出现运行时错误：{bootstrap_errors}"
     finally:
         bootstrap.close()
+    if os.environ.get("PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK") == "1":
+        context.route("https://**/*", lambda route: route.abort("blockedbyclient"))
     return context
 
 

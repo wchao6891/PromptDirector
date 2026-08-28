@@ -5160,7 +5160,12 @@ async function analyzeEntryVideo(message) {
     mode: message.mode,
     customQuestion: message.customQuestion,
     videoBlob,
-    youtubeUrl: sourceUrl,
+    videoUrl: sourceUrl,
+    referenceProvider: asset.reference?.provider,
+    referencePlaybackMode: asset.reference?.playbackMode,
+    localVideo: route.localVideo,
+    preferPublicVideoUrl: route.preferPublicVideoUrl,
+    publicVideoUrl: route.publicVideoUrl,
     onStage: (phase) => chrome.runtime.sendMessage({
       type: "VIDEO_ANALYSIS_CHANGED", entryId: entry.id, assetId: asset.id, phase,
       provider: route.provider, model: route.model

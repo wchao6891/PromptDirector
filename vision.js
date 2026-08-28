@@ -146,7 +146,10 @@ function normalizeCompatibleSettings(value = {}) {
   }
   return {
     protocol: value?.protocol === "responses" ? "responses" : "chat_completions",
-    structuredOutput: value?.structuredOutput === "json_object" ? "json_object" : "json_schema",
+    structuredOutput: value?.structuredOutput === "prompt_only"
+      ? "prompt_only"
+      : value?.structuredOutput === "json_object" ? "json_object" : "json_schema",
+    imageBase64: value?.imageBase64 === "raw" ? "raw" : "data_url",
     endpoint,
     model: String(value?.model ?? "").trim(),
     apiKey,
@@ -224,6 +227,7 @@ export function mergeVisionSettings(currentValue = {}, incomingValue = {}) {
     compatible: {
       protocol: incoming.compatible?.protocol ?? current.compatible.protocol,
       structuredOutput: incoming.compatible?.structuredOutput ?? current.compatible.structuredOutput,
+      imageBase64: incoming.compatible?.imageBase64 ?? current.compatible.imageBase64,
       endpoint: nextEndpoint,
       model: incoming.compatible?.model ?? current.compatible.model,
       apiKey: compatibleApiKey,
@@ -259,6 +263,7 @@ export function publicVisionSettings(value = {}) {
     compatible: {
       protocol: settings.compatible.protocol,
       structuredOutput: settings.compatible.structuredOutput,
+      imageBase64: settings.compatible.imageBase64,
       model: settings.compatible.model,
       configured: Boolean(settings.compatible.endpoint && settings.compatible.model &&
         (settings.compatible.apiKey || isLoopbackEndpoint(settings.compatible.endpoint))),
@@ -527,20 +532,22 @@ async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl,
   }
   const schema = options.schema ?? VISUAL_MODEL_RESPONSE_SCHEMA;
   const schemaName = options.schemaName ?? "vision_reconstruction_tags_v1";
-  const structuredInstruction = settings.compatible.structuredOutput === "json_object"
+  const structuredInstruction = ["json_object", "prompt_only"].includes(settings.compatible.structuredOutput)
     ? `${instruction}\nJSON property names are case-sensitive. Return exactly one object matching this JSON Schema: ${JSON.stringify(schema)}`
     : instruction;
   const body = {
     model: settings.compatible.model,
     max_tokens: positiveTokenBudget(options.maxOutputTokens) || settings.maxOutputTokens,
-    response_format: settings.compatible.structuredOutput === "json_object"
-      ? { type: "json_object" }
-      : { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } },
+    ...(settings.compatible.structuredOutput === "prompt_only" ? {} : {
+      response_format: settings.compatible.structuredOutput === "json_object"
+        ? { type: "json_object" }
+        : { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } }
+    }),
     messages: [{
       role: "user",
       content: [
         { type: "text", text: structuredInstruction },
-        { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } }
+        compatibleImagePart(imageDataUrl, settings.compatible.imageBase64)
       ]
     }]
   };
@@ -552,6 +559,14 @@ async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl,
     throw new VisionOutputError(compatibleEmptyResultMessage(choice?.finish_reason, options.emptyResultMessage));
   }
   return { content, model: String(payload.model ?? settings.compatible.model), usage: normalizeCompatibleUsage(payload.usage) };
+}
+
+function compatibleImagePart(imageDataUrl, encoding) {
+  if (encoding === "raw") {
+    const raw = String(imageDataUrl).replace(/^data:image\/[^;]+;base64,/i, "");
+    return { type: "image_url", image_url: { url: raw } };
+  }
+  return { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } };
 }
 
 function compatibleEmptyResultMessage(finishReason, fallback = "") {

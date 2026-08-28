@@ -289,7 +289,7 @@ def assert_new_install_defaults() -> None:
     with extension_session("prompt-director-ai-registry-new-") as run:
         library = open_ai_settings(run)
 
-        expect(library.locator("#ai-provider-list .ai-provider-row")).to_have_count(10)
+        expect(library.locator("#ai-provider-list .ai-provider-row")).to_have_count(11)
         expect(library.locator('#ai-provider-list [data-provider-category="official"]')).to_contain_text("官方服务")
         expect(library.locator('#ai-provider-list [data-provider-category="aggregator"]')).to_contain_text("聚合平台")
         expect(library.locator('#ai-provider-list [data-provider-category="custom"]')).to_contain_text("自定义兼容服务")
@@ -321,7 +321,7 @@ def assert_new_install_defaults() -> None:
         assert execution_state["ok"] is True, execution_state
         assert execution_state["aiSettings"]["analysisModel"] == "", execution_state
         assert execution_state["aiSettings"]["compatible"] == {
-            "endpoint": "", "model": "", "apiKey": ""
+            "endpoint": "", "model": "", "apiKey": "", "structuredOutput": "json_object"
         }, execution_state
 
         library.evaluate(
@@ -500,7 +500,7 @@ def main() -> None:
         })
         library = open_ai_settings(run)
 
-        expect(library.locator("#ai-provider-list .ai-provider-row")).to_have_count(10)
+        expect(library.locator("#ai-provider-list .ai-provider-row")).to_have_count(11)
         expect(library.locator("#ai-assignment-list .ai-assignment-row")).to_have_count(7)
         expect(library.locator('[data-ai-routing-panel="tasks"]')).to_be_visible()
         expect(library.locator('[data-ai-routing-panel="providers"]')).to_be_hidden()
@@ -524,22 +524,26 @@ def main() -> None:
         expect(library.locator("#ai-settings-status")).to_contain_text("规则保存在本机")
         assignments_before_rules = library.evaluate("() => chrome.storage.local.get('aiTaskAssignments').then(value => value.aiTaskAssignments)")
         library.locator("#analysis-instructions-zh").fill("只保存统一 Registry 的文字分析规则")
-        library.locator("#ai-settings-form").get_by_role("button", name="保存分析规则").click()
+        text_save = library.locator("#ai-settings-form").get_by_role("button", name="保存分析规则")
+        text_save.click()
         library.wait_for_function(
             """expected => chrome.storage.local.get('aiPreferences').then(value =>
               value.aiPreferences?.textInstructionsByLocale?.['zh-CN'] === expected)""",
             arg="只保存统一 Registry 的文字分析规则",
         )
+        expect(text_save).to_be_enabled()
         library.locator('[data-analysis-kind="vision"]').click()
         expect(library.locator("#vision-instructions-zh")).to_be_visible()
         expect(library.locator("#vision-settings-status")).to_contain_text("规则保存在本机")
         library.locator("#vision-instructions-zh").fill("只保存统一 Registry 的图片分析规则")
-        library.locator("#vision-settings-form").get_by_role("button", name="保存分析规则").click()
+        vision_save = library.locator("#vision-settings-form").get_by_role("button", name="保存分析规则")
+        vision_save.click()
         library.wait_for_function(
             """expected => chrome.storage.local.get('aiPreferences').then(value =>
               value.aiPreferences?.visionInstructionsByLocale?.['zh-CN'] === expected)""",
             arg="只保存统一 Registry 的图片分析规则",
         )
+        expect(vision_save).to_be_enabled()
         saved_preferences = library.evaluate("() => chrome.storage.local.get(['aiPreferences', 'aiTaskAssignments'])")
         assert saved_preferences["aiPreferences"]["textInstructionsByLocale"]["zh-CN"] == "只保存统一 Registry 的文字分析规则"
         assert saved_preferences["aiPreferences"]["visionInstructionsByLocale"]["zh-CN"] == "只保存统一 Registry 的图片分析规则"
@@ -565,7 +569,8 @@ def main() -> None:
         dialog.locator("#promptdirector-app-dialog-providerEditor").select_option("openrouter")
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor")).to_have_value("openrouter")
         expect(dialog.locator("#promptdirector-app-dialog-provider_openrouter_apiKey")).to_be_visible()
-        expect(dialog.locator("#promptdirector-app-dialog-providerEditor option")).to_have_count(10)
+        expect(dialog.locator("#promptdirector-app-dialog-providerEditor option")).to_have_count(11)
+        expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="官方服务 · 智谱 GLM")).to_have_count(1)
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="官方服务 · Kimi")).to_have_count(1)
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="聚合平台 · OpenRouter")).to_have_count(1)
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="自定义兼容服务 · 自定义兼容服务（图片与生成）")).to_have_count(1)
@@ -769,7 +774,7 @@ def main() -> None:
         assert composer_parameters["aspectRatio"] == "16:9", composer_parameters
         assert composer_parameters["imageSize"] == "2K", composer_parameters
         assert gemini_interaction_calls == 0
-        print({"providersShown": 10, "connectedProviders": 5, "taskAssignments": 7, "newInstallUnassigned": True, "nanoBananaCatalogAssigned": True, "nanoBananaComposerParameters": True, "paidCalls": 0, "unifiedPreferencesSaved": True, "credentialsExposed": False})
+        print({"providersShown": 11, "connectedProviders": 5, "taskAssignments": 7, "newInstallUnassigned": True, "nanoBananaCatalogAssigned": True, "nanoBananaComposerParameters": True, "paidCalls": 0, "unifiedPreferencesSaved": True, "credentialsExposed": False})
 
 
 if __name__ == "__main__":

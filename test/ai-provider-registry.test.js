@@ -54,7 +54,7 @@ function configuredAssignments() {
 
 test("provider presets are the single model-free source for official and aggregator services", () => {
   assert.deepEqual(AI_PROVIDER_PRESETS.map((preset) => preset.id), [
-    "deepseek", "openai", "gemini", "xai", "kimi", "minimax", "volcengine", "openrouter",
+    "deepseek", "zhipu", "openai", "gemini", "xai", "kimi", "minimax", "volcengine", "openrouter",
     "custom-text", "custom-media"
   ]);
   assert.equal(AI_PROVIDER_PRESETS.every((preset) =>
@@ -66,6 +66,24 @@ test("provider presets are the single model-free source for official and aggrega
   assert.equal(getAiProviderPreset("gemini").capabilities.includes("imageGeneration"), true);
   assert.equal(getAiProviderPreset("deepseek").capabilities.includes("imageAnalysis"), true);
   assert.equal(getAiProviderPreset("deepseek").structuredOutput, "json_object");
+  assert.deepEqual(getAiProviderPreset("zhipu"), {
+    id: "zhipu",
+    label: "智谱 GLM",
+    category: "official",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    protocol: "chat_completions",
+    discovery: { adapter: "identity" },
+    catalogCompleteness: "partial",
+    capabilities: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"],
+    catalogRequiredTasks: [],
+    structuredOutput: "prompt_only",
+    mediaInput: {
+      imageBase64: "raw",
+      localVideo: "unsupported",
+      preferPublicVideoUrl: true,
+      publicVideoUrl: "direct"
+    }
+  });
   assert.deepEqual(getAiProviderPreset("gemini").catalogRequiredTasks, ["imageGeneration"]);
   assert.equal(getAiProviderPreset("openrouter").category, "aggregator");
   assert.equal(getAiProviderPreset("missing"), null);

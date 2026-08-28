@@ -436,6 +436,37 @@ test("compatible json_object vision requests keep image input and local reconstr
   })), /至少一个有效检索标签/);
 });
 
+test("Zhipu-compatible vision sends raw image Base64 without OpenAI-only detail fields", async () => {
+  let body;
+  await analyzeImageWithVision({
+    imageDataUrl: "data:image/png;base64,AAAA",
+    catalog: createDefaultFacetCatalog(),
+    locale: "zh-CN",
+    settings: {
+      activeProvider: "compatible", consent: true,
+      compatible: {
+        protocol: "chat_completions",
+        structuredOutput: "prompt_only",
+        imageBase64: "raw",
+        endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        apiKey: "zhipu-secret",
+        model: "glm-4.6v"
+      }
+    }
+  }, async (_url, options) => {
+    body = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(completeVisionResult()) } }] })
+    };
+  });
+
+  const image = body.messages[0].content.find((item) => item.type === "image_url");
+  assert.deepEqual(image, { type: "image_url", image_url: { url: "AAAA" } });
+  assert.equal(Object.hasOwn(body, "response_format"), false);
+  assert.match(body.messages[0].content.find((item) => item.type === "text").text, /reconstructionPrompt/);
+});
+
 test("compatible empty vision results get exactly one structured-output correction request", async () => {
   const input = {
     imageDataUrl: "data:image/png;base64,AAAA",

@@ -1,5 +1,5 @@
 import { boundedMediaBlobFromResponse } from "./bounded-media.js";
-import { getAiModelCapability } from "./ai-model-capabilities.js";
+import { getAiModelCapability, listAiModelCapabilities } from "./ai-model-capabilities.js";
 import { getAiProviderPreset } from "./ai-provider-presets.js";
 
 const TEXT_TASKS = Object.freeze(["textTags", "skillExtraction", "creativePlanning"]);
@@ -53,12 +53,15 @@ export function createAiProviderModule(options = {}) {
     }) : {
       providerId: profile.id,
       discoveredAt: new Date().toISOString(),
-      models: mergeModels(discovery.models, configuredModels(profile).map((model) => ({
-        ...model,
-        status: Array.isArray(discovery.models) && !discovery.models.some((item) => item.id === model.id) && !profile.id.startsWith("custom")
-          ? "unavailable"
-          : model.status
-      }))),
+      models: mergeModels(discovery.models, configuredModels(profile).map((model) => {
+        const discovered = discovery.models.find((item) => item.id === model.id);
+        return {
+          ...model,
+          status: discovered?.status ?? (Array.isArray(discovery.models) && !profile.id.startsWith("custom")
+            ? "unavailable"
+            : model.status)
+        };
+      })),
       cache: discovery.cache,
       source: discovery.source
     };
@@ -71,12 +74,15 @@ export function createAiProviderModule(options = {}) {
     const modelId = clean(modelIdValue);
     if (!modelId) throw new Error("缺少要校验的模型名称");
     const result = await discoverModels({ ...profileValue, models: {} }, { etag: "" });
-    const providerModels = result.models.filter((model) => model.source !== "user_configuration");
+    const providerModels = result.models.filter((model) =>
+      model.status !== "unavailable" && model.source.includes("provider_models")
+    );
+    const available = providerModels.some((model) => model.id === modelId);
     return {
       providerId: result.providerId,
       modelId,
-      available: providerModels.some((model) => model.id === modelId),
-      verification: "catalog_visible",
+      available,
+      verification: available ? "catalog_visible" : "not_catalog_visible",
       executionVerified: false,
       visibleModelIds: providerModels.map((model) => model.id)
     };
@@ -97,9 +103,25 @@ async function discoverProviderModels(fetchImpl, profile, cache) {
   const result = await adapter(fetchImpl, profile, cache);
   if (result.notModified) return result;
   const allowedTasks = preset ? new Set(preset.capabilities) : null;
+  const officialModels = preset?.catalogCompleteness === "partial"
+    ? listAiModelCapabilities(profile.id).map((capability) => modelDescriptor({ id: capability.id }, {
+      status: "unverified",
+      confidence: "declared",
+      tasks: capability.tasks,
+      inputModalities: capability.inputModalities,
+      outputModalities: capability.outputModalities,
+      supportedParameters: capability.supportedParameters,
+      supportedResolutions: capability.supportedResolutions,
+      supportedAspectRatios: capability.supportedAspectRatios,
+      referenceImages: capability.referenceImages,
+      concurrencyLimit: capability.concurrencyLimit,
+      contextLength: capability.contextLength,
+      source: "official_capabilities"
+    }))
+    : [];
   return {
     ...result,
-    models: result.models.map((model) => ({
+    models: mergeModels(result.models, officialModels).map((model) => ({
       ...model,
       tasks: allowedTasks ? model.tasks.filter((task) => allowedTasks.has(task)) : model.tasks
     }))
@@ -274,7 +296,7 @@ function modelDescriptor(item = {}, options = {}) {
   const descriptor = {
     id,
     name: clean(item.displayName ?? item.display_name ?? item.name ?? item.id) || id,
-    status: clean(item.status) || "available",
+    status: clean(options.status ?? item.status) || "available",
     confidence: options.confidence ?? "manual_unverified",
     source: options.source ?? "unknown",
     tasks: uniqueTaskIds(options.tasks),
@@ -285,7 +307,7 @@ function modelDescriptor(item = {}, options = {}) {
       : stringArray(item.supported_parameters ?? item.supportedParameters ?? item.allowed_passthrough_parameters)),
     parameterDescriptors: options.parameterDescriptors ?? parameterDescriptors,
     supportedMethods: stringArray(options.supportedMethods),
-    contextLength: positiveNumber(item.context_length ?? item.contextLength),
+    contextLength: positiveNumber(options.contextLength ?? item.context_length ?? item.contextLength),
     pricing: cloneObject(item.pricing ?? item.pricing_skus),
     supportedResolutions: options.supportedResolutions ?? stringArray(item.supported_resolutions ?? item.supportedResolutions ?? parameterDescriptors?.resolution?.values),
     supportedAspectRatios: options.supportedAspectRatios ?? stringArray(item.supported_aspect_ratios ?? item.supportedAspectRatios ?? parameterDescriptors?.aspect_ratio?.values),
@@ -338,8 +360,9 @@ function mergeModels(...collections) {
     merged.set(collection.id, {
       ...before,
       ...collection,
+      status: mergedModelStatus(before, collection),
       confidence: strongerConfidence(before.confidence, collection.confidence),
-      source: collection.confidence === "manual_unverified" && before.confidence !== "manual_unverified" ? before.source : collection.source,
+      source: mergedModelSource(before, collection),
       name: metadataPrimary.name || metadataSecondary.name,
       tasks: uniqueTaskIds([...(before.tasks ?? []), ...(collection.tasks ?? [])]),
       configuredTasks: uniqueTaskIds([...(before.configuredTasks ?? []), ...(collection.configuredTasks ?? [])]),
@@ -356,6 +379,23 @@ function mergeModels(...collections) {
     });
   }
   return [...merged.values()];
+}
+
+function mergedModelStatus(before, collection) {
+  const providerVisible = [before, collection].some((item) =>
+    item.status === "available" && item.source?.includes("provider_models")
+  );
+  return providerVisible ? "available" : collection.status ?? before.status;
+}
+
+function mergedModelSource(before, collection) {
+  const sources = [before.source, collection.source].filter(Boolean);
+  if (sources.some((source) => source.includes("provider_models")) && sources.includes("official_capabilities")) {
+    return "provider_models+official_capabilities";
+  }
+  return collection.confidence === "manual_unverified" && before.confidence !== "manual_unverified"
+    ? before.source
+    : collection.source;
 }
 
 function strongerConfidence(left, right) {

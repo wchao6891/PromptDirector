@@ -116,6 +116,81 @@ test("DeepSeek image analysis projects the selected account model through its co
   assert.equal(projected.compatible.structuredOutput, "json_object");
 });
 
+test("Zhipu runtime preserves its official raw-image and public-video input contract", () => {
+  const configuration = aiConfigurationFromStorage({
+    aiProviderRegistry: { providers: {
+      zhipu: {
+        apiKey: "zhipu-key",
+        consent: true,
+        models: { imageAnalysis: "glm-4.6v", videoAnalysis: "glm-4.6v" },
+        discoveredModels: [{
+          id: "glm-4.6v", status: "available", confidence: "declared",
+          source: "provider_models+official_capabilities",
+          tasks: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"]
+        }]
+      }
+    } },
+    aiTaskAssignments: {
+      imageAnalysis: { providerId: "zhipu", model: "glm-4.6v" },
+      videoAnalysis: { providerId: "zhipu", model: "glm-4.6v" }
+    }
+  });
+
+  const vision = resolveVisionTaskSettings("imageAnalysis", configuration);
+  assert.equal(vision.compatible.imageBase64, "raw");
+  assert.equal(vision.compatible.structuredOutput, "prompt_only");
+  assert.equal(projectAiRuntime(configuration).visionSettings.providerProfiles.zhipu.models.imageAnalysis, "glm-4.6v");
+  assert.equal(projectAiRuntime(configuration).visionSettings.providerProfiles.zhipu.models.videoAnalysis, "glm-4.6v");
+  assert.deepEqual(resolveVideoAnalysisTask(configuration), {
+    taskId: "videoAnalysis",
+    providerId: "zhipu",
+    provider: "智谱 GLM",
+    providerLabel: "智谱 GLM",
+    model: "glm-4.6v",
+    protocol: "chat_completions",
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    localVideo: "unsupported",
+    preferPublicVideoUrl: true,
+    publicVideoUrl: "direct"
+  });
+});
+
+test("GLM-5.3-Flash overrides older provider defaults with its model-specific multimodal contract", () => {
+  const configuration = aiConfigurationFromStorage({
+    aiProviderRegistry: { providers: {
+      zhipu: {
+        apiKey: "zhipu-key", consent: true,
+        models: {
+          textTags: "glm-5.3-flash", creativePlanning: "glm-5.3-flash",
+          imageAnalysis: "glm-5.3-flash", videoAnalysis: "glm-5.3-flash"
+        },
+        discoveredModels: [{
+          id: "glm-5.3-flash", status: "available", confidence: "declared",
+          source: "provider_models+official_capabilities",
+          tasks: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"]
+        }]
+      }
+    } },
+    aiTaskAssignments: {
+      textTags: { providerId: "zhipu", model: "glm-5.3-flash" },
+      creativePlanning: { providerId: "zhipu", model: "glm-5.3-flash" },
+      imageAnalysis: { providerId: "zhipu", model: "glm-5.3-flash" },
+      videoAnalysis: { providerId: "zhipu", model: "glm-5.3-flash" }
+    }
+  });
+
+  const text = resolveTextTaskSettings("textTags", configuration);
+  assert.equal(text.compatible.structuredOutput, "json_object");
+  assert.equal(text.compatible.structuredOutputTokenBudget, 4096);
+  const vision = resolveVisionTaskSettings("imageAnalysis", configuration);
+  assert.equal(vision.compatible.structuredOutput, "json_object");
+  assert.equal(vision.compatible.imageBase64, "data_url");
+  const video = resolveVideoAnalysisTask(configuration);
+  assert.equal(video.preferPublicVideoUrl, true);
+  assert.equal(video.localVideo, "base64");
+});
+
 test("changing the image-analysis assignment does not erase generation services", () => {
   const configuration = aiConfigurationFromStorage({
     aiProviderRegistry: { providers: {
@@ -160,7 +235,7 @@ test("new-install runtime previews remain unassigned instead of inventing provid
 
   assert.equal(runtime.aiSettings.activeProvider, "compatible");
   assert.equal(runtime.aiSettings.analysisModel, "");
-  assert.deepEqual(runtime.aiSettings.compatible, { endpoint: "", model: "", apiKey: "" });
+  assert.deepEqual(runtime.aiSettings.compatible, { endpoint: "", model: "", apiKey: "", structuredOutput: "json_object" });
   assert.equal(resolveTextTaskSettings("textTags", configuration, { requireConfigured: false }).analysisModel, "");
   assert.throws(() => resolveTextTaskSettings("textTags", configuration), /尚未分配/);
   assert.throws(() => resolveVideoAnalysisTask(configuration), /尚未分配/);

@@ -469,7 +469,7 @@ def main() -> None:
         composer.locator(".composer-case-option", has_text="即梦角色").locator("input").check()
         composer.locator("#composer-reference-apply").click()
         composer.locator("#composer-model-trigger").click()
-        composer.locator("#composer-model-openai").click()
+        composer.locator("#composer-model-dynamic button", has_text="OpenAI").click()
         expect(composer.locator("#composer-model-label")).to_have_text("OpenAI")
         composer.locator("#composer-instruction").fill("参考1保持三人构图和中间女性聚焦，参考2只负责画面风格")
         composer.locator("#composer-action").click()
@@ -489,6 +489,15 @@ def main() -> None:
                 type: 'UPDATE_AI_PROVIDER_CONFIGURATION',
                 registry: {
                   providers: {
+                    'custom-text': {
+                      endpoint: `${origin}/v1/responses`,
+                      protocol: 'responses',
+                      apiKey: 'controlled-chat-test-key',
+                      consent: true,
+                      models: {
+                        creativePlanning: 'local-vision-test'
+                      }
+                    },
                     'custom-media': {
                       endpoint: `${origin}/v1/responses`,
                       protocol: 'responses',
@@ -511,6 +520,7 @@ def main() -> None:
                 },
                 assignments: {
                   ...aiTaskAssignments,
+                  creativePlanning: {providerId: 'custom-text', model: 'local-vision-test'},
                   imageAnalysis: {providerId: 'custom-media', model: 'local-vision-test'},
                   imageGeneration: {providerId: 'custom-media', model: 'local-image-test'}
                 }
@@ -518,9 +528,11 @@ def main() -> None:
             }""",
             local_origin,
         )
+        composer.reload()
+        expect(composer.locator("#composer-model-trigger")).to_be_visible()
         composer.locator("#composer-model-trigger").click()
-        composer.locator("#composer-model-compatible").click()
-        expect(composer.locator("#composer-model-label")).to_have_text("兼容服务")
+        composer.locator("#composer-model-dynamic button", has_text="自定义兼容服务（文字）").click()
+        expect(composer.locator("#composer-model-label")).to_have_text("自定义兼容服务（文字）")
         CreativeServiceHandler.requests.clear()
         CreativeServiceHandler.release_image.clear()
         composer.locator("#composer-options summary").click()

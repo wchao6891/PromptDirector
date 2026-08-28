@@ -18,6 +18,7 @@ import { normalizeVisionSettings, OPENAI_RESPONSES_ENDPOINT, OPENAI_VIDEOS_ENDPO
 import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia } from "./bounded-media.js";
 import { createAiProviderModule } from "./ai-provider-module.js";
+import { getAiModelCapability } from "./ai-model-capabilities.js";
 import {
   compatibleImageSizesFor,
   compatibleProviderPresetForEndpoint
@@ -67,29 +68,24 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
   const vision = normalizeVisionSettings(visionSettingsValue);
   const compatibleLabel = serviceLabelForEndpoint(vision.compatible.endpoint);
   const xai = normalizeXaiComposerSettings(visionSettingsValue?.xai);
+  const deepseekProfile = visionSettingsValue?.providerProfiles?.deepseek;
+  const deepseekModels = [...new Set([
+    "deepseek-v4-flash", "deepseek-v4-pro", deepseekProfile?.models?.creativePlanning
+  ].map((value) => String(value ?? "").trim()).filter(Boolean))];
   const catalog = [
-    {
+    ...deepseekModels.map((model) => ({
       serviceId: "deepseek",
-      model: "deepseek-v4-flash",
-      label: "DeepSeek Flash",
-      shortLabel: "Flash",
+      model,
+      label: model === "deepseek-v4-flash" ? "DeepSeek Flash"
+        : model === "deepseek-v4-pro" ? "DeepSeek Pro" : `DeepSeek · ${model}`,
+      shortLabel: model === "deepseek-v4-flash" ? "Flash" : model === "deepseek-v4-pro" ? "Pro" : "DeepSeek",
       configured: Boolean(ai.apiKey && ai.consent),
-      vision: false,
-      reasoning: true,
+      vision: providerModelSupports(deepseekProfile, model, "imageAnalysis"),
+      planning: model === deepseekProfile?.models?.creativePlanning || providerModelSupports(deepseekProfile, model, "creativePlanning"),
+      reasoning: model === deepseekProfile?.models?.creativePlanning || providerModelSupports(deepseekProfile, model, "creativePlanning"),
       imageGeneration: false,
       videoGeneration: false
-    },
-    {
-      serviceId: "deepseek",
-      model: "deepseek-v4-pro",
-      label: "DeepSeek Pro",
-      shortLabel: "Pro",
-      configured: Boolean(ai.apiKey && ai.consent),
-      vision: false,
-      reasoning: true,
-      imageGeneration: false,
-      videoGeneration: false
-    },
+    })),
     {
       serviceId: "openai",
       model: vision.openai.model,
@@ -97,6 +93,7 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
       shortLabel: "OpenAI",
       configured: Boolean(vision.openai.apiKey && vision.consent && vision.openai.model),
       vision: true,
+      planning: true,
       reasoning: true,
       imageGeneration: Boolean(vision.openai.apiKey && vision.consent && vision.openai.model),
       videoGeneration: openAiVideoConfigured(vision)
@@ -108,6 +105,7 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
       shortLabel: compatibleLabel,
       configured: compatibleConfigured(vision),
       vision: true,
+      planning: true,
       reasoning: compatibleReasoningSupported(vision.compatible),
       imageGeneration: compatibleImageConfigured(vision.compatible),
       videoGeneration: false
@@ -119,14 +117,17 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
       shortLabel: "xAI",
       configured: Boolean(xai.mediaConsent && xai.apiKey && xai.textModel),
       vision: true,
+      planning: true,
       reasoning: false,
       imageGeneration: Boolean(xai.mediaConsent && xai.apiKey && xai.textModel && xai.imageModel),
       videoGeneration: Boolean(xai.mediaConsent && xai.apiKey && xai.textModel && xai.videoModel)
     }
   ];
-  for (const providerId of ["kimi", "gemini", "openrouter", "minimax", "volcengine"]) {
-    const profile = visionSettingsValue?.providerProfiles?.[providerId];
-    if (!profile) continue;
+  const specialProviderIds = new Set(["deepseek", "openai", "xai", "custom-media"]);
+  for (const profile of Object.values(visionSettingsValue?.providerProfiles ?? {})) {
+    const providerId = String(profile?.id ?? "").trim();
+    if (!providerId || specialProviderIds.has(providerId)) continue;
+    if (!profile.capabilities?.some((taskId) => ["creativePlanning", "imageGeneration", "videoGeneration"].includes(taskId))) continue;
     const models = [...new Set([profile.models?.creativePlanning, profile.models?.imageGeneration, profile.models?.videoGeneration]
       .map((value) => String(value ?? "").trim()).filter(Boolean))];
     for (const model of models.length ? models : [""]) {
@@ -137,7 +138,8 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
         shortLabel: profile.label || providerId,
         configured: Boolean(profile.consent && profile.apiKey && model),
         vision: providerModelSupports(profile, model, "imageAnalysis"),
-        reasoning: providerModelSupports(profile, model, "creativePlanning"),
+        planning: model === profile.models?.creativePlanning || providerModelSupports(profile, model, "creativePlanning"),
+        reasoning: false,
         imageGeneration: Boolean(profile.consent && profile.apiKey && providerModelSupports(profile, model, "imageGeneration")),
         videoGeneration: Boolean(profile.consent && profile.apiKey && providerModelSupports(profile, model, "videoGeneration"))
       });
@@ -179,8 +181,9 @@ export function composerServiceCapabilities(profileValue, visionSettingsValue = 
       video: xaiVideoCapability(configured, xai)
     };
   }
-  if (["kimi", "gemini", "openrouter", "minimax", "volcengine"].includes(profile.serviceId)) {
-    const provider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
+  const registryProvider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
+  if (registryProvider && !["openai", "xai", "custom-media"].includes(profile.serviceId)) {
+    const provider = registryProvider;
     const model = profile.model;
     const descriptor = providerModelDescriptor(provider, model);
     const configured = Boolean(provider?.consent && provider?.apiKey && model && descriptor?.tasks?.includes("videoGeneration"));
@@ -475,6 +478,7 @@ export async function executeComposerTurnWithService(input, settingsValue, prepa
 
 async function generateVideoTurn(input, service, settingsValue, preparedImages, options) {
   const visionSettingsValue = settingsValue.vision;
+  const generationProfile = input.session?.generationAiProfile ?? input.session?.aiProfile;
   if (["gemini", "openrouter", "minimax", "volcengine"].includes(service.serviceId)) {
     return generateProviderVideoTurn(input, service, settingsValue, preparedImages, options);
   }
@@ -484,7 +488,7 @@ async function generateVideoTurn(input, service, settingsValue, preparedImages, 
   const remote = normalizeRemoteVideo(options.remoteVideo, "openai");
   const state = remote
     ? { parameters: remote.requestParameters, issues: [] }
-    : normalizeVideoGenerationRequest(input.session?.aiProfile, visionSettingsValue, input.session?.generationParameters);
+    : normalizeVideoGenerationRequest(generationProfile, visionSettingsValue, input.session?.generationParameters);
   if (state.issues.length) throw new ComposerServiceError(state.issues.join("；"), 422, { retryable: false });
   if (preparedImages.length > 1) throw new ComposerServiceError("当前视频服务最多接收 1 张首帧参考图", 422, { retryable: false });
   const settings = normalizeVisionSettings(visionSettingsValue);
@@ -536,7 +540,7 @@ async function generateXaiVideoTurn(input, service, visionSettingsValue, prepare
   const remote = normalizeRemoteVideo(options.remoteVideo, "xai");
   const state = remote
     ? { parameters: remote.requestParameters, issues: [] }
-    : normalizeVideoGenerationRequest(input.session?.aiProfile, visionSettingsValue, input.session?.generationParameters);
+    : normalizeVideoGenerationRequest(input.session?.generationAiProfile ?? input.session?.aiProfile, visionSettingsValue, input.session?.generationParameters);
   if (state.issues.length) throw new ComposerServiceError(state.issues.join("；"), 422, { retryable: false });
   if (preparedImages.length) {
     throw new ComposerServiceError("当前已验证的 xAI 视频生成接口未启用首帧参考图，请移除图片参考后再生成", 422, { retryable: false });
@@ -588,7 +592,8 @@ async function generateProviderVideoTurn(input, service, settingsValue, prepared
   if (!profile?.apiKey || !profile?.consent) {
     throw new ComposerServiceError(`${profile?.label || service.serviceId} 还缺少 API Key 或媒体发送授权`, 422, { retryable: false });
   }
-  const capability = composerServiceCapabilities(input.session?.aiProfile, settingsValue.vision).video;
+  const generationProfile = input.session?.generationAiProfile ?? input.session?.aiProfile;
+  const capability = composerServiceCapabilities(generationProfile, settingsValue.vision).video;
   const referenceCapability = capability?.inputs?.referenceImages ?? { supported: null, maxItems: null };
   if (preparedImages.length && referenceCapability.supported === false) {
     throw new ComposerServiceError("当前视频模型不接收原图", 422, { retryable: false });
@@ -599,7 +604,7 @@ async function generateProviderVideoTurn(input, service, settingsValue, prepared
   const remote = normalizeRemoteVideo(options.remoteVideo, service.serviceId);
   const state = remote
     ? { parameters: remote.requestParameters, issues: [] }
-    : normalizeVideoGenerationRequest(input.session?.aiProfile, settingsValue.vision, input.session?.generationParameters);
+    : normalizeVideoGenerationRequest(generationProfile, settingsValue.vision, input.session?.generationParameters);
   if (state.issues.length) throw new ComposerServiceError(state.issues.join("；"), 422, { retryable: false });
   const module = createAiProviderModule({
     fetchImpl: options.fetchImpl ?? fetch,
@@ -611,10 +616,12 @@ async function generateProviderVideoTurn(input, service, settingsValue, prepared
   let job = remote?.job || null;
   let promptResult = null;
   if (!job) {
-    promptResult = await executeDeepSeekTurn({
-      ...input,
-      session: { ...input.session, outputMode: "text_prompt" }
-    }, settingsValue.ai, { ...options, stream: false });
+    promptResult = await assembleImagePrompt(input, preparedImages, {
+      ...options,
+      stream: false,
+      visionSettings: settingsValue.vision,
+      aiSettings: settingsValue.ai
+    });
     if (promptResult.kind !== "prompt") throw new ComposerServiceError("视频任务没有生成可提交的最终提示词", 422, { retryable: false });
     finalPrompt = promptResult.finalPrompt;
     options.onPhase?.("generation");
@@ -697,7 +704,7 @@ async function pollXaiVideo(remoteId, apiKey, options) {
 async function videoJsonRequest(url, apiKey, method, body, options, label = "OpenAI 视频服务") {
   const response = await videoRequest(url, apiKey, method, body, options, label);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw responseError(label, response.status, payload);
+  if (!response.ok) throw responseError(label, response.status, payload, { secrets: [apiKey] });
   return payload;
 }
 
@@ -711,7 +718,7 @@ async function videoBlobRequest(url, apiKey, options, label = "OpenAI 视频服�
         retryable: true
       });
     }
-    throw responseError(label, response.status, payload);
+    throw responseError(label, response.status, payload, { secrets: [apiKey] });
   }
   try {
     return await boundedMediaBlobFromResponse(response, {
@@ -1032,7 +1039,7 @@ async function generateOpenRouterImageTurn(input, service, preparedImages, refer
   };
   const response = await requestRaw(service.imageGeneration.endpoint, service.apiKey, body, options, IMAGE_REQUEST_TIMEOUT_MS, "OpenRouter 图片服务");
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw responseError("OpenRouter 图片服务", response.status, payload);
+  if (!response.ok) throw responseError("OpenRouter 图片服务", response.status, payload, { secrets: [service.apiKey] });
   const images = (Array.isArray(payload.data) ? payload.data : []).flatMap((item) => {
     const encoded = String(item?.b64_json ?? "").trim();
     if (!encoded) return [];
@@ -1128,7 +1135,7 @@ async function requestStructured(service, instructions, content, options = {}) {
     return parseResponsesPayload(await requestJson(service, body, options), service);
   }
   const body = chatBody(service, instructions, jsonContent, false);
-  body.response_format = { type: "json_object" };
+  if (service.structuredOutput !== "prompt_only") body.response_format = { type: "json_object" };
   return parseChatPayload(await requestJson(service, body, options), service);
 }
 
@@ -1147,12 +1154,12 @@ async function requestText(service, instructions, content, options = {}) {
   const contentType = String(response.headers?.get?.("content-type") ?? "");
   if (!contentType.includes("text/event-stream")) {
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw responseError(service.label, response.status, payload);
+    if (!response.ok) throw responseError(service.label, response.status, payload, { secrets: [service.apiKey] });
     const result = service.protocol === "responses" ? parseResponsesPayload(payload, service) : parseChatPayload(payload, service);
     options.onDelta?.(result.content, result.content);
     return result;
   }
-  if (!response.ok) throw responseError(service.label, response.status, await response.json().catch(() => ({})));
+  if (!response.ok) throw responseError(service.label, response.status, await response.json().catch(() => ({})), { secrets: [service.apiKey] });
   return service.protocol === "responses"
     ? readResponsesSse(response, service, options.onDelta)
     : readChatSse(response, service, options.onDelta);
@@ -1218,7 +1225,8 @@ async function requestImagesEndpoint(service, prompt, referenceImages, requestPa
   const response = await requestRaw(image.endpoint, image.apiKey, body, options, IMAGE_REQUEST_TIMEOUT_MS, service.label);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw responseError(service.label, response.status, payload, {
-    credentialHint: credentialHint(image.apiKey)
+    credentialHint: credentialHint(image.apiKey),
+    secrets: [image.apiKey]
   });
   const values = Array.isArray(payload?.data) ? payload.data : [];
   const images = [];
@@ -1266,7 +1274,8 @@ async function requestImageEdits(service, prompt, referenceImages, requestParame
 async function parseImagesEndpointResponse(service, response, options) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw responseError(service.label, response.status, payload, {
-    credentialHint: credentialHint(service.imageGeneration?.apiKey)
+    credentialHint: credentialHint(service.imageGeneration?.apiKey),
+    secrets: [service.imageGeneration?.apiKey]
   });
   const values = Array.isArray(payload?.data) ? payload.data : [];
   const images = [];
@@ -1303,16 +1312,24 @@ function chatBody(service, instructions, content, stream) {
     messages: [
       { role: "system", content: instructions },
       { role: "user", content: content.map((item) => item.type === "image"
-        ? { type: "image_url", image_url: { url: item.dataUrl, detail: item.detail } }
+        ? chatImagePart(service, item)
         : { type: "text", text: item.text }) }
     ]
   };
 }
 
+function chatImagePart(service, item) {
+  if (service.mediaInput?.imageBase64 === "raw") {
+    const raw = String(item.dataUrl ?? "").split(",", 2)[1] || "";
+    return { type: "image_url", image_url: { url: raw } };
+  }
+  return { type: "image_url", image_url: { url: item.dataUrl, detail: item.detail } };
+}
+
 async function requestJson(service, body, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const response = await requestRaw(service.endpoint, service.apiKey, body, options, timeoutMs, service.label);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw responseError(service.label, response.status, payload);
+  if (!response.ok) throw responseError(service.label, response.status, payload, { secrets: [service.apiKey] });
   return payload;
 }
 
@@ -1379,12 +1396,14 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       }
     };
   }
-  if (["kimi", "gemini", "openrouter", "minimax", "volcengine"].includes(profile.serviceId)) {
-    const provider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
+  const registryProvider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
+  if (registryProvider && !["openai", "xai", "custom-media"].includes(profile.serviceId)) {
+    const provider = registryProvider;
     const model = profile.model;
+    const modelCapability = getAiModelCapability(profile.serviceId, model);
     if (!provider?.apiKey || !model) throw new ComposerServiceError(`请先完成 ${provider?.label || profile.serviceId} 的 API Key 和所选模型配置`, 422, { retryable: false });
     if (!provider.consent) throw new ComposerServiceError(`请先确认：主动${action}时会把本轮文字与所选图片发送到 ${provider.label || profile.serviceId}`, 422, { retryable: false });
-    const planning = providerModelSupports(provider, model, "creativePlanning");
+    const planning = model === provider.models?.creativePlanning || providerModelSupports(provider, model, "creativePlanning");
     const chatCompatible = ["openrouter", "gemini"].includes(profile.serviceId);
     const endpoint = profile.serviceId === "openrouter"
       ? `${String(provider.endpoint).replace(/\/$/, "")}/chat/completions`
@@ -1400,6 +1419,8 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       model,
       planning,
       reasoningEffort: "",
+      structuredOutput: modelCapability?.structuredOutput ?? provider.structuredOutput,
+      mediaInput: { ...(provider.mediaInput ?? {}), ...(modelCapability?.mediaInput ?? {}) },
       provider,
       imageGeneration: profile.serviceId === "openrouter" ? {
         protocol: "openrouter_images",
@@ -1739,7 +1760,7 @@ async function uploadOpenAiImage(service, dataUrl, stem, options) {
   body.append("file", blob, `${stem}.${imageExtension(blob.type) || "png"}`);
   const response = await requestOpenAiFile(service, OPENAI_FILES_ENDPOINT, "POST", body, options);
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw responseError(service.label, response.status, payload);
+  if (!response.ok) throw responseError(service.label, response.status, payload, { secrets: [service.apiKey] });
   const fileId = String(payload?.id ?? "").trim();
   if (!fileId) throw new ComposerServiceError("OpenAI 没有返回临时图片文件 ID", 503);
   return fileId;

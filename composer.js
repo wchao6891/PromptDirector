@@ -10,6 +10,7 @@ import {
   referenceHasUsableLegacyDescription
 } from "./reference-readiness.js";
 import { validReconstructionPrompt } from "./image-prompt.js";
+import { AI_PROVIDER_PRESETS } from "./ai-provider-presets.js";
 import {
   COMPOSER_AGENT_VERSION,
   AGENT_ROUTES,
@@ -30,7 +31,10 @@ import {
 export const COMPOSER_METHOD_VERSION = COMPOSER_AGENT_VERSION;
 export const COMPOSER_AI_MODELS = Object.freeze(["deepseek-v4-flash", "deepseek-v4-pro"]);
 export const COMPOSER_SERVICE_IDS = Object.freeze([
-  "deepseek", "openai", "compatible", "xai", "kimi", "gemini", "openrouter", "minimax", "volcengine"
+  ...AI_PROVIDER_PRESETS
+    .filter((preset) => preset.capabilities.some((taskId) => ["creativePlanning", "imageGeneration", "videoGeneration"].includes(taskId)))
+    .map((preset) => preset.id),
+  "compatible"
 ]);
 export const DEFAULT_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "deepseek", model: "deepseek-v4-flash", thinking: false });
 export const COMPOSER_INPUT_MAX_CHARACTERS = 750_000;
@@ -50,15 +54,30 @@ export function normalizeComposerSettings(value = {}) {
 }
 
 export function normalizeComposerAiProfile(value = {}) {
-  const serviceId = COMPOSER_SERVICE_IDS.includes(value?.serviceId) ? value.serviceId : "deepseek";
+  const requestedServiceId = String(value?.serviceId ?? "").trim();
+  const serviceId = requestedServiceId && COMPOSER_SERVICE_IDS.includes(requestedServiceId)
+    ? requestedServiceId
+    : "deepseek";
   const requestedModel = String(value?.model ?? "").trim();
   return {
     serviceId,
-    model: serviceId === "deepseek"
-      ? COMPOSER_AI_MODELS.includes(requestedModel) ? requestedModel : DEFAULT_COMPOSER_AI_PROFILE.model
-      : requestedModel,
+    model: requestedServiceId && !COMPOSER_SERVICE_IDS.includes(requestedServiceId)
+      ? DEFAULT_COMPOSER_AI_PROFILE.model
+      : requestedModel || (serviceId === "deepseek" ? DEFAULT_COMPOSER_AI_PROFILE.model : ""),
     thinking: value?.thinking === true
   };
+}
+
+export function composerProfileForTaskAssignment(assignmentValue = {}, fallbackValue = {}) {
+  const providerId = String(assignmentValue?.providerId ?? "").trim();
+  if (!providerId) return normalizeComposerAiProfile(fallbackValue);
+  const serviceId = providerId === "custom-media" ? "compatible" : providerId;
+  if (!COMPOSER_SERVICE_IDS.includes(serviceId)) return normalizeComposerAiProfile(fallbackValue);
+  return normalizeComposerAiProfile({
+    serviceId,
+    model: assignmentValue?.model,
+    thinking: fallbackValue?.thinking === true
+  });
 }
 
 export function updateComposerMethod(settingsValue, { targetType, locale, text }) {

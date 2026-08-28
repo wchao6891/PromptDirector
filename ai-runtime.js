@@ -1,4 +1,5 @@
 import { normalizeAiSettings } from "./deepseek.js";
+import { getAiModelCapability } from "./ai-model-capabilities.js";
 import { normalizeVisionSettings } from "./vision.js";
 import {
   normalizeAiProviderRegistry,
@@ -50,6 +51,7 @@ export function projectAiRuntime(configurationValue = {}) {
   const configuration = normalizeConfiguration(configurationValue);
   const { registry, assignments, preferences } = configuration;
   const providers = registry.providers;
+  const providerProfiles = providerProfilesWithAssignments(providers, assignments);
   const planning = settingsForTextAssignment(assignments.creativePlanning, providers, preferences, false);
   const imageAnalysis = assignments.imageAnalysis;
   const imageAnalysisProfile = providers[imageAnalysis.providerId] ?? providers["custom-media"];
@@ -74,6 +76,7 @@ export function projectAiRuntime(configurationValue = {}) {
     compatible: {
       protocol: imageAnalysisProfile?.protocol === "responses" ? "responses" : "chat_completions",
       structuredOutput: imageAnalysisProfile?.structuredOutput,
+      imageBase64: imageAnalysisProfile?.mediaInput?.imageBase64,
       endpoint: clean(imageAnalysis?.providerId) ? chatEndpoint(imageAnalysisProfile) : "",
       model: !imageAnalysisUsesOpenAi ? assignments.imageAnalysis.model : "",
       apiKey: !imageAnalysisUsesOpenAi ? usableKey(imageAnalysisProfile) : "",
@@ -112,7 +115,7 @@ export function projectAiRuntime(configurationValue = {}) {
     aiSettings: planning,
     visionSettings: {
       ...vision,
-      providerProfiles: providers,
+      providerProfiles,
       xai: xaiRuntime
     },
     aiServiceProfiles: {
@@ -134,6 +137,20 @@ export function projectAiRuntime(configurationValue = {}) {
     aiProviderRegistry: registry,
     aiPreferences: preferences
   };
+}
+
+function providerProfilesWithAssignments(providers = {}, assignments = {}) {
+  return Object.fromEntries(Object.entries(providers).map(([providerId, profile]) => [providerId, {
+    ...profile,
+    models: {
+      ...profile.models,
+      ...Object.fromEntries(Object.entries(assignments).flatMap(([taskId, assignment]) =>
+        assignment?.providerId === providerId && clean(assignment.model)
+          ? [[taskId, clean(assignment.model)]]
+          : []
+      ))
+    }
+  }]));
 }
 
 export function resolveTextTaskSettings(taskId, configurationValue = {}, options = {}) {
@@ -168,6 +185,7 @@ export function resolveVisionTaskSettings(taskId, configurationValue = {}, optio
   }
   const profile = configuration.registry.providers[resolved.providerId];
   if (options.requireConfigured !== false) requireConsent(profile, resolved.provider);
+  const modelRuntime = modelRuntimeSettings(profile, resolved.model);
   const openai = resolved.providerId === "openai";
   const endpoint = chatEndpoint(profile);
   const settings = normalizeVisionSettings({
@@ -182,7 +200,8 @@ export function resolveVisionTaskSettings(taskId, configurationValue = {}, optio
     },
     compatible: {
       protocol: profile.protocol === "responses" ? "responses" : "chat_completions",
-      structuredOutput: profile.structuredOutput,
+      structuredOutput: modelRuntime.structuredOutput,
+      imageBase64: modelRuntime.mediaInput.imageBase64,
       endpoint,
       model: resolved.model,
       apiKey: openai ? "" : profile.apiKey,
@@ -209,12 +228,16 @@ export function resolveVideoAnalysisTask(configurationValue = {}) {
   const resolved = resolveAiProviderAssignment("videoAnalysis", configuration.registry, configuration.assignments);
   const profile = configuration.registry.providers[resolved.providerId];
   requireConsent(profile, resolved.provider);
+  const modelRuntime = modelRuntimeSettings(profile, resolved.model);
   return {
     ...resolved,
     providerLabel: resolved.provider,
     protocol: profile.protocol,
     apiKey: profile.apiKey,
-    endpoint: profile.endpoint
+    endpoint: profile.endpoint,
+    ...(["unsupported", "base64"].includes(modelRuntime.mediaInput.localVideo) ? { localVideo: modelRuntime.mediaInput.localVideo } : {}),
+    ...(modelRuntime.mediaInput.preferPublicVideoUrl === true ? { preferPublicVideoUrl: true } : {}),
+    ...(modelRuntime.mediaInput.publicVideoUrl === "direct" ? { publicVideoUrl: "direct" } : {})
   };
 }
 
@@ -234,6 +257,7 @@ function settingsForTextAssignment(assignmentValue, providers, preferences, stri
   const profile = providers[providerId];
   if (strict) requireConsent(profile, profile?.label || providerId);
   const model = clean(assignmentValue?.model);
+  const modelRuntime = modelRuntimeSettings(profile, model);
   const deepseek = providerId === "deepseek";
   const settings = normalizeAiSettings({
     activeProvider: deepseek ? "deepseek" : "compatible",
@@ -242,14 +266,29 @@ function settingsForTextAssignment(assignmentValue, providers, preferences, stri
     consent: strict ? true : profile?.consent === true,
     analysisInstructionsByLocale: preferences.textInstructionsByLocale,
     compatible: deepseek ? undefined : {
+      label: profile?.label,
       endpoint: chatEndpoint(profile),
       model,
-      apiKey: profile?.apiKey
+      apiKey: profile?.apiKey,
+      structuredOutput: modelRuntime.structuredOutput,
+      structuredOutputTokenBudget: modelRuntime.structuredOutputTokenBudget
     }
   });
   settings.analysisModel = model;
   settings.compatible.model = deepseek ? "" : model;
   return settings;
+}
+
+function modelRuntimeSettings(profile = {}, modelValue = "") {
+  const capability = getAiModelCapability(profile?.id, modelValue);
+  return {
+    structuredOutput: capability?.structuredOutput ?? profile?.structuredOutput,
+    structuredOutputTokenBudget: capability?.structuredOutputTokenBudget,
+    mediaInput: {
+      ...(profile?.mediaInput ?? {}),
+      ...(capability?.mediaInput ?? {})
+    }
+  };
 }
 
 function normalizeConfiguration(value = {}) {
