@@ -11,6 +11,7 @@ import {
 } from "./reference-readiness.js";
 import { validReconstructionPrompt } from "./image-prompt.js";
 import { AI_PROVIDER_PRESETS } from "./ai-provider-presets.js";
+import { createComposerActiveTurn } from "./composer-active-turn.js";
 import {
   COMPOSER_AGENT_VERSION,
   AGENT_ROUTES,
@@ -485,6 +486,7 @@ export function createComposerSession(input = {}) {
   const now = new Date().toISOString();
   const targetType = input.targetType === "video" ? "video" : "image";
   const snapshots = normalizeReferenceSnapshots(input.referenceSnapshots);
+  const assemblySnapshots = normalizeComposerAssemblySnapshots(input.assemblySnapshots, input.assemblySnapshot);
   const referenceModeAvailability = imageReferenceModeAvailability(snapshots);
   const requestedReferenceMode = ["conditioned", "prompt_only", "text_only"].includes(input.imageReferenceMode)
     ? input.imageReferenceMode
@@ -511,13 +513,178 @@ export function createComposerSession(input = {}) {
     messages: normalizeMessages(input.messages),
     currentInstruction: String(input.currentInstruction ?? "").trim(),
     retrievedSources: normalizeRetrievedSources(input.retrievedSources),
+    retrievalSnapshot: normalizeRetrievalSnapshot(input.retrievalSnapshot),
+    assemblySnapshots,
+    assemblySnapshot: assemblySnapshots.at(-1) ?? null,
     currentRoute: AGENT_ROUTES.includes(input.currentRoute) ? input.currentRoute : "",
     currentRouteSource: input.currentRouteSource === "manual" ? "manual" : input.currentRouteSource === "auto" ? "auto" : "",
+    activeTurn: createComposerActiveTurn(input.activeTurn),
     promptVersions: normalizePromptVersions(input.promptVersions),
     diagnosticEvents: normalizeDiagnosticEvents(input.diagnosticEvents),
     lastFailure: normalizeComposerFailure(input.lastFailure),
     createdAt: validIso(input.createdAt) || now,
     updatedAt: validIso(input.updatedAt) || now
+  };
+}
+
+export function createComposerAssemblySnapshot(value = {}) {
+  return normalizeComposerAssemblySnapshot({
+    ...value,
+    id: String(value.id ?? "").trim() || globalThis.crypto.randomUUID(),
+    createdAt: validIso(value.createdAt) || new Date().toISOString(),
+    status: "prepared"
+  });
+}
+
+export function completeComposerAssemblySnapshot(snapshotValue, result = {}) {
+  const snapshot = normalizeComposerAssemblySnapshot(snapshotValue);
+  if (!snapshot) return null;
+  return normalizeComposerAssemblySnapshot({
+    ...snapshot,
+    status: "completed",
+    actual: {
+      status: "completed",
+      route: result.route,
+      kind: result.kind,
+      serviceId: result.serviceId || snapshot.serviceId,
+      model: result.model || snapshot.model,
+      promptTokens: result.usage?.promptTokens,
+      completionTokens: result.usage?.completionTokens,
+      finishReason: result.finishReason,
+      protocolDegraded: result.protocolDegraded === true,
+      stages: uniqueStrings(result.actualStages),
+      completedAt: new Date().toISOString()
+    }
+  });
+}
+
+export function failComposerAssemblySnapshot(snapshotValue, error = {}) {
+  const snapshot = normalizeComposerAssemblySnapshot(snapshotValue);
+  if (!snapshot) return null;
+  return normalizeComposerAssemblySnapshot({
+    ...snapshot,
+    status: error.kind === "stopped" ? "stopped" : "failed",
+    actual: {
+      status: error.kind === "stopped" ? "stopped" : "failed",
+      serviceId: snapshot.serviceId,
+      model: snapshot.model,
+      finishReason: String(error.kind ?? "failed"),
+      stages: uniqueStrings(error.actualStages),
+      completedAt: new Date().toISOString()
+    }
+  });
+}
+
+function normalizeComposerAssemblySnapshot(value) {
+  if (!value || typeof value !== "object") return null;
+  const id = String(value.id ?? "").trim();
+  const turnId = String(value.turnId ?? "").trim();
+  const userMessageId = String(value.userMessageId ?? "").trim();
+  if (!id || !turnId || !userMessageId) return null;
+  const status = ["prepared", "completed", "failed", "stopped"].includes(value.status)
+    ? value.status
+    : "prepared";
+  const actualStatus = ["completed", "failed", "stopped"].includes(value.actual?.status)
+    ? value.actual.status
+    : "";
+  return {
+    id,
+    turnId,
+    userMessageId,
+    createdAt: validIso(value.createdAt) || new Date().toISOString(),
+    status,
+    serviceId: String(value.serviceId ?? "").trim(),
+    serviceLabel: String(value.serviceLabel ?? "").trim(),
+    model: String(value.model ?? "").trim(),
+    route: ["auto", ...AGENT_ROUTES].includes(value.route) ? value.route : "auto",
+    routeSource: value.routeSource === "manual" ? "manual" : "auto",
+    targetType: value.targetType === "video" ? "video" : "image",
+    outputMode: ["text_prompt", "create_image", "create_video"].includes(value.outputMode) ? value.outputMode : "text_prompt",
+    outputLanguage: value.outputLanguage === "en" ? "en" : "zh-CN",
+    productionReviewEnabled: value.productionReviewEnabled !== false,
+    agentInstruction: String(value.agentInstruction ?? ""),
+    taskMethod: String(value.taskMethod ?? ""),
+    userRequest: String(value.userRequest ?? "").trim(),
+    skills: (Array.isArray(value.skills) ? value.skills : []).flatMap((item, index) => {
+      const callName = String(item?.callName ?? "").trim();
+      if (!callName) return [];
+      return [{
+        skillId: String(item?.skillId ?? "").trim(),
+        callName,
+        order: Math.max(1, Math.floor(Number(item?.order) || index + 1)),
+        version: String(item?.version ?? "").trim(),
+        instructions: String(item?.instructions ?? "")
+      }];
+    }),
+    references: (Array.isArray(value.references) ? value.references : []).flatMap((item) => {
+      const alias = String(item?.alias ?? "").trim();
+      if (!alias) return [];
+      return [{
+        alias,
+        title: String(item?.title ?? "").trim(),
+        referenceKind: String(item?.referenceKind ?? "").trim(),
+        referenceText: String(item?.referenceText ?? ""),
+        sourceLabels: uniqueStrings(item?.sourceLabels),
+        imageCount: Math.max(0, Math.floor(Number(item?.imageCount) || 0))
+      }];
+    }),
+    retrieval: normalizeRetrievalSnapshot(value.retrieval),
+    retrievedSources: normalizeRetrievedSources(value.retrievedSources),
+    media: {
+      imageReferenceMode: ["conditioned", "prompt_only", "text_only"].includes(value.media?.imageReferenceMode)
+        ? value.media.imageReferenceMode
+        : "conditioned",
+      selectedImageCount: Math.max(0, Math.floor(Number(value.media?.selectedImageCount) || 0)),
+      expectedSentImageCount: Math.max(0, Math.floor(Number(value.media?.expectedSentImageCount) || 0)),
+      omittedImageCount: Math.max(0, Math.floor(Number(value.media?.omittedImageCount) || 0)),
+      omittedReason: String(value.media?.omittedReason ?? "").trim(),
+      editMode: ["whole", "local"].includes(value.media?.editMode) ? value.media.editMode : "",
+      baseImageIncluded: value.media?.baseImageIncluded === true,
+      maskIncluded: value.media?.maskIncluded === true
+    },
+    expectedModelCalls: Math.max(0, Math.floor(Number(value.expectedModelCalls) || 0)),
+    prerequisiteAnalysisRequests: Math.max(0, Math.floor(Number(value.prerequisiteAnalysisRequests) || 0)),
+    plannedStages: uniqueStrings(value.plannedStages),
+    actual: actualStatus ? {
+      status: actualStatus,
+      route: AGENT_ROUTES.includes(value.actual?.route) ? value.actual.route : "",
+      kind: String(value.actual?.kind ?? "").trim(),
+      serviceId: String(value.actual?.serviceId ?? "").trim(),
+      model: String(value.actual?.model ?? "").trim(),
+      promptTokens: Math.max(0, Math.floor(Number(value.actual?.promptTokens) || 0)),
+      completionTokens: Math.max(0, Math.floor(Number(value.actual?.completionTokens) || 0)),
+      finishReason: String(value.actual?.finishReason ?? "").trim(),
+      protocolDegraded: value.actual?.protocolDegraded === true,
+      stages: uniqueStrings(value.actual?.stages),
+      completedAt: validIso(value.actual?.completedAt)
+    } : null
+  };
+}
+
+function normalizeComposerAssemblySnapshots(values, latestValue) {
+  const snapshots = new Map();
+  for (const value of Array.isArray(values) ? values : []) {
+    const snapshot = normalizeComposerAssemblySnapshot(value);
+    if (snapshot) snapshots.set(snapshot.id, snapshot);
+  }
+  const latest = normalizeComposerAssemblySnapshot(latestValue);
+  if (latest) snapshots.set(latest.id, latest);
+  return [...snapshots.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-50);
+}
+
+function normalizeRetrievalSnapshot(value) {
+  if (!value || typeof value !== "object") return null;
+  const query = String(value.query ?? "").trim();
+  const contentRoles = [...new Set((Array.isArray(value.contentRoles) ? value.contentRoles : [])
+    .filter((role) => ["case", "guide"].includes(role)))];
+  const status = ["completed", "empty"].includes(value.status) ? value.status : "";
+  if (!query || !contentRoles.length || !status) return null;
+  return {
+    query,
+    contentRoles,
+    status,
+    sourceCount: Math.max(0, Math.floor(Number(value.sourceCount) || 0)),
+    requestedAt: validIso(value.requestedAt)
   };
 }
 

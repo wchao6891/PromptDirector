@@ -52,16 +52,24 @@ test("composer combines cases and Skills in one reference workspace while keepin
   assert.match(libraryJs, /navigateWithinPromptDirector\(url\)/);
 });
 
-test("composer model menu renders the assigned planning provider dynamically instead of hardcoding vendor ids", async () => {
-  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+test("composer model menu renders every connected task candidate without static provider fallback", async () => {
+  const [composerJs, composerCss] = await Promise.all([
+    readFile(new URL("../composer-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../composer-page.css", import.meta.url), "utf8")
+  ]);
   const renderer = composerJs.slice(
     composerJs.indexOf("function renderGenerationModelChoices"),
     composerJs.indexOf("function renderImageGenerationSettings")
   );
   assert.match(renderer, /creativePlanning/);
-  assert.match(renderer, /provider\.capabilities\?\.includes\(taskId\)/);
+  assert.match(renderer, /availableAiModelChoicesForTask\(taskId/);
   assert.match(renderer, /composerProfileForTaskAssignment/);
+  assert.match(renderer, /button\.hidden = true/);
+  assert.doesNotMatch(renderer, /staticFallback/);
   assert.doesNotMatch(renderer, /\["kimi",\s*"gemini"|providerId === "zhipu"/);
+  assert.match(composerCss, /\.composer-model-menu\s*\{[^}]*max-height:[^;}]*100dvh[^}]*overflow-y:\s*auto/s);
+  assert.match(composerCss, /\.composer-model-dynamic\s*>\s*button/);
+  assert.match(composerCss, /\.composer-model-dynamic\s*>\s*button\[aria-checked="true"\][^{]*\{[^}]*background:\s*var\(--selection\)/s);
 });
 
 test("composer reference selection is visual while Skill management stays on its own page", async () => {
@@ -117,7 +125,7 @@ test("composer reference selection is visual while Skill management stays on its
   assert.match(composerJs, /createComposerImageWorkspace/);
   assert.doesNotMatch(composerJs, /composer-result-more/);
   assert.doesNotMatch(composerJs, /按当前来源重新生成/);
-  assert.match(composerJs, /composerSession\.outputMode === "create_image"/);
+  assert.match(composerJs, /\["create_image", "create_video"\]\.includes\(session\.outputMode\)/);
   assert.match(composerJs, /composerServiceCapabilities\(/);
   assert.match(composerJs, /normalizeImageGenerationRequest\(/);
   const generationSettings = composerJs.slice(
@@ -179,6 +187,45 @@ test("composer temporary references share one attachment entry and block text-on
   assert.doesNotMatch(composerJs, /removeAllImageTempReferences/);
 });
 
+test("composer sends a manual text task from the direct execution phase", async () => {
+  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
+
+  assert.match(composerJs, /resolveComposerTurnPolicy/);
+  assert.match(composerJs, /prepareComposerTurnStart/);
+  assert.match(sendTurn, /prepareComposerTurnStart\(working, turnPolicy\)/);
+  assert.match(sendTurn, /runComposerTurn\(activeOperation, prepared\.startPhase\)/);
+});
+
+test("composer sends an automatic text task through the prepared one-response route", async () => {
+  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const runTurn = composerJs.slice(composerJs.indexOf("async function runComposerTurn"), composerJs.indexOf("function retrieveSourcesForTurn"));
+
+  assert.match(runTurn, /operation\.executionRoute/);
+  assert.match(runTurn, /runAgentExecution\(operation, settingsValue, executionRoute, operation\.session\.currentInstruction\)/);
+});
+
+test("composer checkpoints an active text turn and recovers it without automatic resend", async () => {
+  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
+  const execution = composerJs.slice(composerJs.indexOf("async function runAgentExecution"), composerJs.indexOf("async function persistComposerFailure"));
+  const initialization = composerJs.slice(composerJs.indexOf("async function initializeComposer"), composerJs.indexOf("async function createNewSession"));
+
+  assert.match(sendTurn, /createComposerActiveTurn/);
+  assert.match(execution, /checkpointComposerOperation/);
+  assert.match(execution, /checkpointWriter.*drain/s);
+  assert.match(initialization, /recoverInterruptedComposerTurn/);
+  assert.doesNotMatch(initialization, /runComposerTurn\(/);
+});
+
+test("composer starts an explicit media task from its prepared generation phase", async () => {
+  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
+
+  assert.match(sendTurn, /startPersistentCreativeJob\(\{ session: working, userMessageId, startPhase: prepared\.startPhase, imageEdit: null \}\)/);
+  assert.doesNotMatch(sendTurn, /startPersistentCreativeJob\(\{ session: working, userMessageId, startPhase: "planning"/);
+});
+
 test("composer internal Skill and settings navigation stays in the current tab", async () => {
   const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
   const openSkill = composerJs.slice(composerJs.indexOf("async function openSkillCenter"), composerJs.indexOf("function openAssemblyDialog"));
@@ -200,10 +247,12 @@ test("composer keeps one stable creation toolbar and separates result action lev
     composerHtml.indexOf('<div class="composer-input-footer">'),
     composerHtml.indexOf('<div class="composer-status-line">')
   );
-  for (const id of ["composer-attachment-local", "composer-reference-open", "composer-options", "composer-model-trigger", "composer-action"]) {
+  for (const id of ["composer-attachment-local", "composer-library-search", "composer-reference-open", "composer-options", "composer-model-trigger", "composer-action"]) {
     assert.match(footer, new RegExp(`id="${id}"`));
   }
   assert.ok(footer.indexOf("composer-attachment-local") < footer.indexOf("composer-type-switch"));
+  assert.ok(footer.indexOf("composer-library-search") < footer.indexOf("composer-type-switch"));
+  assert.match(footer, /id="composer-library-search"[^>]+aria-pressed="false"/);
   assert.ok(footer.indexOf("composer-type-switch") < footer.indexOf("composer-reference-open"));
   assert.ok(footer.indexOf("composer-reference-open") < footer.indexOf("composer-options"));
   assert.ok(footer.indexOf("composer-options") < footer.indexOf("composer-model-trigger"));

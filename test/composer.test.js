@@ -14,6 +14,8 @@ import {
   clearComposerFailure,
   composerInputUsage,
   composerProfileForTaskAssignment,
+  completeComposerAssemblySnapshot,
+  createComposerAssemblySnapshot,
   createComposerSession,
   createReferenceSnapshots,
   imageReferenceModeAvailability,
@@ -104,6 +106,104 @@ test("composer AI profile preserves dynamically assigned planning models across 
     resolution: "",
     motion: ""
   });
+});
+
+test("a session keeps its conversation model separate from its media generation model", () => {
+  const session = createComposerSession({
+    aiProfile: { serviceId: "deepseek", model: "deepseek-v4-flash" },
+    generationAiProfile: { serviceId: "compatible", model: "gpt-image-2" },
+    outputMode: "create_image"
+  });
+
+  assert.deepEqual(session.aiProfile, {
+    serviceId: "deepseek",
+    model: "deepseek-v4-flash",
+    thinking: false
+  });
+  assert.deepEqual(session.generationAiProfile, {
+    serviceId: "compatible",
+    model: "gpt-image-2",
+    thinking: false
+  });
+});
+
+test("a session keeps only the latest explicit local retrieval fact", () => {
+  const session = createComposerSession({
+    id: "retrieval-session",
+    retrievalSnapshot: {
+      query: "雾夜角色",
+      contentRoles: ["guide", "case", "guide", "invalid"],
+      status: "completed",
+      sourceCount: 2,
+      requestedAt: "2026-08-30T10:00:00.000Z",
+      apiKey: "must-not-persist"
+    }
+  });
+
+  assert.deepEqual(session.retrievalSnapshot, {
+    query: "雾夜角色",
+    contentRoles: ["guide", "case"],
+    status: "completed",
+    sourceCount: 2,
+    requestedAt: "2026-08-30T10:00:00.000Z"
+  });
+  assert.doesNotMatch(JSON.stringify(session), /must-not-persist/);
+});
+
+test("the latest assembly snapshot freezes sent facts without credentials or media payloads", () => {
+  const prepared = createComposerAssemblySnapshot({
+    turnId: "turn-one",
+    userMessageId: "message-one",
+    serviceId: "zhipu",
+    serviceLabel: "智谱 GLM",
+    model: "glm-5.3-flash",
+    route: "auto",
+    routeSource: "auto",
+    targetType: "video",
+    outputMode: "text_prompt",
+    outputLanguage: "zh-CN",
+    agentInstruction: "系统指令",
+    taskMethod: "任务方法",
+    userRequest: "分析这个视频",
+    skills: [{ skillId: "skill-one", callName: "story", version: "v2", instructions: "保持叙事节奏" }],
+    references: [{ alias: "@参考1", title: "案例", referenceKind: "prompt", referenceText: "原提示词", imageCount: 1 }],
+    media: { selectedImageCount: 1, expectedSentImageCount: 1 },
+    expectedModelCalls: 1,
+    plannedStages: ["requesting_model", "receiving_text"],
+    apiKey: "must-not-persist",
+    mediaBase64: "AAAA"
+  });
+  const completed = completeComposerAssemblySnapshot(prepared, {
+    route: "analyze_materials",
+    kind: "analysis",
+    serviceId: "zhipu",
+    model: "glm-5.3-flash",
+    usage: { promptTokens: 12, completionTokens: 34 },
+    finishReason: "stop",
+    actualStages: ["requesting_model", "receiving_text", "response_completed"]
+  });
+  const session = createComposerSession({ assemblySnapshot: completed });
+  const serialized = JSON.stringify(session.assemblySnapshot);
+
+  assert.equal(session.assemblySnapshot.targetType, "video");
+  assert.equal(session.assemblySnapshot.userRequest, "分析这个视频");
+  assert.equal(session.assemblySnapshot.actual.promptTokens, 12);
+  assert.equal(session.assemblySnapshot.actual.completionTokens, 34);
+  assert.deepEqual(session.assemblySnapshot.actual.stages, ["requesting_model", "receiving_text", "response_completed"]);
+  assert.equal(session.assemblySnapshots.length, 1);
+  assert.equal(serialized.includes("must-not-persist"), false);
+  assert.equal(serialized.includes("AAAA"), false);
+
+  const next = createComposerAssemblySnapshot({
+    turnId: "turn-two",
+    userMessageId: "message-two",
+    userRequest: "第二轮",
+    plannedStages: ["requesting_model"]
+  });
+  const continued = createComposerSession({ ...session, assemblySnapshot: next });
+  assert.equal(continued.assemblySnapshots.length, 2);
+  assert.equal(continued.assemblySnapshots[0].userRequest, "分析这个视频");
+  assert.equal(continued.assemblySnapshot.userRequest, "第二轮");
 });
 
 test("old heavy plans and review reports are discarded while user-visible conversation remains", () => {
@@ -559,6 +659,32 @@ test("automatic routing accepts analysis while a manual route cannot be rewritte
     userMessage: "解释这个概念",
     composerSettings: normalizeComposerSettings()
   }, aiSettings, { fetchImpl: async () => jsonResponse({ route: "compose", status: "ready", instruction: "生成提示词" }) }), /改写了用户手动选择的任务/);
+});
+
+test("DeepSeek automatic execution returns one visible response from one streamed request", async () => {
+  const requests = [];
+  const updates = [];
+  const result = await executeAgentTurn({
+    session: createComposerSession({ routeMode: "auto" }),
+    userMessage: "分析资料差异",
+    composerSettings: normalizeComposerSettings(),
+    route: "auto",
+    instruction: "分析资料差异"
+  }, aiSettings, {
+    onRequestStart: () => { throw new Error("local checkpoint unavailable"); },
+    onDelta: (delta, content) => updates.push({ delta, content }),
+    fetchImpl: async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return sseResponse('{"route":"analyze_materials","status":"ready"}\n两份资料的镜头距离不同。');
+    }
+  });
+
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].messages[0].content, /同一次响应/);
+  assert.deepEqual(updates, [{ delta: "两份资料的镜头距离不同。", content: "两份资料的镜头距离不同。" }]);
+  assert.equal(result.route, "analyze_materials");
+  assert.equal(result.kind, "analysis");
+  assert.equal(result.text, "两份资料的镜头距离不同。");
 });
 
 test("light review changes only the execution instruction and never requires a report", async () => {

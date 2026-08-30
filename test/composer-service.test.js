@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   composerImageEditCapabilities,
   composerImageAvailability,
+  composerGenerationRequiresPromptAssembly,
   composerServiceCapabilities,
   composerServiceCatalog,
   composerVideoAvailability,
@@ -114,6 +115,30 @@ function geminiImageSettings(modelOverrides = {}) {
   });
 }
 
+test("generation request facts match the actual image and video execution paths", () => {
+  const values = visualSettings();
+  assert.equal(composerGenerationRequiresPromptAssembly(
+    { serviceId: "compatible", model: "gpt-5.4-mini" },
+    values.vision,
+    createComposerSession({ outputMode: "create_image", imageReferenceMode: "conditioned" })
+  ), true);
+  assert.equal(composerGenerationRequiresPromptAssembly(
+    { serviceId: "openai", model: "gpt-5-mini" },
+    values.vision,
+    createComposerSession({ outputMode: "create_image", imageReferenceMode: "conditioned" })
+  ), false);
+  assert.equal(composerGenerationRequiresPromptAssembly(
+    { serviceId: "openai", model: "gpt-5-mini" },
+    values.vision,
+    createComposerSession({ outputMode: "create_image", imageReferenceMode: "text_only" })
+  ), true);
+  assert.equal(composerGenerationRequiresPromptAssembly(
+    { serviceId: "openai", model: "gpt-5-mini" },
+    values.vision,
+    createComposerSession({ outputMode: "create_video", targetType: "video" })
+  ), true);
+});
+
 test("Micu planning uses lightweight JSON mode and sends high reasoning only when enabled", async () => {
   const requests = [];
   const fetchImpl = async (_url, options) => {
@@ -207,6 +232,61 @@ test("Kimi creative planning uses the assigned model without falling back to ano
   assert.equal(requests[0].headers.Authorization, "Bearer kimi-secret");
   assert.equal(requests[0].body.model, "account-planning-model");
   assert.equal(planned.instruction, "保留核心冲突");
+});
+
+test("a per-session DeepSeek switch uses that connected model instead of the global planning route", async () => {
+  const requests = [];
+  const settingsValue = visualSettings({
+    providerProfiles: {
+      deepseek: {
+        id: "deepseek",
+        label: "DeepSeek",
+        endpoint: "https://api.deepseek.com/chat/completions",
+        protocol: "chat_completions",
+        structuredOutput: "json_object",
+        apiKey: "deepseek-session-key",
+        credentialConfigured: true,
+        consent: true,
+        capabilities: ["creativePlanning"],
+        discoveredModels: [{
+          id: "deepseek-account-beta",
+          confidence: "manual_unverified",
+          status: "available",
+          tasks: []
+        }],
+        discovery: { discoveredAt: "2026-08-30T10:00:00.000Z" }
+      }
+    }
+  });
+  settingsValue.ai = {
+    activeProvider: "compatible",
+    consent: true,
+    analysisModel: "glm-5.3-flash",
+    compatible: {
+      endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+      apiKey: "zhipu-global-key",
+      model: "glm-5.3-flash"
+    }
+  };
+  const session = createComposerSession({
+    aiProfile: { serviceId: "deepseek", model: "deepseek-account-beta" },
+    messages: [{ role: "user", type: "request", content: "整理这个创意" }]
+  });
+
+  await planComposerTurnWithService({ session, userMessage: "", composerSettings: settings }, settingsValue, {
+    fetchImpl: async (url, options) => {
+      requests.push({ url, body: JSON.parse(options.body) });
+      return response({
+        model: "deepseek-account-beta",
+        choices: [{ message: { content: JSON.stringify({ route: "compose", status: "ready" }) } }]
+      });
+    }
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://api.deepseek.com/chat/completions");
+  assert.equal(requests[0].body.model, "deepseek-account-beta");
+  assert.equal(JSON.stringify(requests[0]).includes("glm-5.3-flash"), false);
 });
 
 test("Zhipu creative planning is selectable from the registry and calls only its assigned GLM model", async () => {
@@ -542,6 +622,68 @@ test("visual planning rejects non-JSON without a repair request", async () => {
   assert.equal(calls, 1);
 });
 
+test("automatic visual text completes routing and the answer in one provider request", async () => {
+  const session = referenceSession("compatible");
+  session.routeMode = "auto";
+  const calls = [];
+  const streamed = [];
+  const result = await executeComposerTurnWithService({
+    session,
+    userMessage: "",
+    composerSettings: settings,
+    route: "auto",
+    instruction: "判断这些参考适合分析还是装配"
+  }, visualSettings(), preparedImages, {
+    onRequestStart: () => { throw new Error("local checkpoint unavailable"); },
+    onDelta: (delta, content) => streamed.push({ delta, content }),
+    fetchImpl: async (_url, options) => {
+      calls.push(JSON.parse(options.body));
+      return response({
+        model: "gpt-5.4-mini",
+        output_text: '{"route":"analyze_materials","status":"ready"}\n三人构图的视觉中心清晰，风格参考只提供色彩和材质。'
+      });
+    }
+  });
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].instructions, /同一次响应/);
+  assert.deepEqual(streamed, [{
+    delta: "三人构图的视觉中心清晰，风格参考只提供色彩和材质。",
+    content: "三人构图的视觉中心清晰，风格参考只提供色彩和材质。"
+  }]);
+  assert.equal(result.route, "analyze_materials");
+  assert.equal(result.kind, "analysis");
+  assert.equal(result.text, "三人构图的视觉中心清晰，风格参考只提供色彩和材质。");
+  assert.equal(result.protocolDegraded, false);
+});
+
+test("automatic visual text preserves an invalid control frame and reports the degraded protocol", async () => {
+  const session = createComposerSession({
+    routeMode: "auto",
+    aiProfile: { serviceId: "compatible", model: "gpt-5.4-mini" },
+    messages: [{ role: "user", type: "request", content: "直接回答" }]
+  });
+  let calls = 0;
+  const result = await executeComposerTurnWithService({
+    session,
+    userMessage: "",
+    composerSettings: settings,
+    route: "auto",
+    instruction: "直接回答"
+  }, visualSettings(), [], {
+    fetchImpl: async () => {
+      calls += 1;
+      return response({ output_text: "直接保留这段普通回答。" });
+    }
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(result.kind, "chat");
+  assert.equal(result.text, "直接保留这段普通回答。");
+  assert.equal(result.protocolDegraded, true);
+  assert.equal(result.protocolDegradationReason, "invalid_control_frame");
+});
+
 function referenceSession(serviceId = "openai", outputMode = "text_prompt") {
   return createComposerSession({
     aiProfile: { serviceId, model: serviceId === "openai" ? "gpt-5-mini" : "gpt-5.4-mini" },
@@ -811,9 +953,11 @@ test("Gemini conditioned generation sends raw multi-image blocks and enforces th
   session.aiProfile = { serviceId: "gemini", model: "gemini-planning-model", thinking: false };
   session.generationAiProfile = { serviceId: "gemini", model: "account-nano-banana-model", thinking: false };
   const calls = [];
+  let requestStarts = 0;
   const result = await executeComposerTurnWithService({
     session, userMessage: "", composerSettings: settings, route: "compose", instruction: "严格保持三张参考图各自职责"
   }, geminiImageSettings(), preparedImages, {
+    onRequestStart: () => { requestStarts += 1; },
     fetchImpl: async (url, options) => {
       calls.push({ url, body: JSON.parse(options.body) });
       return response({ steps: [{ type: "model_output", content: [{ type: "image", mime_type: "image/png", data: "aGVsbG8=" }] }] });
@@ -821,6 +965,7 @@ test("Gemini conditioned generation sends raw multi-image blocks and enforces th
   });
 
   assert.equal(calls.length, 1);
+  assert.equal(requestStarts, 1);
   assert.equal(calls[0].body.input.filter((item) => item.type === "image").length, 3);
   assert.deepEqual(calls[0].body.input.filter((item) => item.type === "image").map((item) => [item.mime_type, item.data]), [
     ["image/png", "AAAA"], ["image/png", "BBBB"], ["image/jpeg", "CCCC"]
@@ -830,12 +975,15 @@ test("Gemini conditioned generation sends raw multi-image blocks and enforces th
 
   const limited = geminiImageSettings({ referenceImages: { supported: true, maxItems: 2, source: "declared" } });
   let paidCalls = 0;
+  let limitedRequestStarts = 0;
   await assert.rejects(() => executeComposerTurnWithService({
     session, userMessage: "", composerSettings: settings, route: "compose", instruction: "保持三张参考"
   }, limited, preparedImages, {
+    onRequestStart: () => { limitedRequestStarts += 1; },
     fetchImpl: async () => { paidCalls += 1; throw new Error("不应调用"); }
   }), (error) => error.kind === "reference_limit" && error.referenceLimit?.maximum === 2);
   assert.equal(paidCalls, 0);
+  assert.equal(limitedRequestStarts, 0);
 });
 
 test("Gemini local mask edits and failed image responses never trigger a paid retry", async () => {
@@ -1211,6 +1359,20 @@ test("unknown reference limits never become zero while explicit unsupported stat
   assert.match(blocked.message, /不接收原图/);
   const promptOnly = createComposerSession({ ...session, imageReferenceMode: "prompt_only" });
   assert.equal(composerImageAvailability(generationProfile, unknown.vision, promptOnly).available, true);
+});
+
+test("dedicated compatible image generation remains available without an image-analysis assignment", () => {
+  const values = visualSettings().vision;
+  values.compatible.endpoint = "";
+  values.compatible.model = "";
+  values.compatible.apiKey = "";
+  const profile = { serviceId: "compatible", model: "gpt-image-2" };
+  assert.equal(composerServiceCapabilities(profile, values).image.generate, true);
+  assert.equal(composerImageAvailability(profile, values, createComposerSession({
+    targetType: "image",
+    generationAiProfile: profile,
+    outputMode: "text_prompt"
+  })).available, true);
 });
 
 test("image requests reject unsupported declared values and omit undeclared values", () => {

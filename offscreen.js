@@ -90,17 +90,22 @@ function startCreativeJob(job) {
     throw new Error("后台已有创作任务正在运行");
   }
   const controller = new AbortController();
-  const runner = { jobId, controller, cancelRequested: false, promise: null };
+  const runner = { jobId, controller, cancelRequested: false, providerMayHaveAccepted: false, promise: null };
   runner.promise = runCreativeJob(job, {
     signal: controller.signal,
     loadState: () => sendBackgroundMessage({ type: "GET_CREATIVE_JOB_EXECUTION_STATE" }),
-    progress: ({ phase, session, remoteVideo }) => sendBackgroundMessage({
-      type: "UPDATE_CREATIVE_JOB_PROGRESS",
-      jobId,
-      phase,
-      session,
-      remoteVideo
-    })
+    progress: ({ phase, session, remoteVideo, providerMayHaveAccepted, actualStages }) => {
+      if (providerMayHaveAccepted === true) runner.providerMayHaveAccepted = true;
+      return sendBackgroundMessage({
+        type: "UPDATE_CREATIVE_JOB_PROGRESS",
+        jobId,
+        phase,
+        actualStages,
+        session,
+        remoteVideo,
+        providerMayHaveAccepted: runner.providerMayHaveAccepted
+      });
+    }
   }).then(async (result) => {
     const response = await sendBackgroundMessage({
       type: "COMPLETE_CREATIVE_JOB",
@@ -123,9 +128,7 @@ function startCreativeJob(job) {
       error: details
     }).catch(() => undefined);
     return { ok: false, message: details.message };
-  }).finally(async () => {
-    const maskAssetId = String(job?.request?.imageEdit?.maskAssetId ?? "").trim();
-    if (maskAssetId) await deleteScreenshotBlob(maskAssetId).catch(() => undefined);
+  }).finally(() => {
     if (creativeJobRunner === runner) creativeJobRunner = null;
   });
   creativeJobRunner = runner;
@@ -137,10 +140,16 @@ async function cancelCreativeJob(jobIdValue) {
   if (!creativeJobRunner || creativeJobRunner.jobId !== jobId) {
     return { ok: false, message: "后台没有找到正在运行的创作任务" };
   }
-  creativeJobRunner.cancelRequested = true;
-  creativeJobRunner.controller.abort();
-  await creativeJobRunner.promise;
-  return { ok: true, jobId, canceled: true };
+  const runner = creativeJobRunner;
+  runner.cancelRequested = true;
+  runner.controller.abort();
+  await runner.promise;
+  return {
+    ok: true,
+    jobId,
+    canceled: true,
+    providerMayHaveAccepted: runner.providerMayHaveAccepted
+  };
 }
 
 async function sendBackgroundMessage(message) {

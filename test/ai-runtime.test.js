@@ -358,3 +358,24 @@ test("Micu image runtime never silently sends the text-group key to image genera
   assert.equal(diagnostic.compatible.apiKey, "vip-2-text-key");
   assert.equal(diagnostic.compatible.imageGeneration.apiKey, "");
 });
+
+test("xAI image analysis never becomes an implicit image-generation route", () => {
+  const runtime = projectAiRuntime(aiConfigurationFromStorage({
+    aiProviderRegistry: { providers: {
+      xai: {
+        apiKey: "xai-key",
+        consent: true,
+        discoveredModels: [{
+          id: "xai-analysis-model",
+          confidence: "declared",
+          tasks: ["imageAnalysis"]
+        }]
+      }
+    } },
+    aiTaskAssignments: {
+      imageAnalysis: { providerId: "xai", model: "xai-analysis-model" }
+    }
+  }));
+  assert.equal(runtime.visionSettings.xai.imageModel, "");
+  assert.equal(runtime.aiServiceProfiles.xai.imageModel, "");
+});

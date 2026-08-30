@@ -107,7 +107,7 @@ export function projectAiRuntime(configurationValue = {}) {
     textModel: assignments.creativePlanning.providerId === "xai" ? assignments.creativePlanning.model : "",
     imageModel: assignments.imageGeneration.providerId === "xai"
       ? assignments.imageGeneration.model
-      : assignments.imageAnalysis.providerId === "xai" ? assignments.imageAnalysis.model : "",
+      : "",
     videoModel: assignments.videoGeneration.providerId === "xai" ? assignments.videoGeneration.model : "",
     mediaConsent: xai?.consent === true
   };
@@ -128,7 +128,7 @@ export function projectAiRuntime(configurationValue = {}) {
         textModel: assignments.creativePlanning.providerId === "xai" ? assignments.creativePlanning.model : "",
         imageModel: assignments.imageGeneration.providerId === "xai"
           ? assignments.imageGeneration.model
-          : assignments.imageAnalysis.providerId === "xai" ? assignments.imageAnalysis.model : "",
+          : "",
         videoModel: assignments.videoGeneration.providerId === "xai" ? assignments.videoGeneration.model : "",
         mediaConsent: xai?.consent === true
       }

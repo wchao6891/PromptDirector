@@ -50,7 +50,8 @@ def main() -> None:
                   }, {id: 'recovery-job'});
                   const running = updateCreativeJob(created.state, 'recovery-job', {
                     status: 'running',
-                    phase: 'generation'
+                    phase: 'generation',
+                    actualStages: ['preparing_media', 'media_prepared']
                   });
                   await chrome.storage.local.set({
                     creativeJobs: running,
@@ -111,6 +112,7 @@ def main() -> None:
                 raise AssertionError({"interrupted": interrupted, "diagnostics": diagnostics})
             assert interrupted["status"] == "interrupted", interrupted
             assert interrupted["error"]["retryable"] is True, interrupted
+            assert interrupted["actualStages"] == ["preparing_media", "media_prepared"], interrupted
             assert not interrupted.get("retryOf"), interrupted
             expect(composer.get_by_role("button", name="重试本轮", exact=True)).to_be_visible(timeout=15_000)
             serialized = str(jobs)
@@ -123,7 +125,7 @@ def main() -> None:
                   const request = stored.creativeJobs.items[0].request;
                   const created = createCreativeJob(stored.creativeJobs, request, {id: 'missing-runner-job'});
                   const running = updateCreativeJob(created.state, 'missing-runner-job', {
-                    status: 'running', phase: 'generation'
+                    status: 'running', phase: 'generation', actualStages: ['preparing_media']
                   });
                   await chrome.storage.local.set({creativeJobs: running});
                   return chrome.runtime.sendMessage({type: 'CANCEL_CREATIVE_JOB', jobId: 'missing-runner-job'});
@@ -133,6 +135,58 @@ def main() -> None:
             assert cancel_result["job"]["status"] == "canceled", cancel_result
             replacement = composer.evaluate("() => chrome.storage.local.get('creativeJobs').then(value => value.creativeJobs.items.find(item => item.id === 'missing-runner-job'))")
             assert replacement["status"] == "canceled", replacement
+            assert replacement["actualStages"] == ["preparing_media"], replacement
+
+            unknown_stop = composer.evaluate(
+                """async () => {
+                  const {createCreativeJob, updateCreativeJob} = await import(chrome.runtime.getURL('creative-jobs.js'));
+                  const stored = await chrome.storage.local.get('creativeJobs');
+                  const sourceRequest = stored.creativeJobs.items[0].request;
+                  const request = {
+                    ...sourceRequest,
+                    session: {...sourceRequest.session, targetType: 'video', outputMode: 'create_video'}
+                  };
+                  const created = createCreativeJob(stored.creativeJobs, request, {id: 'accepted-missing-runner-job'});
+                  const running = updateCreativeJob(created.state, 'accepted-missing-runner-job', {
+                    status: 'running', phase: 'generation', providerMayHaveAccepted: true,
+                    actualStages: ['preparing_media', 'media_prepared', 'provider_request'],
+                    remoteVideo: {
+                      serviceId: 'openai', remoteId: 'remote-stop-unknown', finalPrompt: '保留同一远程任务', requestParameters: {}
+                    }
+                  });
+                  await chrome.storage.local.set({creativeJobs: running});
+                  return chrome.runtime.sendMessage({type: 'CANCEL_CREATIVE_JOB', jobId: 'accepted-missing-runner-job'});
+                }"""
+            )
+            assert unknown_stop["ok"] is True, unknown_stop
+            assert unknown_stop["job"]["status"] == "interrupted", unknown_stop
+            assert unknown_stop["job"]["executionState"] == "stop_unknown", unknown_stop
+            assert unknown_stop["job"]["providerMayHaveAccepted"] is True, unknown_stop
+            assert unknown_stop["job"]["actualStages"] == ["preparing_media", "media_prepared", "provider_request"], unknown_stop
+
+            late_result = composer.evaluate(
+                """async () => {
+                  const {retryCreativeJob} = await import(chrome.runtime.getURL('creative-jobs.js'));
+                  const before = await chrome.storage.local.get('creativeJobs');
+                  const original = before.creativeJobs.items.find(item => item.id === 'accepted-missing-runner-job');
+                  const late = await chrome.runtime.sendMessage({
+                    type: 'COMPLETE_CREATIVE_JOB',
+                    jobId: 'accepted-missing-runner-job',
+                    session: original.request.session,
+                    visuals: [],
+                    generation: null
+                  });
+                  const stored = await chrome.storage.local.get('creativeJobs');
+                  const retried = retryCreativeJob(stored.creativeJobs, 'accepted-missing-runner-job', {id: 'explicit-retry-job'});
+                  return {
+                    late,
+                    retry: retried.job
+                  };
+                }"""
+            )
+            assert late_result["late"]["ok"] is False, late_result
+            assert late_result["retry"]["status"] == "queued", late_result
+            assert late_result["retry"]["remoteVideo"]["remoteId"] == "remote-stop-unknown", late_result
             second.close()
 
             print({
@@ -141,6 +195,9 @@ def main() -> None:
                 "jobCount": len(jobs["items"]),
                 "manualRetryVisible": True,
                 "missingRunnerLockReleased": True,
+                "acceptedMissingRunnerStopUnknown": True,
+                "lateResultRejected": True,
+                "remoteIdentityPreserved": True,
             })
 
 

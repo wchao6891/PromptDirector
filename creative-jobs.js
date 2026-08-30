@@ -19,6 +19,18 @@ export const CREATIVE_JOB_PHASES = Object.freeze([
   "completed"
 ]);
 
+export const CREATIVE_JOB_EXECUTION_STATES = Object.freeze([
+  "queued",
+  "running",
+  "stop_requested",
+  "stop_unknown",
+  "submission_unknown",
+  "completed",
+  "failed",
+  "canceled",
+  "interrupted"
+]);
+
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const RETRYABLE_STATUSES = new Set(["failed", "canceled", "interrupted"]);
 const STATUS_TRANSITIONS = Object.freeze({
@@ -58,7 +70,11 @@ export function createCreativeJob(stateValue, requestValue, options = {}) {
     sessionId: request.session.id,
     userMessageId: request.userMessageId,
     status: "queued",
+    executionState: "queued",
+    providerMayHaveAccepted: false,
+    stopRequestedAt: "",
     phase: request.startPhase,
+    actualStages: [],
     retryOf: clean(options.retryOf),
     request,
     remoteVideo: null,
@@ -95,6 +111,10 @@ export function updateCreativeJob(stateValue, jobIdValue, patchValue = {}, optio
     ...current,
     status,
     phase,
+    actualStages: normalizeActualStages(current.actualStages, patchValue.actualStages),
+    executionState: normalizeExecutionState(patchValue.executionState, status, current.executionState),
+    providerMayHaveAccepted: current.providerMayHaveAccepted || patchValue.providerMayHaveAccepted === true,
+    stopRequestedAt: validIso(patchValue.stopRequestedAt) || current.stopRequestedAt,
     error: Object.hasOwn(patchValue, "error") ? normalizeCreativeJobError(patchValue.error) : current.error,
     remoteVideo: Object.hasOwn(patchValue, "remoteVideo") ? normalizeRemoteVideo(patchValue.remoteVideo) : current.remoteVideo,
     updatedAt: now,
@@ -113,15 +133,63 @@ export function interruptActiveCreativeJobs(stateValue, options = {}) {
     items: state.items.map((job) => ACTIVE_STATUSES.has(job.status) ? {
       ...job,
       status: "interrupted",
+      executionState: job.providerMayHaveAccepted && !job.remoteVideo ? "submission_unknown" : "interrupted",
       error: {
-        kind: "interrupted",
-        message: "浏览器曾在任务完成前退出，结果状态未知，请手动重试",
+        kind: job.providerMayHaveAccepted && !job.remoteVideo ? "submission_unknown" : "interrupted",
+        message: job.providerMayHaveAccepted && !job.remoteVideo
+          ? "服务商可能已接收本次创作，但插件尚未取得可恢复编号。提交结果未知，不会自动重试"
+          : job.remoteVideo
+            ? "远程任务恢复失败，已保留任务编号，请手动重试继续查询"
+            : "浏览器曾在任务完成前退出，结果状态未知，请手动重试",
         retryable: true
       },
       updatedAt: now,
       completedAt: now
     } : job)
   });
+}
+
+export function requestCreativeJobStop(stateValue, jobIdValue, options = {}) {
+  const state = normalizeCreativeJobsState(stateValue);
+  const current = creativeJobById(state, jobIdValue);
+  if (!current) throw new Error("没有找到对应的创作任务");
+  if (!ACTIVE_STATUSES.has(current.status)) return { state, job: current };
+  const now = validIso(options.now) || new Date().toISOString();
+  const next = updateCreativeJob(state, current.id, {
+    executionState: "stop_requested",
+    stopRequestedAt: now
+  }, { now });
+  return { state: next, job: creativeJobById(next, current.id) };
+}
+
+export function settleCreativeJobStop(stateValue, jobIdValue, options = {}) {
+  const state = normalizeCreativeJobsState(stateValue);
+  const current = creativeJobById(state, jobIdValue);
+  if (!current) throw new Error("没有找到对应的创作任务");
+  if (!ACTIVE_STATUSES.has(current.status)) return { state, job: current };
+  const providerMayHaveAccepted = current.providerMayHaveAccepted || options.providerMayHaveAccepted === true;
+  const providerCancelConfirmed = options.providerCancelConfirmed === true;
+  const canceled = providerCancelConfirmed || !providerMayHaveAccepted;
+  const next = updateCreativeJob(state, current.id, canceled ? {
+    status: "canceled",
+    executionState: "canceled",
+    providerMayHaveAccepted,
+    error: {
+      kind: "canceled",
+      message: providerCancelConfirmed ? "服务商已确认取消本次创作" : "任务已在发出服务请求前停止",
+      retryable: true
+    }
+  } : {
+    status: "interrupted",
+    executionState: "stop_unknown",
+    providerMayHaveAccepted: true,
+    error: {
+      kind: "stop_unknown",
+      message: "插件已停止等待，但服务商是否停止仍未知。本轮不会自动重试，再次创作可能重复计费",
+      retryable: true
+    }
+  }, options);
+  return { state: next, job: creativeJobById(next, current.id) };
 }
 
 export function retryCreativeJob(stateValue, jobIdValue, options = {}) {
@@ -159,13 +227,18 @@ function normalizeCreativeJob(value) {
   }
   const createdAt = validIso(value.createdAt) || new Date().toISOString();
   const status = value.status;
+  const legacyProviderState = !Object.hasOwn(value, "providerMayHaveAccepted") && status === "running";
   return {
     id,
     version: CREATIVE_JOBS_VERSION,
     sessionId: request.session.id,
     userMessageId: request.userMessageId,
     status,
+    executionState: normalizeExecutionState(value.executionState, status),
+    providerMayHaveAccepted: value.providerMayHaveAccepted === true || legacyProviderState,
+    stopRequestedAt: validIso(value.stopRequestedAt),
     phase: CREATIVE_JOB_PHASES.includes(value.phase) ? value.phase : request.startPhase,
+    actualStages: normalizeActualStages(value.actualStages),
     retryOf: clean(value.retryOf),
     request,
     remoteVideo: normalizeRemoteVideo(value.remoteVideo),
@@ -262,8 +335,24 @@ function terminalStatus(status) {
   return ["completed", "failed", "canceled", "interrupted"].includes(status);
 }
 
+function normalizeExecutionState(value, status, fallback = "") {
+  if (CREATIVE_JOB_EXECUTION_STATES.includes(value)) return value;
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "canceled") return "canceled";
+  if (status === "interrupted") return "interrupted";
+  if (fallback === "stop_requested") return "stop_requested";
+  return status === "running" ? "running" : "queued";
+}
+
 function phaseIndex(phase) {
   return CREATIVE_JOB_PHASES.indexOf(phase);
+}
+
+function normalizeActualStages(...values) {
+  return [...new Set(values.flatMap((value) => Array.isArray(value) ? value : [])
+    .map(clean)
+    .filter(Boolean))];
 }
 
 function clean(value) {

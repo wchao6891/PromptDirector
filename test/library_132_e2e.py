@@ -23,7 +23,7 @@ def wait_for_initial_gallery_batch(page, total: int) -> int:
 def save_pending_classification(page, entry_id: str) -> None:
     drawer = page.locator("#detail-drawer")
     expect(drawer).to_have_attribute("data-entry-id", entry_id)
-    panel = page.locator(".pending-classification-inline")
+    panel = drawer.locator(".pending-classification-inline")
     expect(panel).to_be_visible()
     select = panel.locator("select")
     select.select_option("content:image-case")
@@ -327,6 +327,14 @@ def main() -> None:
                 expect(library.locator(".pending-classification-inline")).to_be_visible()
                 second_pending_id = library.locator("#detail-drawer").get_attribute("data-entry-id")
                 assert second_pending_id and second_pending_id != first_pending_id
+                library.wait_for_function(
+                    """entryId => {
+                      const drawer = document.querySelector('#detail-drawer');
+                      return drawer?.dataset.entryId === entryId
+                        && document.activeElement === document.querySelector('#detail-close');
+                    }""",
+                    arg=second_pending_id,
+                )
                 save_pending_classification(library, second_pending_id)
                 expect(library.locator("#detail-drawer")).not_to_have_class("open")
                 expect(library.locator("#feedback")).to_contain_text("待确认已处理完")

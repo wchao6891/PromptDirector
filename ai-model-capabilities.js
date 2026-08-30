@@ -58,6 +58,36 @@ function googleImageModel(value) {
 
 export const AI_MODEL_CAPABILITIES = Object.freeze([
   Object.freeze({
+    id: "deepseek-v4-flash",
+    providerId: "deepseek",
+    protocol: "chat_completions",
+    tasks: Object.freeze(["textTags", "skillExtraction", "creativePlanning"]),
+    inputModalities: Object.freeze(["text"]),
+    outputModalities: Object.freeze(["text"]),
+    supportedParameters: Object.freeze(["response_format", "reasoning_effort"]),
+    supportedResolutions: Object.freeze([]),
+    supportedAspectRatios: Object.freeze([]),
+    contextLength: 1_000_000,
+    structuredOutput: "json_object",
+    concurrencyLimit: Object.freeze({ value: 2500, source: DEEPSEEK_CONCURRENCY_SOURCE }),
+    source: DEEPSEEK_CONCURRENCY_SOURCE
+  }),
+  Object.freeze({
+    id: "deepseek-v4-pro",
+    providerId: "deepseek",
+    protocol: "chat_completions",
+    tasks: Object.freeze(["textTags", "skillExtraction", "creativePlanning"]),
+    inputModalities: Object.freeze(["text"]),
+    outputModalities: Object.freeze(["text"]),
+    supportedParameters: Object.freeze(["response_format", "reasoning_effort"]),
+    supportedResolutions: Object.freeze([]),
+    supportedAspectRatios: Object.freeze([]),
+    contextLength: 1_000_000,
+    structuredOutput: "json_object",
+    concurrencyLimit: Object.freeze({ value: 500, source: DEEPSEEK_CONCURRENCY_SOURCE }),
+    source: DEEPSEEK_CONCURRENCY_SOURCE
+  }),
+  Object.freeze({
     id: "deepseek-v4-flash-vision-exp",
     providerId: "deepseek",
     protocol: "chat_completions",

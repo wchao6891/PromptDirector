@@ -6,11 +6,17 @@ import {
   createCreativeJob,
   interruptActiveCreativeJobs,
   normalizeCreativeJobsState,
+  requestCreativeJobStop,
   retryCreativeJob,
+  settleCreativeJobStop,
   updateCreativeJob
 } from "../creative-jobs.js";
 
-const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
+const [background, offscreen, runner] = await Promise.all([
+  readFile(new URL("../background.js", import.meta.url), "utf8"),
+  readFile(new URL("../offscreen.js", import.meta.url), "utf8"),
+  readFile(new URL("../creative-job-runner.js", import.meta.url), "utf8")
+]);
 
 function request(overrides = {}) {
   return {
@@ -43,6 +49,10 @@ test("creative jobs persist an immutable request without credentials or image pa
 
   assert.equal(created.job.id, "job-one");
   assert.equal(created.job.status, "queued");
+  assert.equal(created.job.executionState, "queued");
+  assert.equal(created.job.providerMayHaveAccepted, false);
+  assert.equal(created.job.stopRequestedAt, "");
+  assert.deepEqual(created.job.actualStages, []);
   assert.deepEqual(created.job.request.imageEdit, {
     mode: "local",
     parentVisualId: "visual-one",
@@ -52,6 +62,100 @@ test("creative jobs persist an immutable request without credentials or image pa
   });
   const serialized = JSON.stringify(created.state);
   assert.doesNotMatch(serialized, /must-not-persist|data:image|temporary\.invalid/);
+});
+
+test("creative jobs preserve the ordered set of stages that actually ran", () => {
+  const created = createCreativeJob(undefined, request(), { id: "job-one" });
+  const preparing = updateCreativeJob(created.state, "job-one", {
+    status: "running",
+    phase: "generation",
+    actualStages: ["preparing_media"]
+  });
+  const requested = updateCreativeJob(preparing, "job-one", {
+    actualStages: ["preparing_media", "media_prepared", "provider_request"]
+  });
+
+  assert.deepEqual(requested.items[0].actualStages, [
+    "preparing_media",
+    "media_prepared",
+    "provider_request"
+  ]);
+  assert.deepEqual(normalizeCreativeJobsState(requested).items[0].actualStages, requested.items[0].actualStages);
+});
+
+test("creative job execution facts distinguish a stop request from provider cancellation", () => {
+  const created = createCreativeJob(undefined, request(), { id: "job-one", now: "2026-08-08T00:00:00.000Z" });
+  const running = updateCreativeJob(created.state, "job-one", {
+    status: "running",
+    phase: "generation",
+    providerMayHaveAccepted: true
+  }, { now: "2026-08-08T00:00:01.000Z" });
+  const requested = requestCreativeJobStop(running, "job-one", { now: "2026-08-08T00:00:02.000Z" });
+
+  assert.equal(requested.job.status, "running");
+  assert.equal(requested.job.executionState, "stop_requested");
+  assert.equal(requested.job.providerMayHaveAccepted, true);
+  assert.equal(requested.job.stopRequestedAt, "2026-08-08T00:00:02.000Z");
+
+  const settled = settleCreativeJobStop(requested.state, "job-one", {
+    runnerStopped: true,
+    providerMayHaveAccepted: true,
+    now: "2026-08-08T00:00:03.000Z"
+  });
+  assert.equal(settled.job.status, "interrupted");
+  assert.equal(settled.job.executionState, "stop_unknown");
+  assert.equal(settled.job.error.kind, "stop_unknown");
+  assert.equal(settled.job.error.retryable, true);
+});
+
+test("a queued creative job with no provider request can be canceled conclusively", () => {
+  const created = createCreativeJob(undefined, request(), { id: "job-one" });
+  const requested = requestCreativeJobStop(created.state, "job-one");
+  const settled = settleCreativeJobStop(requested.state, "job-one", {
+    runnerStopped: false,
+    providerMayHaveAccepted: false
+  });
+
+  assert.equal(settled.job.status, "canceled");
+  assert.equal(settled.job.executionState, "canceled");
+  assert.equal(settled.job.error.kind, "canceled");
+});
+
+test("unknown stop keeps a local edit mask and remote video identity available to an explicit retry", () => {
+  const created = createCreativeJob(undefined, request({
+    session: {
+      ...request().session,
+      targetType: "video",
+      outputMode: "create_video"
+    },
+    imageEdit: {
+      mode: "local",
+      parentVisualId: "visual-one",
+      maskAssetId: "creative-job-mask:one",
+      modification: "只修改衣服"
+    }
+  }), { id: "job-one" });
+  const running = updateCreativeJob(created.state, "job-one", {
+    status: "running",
+    phase: "generation",
+    providerMayHaveAccepted: true,
+    remoteVideo: {
+      serviceId: "openai",
+      remoteId: "remote-one",
+      finalPrompt: "继续同一个远程任务",
+      requestParameters: {}
+    }
+  });
+  const requested = requestCreativeJobStop(running, "job-one");
+  const stopped = settleCreativeJobStop(requested.state, "job-one", {
+    runnerStopped: true,
+    providerMayHaveAccepted: true
+  });
+  const retried = retryCreativeJob(stopped.state, "job-one", { id: "job-two" });
+
+  assert.equal(retried.job.request.imageEdit.maskAssetId, "creative-job-mask:one");
+  assert.equal(retried.job.remoteVideo.remoteId, "remote-one");
+  assert.equal(retried.job.retryOf, "job-one");
 });
 
 test("creative jobs allow only one queued or running task", () => {
@@ -78,6 +182,44 @@ test("startup marks stale active jobs interrupted without automatically retrying
   assert.equal(recovered.items.length, 1);
 });
 
+test("legacy running jobs are conservatively recovered as possibly submitted", () => {
+  const created = createCreativeJob(undefined, request(), { id: "job-one" });
+  const { executionState: _executionState, providerMayHaveAccepted: _providerMayHaveAccepted, ...legacyJob } = created.state.items[0];
+  const legacyRunning = {
+    ...created.state,
+    items: [{
+      ...legacyJob,
+      status: "running",
+      phase: "generation"
+    }]
+  };
+  const recovered = interruptActiveCreativeJobs(legacyRunning);
+
+  assert.equal(recovered.items[0].status, "interrupted");
+  assert.equal(recovered.items[0].executionState, "submission_unknown");
+  assert.equal(recovered.items[0].providerMayHaveAccepted, true);
+  assert.equal(recovered.items[0].error.kind, "submission_unknown");
+});
+
+test("durable stop flow persists the request fact and never treats local abort as provider cancellation", () => {
+  const start = background.indexOf("async function cancelCreativeJobAction");
+  const end = background.indexOf("async function dispatchCreativeJob", start);
+  const cancellation = background.slice(start, end);
+
+  assert.match(cancellation, /requestCreativeJobStop/);
+  assert.match(cancellation, /settleCreativeJobStop/);
+  assert.match(cancellation, /providerCancelConfirmed = response\?\.providerCancelConfirmed === true/);
+  assert.match(cancellation, /finalJob\.executionState === "canceled"/);
+  assert.doesNotMatch(cancellation, /status:\s*"canceled"/);
+  assert.match(offscreen, /providerMayHaveAccepted: runner\.providerMayHaveAccepted/);
+  assert.doesNotMatch(offscreen, /finally[\s\S]{0,300}deleteScreenshotBlob\(maskAssetId\)/);
+  assert.match(runner, /onRequestStart: markProviderRequestStarted/);
+  assert.match(runner, /providerMayHaveAccepted = true;[\s\S]{0,360}providerMayHaveAccepted: true,[\s\S]{0,80}actualStages: \[\.\.\.actualStages\]/);
+  assert.match(offscreen, /progress: \(\{ phase, session, remoteVideo, providerMayHaveAccepted, actualStages \}\)/);
+  assert.match(cancellation, /actualStages: active\.actualStages/);
+  assert.doesNotMatch(runner, /startPhase === "planning"|planComposerSession/);
+});
+
 test("startup normalization never rewrites an unchanged creative job from a stale sibling snapshot", () => {
   const start = background.indexOf("const creativeRuns = normalizeCreativeRuns");
   const end = background.indexOf("const storedBatchJob = normalizeAnalysisBatchJob", start);
@@ -97,6 +239,7 @@ test("startup recovery re-reads and commits interrupted jobs inside the shared w
   assert.match(recovery, /await enqueue\(async \(\) => \{/);
   assert.match(recovery, /const latest = await chrome\.storage\.local\.get/);
   assert.match(recovery, /const active = activeCreativeJob\(creativeJobs\)/);
+  assert.match(recovery, /actualStages: active\.actualStages/);
   assert.match(recovery, /await commitLocalChanges\(\{[\s\S]*creativeJobs[\s\S]*composerSessions/);
 });
 

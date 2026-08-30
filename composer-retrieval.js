@@ -24,7 +24,9 @@ export function retrieveComposerSources(input = {}) {
   const nodeById = new Map(catalog.nodes.map((node) => [node.id, node]));
   const searchIndex = Array.isArray(input.searchIndex) ? input.searchIndex : [];
   const indexedById = new Map(searchIndex.map((item) => [item.id, item]));
-  const matchingIds = searchIndex.length ? searchIndexedEntries(searchIndex, queryText) : null;
+  const indexedMatches = searchIndex.length ? searchIndexedEntries(searchIndex, queryText) : null;
+  const matchingIds = indexedMatches?.size ? indexedMatches : null;
+  const naturalLanguageFallback = Boolean(indexedMatches && !indexedMatches.size);
   const candidates = [];
 
   if (!wantedRoles.size || wantedRoles.has("case") || wantedRoles.has("guide")) {
@@ -57,7 +59,7 @@ export function retrieveComposerSources(input = {}) {
   }
 
   candidates.sort(compareCandidates);
-  return fitSourcesToBudget(candidates, characterBudget);
+  return fitSourcesToBudget(naturalLanguageFallback ? bestFallbackCandidatesByRole(candidates) : candidates, characterBudget);
 }
 
 function normalizeWantedRoles(values) {
@@ -99,6 +101,18 @@ function relevanceRank(queryText, terms, fullTextValue, tagsValue, notesValue) {
   const phrase = fullText.includes(query) ? 1 : 0;
   if (!phrase && !fullHits && !overlap) return null;
   return [fullHits === effectiveTerms.length ? 1 : 0, tagHits, phrase, noteHits, fullHits, overlap];
+}
+
+function bestFallbackCandidatesByRole(candidates) {
+  const bestRankByRole = new Map();
+  return candidates.filter((candidate) => {
+    const best = bestRankByRole.get(candidate.role);
+    if (!best) {
+      bestRankByRole.set(candidate.role, candidate.rank);
+      return true;
+    }
+    return candidate.rank.every((value, index) => value === best[index]);
+  });
 }
 
 function chineseCharacterOverlap(query, text) {

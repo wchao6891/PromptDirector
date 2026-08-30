@@ -14,6 +14,7 @@ export const REQUIRED_MODEL_CHAIN_SCRIPTS = [
   "composer_video_generation_e2e.py",
   "creative_job_recovery_e2e.py",
   "ai_provider_registry_e2e.py",
+  "ai_multimodel_routing_regression_e2e.py",
   "zhipu_glm_analysis_e2e.py"
 ];
 

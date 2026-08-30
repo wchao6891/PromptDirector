@@ -20,11 +20,16 @@ function jsonResponse(payload, status = 200, headers = {}) {
   });
 }
 
-test("DeepSeek identity-only discovery keeps models task-neutral and never guesses capability from names", async () => {
+test("DeepSeek discovery applies exact official V4 capabilities and keeps unknown names task-neutral", async () => {
   const calls = [];
   const module = createAiProviderModule({ fetchImpl: async (url, options) => {
     calls.push({ url, options });
-    return jsonResponse({ data: [{ id: "deepseek-v4-flash" }, { id: "future-model-with-video-in-name" }] }, 200, { etag: '"models-v1"' });
+    return jsonResponse({ data: [
+      { id: "deepseek-v4-flash" },
+      { id: "deepseek-v4-pro" },
+      { id: "deepseek-v4-flash-vision-exp" },
+      { id: "future-model-with-video-in-name" }
+    ] }, 200, { etag: '"models-v1"' });
   } });
   const result = await module.discoverModels({
     id: "deepseek",
@@ -33,10 +38,14 @@ test("DeepSeek identity-only discovery keeps models task-neutral and never guess
     protocol: "chat_completions"
   });
   assert.equal(calls[0].url, "https://api.deepseek.com/models");
-  assert.equal(result.models.length, 2);
-  assert.equal(result.models[0].confidence, "manual_unverified");
-  assert.deepEqual(result.models[0].tasks, []);
-  assert.equal(result.models[1].tasks.includes("videoGeneration"), false);
+  assert.equal(result.models.length, 4);
+  assert.equal(result.models[0].confidence, "declared");
+  assert.deepEqual(result.models[0].tasks, ["textTags", "skillExtraction", "creativePlanning"]);
+  assert.deepEqual(result.models[0].inputModalities, ["text"]);
+  assert.deepEqual(result.models[1].tasks, ["textTags", "skillExtraction", "creativePlanning"]);
+  assert.deepEqual(result.models[2].tasks, ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"]);
+  assert.equal(result.models[2].inputModalities.includes("image"), true);
+  assert.equal(result.models[3].tasks.includes("videoGeneration"), false);
   assert.equal(result.cache.etag, '"models-v1"');
 });
 

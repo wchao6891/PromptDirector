@@ -14,9 +14,11 @@ import {
   validateGeneratedPrompt
 } from "./composer.js";
 import {
+  compileAgentAutoExecutionPrompt,
   compileAgentExecutionPrompt,
   compileAgentPlanningPrompt
 } from "./composer-agent.js";
+import { composerAutoResponseProtocolFacts, createComposerAutoResponseProjector } from "./composer-auto-response.js";
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
 
 export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -380,7 +382,7 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
   const timeoutId = setTimeout(() => { timedOut = true; requestController.abort(); }, timeoutMs);
   let streamed;
   try {
-    const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, requestController.signal);
+    const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, requestController.signal, options.onRequestStart);
     streamed = await readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
   } catch (error) {
     if (timedOut) throw new DeepSeekApiError(`${provider.label} 流式输出超时，本次结果未保存`, 408);
@@ -400,7 +402,7 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
 }
 
 export async function executeAgentTurn(input, settingsValue, options = {}) {
-  const route = ["compose", "analyze_materials", "chat"].includes(input.route)
+  const route = ["auto", "compose", "analyze_materials", "chat"].includes(input.route)
     ? input.route
     : "chat";
   if (route === "compose") return { route, kind: "prompt", ...(await streamComposedPrompt(input, settingsValue, options)) };
@@ -413,20 +415,65 @@ export async function executeAgentTurn(input, settingsValue, options = {}) {
     || [...request.messages].reverse().find((item) => item.role === "user")?.content
     || "";
   const executionRequest = { ...request, route, instruction };
-  const systemInstruction = compileAgentExecutionPrompt({
+  const promptInput = {
     settings: input.composerSettings,
     route,
     targetType: request.targetType,
     outputLanguage: request.outputLanguage
-  });
+  };
+  const automatic = route === "auto";
+  const systemInstruction = automatic
+    ? compileAgentAutoExecutionPrompt(promptInput)
+    : compileAgentExecutionPrompt(promptInput);
+  const projector = automatic ? createComposerAutoResponseProjector(options.onDelta) : null;
 
   const streamed = await streamAgentText({
     settings,
     profile,
     systemInstruction,
     executionRequest,
-    options
+    options: automatic
+      ? { ...options, onDelta: (_delta, cumulative) => projector.push(cumulative) }
+      : options
   });
+  if (automatic) {
+    const parsed = projector.push(streamed.content, { final: true });
+    const protocolFacts = composerAutoResponseProtocolFacts(parsed);
+    if (parsed.status === "needs_clarification") {
+      return {
+        ...protocolFacts,
+        route: parsed.route,
+        kind: "question",
+        text: parsed.visibleText,
+        outputLanguage: request.outputLanguage,
+        usage: streamed.usage,
+        model: streamed.model || profile.model,
+        finishReason: streamed.finishReason
+      };
+    }
+    if (parsed.route === "compose") {
+      return {
+        ...protocolFacts,
+        route: parsed.route,
+        kind: "prompt",
+        finalPrompt: validateGeneratedPrompt(parsed.visibleText),
+        outputLanguage: request.outputLanguage,
+        usage: streamed.usage,
+        model: streamed.model || profile.model,
+        finishReason: streamed.finishReason
+      };
+    }
+    return {
+      ...protocolFacts,
+      route: parsed.route,
+      kind: parsed.route === "analyze_materials" ? "analysis" : "chat",
+      text: parsed.visibleText,
+      outputLanguage: request.outputLanguage,
+      usage: streamed.usage,
+      model: streamed.model || profile.model,
+      finishReason: streamed.finishReason
+    };
+  }
   return {
     route,
     kind: route === "analyze_materials" ? "analysis" : "chat",
@@ -460,7 +507,7 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
   options.signal?.addEventListener("abort", onAbort, { once: true });
   const timeoutId = timeoutMs === null ? null : setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
-    const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, controller.signal);
+    const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, controller.signal, options.onRequestStart);
     const result = await readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
     if (!String(result.content ?? "").trim()) throw new DeepSeekApiError(`${provider.label} 没有返回完整内容`, 422);
     return result;
@@ -603,17 +650,20 @@ async function requestDeepSeek(body, settings, options = {}) {
   };
 }
 
-async function fetchDeepSeekStream(body, settings, fetchImpl, signal) {
+async function fetchDeepSeekStream(body, settings, fetchImpl, signal, onRequestStart) {
   const provider = aiProvider(settings);
   const requestModel = settings.activeProvider === "compatible" ? provider.model : body.model || provider.model;
   let response;
   try {
-    response = await fetchImpl(provider.endpoint, {
+    const pending = Promise.resolve(fetchImpl(provider.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}) },
       body: JSON.stringify({ ...body, model: requestModel }),
       signal
-    });
+    }));
+    pending.catch(() => undefined);
+    await notifyRequestStart(onRequestStart);
+    response = await pending;
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     throw new DeepSeekApiError(`无法连接 ${provider.label}，请检查网络后重试`, 0, { cause: error });
@@ -623,6 +673,14 @@ async function fetchDeepSeekStream(body, settings, fetchImpl, signal) {
     throw new DeepSeekApiError(apiError(payload, response.status, provider), response.status);
   }
   return response;
+}
+
+async function notifyRequestStart(onRequestStart) {
+  try {
+    await onRequestStart?.();
+  } catch {
+    // The provider request is already in flight; a local checkpoint failure must not create a paid retry window.
+  }
 }
 
 function aiProvider(settingsValue) {

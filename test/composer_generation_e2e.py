@@ -83,6 +83,18 @@ def current_session(page) -> dict:
     )
 
 
+def completed_session(page) -> dict:
+    page.wait_for_function(
+        """async () => {
+          const sessionId = new URL(location.href).searchParams.get('session');
+          const response = await chrome.runtime.sendMessage({type: 'GET_COMPOSER_SESSION', sessionId});
+          return response?.ok === true && response.session?.activeTurn == null;
+        }""",
+        timeout=10_000,
+    )
+    return current_session(page)
+
+
 def main() -> None:
     local_service = ThreadingHTTPServer(("127.0.0.1", 0), CreativeServiceHandler)
     Thread(target=local_service.serve_forever, daemon=True).start()
@@ -175,9 +187,22 @@ def main() -> None:
             if payload.get("stream"):
                 execution_payload = json.loads(payload["messages"][-1]["content"])
                 execution_route = execution_payload.get("route", "compose")
-                if execution_route == "analyze_materials":
+                user_text = json.dumps(execution_payload.get("messages", []), ensure_ascii=False)
+                latest_user_text = next(
+                    (item.get("content", "") for item in reversed(execution_payload.get("messages", [])) if item.get("role") == "user"),
+                    "",
+                )
+                if execution_route == "auto":
+                    resolved_route = "analyze_materials" if "分析资料" in user_text else "compose"
+                else:
+                    resolved_route = execution_route
+                if "是否检索本地资料" in latest_user_text:
+                    streamed_text = "是否检索本地资料补充雾夜角色细节？你可以回复：检索，或不检索直接生成。"
+                elif "协议降级测试" in latest_user_text:
+                    streamed_text = "自动模式降级为普通回答。"
+                elif resolved_route == "analyze_materials":
                     streamed_text = "资料分析结果：当前资料使用柔和逆光。"
-                elif execution_route == "chat":
+                elif resolved_route == "chat":
                     streamed_text = "**普通对话回答**\n\n- 这个概念强调维度归属。"
                 elif execution_payload.get("outputLanguage") == "en":
                     streamed_text = "An eastern courtyard in soft backlight."
@@ -185,6 +210,9 @@ def main() -> None:
                     streamed_text = "人物从庭院门口走入逆光，镜头跟随至廊下停住。"
                 else:
                     streamed_text = "东方庭院，柔和逆光。"
+                if execution_route == "auto" and "协议降级测试" not in latest_user_text:
+                    status = "needs_clarification" if "是否检索本地资料" in latest_user_text else "ready"
+                    streamed_text = json.dumps({"route": resolved_route, "status": status}, ensure_ascii=False) + "\n" + streamed_text
                 route.fulfill(
                     status=200,
                     content_type="text/event-stream",
@@ -254,8 +282,11 @@ def main() -> None:
         composer.locator("#composer-action").click()
         expect(composer.get_by_role("button", name="重试本轮", exact=True)).to_be_visible()
         composer.get_by_role("button", name="重试本轮", exact=True).click()
+        expect(composer.get_by_role("dialog")).to_contain_text("上一次请求可能已经被服务商接收")
+        composer.get_by_role("button", name="继续重试", exact=True).click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
-        assert len(requests) == 3
+        assert len(requests) == 2
+        assert completed_session(composer)["activeTurn"] is None
         sent = json.dumps(requests, ensure_ascii=False)
         assert "精选场景案例" not in sent
         assert "即梦角色" not in sent
@@ -267,7 +298,7 @@ def main() -> None:
         assert "dimensionUses" not in json.dumps(requests[-1], ensure_ascii=False)
         composer.locator("#composer-options summary").click()
         composer.locator("#composer-assembly-open").click()
-        expect(composer.locator(".composer-assembly-layer")).to_have_count(5)
+        expect(composer.locator(".composer-assembly-layer")).to_have_count(7)
         expect(composer.locator("#composer-assembly-content")).to_contain_text("精选场景案例")
         composer.locator("#composer-assembly-close").click()
 
@@ -289,7 +320,7 @@ def main() -> None:
         )
         composer.locator("#composer-instruction").fill("停止规划测试")
         composer.locator("#composer-action").click()
-        expect(composer.locator(".composer-message.status")).to_contain_text("正在规划")
+        expect(composer.locator(".composer-message.status")).to_contain_text("正在生成")
         expect(composer.locator("#composer-action")).to_have_attribute("data-state", "stop")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.status")).to_contain_text("已停止，本次不完整输出没有保存")
@@ -302,7 +333,7 @@ def main() -> None:
               let requestCount = 0;
               window.fetch = (url, options = {}) => {
                 requestCount += 1;
-                if (requestCount === 2) return Promise.reject(new TypeError('stream offline'));
+                if (requestCount === 1) return Promise.reject(new TypeError('stream offline'));
                 return window.__promptDirectorNativeFetch(url, options);
               };
             }"""
@@ -313,6 +344,8 @@ def main() -> None:
         requests_before_stream_retry = len(requests)
         composer.evaluate("() => { window.fetch = window.__promptDirectorNativeFetch; delete window.__promptDirectorNativeFetch; }")
         composer.get_by_role("button", name="重试本轮", exact=True).click()
+        expect(composer.get_by_role("dialog")).to_contain_text("上一次请求可能已经被服务商接收")
+        composer.get_by_role("button", name="继续重试", exact=True).click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
         assert len(requests) == requests_before_stream_retry + 1
         assert composer.locator(".composer-message.user", has_text="流式中断后复用规划").count() == 1
@@ -354,7 +387,7 @@ def main() -> None:
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_contain_text("镜头跟随")
         video_execution = json.loads(requests[-1]["messages"][-1]["content"])
-        assert video_execution["instruction"] == "保留参考1的柔和逆光和层次，按用户要求生成东方庭院。"
+        assert video_execution["instruction"] == "生成庭院人物行走视频"
 
         composer.locator("#composer-new").click()
         composer.locator(".composer-type-switch label", has_text="图片").click()
@@ -363,59 +396,51 @@ def main() -> None:
         question_requests_before = len(requests)
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.question")).to_have_count(1)
-        expect(composer.locator(".composer-question-options button")).to_have_count(2)
+        expect(composer.locator(".composer-message.question")).to_contain_text("是否检索本地资料")
+        expect(composer.locator(".composer-question-options button")).to_have_count(0)
         assert composer.locator(".composer-message.user", has_text="是否检索本地资料").count() == 1
         assert len(requests) == question_requests_before + 1
-        composer.set_viewport_size({"width": 390, "height": 844})
-        question_box = composer.locator(".composer-message.question").bounding_box()
-        for button in composer.locator(".composer-question-options button").all():
-            button_box = button.bounding_box()
-            assert question_box and button_box
-            assert button_box["x"] >= question_box["x"]
-            assert button_box["x"] + button_box["width"] <= question_box["x"] + question_box["width"] + 1
-        composer.set_viewport_size({"width": 1280, "height": 900})
-        composer.get_by_role("button", name="检索本地资料", exact=True).click()
-        expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
-        retrieval_execution = json.loads(requests[-1]["messages"][-1]["content"])
-        retrieved_roles = sorted(item["role"] for item in retrieval_execution["retrievedSources"])
-        assert retrieved_roles.count("case") >= 1
-        assert retrieved_roles.count("guide") >= 1
-        assert len(retrieval_execution["retrievedSources"]) < 4
-        retrieval_request_text = json.dumps(requests[-1], ensure_ascii=False)
-        assert "内部案例标题" not in retrieval_request_text
-        assert "内部教程标题" not in retrieval_request_text
-        assert "fixture.invalid" not in retrieval_request_text
-        assert "柔和逆光，低饱和" not in retrieval_request_text
-        expect(composer.locator(".composer-version-source")).to_have_count(len(retrieval_execution["retrievedSources"]))
-
-        requests_before_source_regeneration = len(requests)
-        composer.get_by_role("button", name="移除检索来源：内部案例标题", exact=True).click()
-        expect(composer.locator(".composer-retrieved-source")).to_have_count(len(retrieval_execution["retrievedSources"]) - 1)
-        expect(composer.get_by_role("button", name="按当前来源重新生成", exact=True)).to_have_count(0)
-        composer.locator("#composer-instruction").fill("使用剩余来源继续调整")
+        composer.locator("#composer-instruction").fill("不检索，直接生成")
         composer.locator("#composer-action").click()
-        expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_count(2)
-        assert len(requests) == requests_before_source_regeneration + 2
-        regenerated_execution = json.loads(requests[-1]["messages"][-1]["content"])
-        assert len(regenerated_execution["retrievedSources"]) == len(retrieval_execution["retrievedSources"]) - 1
-        assert "guide" in [item["role"] for item in regenerated_execution["retrievedSources"]]
-        assert composer.locator(".composer-message.user").count() == 3
+        expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
 
         composer.locator("#composer-new").click()
-        composer.locator("#composer-instruction").fill("查找不存在的私人资料后继续")
+        retrieval_requests_before = len(requests)
+        composer.locator("#composer-library-search").click()
+        expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "true")
+        composer.locator("#composer-instruction").fill("用私人资料补充雾夜角色")
         composer.locator("#composer-action").click()
-        expect(composer.locator("#composer-feedback")).to_contain_text("没有找到匹配来源")
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
-        no_result_execution = json.loads(requests[-1]["messages"][-1]["content"])
-        assert no_result_execution["retrievedSources"] == []
+        assert len(requests) == retrieval_requests_before + 1
+        retrieval_payload = json.loads(requests[-1]["messages"][-1]["content"])
+        assert len(retrieval_payload["retrievedSources"]) == 2, retrieval_payload
+        assert "雾夜角色穿银色披风" in json.dumps(retrieval_payload, ensure_ascii=False)
+        retrieval_session = completed_session(composer)
+        assert retrieval_session["retrievalSnapshot"]["status"] == "completed", retrieval_session
+        assert retrieval_session["retrievalSnapshot"]["sourceCount"] == 2, retrieval_session
+        assert retrieval_session["assemblySnapshot"]["status"] == "completed", retrieval_session
+        assert retrieval_session["assemblySnapshot"]["userRequest"] == "用私人资料补充雾夜角色", retrieval_session
+        assert retrieval_session["assemblySnapshot"]["actual"]["status"] == "completed", retrieval_session
+        assert retrieval_session["assemblySnapshot"]["actual"]["model"] == "deepseek-v4-flash", retrieval_session
+        expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "false")
+        composer.locator("#composer-options summary").click()
+        composer.locator("#composer-assembly-open").click()
+        expect(composer.locator(".composer-assembly-layer")).to_have_count(7)
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("本轮用户请求")
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("用私人资料补充雾夜角色")
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("采用 2 条来源")
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("预计 1 次模型请求")
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("实际终态：completed")
+        composer.locator("#composer-assembly-close").click()
 
         composer.locator("#composer-new").click()
-        composer.locator("#composer-instruction").fill("规划缺字段测试")
+        composer.locator("#composer-instruction").fill("协议降级测试")
+        degraded_requests_before = len(requests)
         composer.locator("#composer-action").click()
-        expect(composer.locator("#composer-feedback")).to_contain_text("按你的原始要求继续生成")
-        degraded_execution = json.loads(requests[-1]["messages"][-1]["content"])
-        assert degraded_execution["instruction"] == "规划缺字段测试"
-        expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
+        expect(composer.locator(".composer-message.chat .composer-message-text")).to_have_text("自动模式降级为普通回答。")
+        assert len(requests) == degraded_requests_before + 1
+        degraded_session = completed_session(composer)
+        assert any(event["status"] == "degraded" for event in degraded_session["diagnosticEvents"]), degraded_session
 
         openai_requests: list[dict] = []
         generated_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -457,7 +482,8 @@ def main() -> None:
                 content_type="application/json",
                 body=json.dumps({
                     "model": "gpt-5-mini",
-                    "output_text": "三人电影级长焦构图，中间女性清晰聚焦，前景两人明显虚化，银灰机能服与低饱和柔光。",
+                    "output_text": json.dumps({"route": "compose", "status": "ready"}, ensure_ascii=False)
+                    + "\n三人电影级长焦构图，中间女性清晰聚焦，前景两人明显虚化，银灰机能服与低饱和柔光。",
                     "usage": {"input_tokens": 30, "output_tokens": 20, "total_tokens": 50},
                 }, ensure_ascii=False),
             )
@@ -474,9 +500,8 @@ def main() -> None:
         composer.locator("#composer-instruction").fill("参考1保持三人构图和中间女性聚焦，参考2只负责画面风格")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_contain_text("三人电影级长焦构图")
-        assert len(openai_requests) == 2
-        assert not any(part.get("type") == "input_image" for part in openai_requests[0]["input"][0]["content"])
-        visual_parts = openai_requests[1]["input"][0]["content"]
+        assert len(openai_requests) == 1
+        visual_parts = openai_requests[0]["input"][0]["content"]
         assert len([part for part in visual_parts if part.get("type") == "input_image"]) == 2
         labels = [part.get("text") for part in visual_parts if part.get("type") == "input_text"]
         assert "@参考1/图片1" in labels
@@ -624,28 +649,25 @@ def main() -> None:
         image_session_id = creative_jobs["items"][-1]["sessionId"]
         composer.goto(f"chrome-extension://{session.extension_id}/composer.html?session={image_session_id}")
         expect(composer.locator(".composer-result-card img")).to_have_count(1)
-        assert len(openai_requests) == 2
+        assert len(openai_requests) == 1
         local_requests = CreativeServiceHandler.requests
         assert [item["path"] for item in local_requests] == [
-            "/v1/responses", "/v1/responses", "/v1/images/edits"
+            "/v1/responses", "/v1/images/edits"
         ]
         assert [item["authorization"] for item in local_requests] == [
             "Bearer controlled-chat-test-key",
-            "Bearer controlled-chat-test-key",
             "Bearer controlled-image-test-key",
         ]
-        local_planning = json.loads(local_requests[0]["body"])
-        local_execution = json.loads(local_requests[1]["body"])
-        assert local_planning["model"] == "local-vision-test"
+        local_execution = json.loads(local_requests[0]["body"])
         assert local_execution["model"] == "local-vision-test", local_execution["model"]
         assert len([
             part for part in local_execution["input"][0]["content"]
             if part.get("type") == "input_image"
         ]) == 2
-        assert local_requests[2]["content_type"].startswith("multipart/form-data; boundary=")
-        assert local_requests[2]["body"].count(b'name="image[]"') == 2
-        assert b'name="model"' in local_requests[2]["body"] and b"local-image-test" in local_requests[2]["body"]
-        assert b'name="size"' in local_requests[2]["body"] and supported_size.encode() in local_requests[2]["body"]
+        assert local_requests[1]["content_type"].startswith("multipart/form-data; boundary=")
+        assert local_requests[1]["body"].count(b'name="image[]"') == 2
+        assert b'name="model"' in local_requests[1]["body"] and b"local-image-test" in local_requests[1]["body"]
+        assert b'name="size"' in local_requests[1]["body"] and supported_size.encode() in local_requests[1]["body"]
         creative_runs = composer.evaluate("() => chrome.storage.local.get('creativeRuns').then(value => value.creativeRuns)")
         assert len(creative_runs) == 1
         assert len(creative_runs[0]["outputs"]) == 1
@@ -699,11 +721,13 @@ def main() -> None:
         stopped_jobs = None
         while time.monotonic() < deadline:
             stopped_jobs = composer.evaluate("() => chrome.storage.local.get('creativeJobs').then(value => value.creativeJobs)")
-            if stopped_jobs and stopped_jobs["items"][-1]["status"] == "canceled":
+            if stopped_jobs and stopped_jobs["items"][-1]["status"] == "interrupted":
                 break
             composer.wait_for_timeout(100)
         CreativeServiceHandler.release_image.set()
-        assert stopped_jobs and stopped_jobs["items"][-1]["status"] == "canceled", stopped_jobs
+        assert stopped_jobs and stopped_jobs["items"][-1]["status"] == "interrupted", stopped_jobs
+        assert stopped_jobs["items"][-1]["executionState"] == "stop_unknown", stopped_jobs
+        assert stopped_jobs["items"][-1]["providerMayHaveAccepted"] is True, stopped_jobs
         stopped_count = len(stopped_jobs["items"])
         composer.wait_for_timeout(800)
         assert composer.evaluate(
@@ -723,17 +747,14 @@ def main() -> None:
             "network_retry": True,
             "stop": True,
             "stream_retry_reused_instruction": True,
-            "assembly_layers": 5,
+            "assembly_layers": 7,
             "auto_route": "analyze_materials",
             "manual_route": "chat",
             "markdown_rendered": True,
             "english_output": True,
             "video_instruction": True,
-            "clarification_buttons": 2,
-            "local_retrieval_roles": ["case", "guide"],
-            "source_regeneration_replanned": False,
-            "empty_retrieval_continued": True,
-            "degraded_planning_continued": True,
+            "clarification_same_response": True,
+            "invalid_auto_frame_preserved": True,
             "openai_multimodal_images": 2,
             "controlled_image_generation_saved": True,
             "image_generation_survived_navigation": True,

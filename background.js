@@ -250,6 +250,7 @@ import {
   COMPOSER_METHOD_VERSION,
   appendDiagnosticEvent,
   createComposerSession,
+  failComposerAssemblySnapshot,
   isMeaningfulComposerSession,
   normalizeComposerAiProfile,
   normalizeComposerSessions,
@@ -267,7 +268,9 @@ import {
   creativeJobById,
   interruptActiveCreativeJobs,
   normalizeCreativeJobsState,
+  requestCreativeJobStop,
   retryCreativeJob,
+  settleCreativeJobStop,
   updateCreativeJob
 } from "./creative-jobs.js";
 import { handleContextMenuCapture, syncContextMenus } from "./context-menus.js";
@@ -3122,6 +3125,9 @@ async function updateCreativeJobProgress(message) {
   const creativeJobs = updateCreativeJob(stored[STORAGE_KEYS.creativeJobs], current.id, {
     status: "running",
     phase: message.phase,
+    actualStages: message.actualStages,
+    executionState: current.executionState === "stop_requested" ? "stop_requested" : "running",
+    providerMayHaveAccepted: message.providerMayHaveAccepted === true,
     ...(message.remoteVideo ? { remoteVideo: message.remoteVideo } : {})
   });
   const update = { [STORAGE_KEYS.creativeJobs]: creativeJobs };
@@ -3203,6 +3209,7 @@ async function completeCreativeJobAction(message) {
     [STORAGE_KEYS.composerSessions]: upsertSessionList(stored[STORAGE_KEYS.composerSessions], session),
     [STORAGE_KEYS.creativeRuns]: creativeRuns
   });
+  await cleanupCreativeJobMask(current);
   return { ok: true, job: creativeJobById(creativeJobs, current.id), creativeRuns };
 }
 
@@ -3230,8 +3237,13 @@ async function failCreativeJobAction(message) {
     message: `${details.message}。本轮内容已保留。`,
     retryable: details.retryable
   });
+  session = createComposerSession({
+    ...session,
+    assemblySnapshot: failComposerAssemblySnapshot(session.assemblySnapshot, details)
+  });
   const creativeJobs = updateCreativeJob(stored[STORAGE_KEYS.creativeJobs], current.id, {
     status: "failed",
+    actualStages: details.actualStages,
     error: details
   });
   await commitLocalChanges({
@@ -3246,20 +3258,31 @@ async function failCreativeJobAction(message) {
 }
 
 async function cancelCreativeJobAction(jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
-  const current = creativeJobById(stored[STORAGE_KEYS.creativeJobs], jobId);
-  if (!current) return { ok: false, message: "没有找到对应的创作任务" };
-  if (!["queued", "running"].includes(current.status)) return { ok: true, job: current };
+  const requested = await enqueue(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
+    const current = creativeJobById(stored[STORAGE_KEYS.creativeJobs], jobId);
+    if (!current) return null;
+    if (!["queued", "running"].includes(current.status)) return current;
+    const next = requestCreativeJobStop(stored[STORAGE_KEYS.creativeJobs], current.id);
+    await commitLocalChanges({ [STORAGE_KEYS.creativeJobs]: next.state });
+    return next.job;
+  });
+  if (!requested) return { ok: false, message: "没有找到对应的创作任务" };
+  if (!["queued", "running"].includes(requested.status)) return { ok: true, job: requested };
   let runnerStopped = false;
+  let providerMayHaveAccepted = requested.providerMayHaveAccepted;
+  let providerCancelConfirmed = false;
   let runnerMessage = "";
   try {
     await ensureOffscreenDocument();
     const response = await chrome.runtime.sendMessage({
       target: "offscreen",
       type: "CANCEL_CREATIVE_JOB",
-      jobId: current.id
+      jobId: requested.id
     });
     runnerStopped = response?.ok === true;
+    providerMayHaveAccepted ||= response?.providerMayHaveAccepted === true;
+    providerCancelConfirmed = response?.providerCancelConfirmed === true;
     runnerMessage = response?.message || "";
   } catch (error) {
     runnerMessage = userMessage(error);
@@ -3269,36 +3292,42 @@ async function cancelCreativeJobAction(jobId) {
       STORAGE_KEYS.creativeJobs,
       STORAGE_KEYS.composerSessions
     ]);
-    const active = creativeJobById(latest[STORAGE_KEYS.creativeJobs], current.id);
+    const active = creativeJobById(latest[STORAGE_KEYS.creativeJobs], requested.id);
     if (!active || !["queued", "running"].includes(active.status)) return { ok: true, job: active };
-    const creativeJobs = updateCreativeJob(latest[STORAGE_KEYS.creativeJobs], active.id, {
-      status: "canceled",
-      error: {
-        kind: "canceled",
-        message: "用户已取消本次创作",
-        retryable: active.request.imageEdit?.mode !== "local"
-      }
+    const settled = settleCreativeJobStop(latest[STORAGE_KEYS.creativeJobs], active.id, {
+      runnerStopped,
+      providerMayHaveAccepted,
+      providerCancelConfirmed
     });
+    const creativeJobs = settled.state;
+    const finalJob = settled.job;
     const sessions = normalizeComposerSessions(latest[STORAGE_KEYS.composerSessions]);
     const sourceSession = sessions.find((item) => item.id === active.sessionId) ?? active.request.session;
-    const session = setComposerFailure(sourceSession, {
+    let session = setComposerFailure(sourceSession, {
       userMessageId: active.userMessageId,
       phase: active.phase === "planning" ? "planning" : "streaming",
-      kind: "stopped",
-      message: "用户已取消本次创作",
-      retryable: active.request.imageEdit?.mode !== "local"
+      kind: finalJob.executionState === "canceled" ? "stopped" : "interrupted",
+      message: finalJob.error.message,
+      retryable: finalJob.error.retryable
+    });
+    session = createComposerSession({
+      ...session,
+      assemblySnapshot: failComposerAssemblySnapshot(session.assemblySnapshot, {
+        kind: finalJob.executionState === "canceled" ? "stopped" : "interrupted",
+        actualStages: active.actualStages
+      })
     });
     await commitLocalChanges({
       [STORAGE_KEYS.creativeJobs]: creativeJobs,
       [STORAGE_KEYS.composerSessions]: upsertSessionList(sessions, session)
     });
-    await cleanupCreativeJobMask(active);
+    if (finalJob.executionState === "canceled") await cleanupCreativeJobMask(active);
     return {
       ok: true,
-      message: runnerStopped
-        ? "创作任务已取消"
-        : `创作任务状态已解除${runnerMessage ? `；后台执行器未响应：${runnerMessage}` : ""}`,
-      job: creativeJobById(creativeJobs, active.id)
+      message: finalJob.executionState === "canceled"
+        ? finalJob.error.message
+        : `${finalJob.error.message}${runnerMessage && !runnerStopped ? `；后台执行器未响应：${runnerMessage}` : ""}`,
+      job: finalJob
     };
   });
 }
@@ -3323,7 +3352,9 @@ function normalizeCreativeJobFailure(value, job) {
     kind,
     message,
     retryable: value?.retryable === true && job.request.imageEdit?.mode !== "local",
-    referenceLimit: normalizeObservedReferenceLimit(value?.referenceLimit)
+    referenceLimit: normalizeObservedReferenceLimit(value?.referenceLimit),
+    actualStages: [...new Set((Array.isArray(value?.actualStages) ? value.actualStages : [])
+      .map((item) => String(item ?? "").trim()).filter(Boolean))]
   };
 }
 
@@ -4076,6 +4107,10 @@ async function analyzeTempReferencesAction(message) {
         });
         return {
           description: result.description,
+          requestCount: Math.max(0,
+            (Number(result.attempts?.serviceRequests) || 0)
+            + (Number(result.attempts?.outputCorrectionRequests) || 0)
+          ),
           fingerprint: { assetId: asset.assetId, fingerprint },
           analysis: {
             assetId: asset.assetId,
@@ -4090,6 +4125,7 @@ async function analyzeTempReferencesAction(message) {
       return {
         referenceId: reference.entryId,
         descriptions: assetResults.map((item) => item.description),
+        requestCount: assetResults.reduce((total, item) => total + item.requestCount, 0),
         fingerprints: assetResults.map((item) => item.fingerprint),
         analyses: assetResults.map((item) => item.analysis)
       };
@@ -4145,6 +4181,7 @@ async function analyzeTempReferencesAction(message) {
         ok: true,
         quality: failures.length ? "partial" : "complete",
         failedCount: failures.length,
+        prerequisiteAnalysisRequests: analyzed.reduce((total, item) => total + item.requestCount, 0),
         failures,
         message: failures.length
           ? `已保存 ${analyzed.length} 项分析，另有 ${failures.length} 项失败，可直接重试`
@@ -4807,8 +4844,11 @@ async function updateAiProviderConfiguration(message = {}) {
   const current = await loadAiConfiguration();
   const registry = mergeAiProviderRegistry(current.registry, message.registry);
   let assignments = normalizeAiTaskAssignments(message.assignments ?? current.assignments, registry);
-  if (message.connectionSelection) {
-    assignments = applyConnectionModelAssignments(assignments, message.connectionSelection, registry);
+  const connectionSelections = Array.isArray(message.connectionSelections)
+    ? message.connectionSelections
+    : message.connectionSelection ? [message.connectionSelection] : [];
+  for (const selection of connectionSelections) {
+    assignments = applyConnectionModelAssignments(assignments, selection, registry);
   }
   for (const [taskId, assignment] of Object.entries(assignments)) {
     const requested = Number(assignment?.concurrency);
@@ -8321,14 +8361,22 @@ async function recoverCreativeJobs() {
     const active = activeCreativeJob(creativeJobs);
     if (!active || active.id !== recoveryJobId) return;
     const interrupted = interruptActiveCreativeJobs(creativeJobs);
+    const interruptedJob = creativeJobById(interrupted, active.id);
     const sessions = normalizeComposerSessions(latest[STORAGE_KEYS.composerSessions]);
     const sourceSession = sessions.find((item) => item.id === active.sessionId) ?? active.request.session;
-    const session = setComposerFailure(sourceSession, {
+    let session = setComposerFailure(sourceSession, {
       userMessageId: active.userMessageId,
       phase: active.phase === "planning" ? "planning" : "streaming",
       kind: "storage",
-      message: "浏览器曾在任务完成前退出，结果状态未知，请手动重试",
+      message: interruptedJob?.error?.message || "浏览器曾在任务完成前退出，结果状态未知，请手动重试",
       retryable: true
+    });
+    session = createComposerSession({
+      ...session,
+      assemblySnapshot: failComposerAssemblySnapshot(session.assemblySnapshot, {
+        kind: "interrupted",
+        actualStages: active.actualStages
+      })
     });
     await commitLocalChanges({
       [STORAGE_KEYS.creativeJobs]: interrupted,

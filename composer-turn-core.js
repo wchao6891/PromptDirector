@@ -9,7 +9,49 @@ import {
 import { composerOutputChecks } from "./composer-diagnostics.js";
 import { planComposerTurnWithService } from "./composer-service.js";
 
-export async function planComposerSession({ session: sessionValue, composerSettings, settings, signal, retrieveSources }) {
+export function prepareComposerTurnStart(sessionValue, policy = {}) {
+  const session = createComposerSession(sessionValue);
+  const instruction = [...session.messages].reverse().find((message) => message.role === "user")?.content ?? "";
+  if (policy.path === "direct_text") {
+    return {
+      session: createComposerSession({
+        ...session,
+        currentInstruction: instruction,
+        currentRoute: policy.route,
+        currentRouteSource: "manual"
+      }),
+      startPhase: "streaming",
+      executionRoute: policy.route
+    };
+  }
+  if (policy.path === "direct_auto") {
+    return {
+      session: createComposerSession({
+        ...session,
+        currentInstruction: instruction,
+        currentRoute: "",
+        currentRouteSource: "auto"
+      }),
+      startPhase: "streaming",
+      executionRoute: "auto"
+    };
+  }
+  if (["direct_generation", "assemble_then_generate"].includes(policy.path)) {
+    return {
+      session: createComposerSession({
+        ...session,
+        currentInstruction: instruction,
+        currentRoute: "compose",
+        currentRouteSource: "manual"
+      }),
+      startPhase: "generation",
+      executionRoute: "compose"
+    };
+  }
+  return { session, startPhase: "planning", executionRoute: "" };
+}
+
+export async function planComposerSession({ session: sessionValue, composerSettings, settings, signal }) {
   const planned = await planComposerTurnWithService({
     session: sessionValue,
     userMessage: "",
@@ -39,42 +81,42 @@ export async function planComposerSession({ session: sessionValue, composerSetti
     });
     return { session, planned, needsClarification: true, retrievedCount: 0 };
   }
-  let retrievedCount = 0;
-  if (planned.librarySearch && typeof retrieveSources === "function") {
-    const retrievedSources = await retrieveSources(session, planned.librarySearch);
-    retrievedCount = retrievedSources.length;
-    session = createComposerSession({ ...session, retrievedSources });
-    session = appendDiagnosticEvent(session, {
-      phase: "retrieval",
-      status: retrievedCount ? "completed" : "empty",
-      detail: retrievedCount
-        ? `本地检索采用 ${retrievedCount} 条来源`
-        : `本地检索没有找到匹配来源：${planned.librarySearch.query}`
-    });
-  }
   session = appendDiagnosticEvent(session, {
     phase: "planning",
     status: "completed",
     detail: `${planned.route} 轻量规划已完成`
   });
-  return { session, planned, needsClarification: false, retrievedCount };
+  return { session, planned, needsClarification: false, retrievedCount: session.retrievedSources.length };
 }
 
 export function applyComposerServiceResult(sessionValue, result, composerSettings, route, instruction) {
+  const resolvedRoute = ["compose", "analyze_materials", "chat"].includes(result?.route)
+    ? result.route
+    : route;
   const instructionSnapshot = createInstructionSnapshot(
     composerSettings,
-    route,
+    resolvedRoute,
     sessionValue.targetType,
     result.outputLanguage,
     sessionValue.currentRouteSource,
     instruction
   );
-  if (route !== "compose") {
+  if (result.kind === "question") {
     return appendComposerMessage(clearComposerFailure(sessionValue), {
       role: "assistant",
-      type: result.kind === "analysis" ? "analysis" : "chat",
+      type: "question",
       content: result.text,
-      route,
+      route: resolvedRoute,
+      routeSource: sessionValue.currentRouteSource,
+      instructionSnapshot
+    });
+  }
+  if (resolvedRoute !== "compose") {
+    return appendComposerMessage(clearComposerFailure(sessionValue), {
+      role: "assistant",
+      type: resolvedRoute === "analyze_materials" ? "analysis" : "chat",
+      content: result.text,
+      route: resolvedRoute,
       routeSource: sessionValue.currentRouteSource,
       instructionSnapshot
     });
@@ -97,7 +139,7 @@ export function applyComposerServiceResult(sessionValue, result, composerSetting
     role: "assistant",
     type: "prompt",
     content: result.finalPrompt,
-    route,
+    route: resolvedRoute,
     routeSource: session.currentRouteSource,
     instructionSnapshot
   });
