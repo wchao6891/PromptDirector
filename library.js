@@ -8828,7 +8828,7 @@ async function openAiProviderDialog(initialProviderId = "") {
           providerId: profile.id,
           model: analysisModel,
           taskIds: selectedTaskIds,
-          allowManualUnverifiedTasks: profile.category === "custom" ? selectedTaskIds : []
+          allowManualUnverifiedTasks: selectedTaskIds
         }
       });
       if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("AI 服务配置保存失败"));
@@ -8876,7 +8876,6 @@ function connectionAnalysisModelOptions(profile = {}) {
   for (const taskId of connectionAnalysisTaskIds(profile)) {
     for (const model of availableAiModelsForTask(taskId, profile)) {
       if (model.status !== "available") continue;
-      if (!["declared", "protocol_inferred"].includes(model.assignmentEvidence)) continue;
       if (!byId.has(model.id)) byId.set(model.id, model);
     }
   }
@@ -8890,8 +8889,7 @@ function connectionModelTaskIds(profile = {}, modelValue = "") {
   const model = String(modelValue ?? "").trim();
   if (!model) return [];
   return connectionAnalysisTaskIds(profile).filter((taskId) => availableAiModelsForTask(taskId, profile)
-    .some((item) => item.id === model && item.status === "available"
-      && ["declared", "protocol_inferred"].includes(item.assignmentEvidence)));
+    .some((item) => item.id === model && item.status === "available"));
 }
 
 function connectionManagedModel(profile = {}) {

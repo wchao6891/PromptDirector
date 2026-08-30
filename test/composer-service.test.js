@@ -209,6 +209,61 @@ test("Kimi creative planning uses the assigned model without falling back to ano
   assert.equal(planned.instruction, "保留核心冲突");
 });
 
+test("a per-session DeepSeek switch uses that connected model instead of the global planning route", async () => {
+  const requests = [];
+  const settingsValue = visualSettings({
+    providerProfiles: {
+      deepseek: {
+        id: "deepseek",
+        label: "DeepSeek",
+        endpoint: "https://api.deepseek.com/chat/completions",
+        protocol: "chat_completions",
+        structuredOutput: "json_object",
+        apiKey: "deepseek-session-key",
+        credentialConfigured: true,
+        consent: true,
+        capabilities: ["creativePlanning"],
+        discoveredModels: [{
+          id: "deepseek-account-beta",
+          confidence: "manual_unverified",
+          status: "available",
+          tasks: []
+        }],
+        discovery: { discoveredAt: "2026-08-30T10:00:00.000Z" }
+      }
+    }
+  });
+  settingsValue.ai = {
+    activeProvider: "compatible",
+    consent: true,
+    analysisModel: "glm-5.3-flash",
+    compatible: {
+      endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+      apiKey: "zhipu-global-key",
+      model: "glm-5.3-flash"
+    }
+  };
+  const session = createComposerSession({
+    aiProfile: { serviceId: "deepseek", model: "deepseek-account-beta" },
+    messages: [{ role: "user", type: "request", content: "整理这个创意" }]
+  });
+
+  await planComposerTurnWithService({ session, userMessage: "", composerSettings: settings }, settingsValue, {
+    fetchImpl: async (url, options) => {
+      requests.push({ url, body: JSON.parse(options.body) });
+      return response({
+        model: "deepseek-account-beta",
+        choices: [{ message: { content: JSON.stringify({ route: "compose", status: "ready" }) } }]
+      });
+    }
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://api.deepseek.com/chat/completions");
+  assert.equal(requests[0].body.model, "deepseek-account-beta");
+  assert.equal(JSON.stringify(requests[0]).includes("glm-5.3-flash"), false);
+});
+
 test("Zhipu creative planning is selectable from the registry and calls only its assigned GLM model", async () => {
   const requests = [];
   const zhipuSettings = visualSettings({
@@ -1211,6 +1266,20 @@ test("unknown reference limits never become zero while explicit unsupported stat
   assert.match(blocked.message, /不接收原图/);
   const promptOnly = createComposerSession({ ...session, imageReferenceMode: "prompt_only" });
   assert.equal(composerImageAvailability(generationProfile, unknown.vision, promptOnly).available, true);
+});
+
+test("dedicated compatible image generation remains available without an image-analysis assignment", () => {
+  const values = visualSettings().vision;
+  values.compatible.endpoint = "";
+  values.compatible.model = "";
+  values.compatible.apiKey = "";
+  const profile = { serviceId: "compatible", model: "gpt-image-2" };
+  assert.equal(composerServiceCapabilities(profile, values).image.generate, true);
+  assert.equal(composerImageAvailability(profile, values, createComposerSession({
+    targetType: "image",
+    generationAiProfile: profile,
+    outputMode: "text_prompt"
+  })).available, true);
 });
 
 test("image requests reject unsupported declared values and omit undeclared values", () => {

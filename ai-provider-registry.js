@@ -169,6 +169,22 @@ export function availableAiModelsForTask(taskId, profileValue = {}) {
   return available;
 }
 
+export function availableAiModelChoicesForTask(taskId, registryValue = {}) {
+  requireTask(taskId);
+  const registry = normalizeAiProviderRegistry(registryValue);
+  return Object.values(registry.providers).flatMap((profile) =>
+    availableAiModelsForTask(taskId, profile)
+      .filter((model) => model.status === "available" && providerConfiguredForTask(profile, taskId, model.id))
+      .map((model) => ({
+        providerId: profile.id,
+        providerLabel: profile.label,
+        modelId: model.id,
+        modelName: model.name || model.id,
+        assignmentEvidence: model.assignmentEvidence
+      }))
+  );
+}
+
 export function createAiTaskAssignment(taskId, providerIdValue, modelValue, registryValue = {}) {
   requireTask(taskId);
   const registry = normalizeAiProviderRegistry(registryValue);
@@ -384,6 +400,7 @@ function modelAssignmentEvidence(taskId, model = {}, profile = null) {
     return ASSIGNMENT_EVIDENCE.has(model.confidence) ? model.confidence : "declared";
   }
   if (model.confidence === "manual_unverified"
+    && (model.tasks ?? []).length === 0
     && (model.inputModalities ?? []).length === 0 && (model.outputModalities ?? []).length === 0) {
     if (MANUAL_ASSIGNMENT_TASKS.has(taskId)) return "manual_unverified";
     const configuredGenerationModel = taskId === "imageGeneration"

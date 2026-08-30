@@ -52,15 +52,17 @@ test("composer combines cases and Skills in one reference workspace while keepin
   assert.match(libraryJs, /navigateWithinPromptDirector\(url\)/);
 });
 
-test("composer model menu renders the assigned planning provider dynamically instead of hardcoding vendor ids", async () => {
+test("composer model menu renders every connected task candidate without static provider fallback", async () => {
   const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
   const renderer = composerJs.slice(
     composerJs.indexOf("function renderGenerationModelChoices"),
     composerJs.indexOf("function renderImageGenerationSettings")
   );
   assert.match(renderer, /creativePlanning/);
-  assert.match(renderer, /provider\.capabilities\?\.includes\(taskId\)/);
+  assert.match(renderer, /availableAiModelChoicesForTask\(taskId/);
   assert.match(renderer, /composerProfileForTaskAssignment/);
+  assert.match(renderer, /button\.hidden = true/);
+  assert.doesNotMatch(renderer, /staticFallback/);
   assert.doesNotMatch(renderer, /\["kimi",\s*"gemini"|providerId === "zhipu"/);
 });
 

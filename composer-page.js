@@ -31,6 +31,7 @@ import {
   normalizeAiSettings
 } from "./deepseek.js";
 import { requireAiRuntimeProtocolVersion } from "./ai-runtime.js";
+import { availableAiModelChoicesForTask } from "./ai-provider-registry.js";
 import { confirmAppAction } from "./ui-dialogs.js";
 import {
   ComposerServiceError,
@@ -1574,24 +1575,21 @@ function renderGenerationModelChoices(selectedProfile) {
   const generationMode = ["create_image", "create_video"].includes(composerSession?.outputMode);
   const videoTask = generationMode && composerSession.outputMode === "create_video";
   const taskId = generationMode ? (videoTask ? "videoGeneration" : "imageGeneration") : "creativePlanning";
-  const choices = Object.values(composerVisionSettings.providerProfiles ?? {}).flatMap((provider) => {
-    const model = provider.models?.[taskId];
-    if (!provider.credentialConfigured || !provider.consent || !provider.capabilities?.includes(taskId) || !model) return [];
-    const candidate = composerProfileForTaskAssignment({ providerId: provider.id, model }, selectedProfile);
+  const profiles = composerVisionSettings.providerProfiles ?? {};
+  const choices = availableAiModelChoicesForTask(taskId, { providers: profiles }).flatMap((choice) => {
+    const provider = profiles[choice.providerId];
+    const candidate = composerProfileForTaskAssignment({ providerId: choice.providerId, model: choice.modelId }, selectedProfile);
+    if (candidate.serviceId === "unassigned") return [];
     if (!generationMode) {
-      const service = composerServiceCatalog(composerAiSettings, composerVisionSettings)
-        .find((item) => item.serviceId === candidate.serviceId && item.model === candidate.model);
-      return service?.planning ? [{ provider, candidate }] : [];
+      return [{ provider, candidate }];
     }
     const capability = composerServiceCapabilities(candidate, composerVisionSettings)[videoTask ? "video" : "image"];
     return capability?.generate ? [{ provider, candidate }] : [];
   });
-  const staticFallback = !generationMode && choices.length === 0;
   for (const button of [elements.composerModelFlash, elements.composerModelPro, elements.composerModelOpenai, elements.composerModelCompatible, elements.composerModelXai]) {
-    button.hidden = !staticFallback;
+    button.hidden = true;
   }
-  elements.composerModelDynamic.hidden = staticFallback;
-  if (staticFallback) return elements.composerModelDynamic.replaceChildren();
+  elements.composerModelDynamic.hidden = false;
   elements.composerModelDynamic.replaceChildren(...choices.map(({ provider, candidate }) => {
     const button = document.createElement("button");
     button.type = "button";

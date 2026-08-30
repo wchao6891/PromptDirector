@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
-  "version": "1.19.5",
+  "version": "1.19.6",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq2m8W9ACXJTkJqPAd36sPrtzonmHhOYU34uS7c+D7DXX6ggWNMwB4xZapGFJ4ScBQJv71PeG9KfsEnhcXFZ9RoX/X3wY+57evL19hf6woNX1xxhKOe1rtx5QmzWCEYIr99TzW50k/N9U6tS9Ri+2DHKYA85ssXTC8B2yRQ5zUXhsAWZe/HDU18UFuvUKXYt3ZdIUi31c2vIlgFFBfsyKbIUMny9LlxL/smb4vJzU/+A3LwJDjjvOtS/lmQ2vHoQGjHJItO18bYI6h67fIEvmWk+HJKtO08Ca+5RLS8TYhI+K7l7S0RyDVNujyVWtvhAULot1H0BvteYL87fKu3SNywIDAQAB",
   "homepage_url": "https://github.com/wchao6891/PromptDirector",
   "default_locale": "zh_CN",

@@ -193,6 +193,7 @@ def wait_for_theme(page, theme: str) -> None:
     page.wait_for_function(
         """(theme) => {
           if (document.documentElement.dataset.theme !== theme) return false;
+          if (document.body.style.color !== 'var(--ui-text)') return false;
           const channels = getComputedStyle(document.body).backgroundColor.match(/[0-9]+/g)?.map(Number) || [];
           if (channels.length < 3) return false;
           return theme === 'dark' ? Math.max(...channels.slice(0, 3)) < 60 : Math.min(...channels.slice(0, 3)) > 200;

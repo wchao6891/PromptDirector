@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   AI_ASSIGNMENT_TASKS,
   applyConnectionModelAssignments,
+  availableAiModelChoicesForTask,
   availableAiModelsForTask,
   availableAiProvidersForTask,
   createAiTaskAssignment,
@@ -635,4 +636,22 @@ test("custom media reports analysis and generation credentials independently", (
   assert.equal(resolveAiProviderAssignment("imageGeneration", registry, {
     imageGeneration: { providerId: "custom-media", model: "gpt-image-2" }
   }).model, "gpt-image-2");
+});
+
+test("connected task choices retain every account-visible model without inventing capability for declared video-only models", () => {
+  const registry = normalizeAiProviderRegistry({ providers: {
+    deepseek: {
+      apiKey: "deepseek-key",
+      consent: true,
+      discoveredModels: [
+        { id: "account-alpha", confidence: "manual_unverified", tasks: [] },
+        { id: "account-beta", confidence: "manual_unverified", tasks: [] },
+        { id: "video-only", confidence: "declared", tasks: ["videoAnalysis"] }
+      ]
+    }
+  } });
+  assert.deepEqual(
+    availableAiModelChoicesForTask("creativePlanning", registry).map((choice) => choice.modelId),
+    ["account-alpha", "account-beta"]
+  );
 });

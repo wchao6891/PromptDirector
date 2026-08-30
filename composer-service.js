@@ -19,6 +19,7 @@ import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia } from "./bounded-media.js";
 import { createAiProviderModule } from "./ai-provider-module.js";
 import { getAiModelCapability } from "./ai-model-capabilities.js";
+import { availableAiModelChoicesForTask } from "./ai-provider-registry.js";
 import {
   compatibleImageSizesFor,
   compatibleProviderPresetForEndpoint
@@ -145,6 +146,29 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
       });
     }
   }
+  for (const choice of availableAiModelChoicesForTask("creativePlanning", {
+    providers: visionSettingsValue?.providerProfiles ?? {}
+  })) {
+    const serviceId = choice.providerId === "custom-media" ? "compatible" : choice.providerId;
+    const existing = catalog.find((item) => item.serviceId === serviceId && item.model === choice.modelId);
+    if (existing) {
+      existing.configured = true;
+      existing.planning = true;
+      continue;
+    }
+    catalog.push({
+      serviceId,
+      model: choice.modelId,
+      label: `${choice.providerLabel} · ${choice.modelName}`,
+      shortLabel: choice.providerLabel,
+      configured: true,
+      vision: false,
+      planning: true,
+      reasoning: false,
+      imageGeneration: false,
+      videoGeneration: false
+    });
+  }
   return catalog;
 }
 
@@ -226,7 +250,7 @@ export function composerServiceCapabilities(profileValue, visionSettingsValue = 
     };
   }
   const provider = settings.compatible;
-  const configured = compatibleConfigured(settings);
+  const configured = compatibleImageConfigured(provider);
   if (provider.imageGeneration.protocol === "responses_tool") {
     return {
       serviceId: "compatible",
@@ -445,7 +469,7 @@ export async function planComposerTurnWithService(input, settingsValue, options 
   if (profile.serviceId === "unassigned") {
     throw new ComposerServiceError("创作规划未配置，请在 AI 服务的任务路由中选择模型", 422, { retryable: false });
   }
-  if (profile.serviceId === "deepseek") return planDeepSeekTurn(input, settingsValue.ai, options);
+  if (usesProjectedDeepseekSettings(profile, settingsValue.ai)) return planDeepSeekTurn(input, settingsValue.ai, options);
   const service = requireVisualService(profile, settingsValue.vision, "规划");
   if (service.planning === false) {
     throw new ComposerServiceError(`${service.label} 的所选模型未声明创作规划能力，请重新分配模型`, 422, { retryable: false });
@@ -480,7 +504,7 @@ export async function executeComposerTurnWithService(input, settingsValue, prepa
   const executionProfile = generationMode
     ? normalizeComposerAiProfile(input.session?.generationAiProfile)
     : planningProfile;
-  if (!generationMode && executionProfile.serviceId === "deepseek") {
+  if (!generationMode && usesProjectedDeepseekSettings(executionProfile, settingsValue.ai)) {
     assertTextReferencesAvailable(input.session);
     return executeDeepSeekTurn(input, settingsValue.ai, options);
   }
@@ -1090,7 +1114,7 @@ async function assembleImagePrompt(input, preparedImages, options) {
     session: { ...input.session, outputMode: "text_prompt" }
   };
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  if (profile.serviceId === "deepseek") {
+  if (usesProjectedDeepseekSettings(profile, options.aiSettings)) {
     assertTextReferencesAvailable(input.session);
     const result = await executeDeepSeekTurn(promptInput, options.aiSettings, { ...options, stream: false });
     if (result.kind !== "prompt") throw new ComposerServiceError("图片任务没有生成可提交的最终提示词", 422, { retryable: false });
@@ -1418,14 +1442,25 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       }
     };
   }
-  const registryProvider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
-  if (registryProvider && !["openai", "xai", "custom-media"].includes(profile.serviceId)) {
+  const registryProviderId = profile.serviceId === "compatible" ? "custom-media" : profile.serviceId;
+  const registryProvider = visionSettingsValue?.providerProfiles?.[registryProviderId];
+  if (registryProvider?.id && !["openai", "xai"].includes(registryProviderId)) {
     const provider = registryProvider;
     const model = profile.model;
-    const modelCapability = getAiModelCapability(profile.serviceId, model);
-    if (!provider?.apiKey || !model) throw new ComposerServiceError(`请先完成 ${provider?.label || profile.serviceId} 的 API Key 和所选模型配置`, 422, { retryable: false });
+    const modelCapability = getAiModelCapability(registryProviderId, model);
+    const imageGenerationModel = String(provider.imageGeneration?.model || provider.models?.imageGeneration || "").trim();
+    const imageGenerationReady = model === imageGenerationModel
+      && provider.imageGeneration?.protocol
+      && provider.imageGeneration.protocol !== "none"
+      && provider.imageGeneration?.endpoint
+      && (provider.imageGeneration?.apiKey || isLoopback(provider.imageGeneration.endpoint));
+    if ((!provider?.apiKey && !imageGenerationReady) || !model) {
+      throw new ComposerServiceError(`请先完成 ${provider?.label || profile.serviceId} 的 API Key 和所选模型配置`, 422, { retryable: false });
+    }
     if (!provider.consent) throw new ComposerServiceError(`请先确认：主动${action}时会把本轮文字与所选图片发送到 ${provider.label || profile.serviceId}`, 422, { retryable: false });
-    const planning = model === provider.models?.creativePlanning || providerModelSupports(provider, model, "creativePlanning");
+    const planning = availableAiModelChoicesForTask("creativePlanning", {
+      providers: { [registryProviderId]: provider }
+    }).some((choice) => choice.modelId === model);
     const chatCompatible = ["openrouter", "gemini"].includes(profile.serviceId);
     const endpoint = profile.serviceId === "openrouter"
       ? `${String(provider.endpoint).replace(/\/$/, "")}/chat/completions`
@@ -1453,7 +1488,17 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
         endpoint: geminiInteractionsEndpoint(provider.endpoint),
         apiKey: provider.apiKey,
         model
-      } : null
+      } : provider.imageGeneration?.protocol && provider.imageGeneration.protocol !== "none"
+        ? {
+            protocol: provider.imageGeneration.protocol,
+            endpoint: provider.imageGeneration.endpoint,
+            editsEndpoint: provider.imageGeneration.editsEndpoint,
+            apiKey: provider.imageGeneration.apiKey || provider.apiKey,
+            model: imageGenerationModel,
+            sizes: compatibleImageSizesFor(provider.endpoint, provider.imageGeneration),
+            qualities: structuredClone(provider.imageGeneration.qualities ?? [])
+          }
+        : null
     };
   }
   if (!settings.consent) throw new ComposerServiceError(`请先确认：主动${action}时会把所选案例图片和文字发送到当前视觉服务`, 422, { retryable: false });
@@ -1513,6 +1558,12 @@ function assertTextReferencesAvailable(session) {
 function compatibleConfigured(vision) {
   const provider = vision.compatible;
   return Boolean(vision.consent && provider.endpoint && provider.model && (provider.apiKey || isLoopback(provider.endpoint)));
+}
+
+function usesProjectedDeepseekSettings(profile, settingsValue) {
+  if (profile.serviceId !== "deepseek") return false;
+  const settings = normalizeAiSettings(settingsValue);
+  return settings.activeProvider === "deepseek" && settings.analysisModel === profile.model;
 }
 
 function responsesImageCapability(configured, references = { supported: true, maxItems: null }) {
@@ -1669,7 +1720,12 @@ function greatestCommonDivisor(left, right) {
 
 function compatibleImageConfigured(provider) {
   const image = provider.imageGeneration;
-  if (image.protocol === "responses_tool") return compatibleConfigured({ consent: true, compatible: provider });
+  if (image.protocol === "responses_tool") {
+    const endpoint = image.endpoint || provider.endpoint;
+    const model = image.model || provider.model;
+    const apiKey = image.apiKey || provider.apiKey;
+    return Boolean(endpoint && model && (apiKey || isLoopback(endpoint)));
+  }
   return !compatibleImageConfigurationIssue(image, compatibleImageSizesFor(provider.endpoint, image));
 }
 
