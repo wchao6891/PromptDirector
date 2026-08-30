@@ -109,8 +109,9 @@ def main() -> None:
                 )
                 return
             if payload.get("stream") is True:
+                content = '{"route":"compose","status":"ready"}\n黑场中主体快速出现，镜头稳定推进。'
                 body = (
-                    f'data: {json.dumps({"model": "glm-5.3-flash", "choices": [{"delta": {"content": "黑场中主体快速出现，镜头稳定推进。"}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 16, "completion_tokens": 7, "total_tokens": 23}}, ensure_ascii=False)}\n\n'
+                    f'data: {json.dumps({"model": "glm-5.3-flash", "choices": [{"delta": {"content": content}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 16, "completion_tokens": 7, "total_tokens": 23}}, ensure_ascii=False)}\n\n'
                     "data: [DONE]\n\n"
                 )
                 route.fulfill(status=200, content_type="text/event-stream", body=body)

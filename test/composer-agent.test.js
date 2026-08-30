@@ -6,6 +6,7 @@ import {
   COMPOSER_AGENT_VERSION,
   DEFAULT_AGENT_INSTRUCTION,
   DEFAULT_TASK_METHODS,
+  compileAgentAutoExecutionPrompt,
   compileAgentExecutionPrompt,
   compileAgentPlanningPrompt,
   composerAssemblyLayers,
@@ -35,18 +36,41 @@ test("light agent compiles routing, button questions, and local search without a
   assert.doesNotMatch(execution, /plan\.|dimensionUses|preservedFeatures/);
 });
 
-test("assembly inspector shows only the five lightweight inputs", () => {
+test("automatic execution chooses and completes one task in the same response", () => {
+  const prompt = compileAgentAutoExecutionPrompt({
+    settings: normalizeComposerAgentSettings(),
+    targetType: "video",
+    outputLanguage: "zh-CN",
+    productionReviewEnabled: true
+  });
+
+  assert.match(prompt, /第一行必须只输出.*\{"route":"compose\|analyze_materials\|chat","status":"ready\|needs_clarification"\}/s);
+  assert.match(prompt, /compose:/);
+  assert.match(prompt, /analyze_materials:/);
+  assert.match(prompt, /chat:/);
+  assert.match(prompt, /同一次响应/);
+  assert.match(prompt, /视频模型/);
+  assert.doesNotMatch(prompt, /suggestedTitle|librarySearch|隐藏推理/);
+});
+
+test("assembly inspector exposes the user request and explicit retrieval fact without hidden reasoning", () => {
   const layers = composerAssemblyLayers({
     settings: normalizeComposerAgentSettings(),
     routeMode: "auto",
     targetType: "image",
     outputLanguage: "zh-CN",
+    userRequest: "参考雾夜角色，生成东方庭院提示词",
     skills: "1. /国风视觉\n保持有根的视觉方向。",
-    references: "@参考1 手选原文\n\n@检索1 [guide] 教程原文"
+    references: "@参考1 手选原文\n\n@检索1 [guide] 教程原文",
+    retrieval: "已授权 · 查询：雾夜角色 · 采用 1 条来源",
+    expectedModelCalls: 1
   });
-  assert.deepEqual(layers.map((item) => item.id), ["agent", "task", "skills", "references", "runtime"]);
+  assert.deepEqual(layers.map((item) => item.id), ["agent", "task", "user", "skills", "references", "retrieval", "runtime"]);
+  assert.match(layers.find((item) => item.id === "user").content, /东方庭院/);
   assert.match(layers.find((item) => item.id === "skills").content, /国风视觉/);
   assert.match(layers.find((item) => item.id === "references").content, /@参考1.*@检索1/s);
+  assert.match(layers.find((item) => item.id === "retrieval").content, /已授权.*雾夜角色/s);
+  assert.match(layers.find((item) => item.id === "runtime").content, /预计 1 次模型请求/);
 });
 
 test("legacy editable methods migrate without carrying the old harness schema", () => {

@@ -5,12 +5,15 @@ import {
   COMPOSER_INPUT_MAX_CHARACTERS,
   composerInputUsage,
   composerProfileForTaskAssignment,
+  completeComposerAssemblySnapshot,
+  createComposerAssemblySnapshot,
   createComposerSession,
   createReferenceSnapshots,
   referenceSourcePartsForAsset,
   imageReferenceModeAvailability,
   isMeaningfulComposerSession,
   isComposerEligibleEntry,
+  failComposerAssemblySnapshot,
   normalizeComposerAiProfile,
   plannerRequestPayload,
   setComposerFailure,
@@ -35,6 +38,7 @@ import { availableAiModelChoicesForTask } from "./ai-provider-registry.js";
 import { confirmAppAction } from "./ui-dialogs.js";
 import {
   ComposerServiceError,
+  composerGenerationRequiresPromptAssembly,
   composerImageEditCapabilities,
   composerImageAvailability,
   composerServiceCapabilities,
@@ -46,10 +50,17 @@ import {
   normalizeVideoGenerationRequest,
   selectedComposerService
 } from "./composer-service.js";
-import { applyComposerServiceResult, planComposerSession } from "./composer-turn-core.js";
+import { applyComposerServiceResult, planComposerSession, prepareComposerTurnStart } from "./composer-turn-core.js";
 import { createComposerImageWorkspace } from "./composer-image-workspace.js";
 import { createComposerAnalysisTaskBridge } from "./composer-analysis-task-bridge.js";
 import { composerAssemblyLayers } from "./composer-agent.js";
+import {
+  createComposerActiveTurn,
+  createLatestCheckpointWriter,
+  recoverInterruptedComposerTurn,
+  updateComposerActiveTurn
+} from "./composer-active-turn.js";
+import { resolveComposerTurnPolicy } from "./composer-turn-policy.js";
 import { retrieveComposerSources } from "./composer-retrieval.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { readImageDimensions } from "./image-metadata.js";
@@ -94,7 +105,7 @@ const elements = Object.fromEntries([
   "composer-shell", "composer-nav", "composer-nav-open", "composer-nav-close", "composer-new", "composer-session-list",
   "composer-title", "composer-save-state", "composer-platform", "composer-output-language", "composer-route", "composer-production-review", "composer-reference-open", "composer-reference-count",
   "composer-applied-skills", "composer-skill-menu", "composer-assembly-open", "composer-timeline", "composer-aliases", "composer-retrieval-sources", "composer-instruction", "composer-action", "composer-feedback", "composer-send-note",
-  "composer-attachment-files", "composer-attachment-local", "composer-temp-reference-row", "composer-temp-references", "composer-temp-reference-save-all",
+  "composer-attachment-files", "composer-attachment-local", "composer-library-search", "composer-temp-reference-row", "composer-temp-references", "composer-temp-reference-save-all",
   "composer-model-trigger", "composer-model-label", "composer-model-menu", "composer-model-dynamic", "composer-model-flash", "composer-model-pro", "composer-model-openai", "composer-model-openai-label", "composer-model-compatible", "composer-model-compatible-label", "composer-model-xai", "composer-model-xai-label", "composer-thinking", "composer-create-image", "composer-create-media-label", "composer-create-image-note", "composer-generation-settings", "composer-generation-settings-title", "composer-image-size-field", "composer-image-size", "composer-image-quality-field", "composer-image-quality", "composer-image-reference-mode-field", "composer-image-reference-mode", "composer-video-duration-field", "composer-video-duration", "composer-generation-parameter-note",
   "composer-diagnostic-export", "composer-reference-workspace", "composer-reference-close", "composer-reference-cancel", "composer-reference-tab-cases", "composer-reference-tab-skills", "composer-project-list", "composer-projects-panel", "composer-case-picker", "composer-reference-footer", "composer-workspace-title", "composer-workspace-description",
   "composer-case-selection-count", "composer-reference-search", "composer-reference-project-filter", "composer-case-list", "composer-selection-strip",
@@ -121,6 +132,8 @@ let creativeExperimentSettings = { enabled: false, autoAnalyze: false };
 let composerSearchIndex = [];
 let composerDocumentTextByEntryId = new Map();
 let reuseRetrievedSourcesNextTurn = false;
+let libraryRetrievalEnabled = false;
+let prerequisiteAnalysisRequestsNextTurn = 0;
 let creativeStateRefreshRevision = 0;
 let composerInitializationComplete = false;
 let creativeStateRefreshPending = false;
@@ -189,6 +202,7 @@ function bindEvents() {
   elements.composerVideoDuration.addEventListener("change", safely(updateImageGenerationParameters));
   elements.composerDiagnosticExport.addEventListener("click", safely(exportComposerDiagnostic));
   elements.composerAttachmentLocal.addEventListener("click", () => elements.composerAttachmentFiles.click());
+  elements.composerLibrarySearch.addEventListener("click", toggleLibraryRetrieval);
   elements.composerAttachmentFiles.addEventListener("change", safely(async () => {
     const files = Array.from(elements.composerAttachmentFiles.files ?? []);
     elements.composerAttachmentFiles.value = "";
@@ -330,7 +344,7 @@ async function syncCreativeJobState(expectedRevision = null) {
       durable: true,
       jobId: active.id,
       sessionId: active.sessionId,
-      phase: active.phase === "planning" ? "planning" : "streaming",
+      phase: active.executionState === "stop_requested" ? "stopping" : active.phase === "planning" ? "planning" : "streaming",
       requestPhase: active.phase,
       executionRoute: active.request.session.currentRoute || "compose",
       userMessageId: active.userMessageId,
@@ -384,6 +398,13 @@ async function initializeComposer() {
     if (existing?.ok) composerSession = existing.session;
   }
   await syncCreativeJobState();
+  if (composerSession && !activeOperation) {
+    const recovered = recoverInterruptedComposerTurn(composerSession);
+    if (recovered !== composerSession) {
+      composerSession = createComposerSession(recovered);
+      composerSession = await saveSession(composerSession).catch(() => composerSession);
+    }
+  }
   if (!composerSession) {
     const requestedIds = uniqueIds((params.get("references") ?? "").split(","));
     const requestedAssetId = String(params.get("asset") ?? "").trim();
@@ -408,6 +429,8 @@ async function initializeComposer() {
 async function createNewSession(referenceIds = [], focus = true) {
   const targetType = selectedTargetType();
   reuseRetrievedSourcesNextTurn = false;
+  libraryRetrievalEnabled = false;
+  prerequisiteAnalysisRequestsNextTurn = 0;
   composerSession = createComposerSession({
     title: targetType === "video" ? t("未命名视频提示词") : t("未命名图片提示词"),
     targetType,
@@ -447,6 +470,7 @@ function renderComposer() {
   elements.composerAliases.replaceChildren(...libraryReferences.map(referenceAliasButton));
   elements.composerAliases.hidden = libraryReferences.length === 0;
   renderTempReferences();
+  renderLibraryRetrievalToggle();
   renderRetrievedSources();
   renderAppliedSkills();
   renderSessions();
@@ -462,6 +486,21 @@ function renderTempReferences() {
   elements.composerTempReferenceRow.hidden = references.length === 0;
   elements.composerTempReferenceSaveAll.disabled = Boolean(activeOperation) || references.length === 0;
   elements.composerTempReferences.replaceChildren(...references.map(tempReferenceCard));
+}
+
+function toggleLibraryRetrieval() {
+  if (activeOperation) return;
+  libraryRetrievalEnabled = !libraryRetrievalEnabled;
+  renderLibraryRetrievalToggle();
+  renderSendState();
+}
+
+function renderLibraryRetrievalToggle() {
+  elements.composerLibrarySearch.setAttribute("aria-pressed", String(libraryRetrievalEnabled));
+  elements.composerLibrarySearch.classList.toggle("selected", libraryRetrievalEnabled);
+  const label = t(libraryRetrievalEnabled ? "本轮发送时将检索本地资料" : "本轮检索本地资料");
+  elements.composerLibrarySearch.title = label;
+  elements.composerLibrarySearch.setAttribute("aria-label", label);
 }
 
 function tempReferenceCard(reference) {
@@ -796,8 +835,8 @@ function renderTimeline() {
   if (!composerSession) return;
   const session = displayedComposerSession();
   const inner = el("div", "composer-chat-inner");
-  const streamingText = currentStreamingText();
   const operation = currentComposerOperation();
+  const streamingText = currentStreamingText() || (!operation ? session.activeTurn?.partialText || "" : "");
   if (!session.messages.length && !streamingText && !operation && !session.lastFailure) inner.append(createWelcome());
   let promptIndex = 0;
   for (const message of session.messages) {
@@ -805,12 +844,14 @@ function renderTimeline() {
     inner.append(createMessage(message, version, false, session));
   }
   if (streamingText) {
-    const route = operation?.session?.currentRoute || "compose";
+    const route = operation?.session?.currentRoute || session.activeTurn?.route || "";
     const type = route === "compose" ? "prompt" : route === "analyze_materials" ? "analysis" : "chat";
-    inner.append(createMessage({ role: "assistant", type, route, content: streamingText }, null, true, session));
-  } else if (operation) {
+    inner.append(createMessage({ role: "assistant", type, route: route === "auto" ? "" : route, content: streamingText }, null, true, session));
+  }
+  if (operation && !streamingText) {
     inner.append(createMessage({ role: "assistant", type: "status", content: operationLabel(operation.phase) }, null, false, session));
-  } else if (session.lastFailure) {
+  }
+  if (!operation && session.lastFailure) {
     inner.append(createFailureMessage(session.lastFailure));
   }
   elements.composerTimeline.replaceChildren(inner);
@@ -975,22 +1016,61 @@ async function sendComposerTurn() {
     route: composerSession.routeMode === "auto" ? "" : composerSession.routeMode,
     routeSource: composerSession.routeMode === "auto" ? "auto" : "manual"
   });
+  const reuseExistingRetrievedSources = reuseRetrievedSourcesNextTurn;
   working = createComposerSession({
     ...working,
     currentInstruction: "",
-    retrievedSources: reuseRetrievedSourcesNextTurn ? working.retrievedSources : [],
+    retrievedSources: reuseExistingRetrievedSources ? working.retrievedSources : [],
+    retrievalSnapshot: reuseExistingRetrievedSources ? working.retrievalSnapshot : null,
     currentRoute: "",
     currentRouteSource: ""
   });
   reuseRetrievedSourcesNextTurn = false;
+  if (libraryRetrievalEnabled) {
+    const contentRoles = ["case", "guide"];
+    const retrievedSources = retrieveSourcesForTurn(working, { query: instruction, contentRoles });
+    working = appendDiagnosticEvent(createComposerSession({
+      ...working,
+      retrievedSources,
+      retrievalSnapshot: {
+        query: instruction,
+        contentRoles,
+        status: retrievedSources.length ? "completed" : "empty",
+        sourceCount: retrievedSources.length,
+        requestedAt: new Date().toISOString()
+      }
+    }), {
+      phase: "retrieval",
+      status: retrievedSources.length ? "completed" : "empty",
+      detail: retrievedSources.length
+        ? `本轮明确授权检索，采用 ${retrievedSources.length} 条来源`
+        : "本轮明确授权检索，没有找到匹配来源"
+    });
+    libraryRetrievalEnabled = false;
+  }
   const userMessageId = working.messages.at(-1).id;
   if (wasEmpty) working.title = conversationTitle(instruction);
   elements.composerInstruction.value = "";
+  const turnPolicy = composerTurnPolicyFor(working);
+  const turnId = crypto.randomUUID();
+  working = createComposerSession({
+    ...working,
+    assemblySnapshot: freezeComposerAssemblySnapshot(working, {
+      turnId,
+      userMessageId,
+      userRequest: instruction,
+      policy: turnPolicy,
+      prerequisiteAnalysisRequests: prerequisiteAnalysisRequestsNextTurn
+    })
+  });
+  prerequisiteAnalysisRequestsNextTurn = 0;
+  const prepared = prepareComposerTurnStart(working, turnPolicy);
+  working = prepared.session;
   if (["create_image", "create_video"].includes(working.outputMode)) {
     composerSession = working;
     renderComposer();
     try {
-      await startPersistentCreativeJob({ session: working, userMessageId, startPhase: "planning", imageEdit: null });
+      await startPersistentCreativeJob({ session: working, userMessageId, startPhase: prepared.startPhase, imageEdit: null });
     } catch (error) {
       composerSession = setComposerFailure(working, {
         userMessageId,
@@ -1004,24 +1084,47 @@ async function sendComposerTurn() {
     }
     return;
   }
-  const planningService = selectedComposerService(working.aiProfile, composerAiSettings, composerVisionSettings).shortLabel;
-  working = appendDiagnosticEvent(working, { phase: "planning", status: "started", detail: `${planningService} 正在规划` });
+  const selectedService = selectedComposerService(working.aiProfile, composerAiSettings, composerVisionSettings);
+  const serviceLabel = selectedService.shortLabel;
+  working = createComposerSession({
+    ...working,
+    activeTurn: createComposerActiveTurn({
+      turnId,
+      userMessageId,
+      route: prepared.executionRoute,
+      routeSource: working.currentRouteSource,
+      serviceId: working.aiProfile.serviceId,
+      model: selectedService.model || working.aiProfile.model
+    })
+  });
+  working = appendDiagnosticEvent(working, {
+    phase: prepared.startPhase,
+    status: "started",
+    detail: prepared.startPhase === "streaming" ? routeOperationLabel(prepared.executionRoute) : `${serviceLabel} 正在规划`
+  });
   const controller = new AbortController();
   activeOperation = {
     kind: "compose",
     sessionId: working.id,
-    phase: "planning",
-    requestPhase: "planning",
+    phase: prepared.startPhase,
+    requestPhase: prepared.startPhase,
+    executionRoute: prepared.executionRoute,
     userMessageId,
     controller,
     session: working,
     streamingText: ""
   };
+  const operation = activeOperation;
+  operation.checkpointWriter = createLatestCheckpointWriter(async (snapshot) => {
+    const saved = await saveSession(snapshot);
+    operation.session = saved;
+    return saved;
+  });
   composerSession = working;
   renderComposer();
   try {
     activeOperation.session = await saveSession(working);
-    await runComposerTurn(activeOperation, "planning");
+    await runComposerTurn(activeOperation, prepared.startPhase);
   } catch (error) {
     const operation = activeOperation;
     if (operation?.sessionId === working.id) {
@@ -1163,6 +1266,7 @@ async function handleBlockedReferenceAnalysisState(task) {
   if (task.status === "completed") {
     const result = composerAnalysisTaskBridge.consumeCompletion();
     if (!result) return;
+    prerequisiteAnalysisRequestsNextTurn = Math.max(0, Math.floor(Number(result.prerequisiteAnalysisRequests) || 0));
     applyTempReferenceResponse(result, "临时图片分析失败");
     renderComposer();
     elements.composerImageBlocker.close();
@@ -1226,13 +1330,31 @@ async function retryComposerTurn() {
     return;
   }
   if (!composerSession.lastFailure?.retryable) return;
+  if (composerSession.activeTurn?.providerMayHaveAccepted && !await confirmAppAction({
+    title: t("重新发起文字请求？"),
+    description: t("上一次请求可能已经被服务商接收。重试会发起新的请求，并可能再次计费；已保留的部分内容不会覆盖新结果。"),
+    confirmLabel: t("继续重试")
+  })) return;
   const failure = composerSession.lastFailure;
-  const startPhase = failure.phase === "streaming" && composerSession.currentInstruction && composerSession.currentRoute ? "streaming" : "planning";
+  const executionRoute = composerSession.routeMode === "auto" ? "auto" : composerSession.currentRoute;
+  const startPhase = failure.phase === "streaming" && composerSession.currentInstruction && executionRoute ? "streaming" : "planning";
   let working = clearComposerFailure(composerSession);
   working = appendDiagnosticEvent(working, {
     phase: startPhase,
     status: startPhase === "streaming" ? "retrying" : "started",
     detail: startPhase === "streaming" ? "重试生成" : "重试规划"
+  });
+  const selectedService = selectedComposerService(working.aiProfile, composerAiSettings, composerVisionSettings);
+  working = createComposerSession({
+    ...working,
+    activeTurn: createComposerActiveTurn({
+      turnId: crypto.randomUUID(),
+      userMessageId: failure.userMessageId,
+      route: executionRoute,
+      routeSource: working.currentRouteSource,
+      serviceId: working.aiProfile.serviceId,
+      model: selectedService.model || working.aiProfile.model
+    })
   });
   const controller = new AbortController();
   activeOperation = {
@@ -1240,11 +1362,18 @@ async function retryComposerTurn() {
     sessionId: working.id,
     phase: startPhase,
     requestPhase: startPhase,
+    executionRoute,
     userMessageId: failure.userMessageId,
     controller,
     session: working,
     streamingText: ""
   };
+  const operation = activeOperation;
+  operation.checkpointWriter = createLatestCheckpointWriter(async (snapshot) => {
+    const saved = await saveSession(snapshot);
+    operation.session = saved;
+    return saved;
+  });
   composerSession = working;
   renderComposer();
   try {
@@ -1270,16 +1399,17 @@ async function runComposerTurn(operation, startPhase = "planning") {
   if (!operation || operation.kind !== "compose") return;
   try {
     const settingsValue = await privateComposerServiceSettings();
-    if (startPhase === "streaming" && operation.session.currentInstruction && operation.session.currentRoute) {
-      await runAgentExecution(operation, settingsValue, operation.session.currentRoute, operation.session.currentInstruction);
+    const executionRoute = operation.executionRoute
+      || (operation.session.routeMode === "auto" ? "auto" : operation.session.currentRoute);
+    if (startPhase === "streaming" && operation.session.currentInstruction && executionRoute) {
+      await runAgentExecution(operation, settingsValue, executionRoute, operation.session.currentInstruction);
       return;
     }
     const planning = await planComposerSession({
       session: operation.session,
       composerSettings,
       settings: settingsValue,
-      signal: operation.controller.signal,
-      retrieveSources: retrieveSourcesForTurn
+      signal: operation.controller.signal
     });
     let working = planning.session;
     const planned = planning.planned;
@@ -1287,7 +1417,6 @@ async function runComposerTurn(operation, startPhase = "planning") {
       operation.session = await saveSession(working);
       return;
     }
-    if (planned.librarySearch && !planning.retrievedCount && composerSession?.id === working.id) composerFeedback(t("本地资料库没有找到匹配来源，已使用现有参考继续"));
     if (planned.notice && composerSession?.id === working.id) composerFeedback(t(planned.notice));
     operation.session = await saveSession(working);
     await runAgentExecution(operation, settingsValue, planned.route, planned.instruction);
@@ -1346,6 +1475,15 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
   operation.requestPhase = "streaming";
   operation.executionRoute = route;
   operation.session = appendDiagnosticEvent(operation.session, { phase: "streaming", status: "started", detail: routeOperationLabel(route) });
+  operation.session = createComposerSession({
+    ...operation.session,
+    activeTurn: updateComposerActiveTurn(operation.session.activeTurn, {
+      status: "waiting",
+      phase: "waiting",
+      route,
+      updatedAt: new Date().toISOString()
+    })
+  });
   operation.session = await saveSession(operation.session);
   renderActiveState();
   const preparedImages = operation.session.imageReferenceMode === "text_only"
@@ -1360,20 +1498,64 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
       imageEdit: operation.imageEdit
     }, settingsValue, preparedImages, {
       signal: operation.controller.signal,
+      onRequestStart: async () => {
+        recordComposerActualStage(operation, "requesting_model");
+        if (operation.session.activeTurn?.providerMayHaveAccepted) return;
+        operation.session = createComposerSession({
+          ...operation.session,
+          activeTurn: updateComposerActiveTurn(operation.session.activeTurn, {
+            providerMayHaveAccepted: true,
+            updatedAt: new Date().toISOString()
+          })
+        });
+        try {
+          operation.session = await saveSession(operation.session);
+        } catch (error) {
+          operation.session = appendDiagnosticEvent(operation.session, {
+            phase: "requesting_model",
+            status: "checkpoint_failed",
+            detail: `服务请求已经发出，但本地状态检查点保存失败：${error.message || "存储不可用"}`
+          });
+          if (composerSession?.id === operation.sessionId) composerSession = operation.session;
+        }
+      },
       onDelta: (_delta, content) => {
+        recordComposerActualStage(operation, "receiving_text");
         operation.streamingText = content;
+        checkpointComposerOperation(operation, {
+          status: "receiving",
+          phase: "streaming",
+          partialText: content,
+          updatedAt: new Date().toISOString()
+        });
         if (composerSession?.id === operation.sessionId) renderStreamingText();
       }
   });
+  recordComposerActualStage(operation, "response_completed");
+  await operation.checkpointWriter?.drain();
   operation.streamingText = "";
+  if (result.protocolDegraded) {
+    operation.session = appendDiagnosticEvent(operation.session, {
+      phase: "streaming",
+      status: "degraded",
+      detail: "自动路由控制信息无效，已保留原回答并按普通对话保存"
+    });
+  }
   operation.session = appendDiagnosticEvent(operation.session, {
     phase: "streaming",
     status: "completed",
     detail: `输入 ${result.usage.promptTokens} / 输出 ${result.usage.completionTokens} tokens`
   });
-  const working = applyComposerServiceResult(operation.session, result, composerSettings, route, instruction);
+  const working = createComposerSession({
+    ...applyComposerServiceResult(operation.session, result, composerSettings, route, instruction),
+    assemblySnapshot: completeComposerAssemblySnapshot(operation.session.assemblySnapshot, {
+      ...result,
+      actualStages: operation.actualStages
+    }),
+    activeTurn: null
+  });
   operation.session = await saveSession(working);
-  if (route !== "compose") return;
+  if (result.route !== "compose") return;
   if (result.kind === "image") {
     creativeRuns = await persistGeneratedImages(
       operation.session,
@@ -1393,7 +1575,9 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
 }
 
 async function persistComposerFailure(operation, error) {
+  await operation.checkpointWriter?.drain().catch(() => undefined);
   const details = composerServiceErrorDetails(error);
+  details.actualStages = operation.actualStages;
   const phase = operation.requestPhase === "streaming" ? "streaming" : "planning";
   let working = appendDiagnosticEvent(operation.session, {
     phase,
@@ -1407,6 +1591,16 @@ async function persistComposerFailure(operation, error) {
     message: details.kind === "stopped" ? details.message : `${details.message}。本轮内容已保留。`,
     retryable: operation.imageEdit ? false : details.retryable
   });
+  working = createComposerSession({
+    ...working,
+    assemblySnapshot: failComposerAssemblySnapshot(working.assemblySnapshot, details),
+    activeTurn: updateComposerActiveTurn(working.activeTurn, {
+      status: details.kind === "stopped" ? "stopped" : "failed",
+      phase: details.kind === "stopped" ? "stopped" : "failed",
+      partialText: operation.streamingText || working.activeTurn?.partialText || "",
+      updatedAt: new Date().toISOString()
+    })
+  });
   operation.streamingText = "";
   try {
     operation.session = await saveSession(working);
@@ -1414,6 +1608,13 @@ async function persistComposerFailure(operation, error) {
     operation.session = working;
     if (composerSession?.id === operation.sessionId) composerSession = working;
   }
+}
+
+function recordComposerActualStage(operation, stageValue) {
+  const stage = String(stageValue ?? "").trim();
+  if (!stage) return;
+  operation.actualStages ??= [];
+  if (!operation.actualStages.includes(stage)) operation.actualStages.push(stage);
 }
 
 async function stopActiveOperation() {
@@ -1435,6 +1636,12 @@ async function stopActiveOperation() {
     return;
   }
   activeOperation.phase = "stopping";
+  checkpointComposerOperation(activeOperation, {
+    status: "stop_requested",
+    phase: "stopping",
+    stopRequestedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
   activeOperation.controller.abort();
   renderActiveState();
 }
@@ -1460,7 +1667,7 @@ function setActiveCreativeJob(job) {
     durable: true,
     jobId: job.id,
     sessionId: job.sessionId,
-    phase: job.phase === "planning" ? "planning" : "streaming",
+    phase: job.executionState === "stop_requested" ? "stopping" : job.phase === "planning" ? "planning" : "streaming",
     requestPhase: job.phase,
     executionRoute: job.request.session.currentRoute || "compose",
     userMessageId: job.userMessageId,
@@ -1481,6 +1688,25 @@ function renderStreamingText() {
   if (node) node.textContent = currentStreamingText();
   else renderTimeline();
   elements.composerTimeline.scrollTop = elements.composerTimeline.scrollHeight;
+}
+
+function checkpointComposerOperation(operation, patch) {
+  if (!operation?.session?.activeTurn) return;
+  operation.session = createComposerSession({
+    ...operation.session,
+    activeTurn: updateComposerActiveTurn(operation.session.activeTurn, patch),
+    updatedAt: new Date().toISOString()
+  });
+  if (!operation.checkpointWriter) {
+    operation.checkpointWriter = createLatestCheckpointWriter(async (snapshot) => {
+      const saved = await saveSession(snapshot);
+      operation.session = saved;
+      return saved;
+    });
+  }
+  operation.checkpointWriter.schedule(operation.session).catch((error) => {
+    operation.checkpointError = error;
+  });
 }
 
 function currentStreamingText() {
@@ -1859,6 +2085,8 @@ async function loadComposerSession(sessionId) {
   if (!response?.ok) return composerFeedback(response?.message || t("没有找到这份创作草稿"), true);
   composerSession = response.session;
   reuseRetrievedSourcesNextTurn = false;
+  libraryRetrievalEnabled = false;
+  prerequisiteAnalysisRequestsNextTurn = 0;
   replaceComposerSessionUrl(sessionId);
   elements.composerShell.classList.remove("nav-open");
   closeReferenceWorkspace();
@@ -2494,19 +2722,123 @@ async function openSkillCenter(skillId = "") {
   location.assign(url.href);
 }
 
+function freezeComposerAssemblySnapshot(session, {
+  turnId,
+  userMessageId,
+  userRequest,
+  policy,
+  imageEdit = null,
+  prerequisiteAnalysisRequests = 0
+}) {
+  const payload = plannerRequestPayload(session, "", composerSettings);
+  const generationMode = ["create_image", "create_video"].includes(session.outputMode);
+  const profile = generationMode ? session.generationAiProfile : session.aiProfile;
+  const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings);
+  const selectedImageCount = session.referenceSnapshots.reduce((total, reference) => total + reference.imageRefs.length, 0);
+  const canSendImages = service.vision === true && session.imageReferenceMode !== "text_only";
+  const expectedSentImageCount = canSendImages ? selectedImageCount : 0;
+  const omittedImageCount = selectedImageCount - expectedSentImageCount;
+  const taskMethod = session.routeMode === "auto"
+    ? Object.entries(composerSettings.taskMethods)
+        .map(([taskKey, method]) => `${taskKey}\n${String(method?.text ?? "").trim()}`)
+        .filter((item) => item.trim())
+        .join("\n\n")
+    : payload.taskMethod;
+  return createComposerAssemblySnapshot({
+    turnId,
+    userMessageId,
+    serviceId: service.serviceId,
+    serviceLabel: service.shortLabel,
+    model: service.model || profile.model,
+    route: policy.route,
+    routeSource: policy.routeSource,
+    targetType: session.targetType,
+    outputMode: session.outputMode,
+    outputLanguage: payload.outputLanguage,
+    productionReviewEnabled: session.productionReviewEnabled,
+    agentInstruction: composerSettings.agentInstruction.text,
+    taskMethod,
+    userRequest,
+    skills: session.appliedSkills.map((skill, index) => ({
+      skillId: skill.skillId,
+      callName: skill.callName,
+      version: skill.versionId,
+      order: index + 1,
+      instructions: skill.skillMarkdown
+    })),
+    references: session.referenceSnapshots.map((reference) => ({
+      alias: reference.alias,
+      title: reference.title,
+      referenceKind: reference.referenceKind,
+      referenceText: reference.referenceText,
+      sourceLabels: reference.referenceSources.map((source) => source.label),
+      imageCount: reference.imageRefs.length
+    })),
+    retrieval: session.retrievalSnapshot,
+    retrievedSources: session.retrievedSources,
+    media: {
+      imageReferenceMode: session.imageReferenceMode,
+      selectedImageCount,
+      expectedSentImageCount,
+      omittedImageCount,
+      omittedReason: omittedImageCount
+        ? session.imageReferenceMode === "text_only"
+          ? "本轮明确选择只发送文字"
+          : "当前创作服务只读取文字"
+        : "",
+      editMode: imageEdit?.mode,
+      baseImageIncluded: Boolean(imageEdit),
+      maskIncluded: imageEdit?.mode === "local"
+    },
+    expectedModelCalls: policy.expectedModelCalls,
+    prerequisiteAnalysisRequests,
+    plannedStages: policy.stages
+  });
+}
+
 function openAssemblyDialog() {
   if (!composerSession) return;
   const payload = plannerRequestPayload(composerSession, "", composerSettings);
-  const selectedReferences = composerSession.referenceSnapshots.map((item) => `${item.alias} ${item.title}\n${item.referenceText}`);
-  const retrievedReferences = composerSession.retrievedSources.map((item) => `${item.alias} [${item.role}] ${item.title}\n${item.text}`);
+  const draftRequest = elements.composerInstruction.value.trim();
+  const snapshot = draftRequest ? null : composerSession.assemblySnapshot;
+  const latestUserRequest = [...composerSession.messages].reverse().find((item) => item.role === "user")?.content || "";
+  const userRequest = draftRequest || snapshot?.userRequest || latestUserRequest;
+  const includeRetrievedSources = !draftRequest || reuseRetrievedSourcesNextTurn;
+  const selectedReferences = snapshot
+    ? snapshot.references.map((item) => `${item.alias} ${item.title}\n${item.referenceText}`)
+    : composerSession.referenceSnapshots.map((item) => `${item.alias} ${item.title}\n${item.referenceText}`);
+  const retrievedReferences = snapshot
+    ? snapshot.retrievedSources.map((item) => `${item.alias} [${item.role}] ${item.title}\n${item.text}`)
+    : includeRetrievedSources
+      ? composerSession.retrievedSources.map((item) => `${item.alias} [${item.role}] ${item.title}\n${item.text}`)
+    : [];
+  const snapshotSkills = snapshot?.skills.map((skill) => `${skill.order}. /${skill.callName} · ${skill.version}\n${skill.instructions}`).join("\n\n");
+  const draftService = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
+  const draftPrerequisiteAnalysis = imageTempReferenceBlock(composerSession.referenceSnapshots, draftService);
+  const mediaSummary = snapshot ? [
+    `手选图片 ${snapshot.media.selectedImageCount} 张；预计发送 ${snapshot.media.expectedSentImageCount} 张`,
+    snapshot.media.baseImageIncluded ? `编辑底图已发送${snapshot.media.maskIncluded ? "；局部遮罩已发送" : ""}` : "",
+    snapshot.media.omittedImageCount ? `明确未发送 ${snapshot.media.omittedImageCount} 张：${snapshot.media.omittedReason}` : ""
+  ].filter(Boolean).join("\n") : "";
   const layers = composerAssemblyLayers({
     settings: composerSettings,
-    targetType: composerSession.targetType,
-    routeMode: composerSession.routeMode,
-    outputLanguage: payload.outputLanguage,
-    productionReviewEnabled: composerSession.productionReviewEnabled,
-    skills: payload.skills.map((skill) => `${skill.order}. /${skill.callName}\n${skill.instructions}`).join("\n\n"),
-    references: [...selectedReferences, ...retrievedReferences].join("\n\n")
+    targetType: snapshot?.targetType || composerSession.targetType,
+    routeMode: snapshot?.route || composerSession.routeMode,
+    outputLanguage: snapshot?.outputLanguage || payload.outputLanguage,
+    productionReviewEnabled: snapshot?.productionReviewEnabled ?? composerSession.productionReviewEnabled,
+    agentInstruction: snapshot?.agentInstruction,
+    taskMethod: snapshot?.taskMethod,
+    userRequest,
+    skills: snapshotSkills || payload.skills.map((skill) => `${skill.order}. /${skill.callName}\n${skill.instructions}`).join("\n\n"),
+    references: [...selectedReferences, ...retrievedReferences].join("\n\n"),
+    retrieval: snapshot ? composerRetrievalSummary({ retrievalSnapshot: snapshot.retrieval }) : composerRetrievalSummary(composerSession, Boolean(draftRequest)),
+    serviceLabel: snapshot?.serviceLabel,
+    model: snapshot?.model,
+    expectedModelCalls: snapshot?.expectedModelCalls ?? composerTurnPolicyFor(composerSession).expectedModelCalls,
+    prerequisiteAnalysisRequests: snapshot?.prerequisiteAnalysisRequests
+      ?? (draftPrerequisiteAnalysis.blocked ? draftPrerequisiteAnalysis.imageCount : 0),
+    mediaSummary,
+    actual: snapshot?.actual
   });
   elements.composerAssemblyContent.replaceChildren(...layers.map((layer) => {
     if (["agent", "task"].includes(layer.id)) return assemblyLayer(t(layer.title), layer.content, t("编辑"), async () => {
@@ -2522,9 +2854,30 @@ function openAssemblyDialog() {
       elements.composerAssemblyDialog.close();
       openReferenceWorkspace();
     });
+    if (layer.id === "user") return assemblyLayer(t(layer.title), layer.content || t("等待输入本轮请求"), t("修改"), () => {
+      elements.composerAssemblyDialog.close();
+      if (!elements.composerInstruction.value.trim() && userRequest) elements.composerInstruction.value = userRequest;
+      elements.composerInstruction.focus();
+      renderSendState();
+    });
+    if (layer.id === "retrieval" && draftRequest && !reuseRetrievedSourcesNextTurn) return assemblyLayer(t(layer.title), layer.content, t(libraryRetrievalEnabled ? "关闭" : "启用"), () => {
+      elements.composerAssemblyDialog.close();
+      toggleLibraryRetrieval();
+    });
     return assemblyLayer(t(layer.title), layer.content);
   }));
   elements.composerAssemblyDialog.showModal();
+}
+
+function composerRetrievalSummary(session, hasDraftRequest = false) {
+  if (libraryRetrievalEnabled && hasDraftRequest) return "已授权；发送本轮时检索案例与教程";
+  if (hasDraftRequest && !reuseRetrievedSourcesNextTurn) return "未授权，不检索资料库";
+  const snapshot = session?.retrievalSnapshot;
+  if (!snapshot) return "未授权，不检索资料库";
+  const result = snapshot.status === "completed"
+    ? `采用 ${snapshot.sourceCount} 条来源`
+    : "没有匹配来源";
+  return `已授权 · 查询：${snapshot.query} · ${result}`;
 }
 
 function assemblyLayer(title, content, actionLabel, action) {
@@ -2781,6 +3134,15 @@ async function rerollCreativeVideoOutput(run) {
     routeSource: "manual"
   });
   const userMessageId = working.messages.at(-1).id;
+  working = createComposerSession({
+    ...working,
+    assemblySnapshot: freezeComposerAssemblySnapshot(working, {
+      turnId: crypto.randomUUID(),
+      userMessageId,
+      userRequest: working.messages.at(-1).content,
+      policy: composerTurnPolicyFor(working)
+    })
+  });
   composerSession = working;
   renderComposer();
   return startPersistentCreativeJob({ session: working, userMessageId, startPhase: "generation", imageEdit: null });
@@ -2842,6 +3204,16 @@ async function startGeneratedImageTurn({ run, displayMessage, instruction, image
     routeSource: "manual"
   });
   const userMessageId = working.messages.at(-1).id;
+  working = createComposerSession({
+    ...working,
+    assemblySnapshot: freezeComposerAssemblySnapshot(working, {
+      turnId: crypto.randomUUID(),
+      userMessageId,
+      userRequest: displayMessage,
+      policy: composerTurnPolicyFor(working),
+      imageEdit
+    })
+  });
   composerSession = working;
   renderComposer();
   return startPersistentCreativeJob({
@@ -3071,12 +3443,16 @@ function renderSendState() {
   const descriptions = composerSession.referenceSnapshots.filter((item) => item.referenceKind === "vision").length;
   const images = composerSession.referenceSnapshots.reduce((sum, item) => sum + item.imageRefs.length, 0);
   const usage = composerInputUsage(composerSession, elements.composerInstruction.value, composerSettings);
-  const service = selectedComposerService(activeComposerProfile(), composerAiSettings, composerVisionSettings);
-  const callCount = composerSession.outputMode === "create_image" && service.serviceId === "compatible" && composerVisionSettings.compatible.imageGeneration.protocol === "images_generations" ? 3 : 2;
-  const requestLabel = composerSession.outputMode === "create_video" ? "异步视频任务" : `${callCount} 次请求`;
+  const callCount = composerTurnPolicyFor(composerSession).expectedModelCalls;
+  const planningService = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
+  const prerequisiteAnalysis = imageTempReferenceBlock(composerSession.referenceSnapshots, planningService);
+  const prerequisiteAnalysisCount = prerequisiteAnalysis.blocked ? prerequisiteAnalysis.imageCount : 0;
+  const requestLabel = composerSession.outputMode === "create_video" ? "异步视频任务" : `${callCount} 次创作请求`;
+  const prerequisiteLabel = prerequisiteAnalysisCount ? ` · 发送前另需 ${prerequisiteAnalysisCount} 次图片分析` : "";
+  const retrievalLabel = libraryRetrievalEnabled ? " · 本轮检索已开启" : "";
   elements.composerSendNote.textContent = currentLocale() === "en"
-    ? `${prompts} prompt originals · ${images} selected images · ${descriptions} visual descriptions · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} characters · ${composerSession.outputMode === "create_video" ? "asynchronous video task" : `${callCount} requests`}`
-    : `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} 字符 · ${requestLabel}`;
+    ? `${prompts} prompt originals · ${images} selected images · ${descriptions} visual descriptions · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} characters${libraryRetrievalEnabled ? " · local retrieval enabled" : ""} · ${composerSession.outputMode === "create_video" ? "asynchronous video task" : `${callCount} creation requests`}${prerequisiteAnalysisCount ? ` · ${prerequisiteAnalysisCount} image-analysis requests required before sending` : ""}`
+    : `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel}${prerequisiteLabel}`;
   elements.composerSendNote.classList.toggle("error", usage.overLimit);
   const currentRun = activeOperation?.kind === "compose" && activeOperation.sessionId === composerSession.id;
   if (currentRun) {
@@ -3090,6 +3466,26 @@ function renderSendState() {
     elements.composerAction.setAttribute("aria-label", t("发送"));
     setUiIcon(elements.composerAction, "send");
   }
+}
+
+function composerTurnPolicyFor(session) {
+  if (!session || !["create_image", "create_video"].includes(session.outputMode)) {
+    return resolveComposerTurnPolicy({ routeMode: session?.routeMode, outputMode: session?.outputMode });
+  }
+  const profile = normalizeComposerAiProfile(session.generationAiProfile);
+  const videoTask = session.outputMode === "create_video";
+  const availability = videoTask
+    ? composerVideoAvailability(profile, composerVisionSettings, { ...session, aiProfile: profile })
+    : composerImageAvailability(profile, composerVisionSettings, { ...session, aiProfile: profile });
+  return resolveComposerTurnPolicy({
+    routeMode: session.routeMode,
+    outputMode: session.outputMode,
+    generationCapability: {
+      available: availability.available,
+      issue: availability.available ? "" : availability.message,
+      requiresPromptAssembly: composerGenerationRequiresPromptAssembly(profile, composerVisionSettings, session)
+    }
+  });
 }
 
 function operationLabel(phase) {

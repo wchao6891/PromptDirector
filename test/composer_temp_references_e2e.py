@@ -99,11 +99,12 @@ def main() -> None:
             payload = route.request.post_data_json
             composer_requests.append(payload)
             if payload.get("stream"):
+                visible_text = "Use the analyzed composition."
                 route.fulfill(
                     status=200,
                     content_type="text/event-stream",
                     body=(
-                        f'data: {json.dumps({"model": "deepseek-v4-flash", "choices": [{"delta": {"content": "Use the analyzed composition."}, "finish_reason": "stop"}]})}\n\n'
+                        f'data: {json.dumps({"model": "deepseek-v4-flash", "choices": [{"delta": {"content": json.dumps({"route": "compose", "status": "ready"}) + chr(10) + visible_text}, "finish_reason": "stop"}]})}\n\n'
                         "data: [DONE]\n\n"
                     ),
                 )
@@ -214,7 +215,15 @@ def main() -> None:
             session_id,
         )
         assert len(vision_requests) == 1, vision_requests
-        assert len(composer_requests) == 2, composer_requests
+        assert len(composer_requests) == 1, composer_requests
+        assembly_snapshot = composer.evaluate(
+            """async (sessionId) => {
+              const stored = await chrome.storage.local.get('composerSessions');
+              return stored.composerSessions.find(item => item.id === sessionId)?.assemblySnapshot || null;
+            }""",
+            session_id,
+        )
+        assert assembly_snapshot["prerequisiteAnalysisRequests"] == 1, assembly_snapshot
         assert analyzed == [
             {"kind": "vision", "text": "Centered subject with a clear silhouette and controlled contrast."},
             {"kind": "vision", "text": "Centered subject with a clear silhouette and controlled contrast."},
@@ -249,7 +258,7 @@ def main() -> None:
         )
         expect(composer.locator("#composer-instruction")).to_have_value("Keep this request and attachment after an analysis failure")
         expect(composer.locator(".composer-temp-reference-card")).to_have_count(1)
-        assert len(composer_requests) == 2, composer_requests
+        assert len(composer_requests) == 1, composer_requests
         failed_reference = composer.evaluate(
             """async (sessionId) => {
               const stored = await chrome.storage.local.get('composerSessions');
@@ -266,7 +275,7 @@ def main() -> None:
         composer.locator("#composer-action").click()
         expect(composer.locator("#composer-image-blocker")).to_be_visible()
         expect(composer.locator("#composer-image-blocker-description")).to_contain_text("尚未分析的参考图片")
-        assert len(composer_requests) == 2, composer_requests
+        assert len(composer_requests) == 1, composer_requests
         composer.locator("#composer-image-blocker-cancel").click()
 
         print({

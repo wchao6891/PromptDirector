@@ -96,3 +96,22 @@ test("local composer retrieval narrows candidates through the reusable search in
 
   assert.deepEqual(sources.map((item) => item.entryId), ["match"]);
 });
+
+test("one-click retrieval finds the distinctive subject inside a natural-language request", () => {
+  const entries = [
+    { id: "case", title: "雾夜案例", text: "雾夜角色穿银色披风。", classification: { pathIds: [CONTENT_IDS.promptImage] } },
+    { id: "guide", title: "雾夜教程", text: "雾夜角色先确定轮廓光。", classification: { pathIds: [CONTENT_IDS.tutorial] } },
+    { id: "partial", title: "普通角色", text: "普通角色穿黑色夹克。", classification: { pathIds: [CONTENT_IDS.promptImage] } },
+    { id: "unrelated", title: "白日建筑", text: "晴天里的白色建筑。", classification: { pathIds: [CONTENT_IDS.promptImage] } }
+  ];
+  const sources = retrieveComposerSources({
+    query: "用私人资料补充雾夜角色",
+    contentRoles: ["case", "guide"],
+    targetType: "image",
+    characterBudget: 2_000,
+    entries,
+    searchIndex: buildSearchIndex(entries)
+  });
+
+  assert.deepEqual(sources.map((item) => item.entryId).sort(), ["case", "guide"]);
+});

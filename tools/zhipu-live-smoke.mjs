@@ -14,7 +14,7 @@ import {
   resolveVisionTaskSettings
 } from "../ai-runtime.js";
 import { createComposerSession, normalizeComposerSettings } from "../composer.js";
-import { planComposerTurnWithService } from "../composer-service.js";
+import { executeComposerTurnWithService, planComposerTurnWithService } from "../composer-service.js";
 import { extractCreativeSkillDraft } from "../creative-skill-service.js";
 import { analyzeVideoWithChatCompletions } from "../video-analysis.js";
 import { analyzeImageWithVision, createVisionRequestBudget } from "../vision.js";
@@ -29,6 +29,7 @@ if (!TASKS.length || requestedTasks.some((taskId) => !ALL_TASKS.includes(taskId)
 const IMAGE_URL = "https://cdn.bigmodel.cn/static/logo/register.png";
 const VIDEO_URL = "https://cdn.bigmodel.cn/agent-demos/lark/113123.mov";
 const USE_SYNTHETIC_LOCAL_VIDEO = process.env.PROMPTDIRECTOR_ZHIPU_SYNTHETIC_LOCAL_VIDEO === "1";
+const COMPARE_COMPOSER = process.env.PROMPTDIRECTOR_ZHIPU_COMPARE_COMPOSER === "1";
 const SYNTHETIC_LOCAL_VIDEO = fileURLToPath(new URL("../test/fixtures/zhipu-local-video-smoke.mp4", import.meta.url));
 const apiKey = String(process.env.PROMPTDIRECTOR_ZHIPU_API_KEY ?? "").trim();
 
@@ -141,17 +142,19 @@ try {
   if (TASKS.includes("creativePlanning")) await runTask("creativePlanning", async (fetchImpl) => {
     const session = createComposerSession({
       targetType: "video",
-      routeMode: "compose",
+      routeMode: "auto",
       outputLanguage: "zh-CN",
       aiProfile: { serviceId: "zhipu", model: MODEL, thinking: false },
       messages: [{ role: "user", type: "request", content: "为新品设计一个前三秒视频广告钩子" }]
     });
-    const result = await planComposerTurnWithService({
+    const result = await executeComposerTurnWithService({
       session,
       userMessage: "",
-      composerSettings: normalizeComposerSettings()
-    }, { ai: runtime.aiSettings, vision: runtime.visionSettings }, { fetchImpl });
-    return resultFact(result, { route: result.route, hasInstruction: Boolean(result.instruction) });
+      composerSettings: normalizeComposerSettings(),
+      route: "auto",
+      instruction: "为新品设计一个前三秒视频广告钩子"
+    }, { ai: runtime.aiSettings, vision: runtime.visionSettings }, [], { fetchImpl, stream: false });
+    return resultFact(result, { route: result.route, kind: result.kind });
   });
 
   if (TASKS.includes("imageAnalysis")) await runTask("imageAnalysis", async (fetchImpl) => {
@@ -186,6 +189,8 @@ try {
     }, { fetchImpl });
     return resultFact(result, { sourceKind: result.sourceKind, textCharacters: result.text.length });
   });
+
+  if (COMPARE_COMPOSER) await runComposerComparison(runtime);
 } catch (error) {
   receipt.fatalError = safeError(error);
 }
@@ -193,7 +198,8 @@ try {
 receipt.finishedAt = new Date().toISOString();
 receipt.passed = receipt.discovery?.passed === true
   && TASKS.every((taskId) => receipt.tasks[taskId]?.passed === true)
-  && TASKS.every((taskId) => receipt.requests[taskId] === 1);
+  && TASKS.every((taskId) => receipt.requests[taskId] === 1)
+  && (!COMPARE_COMPOSER || receipt.composerComparison?.passed === true);
 process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
 if (!receipt.passed) process.exitCode = 1;
 
@@ -212,6 +218,96 @@ async function runTask(taskId, operation) {
   } finally {
     receipt.requests[taskId] = calls;
   }
+}
+
+async function runComposerComparison(runtime) {
+  const instruction = "为一款太空采矿策略游戏生成前三秒竖屏视频广告提示词：黑场后采矿舰被陨石击中，镜头快速推进，第三秒出现可升级激光钻头；写实科幻，9:16。";
+  const composerSettings = normalizeComposerSettings();
+  const createSession = () => createComposerSession({
+    targetType: "video",
+    routeMode: "auto",
+    outputLanguage: "zh-CN",
+    aiProfile: { serviceId: "zhipu", model: MODEL, thinking: false },
+    messages: [{ role: "user", type: "request", content: instruction }]
+  });
+  const settings = { ai: runtime.aiSettings, vision: runtime.visionSettings };
+  const legacyRequest = countedFetch(2);
+  const directRequest = countedFetch(1);
+  try {
+    const legacyStarted = performance.now();
+    const planned = await planComposerTurnWithService({
+      session: createSession(),
+      userMessage: "",
+      composerSettings
+    }, settings, { fetchImpl: legacyRequest.fetchImpl });
+    if (planned.status !== "ready") throw new Error("旧两段链路提出了澄清问题，无法完成同输入成对对照");
+    let legacyFirstDelta = null;
+    const legacyResult = await executeComposerTurnWithService({
+      session: createSession(),
+      userMessage: "",
+      composerSettings,
+      route: planned.route,
+      instruction: planned.instruction
+    }, settings, [], {
+      fetchImpl: legacyRequest.fetchImpl,
+      onDelta: () => { legacyFirstDelta ??= performance.now(); }
+    });
+    const legacyFinished = performance.now();
+
+    const directStarted = performance.now();
+    let directFirstDelta = null;
+    const directResult = await executeComposerTurnWithService({
+      session: createSession(),
+      userMessage: "",
+      composerSettings,
+      route: "auto",
+      instruction
+    }, settings, [], {
+      fetchImpl: directRequest.fetchImpl,
+      onDelta: () => { directFirstDelta ??= performance.now(); }
+    });
+    const directFinished = performance.now();
+    receipt.composerComparison = {
+      passed: legacyRequest.calls() === 2 && directRequest.calls() === 1,
+      legacyTwoStage: comparisonFact(legacyResult, legacyRequest.calls(), legacyStarted, legacyFirstDelta, legacyFinished, planned.usage),
+      directSingleResponse: comparisonFact(directResult, directRequest.calls(), directStarted, directFirstDelta, directFinished)
+    };
+  } catch (error) {
+    receipt.composerComparison = { passed: false, error: safeError(error) };
+  }
+}
+
+function countedFetch(maximum) {
+  let calls = 0;
+  return {
+    calls: () => calls,
+    fetchImpl: (...args) => {
+      calls += 1;
+      if (calls > maximum) throw new Error(`创作台成对验证阻止了第 ${calls} 次额外请求`);
+      return fetch(...args);
+    }
+  };
+}
+
+function comparisonFact(result, requests, started, firstDelta, finished, priorUsage = {}) {
+  const output = String(result?.finalPrompt ?? result?.text ?? "");
+  return {
+    requests,
+    route: result?.route,
+    kind: result?.kind,
+    firstDeltaMs: firstDelta === null ? null : Math.round(firstDelta - started),
+    totalMs: Math.round(finished - started),
+    usage: sumUsage(priorUsage, result?.usage),
+    outputSha256: createHash("sha256").update(output).digest("hex")
+  };
+}
+
+function sumUsage(...values) {
+  const result = {};
+  for (const value of values) {
+    for (const [key, amount] of Object.entries(safeUsage(value))) result[key] = (result[key] || 0) + amount;
+  }
+  return result;
 }
 
 function resultFact(result, extra = {}) {

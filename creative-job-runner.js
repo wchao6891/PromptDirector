@@ -1,7 +1,6 @@
 import {
-  COMPOSER_INPUT_MAX_CHARACTERS,
   appendDiagnosticEvent,
-  composerInputUsage,
+  completeComposerAssemblySnapshot,
   createComposerSession,
   normalizeComposerSettings
 } from "./composer.js";
@@ -10,17 +9,13 @@ import {
   executeComposerTurnWithService,
   selectedComposerService
 } from "./composer-service.js";
-import { applyComposerServiceResult, planComposerSession } from "./composer-turn-core.js";
-import { retrieveComposerSources } from "./composer-retrieval.js";
+import { applyComposerServiceResult } from "./composer-turn-core.js";
 import { normalizeAiSettings } from "./deepseek.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { readImageDimensions } from "./image-metadata.js";
-import { deleteMediaBlob, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
+import { deleteMediaBlob, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
 import { prepareLocalMedia } from "./local-media.js";
-import { entryMediaAssets } from "./media.js";
 import { assertImageDimensions } from "./resource-limits.js";
-import { buildSearchIndex } from "./search-index.js";
-import { materializeLogicalCases } from "./compound-cases.js";
 import { blobToDataUrl, normalizeVisionSettings } from "./vision.js";
 import { normalizeAiServiceProfiles } from "./ai-service-profiles.js";
 
@@ -39,30 +34,14 @@ export async function runCreativeJob(job, context = {}) {
   const composerSettings = normalizeComposerSettings(stored.composerSettings);
   let session = createComposerSession(job.request.session);
   const savedIds = [];
+  const actualStages = [];
+  const recordStage = (value) => {
+    const stage = String(value ?? "").trim();
+    if (stage && !actualStages.includes(stage)) actualStages.push(stage);
+  };
   try {
-    if (job.request.startPhase === "planning" && !job.remoteVideo) {
-      await context.progress({ phase: "planning", session });
-      const service = selectedComposerService(session.aiProfile, settings.ai, settings.vision);
-      session = appendDiagnosticEvent(session, {
-        phase: "planning",
-        status: "started",
-        detail: `${service.shortLabel} 正在规划`
-      });
-      const planning = await planComposerSession({
-        session,
-        composerSettings,
-        settings,
-        signal,
-        retrieveSources: (current, search) => retrieveSources(stored, current, search, composerSettings)
-      });
-      session = planning.session;
-      if (planning.needsClarification) {
-        return { session, visuals: [], generation: null };
-      }
-    }
-
     if (!job.remoteVideo || job.phase === "generation") {
-      await context.progress({ phase: "generation", session });
+      await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
     }
     const route = session.currentRoute || "compose";
     const instruction = session.currentInstruction || latestUserMessage(session);
@@ -74,9 +53,33 @@ export async function runCreativeJob(job, context = {}) {
         : session.outputMode === "create_video" ? "正在创建视频" : "正在生成"
     });
     const executionSession = createComposerSession(session);
+    recordStage("preparing_media");
+    await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
     const preparedImages = await prepareReferenceImages(executionSession, settings);
     const imageEdit = await prepareImageEdit(job.request.imageEdit);
+    recordStage("media_prepared");
+    await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
     let phaseQueue = Promise.resolve();
+    let providerMayHaveAccepted = job.providerMayHaveAccepted === true || Boolean(job.remoteVideo);
+    const markProviderRequestStarted = async () => {
+      if (providerMayHaveAccepted) return;
+      providerMayHaveAccepted = true;
+      recordStage("provider_request");
+      try {
+        await context.progress({
+          phase: "generation",
+          session,
+          providerMayHaveAccepted: true,
+          actualStages: [...actualStages]
+        });
+      } catch (error) {
+        session = appendDiagnosticEvent(session, {
+          phase: "generation",
+          status: "checkpoint_failed",
+          detail: `服务请求已经发出，但本地状态检查点保存失败：${error.message || "存储不可用"}`
+        });
+      }
+    };
     const result = await executeComposerTurnWithService({
       session: executionSession,
       userMessage: "",
@@ -88,11 +91,20 @@ export async function runCreativeJob(job, context = {}) {
       signal,
       stream: false,
       onPhase: (phase) => {
-        phaseQueue = phaseQueue.then(() => context.progress({ phase, session }));
+        recordStage(phase);
+        const stages = [...actualStages];
+        phaseQueue = phaseQueue.then(() => context.progress({ phase, session, actualStages: stages }));
       },
+      onRequestStart: markProviderRequestStarted,
       remoteVideo: job.remoteVideo,
       onRemoteVideo: (remoteVideo) => {
-        phaseQueue = phaseQueue.then(() => context.progress({ phase: "generation", session, remoteVideo }));
+        const stages = [...actualStages];
+        phaseQueue = phaseQueue.then(() => context.progress({
+          phase: "generation",
+          session,
+          remoteVideo,
+          actualStages: stages
+        }));
       },
       pollIntervalMs: context.pollIntervalMs
     });
@@ -104,8 +116,15 @@ export async function runCreativeJob(job, context = {}) {
     });
     session = applyComposerServiceResult(session, result, composerSettings, route, instruction);
 
-    if (!["image", "video"].includes(result.kind)) return { session, visuals: [], generation: null };
-    await context.progress({ phase: "persisting", session });
+    if (!["image", "video"].includes(result.kind)) {
+      session = createComposerSession({
+        ...session,
+        assemblySnapshot: completeComposerAssemblySnapshot(session.assemblySnapshot, { ...result, actualStages })
+      });
+      return { session, visuals: [], generation: null };
+    }
+    recordStage("persisting");
+    await context.progress({ phase: "persisting", session, actualStages: [...actualStages] });
     const visuals = [];
     for (const item of result.images ?? []) {
       const blob = item?.blob;
@@ -148,6 +167,12 @@ export async function runCreativeJob(job, context = {}) {
       visuals.push({ ...prepared.asset, reviewStatus: "unverified" });
     }
     if (!visuals.length) throw new Error(result.kind === "video" ? "视频服务没有返回视频" : "生图服务没有返回图片");
+    recordStage("persisted");
+    await context.progress({ phase: "persisting", session, actualStages: [...actualStages] });
+    session = createComposerSession({
+      ...session,
+      assemblySnapshot: completeComposerAssemblySnapshot(session.assemblySnapshot, { ...result, actualStages })
+    });
     return {
       session,
       visuals,
@@ -166,6 +191,7 @@ export async function runCreativeJob(job, context = {}) {
     };
   } catch (error) {
     await Promise.allSettled(savedIds.flatMap((id) => [deleteScreenshotBlob(id), deleteMediaBlob(id)]));
+    error.actualStages = [...actualStages];
     throw error;
   }
 }
@@ -261,35 +287,6 @@ async function prepareImageEdit(value) {
     baseImage: { visualId: value.parentVisualId, dataUrl: await blobToDataUrl(baseBlob) },
     mask: maskBlob ? { dataUrl: await blobToDataUrl(maskBlob) } : null
   };
-}
-
-async function retrieveSources(stored, session, search, composerSettings) {
-  const entries = materializeLogicalCases(stored.entries, stored.compoundCases);
-  const documentIds = [...new Set(entries.flatMap((entry) => entryMediaAssets(entry))
-    .filter((asset) => asset.kind === "document")
-    .map((asset) => asset.id))];
-  const derived = await Promise.all(documentIds.map(async (id) => [id, await getDerivedMedia(id).catch(() => null)]));
-  const documentText = new Map(derived.flatMap(([id, value]) => value?.searchText ? [[id, value.searchText]] : []));
-  const documentTextByEntryId = new Map(entries.flatMap((entry) => {
-    const text = entryMediaAssets(entry).map((asset) => documentText.get(asset.id)).filter(Boolean).join("\n").trim();
-    return text ? [[entry.id, text]] : [];
-  }));
-  const baseSession = createComposerSession({ ...session, retrievedSources: [] });
-  const remainingCharacters = Math.max(
-    0,
-    COMPOSER_INPUT_MAX_CHARACTERS - composerInputUsage(baseSession, "", composerSettings).characters
-  );
-  return retrieveComposerSources({
-    query: search.query,
-    contentRoles: search.contentRoles,
-    targetType: session.targetType,
-    characterBudget: remainingCharacters,
-    entries,
-    facetCatalog: stored.facetCatalog,
-    excludedEntryIds: session.referenceSnapshots.map((item) => item.entryId),
-    searchIndex: buildSearchIndex(entries, stored.facetCatalog, documentText),
-    documentTextByEntryId
-  });
 }
 
 function latestUserMessage(session) {

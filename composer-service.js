@@ -13,7 +13,12 @@ import {
   plannerRequestPayload,
   validateGeneratedPrompt
 } from "./composer.js";
-import { compileAgentExecutionPrompt, compileAgentPlanningPrompt } from "./composer-agent.js";
+import {
+  compileAgentAutoExecutionPrompt,
+  compileAgentExecutionPrompt,
+  compileAgentPlanningPrompt
+} from "./composer-agent.js";
+import { composerAutoResponseProtocolFacts, createComposerAutoResponseProjector } from "./composer-auto-response.js";
 import { normalizeVisionSettings, OPENAI_RESPONSES_ENDPOINT, OPENAI_VIDEOS_ENDPOINT } from "./vision.js";
 import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia } from "./bounded-media.js";
@@ -56,12 +61,23 @@ export class ComposerServiceError extends Error {
 
 export function composerServiceErrorDetails(error) {
   if (error?.name === "AbortError") {
-    return { kind: "stopped", message: "已停止，本次不完整输出没有保存", retryable: false };
+    return {
+      kind: "stopped",
+      message: "已停止，本次不完整输出没有保存",
+      retryable: false,
+      actualStages: Array.isArray(error.actualStages) ? error.actualStages : []
+    };
   }
   if (error instanceof ComposerServiceError) {
-    return { kind: error.kind, message: error.message, retryable: error.retryable, referenceLimit: error.referenceLimit };
+    return {
+      kind: error.kind,
+      message: error.message,
+      retryable: error.retryable,
+      referenceLimit: error.referenceLimit,
+      actualStages: Array.isArray(error.actualStages) ? error.actualStages : []
+    };
   }
-  return deepSeekErrorDetails(error);
+  return { ...deepSeekErrorDetails(error), actualStages: Array.isArray(error?.actualStages) ? error.actualStages : [] };
 }
 
 export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue = {}) {
@@ -416,6 +432,27 @@ export function composerImageAvailability(profileValue, visionSettingsValue = {}
   return imageParameterAvailability(profileValue, visionSettingsValue, session, `由 ${service.shortLabel} 直接生成并保存到本轮结果`);
 }
 
+export function composerGenerationRequiresPromptAssembly(profileValue, visionSettingsValue = {}, session = {}) {
+  if (session?.outputMode === "create_video") return true;
+  if (session?.outputMode !== "create_image") return false;
+  const profile = normalizeComposerAiProfile(profileValue);
+  const settings = normalizeVisionSettings(visionSettingsValue);
+  const registryProvider = visionSettingsValue?.providerProfiles?.[profile.serviceId];
+  const protocol = profile.serviceId === "compatible"
+    ? settings.compatible.imageGeneration.protocol
+    : profile.serviceId === "xai"
+      ? "images_generations"
+      : profile.serviceId === "openrouter"
+        ? "openrouter_images"
+        : profile.serviceId === "gemini"
+          ? "gemini_interactions"
+          : profile.serviceId === "openai"
+            ? "responses_tool"
+            : String(registryProvider?.imageGeneration?.protocol ?? "");
+  return session?.imageReferenceMode !== "conditioned"
+    || ["images_generations", "openrouter_images"].includes(protocol);
+}
+
 function imageParameterAvailability(profileValue, settings, session, message) {
   const state = normalizeImageGenerationRequest(profileValue, settings, session?.generationParameters);
   return state.issues.length
@@ -649,7 +686,12 @@ async function generateProviderVideoTurn(input, service, settingsValue, prepared
     : normalizeVideoGenerationRequest(generationProfile, settingsValue.vision, input.session?.generationParameters);
   if (state.issues.length) throw new ComposerServiceError(state.issues.join("；"), 422, { retryable: false });
   const module = createAiProviderModule({
-    fetchImpl: options.fetchImpl ?? fetch,
+    fetchImpl: async (...args) => {
+      const pending = Promise.resolve((options.fetchImpl ?? fetch)(...args));
+      pending.catch(() => undefined);
+      await notifyRequestStart(options);
+      return pending;
+    },
     signal: options.signal,
     timeoutMs: REQUEST_TIMEOUT_MS
   });
@@ -781,7 +823,7 @@ async function videoRequest(url, apiKey, method, body, options, label = "OpenAI 
   try {
     const multipart = typeof FormData !== "undefined" && body instanceof FormData;
     const json = body && !multipart;
-    return await (options.fetchImpl ?? fetch)(url, {
+    const pending = Promise.resolve((options.fetchImpl ?? fetch)(url, {
       method,
       headers: {
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -790,7 +832,10 @@ async function videoRequest(url, apiKey, method, body, options, label = "OpenAI 
       ...(body ? { body: json ? JSON.stringify(body) : body } : {}),
       redirect: "error",
       signal: controller.signal
-    });
+    }));
+    pending.catch(() => undefined);
+    await notifyRequestStart(options);
+    return await pending;
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     throw new ComposerServiceError(`无法连接${label}，请检查网络和权限`, 0, { cause: error });
@@ -839,20 +884,64 @@ async function executeVisualTextTurn(input, service, preparedImages, options) {
   assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = executionRequest(input);
   const route = request.route;
-  const systemInstruction = compileAgentExecutionPrompt({
+  const automatic = route === "auto";
+  const promptInput = {
     settings: input.composerSettings,
     route,
     targetType: request.targetType,
     outputLanguage: request.outputLanguage,
     productionReviewEnabled: request.productionReviewEnabled
-  });
+  };
+  const systemInstruction = automatic
+    ? compileAgentAutoExecutionPrompt(promptInput)
+    : compileAgentExecutionPrompt(promptInput);
   const content = multimodalContent(input.session, request, preparedImages, service.protocol);
+  const projector = automatic ? createComposerAutoResponseProjector(options.onDelta) : null;
   const result = await requestText(service, systemInstruction, content, {
     signal: options.signal,
     fetchImpl: options.fetchImpl,
-    onDelta: options.onDelta,
+    onRequestStart: options.onRequestStart,
+    onDelta: automatic ? (_delta, cumulative) => projector.push(cumulative) : options.onDelta,
     stream: options.stream !== false
   });
+  if (automatic) {
+    const parsed = projector.push(result.content, { final: true });
+    const protocolFacts = composerAutoResponseProtocolFacts(parsed);
+    if (parsed.status === "needs_clarification") {
+      return {
+        ...protocolFacts,
+        route: parsed.route,
+        kind: "question",
+        text: parsed.visibleText,
+        outputLanguage: request.outputLanguage,
+        usage: result.usage,
+        model: result.model,
+        finishReason: result.finishReason
+      };
+    }
+    if (parsed.route === "compose") {
+      return {
+        ...protocolFacts,
+        route: parsed.route,
+        kind: "prompt",
+        finalPrompt: validateGeneratedPrompt(parsed.visibleText),
+        outputLanguage: request.outputLanguage,
+        usage: result.usage,
+        model: result.model,
+        finishReason: result.finishReason
+      };
+    }
+    return {
+      ...protocolFacts,
+      route: parsed.route,
+      kind: parsed.route === "analyze_materials" ? "analysis" : "chat",
+      text: parsed.visibleText,
+      outputLanguage: request.outputLanguage,
+      usage: result.usage,
+      model: result.model,
+      finishReason: result.finishReason
+    };
+  }
   if (route === "compose") {
     return {
       route,
@@ -1133,7 +1222,7 @@ function executionRequest(input) {
     || "";
   return {
     ...request,
-    route: ["compose", "analyze_materials", "chat"].includes(input.route) ? input.route : "chat",
+    route: ["auto", "compose", "analyze_materials", "chat"].includes(input.route) ? input.route : "chat",
     instruction,
     references: (input.session?.referenceSnapshots ?? []).map((item) => ({
       alias: item.alias,
@@ -1392,13 +1481,16 @@ async function requestRaw(url, apiKey, body, options, timeoutMs, label, extraHea
     ? setTimeout(() => { timedOut = true; controller.abort(); }, requestedTimeout)
     : null;
   try {
-    return await (options.fetchImpl ?? fetch)(url, {
+    const pending = Promise.resolve((options.fetchImpl ?? fetch)(url, {
       method: "POST",
       headers: { ...(multipart ? {} : { "Content-Type": "application/json" }), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), ...extraHeaders },
       body: multipart ? body : JSON.stringify(body),
       redirect: "error",
       signal: controller.signal
-    });
+    }));
+    pending.catch(() => undefined);
+    await notifyRequestStart(options);
+    return await pending;
   } catch (error) {
     if (timedOut) throw new ComposerServiceError(`${label} 请求超时，本次结果未保存`, 408, { cause: error });
     if (error?.name === "AbortError") throw error;
@@ -1406,6 +1498,14 @@ async function requestRaw(url, apiKey, body, options, timeoutMs, label, extraHea
   } finally {
     if (timeoutId !== null) clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+async function notifyRequestStart(options = {}) {
+  try {
+    await options.onRequestStart?.();
+  } catch (error) {
+    options.onRequestStartError?.(error);
   }
 }
 
