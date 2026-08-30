@@ -53,7 +53,10 @@ test("composer combines cases and Skills in one reference workspace while keepin
 });
 
 test("composer model menu renders every connected task candidate without static provider fallback", async () => {
-  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const [composerJs, composerCss] = await Promise.all([
+    readFile(new URL("../composer-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../composer-page.css", import.meta.url), "utf8")
+  ]);
   const renderer = composerJs.slice(
     composerJs.indexOf("function renderGenerationModelChoices"),
     composerJs.indexOf("function renderImageGenerationSettings")
@@ -64,6 +67,9 @@ test("composer model menu renders every connected task candidate without static 
   assert.match(renderer, /button\.hidden = true/);
   assert.doesNotMatch(renderer, /staticFallback/);
   assert.doesNotMatch(renderer, /\["kimi",\s*"gemini"|providerId === "zhipu"/);
+  assert.match(composerCss, /\.composer-model-menu\s*\{[^}]*max-height:[^;}]*100dvh[^}]*overflow-y:\s*auto/s);
+  assert.match(composerCss, /\.composer-model-dynamic\s*>\s*button/);
+  assert.match(composerCss, /\.composer-model-dynamic\s*>\s*button\[aria-checked="true"\][^{]*\{[^}]*background:\s*var\(--selection\)/s);
 });
 
 test("composer reference selection is visual while Skill management stays on its own page", async () => {

@@ -8543,18 +8543,17 @@ async function openAiProviderDialog(initialProviderId = "") {
         { value: "chat_completions", label: "OpenAI Chat Completions" }
       ] }
     );
-    const analysisTaskIds = connectionAnalysisTaskIds(profile);
-    if (analysisTaskIds.length) {
-      const analysisOptions = connectionAnalysisModelOptions(profile);
-      const currentModel = connectionManagedModel(profile);
+    const analysisModelGroups = connectionAnalysisModelGroups(profile);
+    for (const group of analysisModelGroups) {
+      const currentModel = connectionGroupModel(profile, group.taskIds);
       fields.push({
-        id: `provider_${key}_analysisModel`,
-        label: t("分析模型"),
+        id: `provider_${key}_model_${group.id}`,
+        label: t(group.label),
         type: custom ? "text" : "select",
-        value: custom ? currentModel || analysisTaskIds.map((taskId) => profile.models?.[taskId]).find(Boolean) || ""
-          : analysisOptions.some((option) => option.value === currentModel) ? currentModel : "",
-        options: [{ value: "", label: t("读取模型后选择") }, ...analysisOptions],
-        placeholder: custom ? t("填写这个兼容接口实际调用的模型") : ""
+        value: currentModel,
+        options: [{ value: "", label: t("不更改这些任务") }, ...group.options],
+        placeholder: custom ? t("填写这个兼容接口实际调用的模型") : "",
+        help: t("保存后更新：{tasks}", { tasks: group.taskIds.map(taskDisplayLabel).join("、") })
       });
     }
     for (const taskId of ["imageGeneration", "videoGeneration"].filter((taskId) => profile.capabilities.includes(taskId))) {
@@ -8646,35 +8645,14 @@ async function openAiProviderDialog(initialProviderId = "") {
         controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
         controls.get(`${prefix}apiKey`).focus();
       });
-      const syncConnectionHelp = () => {
-        for (const profile of profiles) {
-          const key = keyFor(profile.id);
-          const input = controls.get(`provider_${key}_analysisModel`);
-          if (!input) continue;
-          const wrapper = input.closest(".app-dialog-field");
-          let help = wrapper.querySelector(":scope > .model-capability-help");
-          if (!help) {
-            help = document.createElement("small");
-            help.className = "model-capability-help";
-            wrapper.append(help);
-            input.addEventListener("input", syncConnectionHelp);
-            input.addEventListener("change", syncConnectionHelp);
-          }
-          const taskIds = profile.category === "custom"
-            ? connectionAnalysisTaskIds(profile)
-            : connectionModelTaskIds(profile, input.value);
-          help.textContent = input.value && taskIds.length
-            ? t("保存后联动：{tasks}；已单独更换的任务保持不变", { tasks: taskIds.map(taskDisplayLabel).join("、") })
-            : profile.category === "custom"
-              ? t("填写兼容接口实际调用的模型；保存后任务路由会同步更新")
-              : t("先读取当前账号模型，再选择本次连接使用的分析模型");
-        }
-      };
       for (const profile of profiles) {
         if (profile.category === "custom" || !connectionAnalysisTaskIds(profile).length) continue;
         const key = keyFor(profile.id);
-        const input = controls.get(`provider_${key}_analysisModel`);
-        const wrapper = input?.closest(".app-dialog-field");
+        const modelInputs = CONNECTION_ANALYSIS_MODEL_GROUPS.flatMap((group) => {
+          const input = controls.get(`provider_${key}_model_${group.id}`);
+          return input ? [{ group, input }] : [];
+        });
+        const wrapper = modelInputs[0]?.input.closest(".app-dialog-field");
         if (!wrapper) continue;
         const readModels = textEl("button", "button-secondary", "读取模型");
         readModels.type = "button";
@@ -8716,13 +8694,19 @@ async function openAiProviderDialog(initialProviderId = "") {
               throw new Error(translateUiMessage(response?.message) || t("模型目录读取失败"));
             }
             Object.assign(profile, response.provider);
-            const options = connectionAnalysisModelOptions(profile);
-            input.replaceChildren(option("", t("请选择分析模型")), ...options.map((item) => option(item.value, item.label)));
-            input.value = options.some((item) => item.value === connectionManagedModel(profile))
-              ? connectionManagedModel(profile) : "";
-            syncConnectionHelp();
-            statusLine.textContent = t("已读取 {count} 个可选分析模型", { count: options.length });
-            input.focus();
+            for (const { group, input } of modelInputs) {
+              const taskIds = group.taskIds.filter((taskId) => profile.capabilities?.includes(taskId));
+              const options = connectionAnalysisModelOptions(profile, taskIds);
+              const currentModel = connectionGroupModel(profile, taskIds);
+              input.replaceChildren(option("", t("不更改这些任务")), ...options.map((item) => option(item.value, item.label)));
+              input.value = options.some((item) => item.value === currentModel) ? currentModel : "";
+              const field = input.closest(".app-dialog-field");
+              field.dataset.modelOptionsAvailable = String(options.length > 0);
+              field.hidden = profile.id !== editor.value || !options.length;
+            }
+            const availableCount = profile.discoveredModels.filter((model) => model.status === "available").length;
+            statusLine.textContent = t("已读取 {count} 个可选模型，可分别配置文字、图片与视频任务", { count: availableCount });
+            modelInputs.find(({ input }) => !input.closest(".app-dialog-field").hidden)?.input.focus();
           } catch (error) {
             statusLine.classList.add("error");
             statusLine.textContent = translateUiMessage(error?.message) || t("模型目录读取失败");
@@ -8737,7 +8721,10 @@ async function openAiProviderDialog(initialProviderId = "") {
         for (const profile of profiles) {
           const prefix = `provider_${keyFor(profile.id)}_`;
           for (const [id, input] of controls) {
-            if (id.startsWith(prefix)) input.parentElement.hidden = profile.id !== editor.value;
+            if (id.startsWith(prefix)) {
+              input.parentElement.hidden = profile.id !== editor.value
+                || input.parentElement.dataset.modelOptionsAvailable === "false";
+            }
           }
         }
         if (micuPreset) micuPreset.hidden = editor.value !== "custom-media";
@@ -8748,7 +8735,6 @@ async function openAiProviderDialog(initialProviderId = "") {
       };
       editor.addEventListener("change", syncProviderFields);
       syncProviderFields();
-      syncConnectionHelp();
     },
     onSubmit: async (values) => {
       const registryUpdate = { providers: {} };
@@ -8759,20 +8745,26 @@ async function openAiProviderDialog(initialProviderId = "") {
       const apiKey = values[`provider_${key}_apiKey`];
       const endpoint = profile.id.startsWith("custom") ? values[`provider_${key}_endpoint`] : profile.endpoint;
       const consent = values[`provider_${key}_consent`] === true;
-      const analysisTaskIds = connectionAnalysisTaskIds(profile);
-      const analysisModel = String(values[`provider_${key}_analysisModel`] ?? "").trim();
-      const hasAnalysisConnection = Boolean(apiKey || profile.credentialConfigured);
-      if (analysisTaskIds.length && hasAnalysisConnection && !analysisModel) {
-        throw new Error(profile.category === "custom" ? t("请填写分析模型") : t("请先读取模型并选择分析模型"));
+      const analysisModelGroups = connectionAnalysisModelGroups(profile);
+      const analysisSelections = analysisModelGroups.flatMap((group) => {
+        const model = String(values[`provider_${key}_model_${group.id}`] ?? "").trim();
+        if (!model) return [];
+        const taskIds = profile.category === "custom"
+          ? group.taskIds
+          : connectionModelTaskIds(profile, model, group.taskIds);
+        if (taskIds.length !== group.taskIds.length) {
+          throw new Error(t("{model} 不能完成“{group}”包含的全部任务，请重新选择", { model, group: t(group.label) }));
+        }
+        return [{ model, taskIds }];
+      });
+      const establishesAnalysisConnection = Boolean(apiKey && !profile.credentialConfigured);
+      if (analysisModelGroups.length && establishesAnalysisConnection && !analysisSelections.length) {
+        throw new Error(profile.category === "custom" ? t("请填写至少一个任务模型") : t("请先读取模型并至少选择一类任务模型"));
       }
-      if (analysisModel && !consent) throw new Error(t("请先确认发送授权"));
-      const selectedTaskIds = profile.category === "custom"
-        ? analysisTaskIds
-        : connectionModelTaskIds(profile, analysisModel);
-      if (analysisModel && !selectedTaskIds.length) throw new Error(t("当前模型没有可确认的分析能力，请重新读取并选择"));
+      if (analysisSelections.length && !consent) throw new Error(t("请先确认发送授权"));
       const models = {};
-      for (const taskId of analysisTaskIds) {
-        models[taskId] = profile.category === "custom" ? analysisModel : "";
+      for (const selection of analysisSelections) {
+        for (const taskId of selection.taskIds) models[taskId] = selection.model;
       }
       for (const taskId of ["imageGeneration", "videoGeneration"].filter((taskId) => profile.capabilities.includes(taskId))) {
         models[taskId] = String(values[`provider_${key}_model_${taskId}`] ?? "").trim();
@@ -8824,12 +8816,13 @@ async function openAiProviderDialog(initialProviderId = "") {
         type: "UPDATE_AI_PROVIDER_CONFIGURATION",
         registry: registryUpdate,
         assignments: aiTaskAssignments,
-        connectionSelection: {
+        connectionSelections: analysisSelections.map((selection) => ({
           providerId: profile.id,
-          model: analysisModel,
-          taskIds: selectedTaskIds,
-          allowManualUnverifiedTasks: selectedTaskIds
-        }
+          model: selection.model,
+          taskIds: selection.taskIds,
+          allowManualUnverifiedTasks: selection.taskIds,
+          replaceExisting: true
+        }))
       });
       if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("AI 服务配置保存失败"));
       applyAiConfigurationResponse(response);
@@ -8866,39 +8859,60 @@ function taskDisplayLabel(taskId) {
 const CONNECTION_ANALYSIS_TASK_IDS = Object.freeze([
   "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
 ]);
+const CONNECTION_ANALYSIS_MODEL_GROUPS = Object.freeze([
+  { id: "textAnalysis", label: "文字与创作模型", taskIds: Object.freeze(["textTags", "skillExtraction", "creativePlanning"]) },
+  { id: "imageAnalysis", label: "图片分析模型", taskIds: Object.freeze(["imageAnalysis"]) },
+  { id: "videoAnalysis", label: "视频分析模型", taskIds: Object.freeze(["videoAnalysis"]) }
+]);
 
 function connectionAnalysisTaskIds(profile = {}) {
   return CONNECTION_ANALYSIS_TASK_IDS.filter((taskId) => profile.capabilities?.includes(taskId));
 }
 
-function connectionAnalysisModelOptions(profile = {}) {
+function connectionAnalysisModelGroups(profile = {}) {
+  return CONNECTION_ANALYSIS_MODEL_GROUPS.flatMap((group) => {
+    const taskIds = group.taskIds.filter((taskId) => profile.capabilities?.includes(taskId));
+    if (!taskIds.length) return [];
+    const options = connectionAnalysisModelOptions(profile, taskIds);
+    if (profile.category !== "custom" && profile.discovery?.discoveredAt && !options.length) return [];
+    return [{ ...group, taskIds, options }];
+  });
+}
+
+function connectionAnalysisModelOptions(profile = {}, taskIds = connectionAnalysisTaskIds(profile)) {
   const byId = new Map();
-  for (const taskId of connectionAnalysisTaskIds(profile)) {
+  for (const taskId of taskIds) {
     for (const model of availableAiModelsForTask(taskId, profile)) {
       if (model.status !== "available") continue;
       if (!byId.has(model.id)) byId.set(model.id, model);
     }
   }
-  return [...byId.values()].map((model) => ({
+  return [...byId.values()].filter((model) => taskIds.every((taskId) =>
+    availableAiModelsForTask(taskId, profile).some((candidate) => candidate.id === model.id && candidate.status === "available")
+  )).map((model) => ({
     value: model.id,
     label: `${model.name || model.id}${modelPriceLabel(model.pricing)}`
   }));
 }
 
-function connectionModelTaskIds(profile = {}, modelValue = "") {
+function connectionModelTaskIds(profile = {}, modelValue = "", taskIds = connectionAnalysisTaskIds(profile)) {
   const model = String(modelValue ?? "").trim();
   if (!model) return [];
-  return connectionAnalysisTaskIds(profile).filter((taskId) => availableAiModelsForTask(taskId, profile)
+  return taskIds.filter((taskId) => availableAiModelsForTask(taskId, profile)
     .some((item) => item.id === model && item.status === "available"));
 }
 
-function connectionManagedModel(profile = {}) {
-  const models = new Set(connectionAnalysisTaskIds(profile).flatMap((taskId) => {
+function connectionGroupModel(profile = {}, taskIds = []) {
+  const assignedModels = new Set(taskIds.flatMap((taskId) => {
     const assignment = aiTaskAssignments?.[taskId];
-    return assignment?.managedBy === "connection" && assignment.providerId === profile.id && assignment.model
+    return assignment?.providerId === profile.id && assignment.model
       ? [assignment.model] : [];
   }));
-  return models.size === 1 ? [...models][0] : "";
+  if (assignedModels.size === 1 && taskIds.every((taskId) => aiTaskAssignments?.[taskId]?.providerId === profile.id)) {
+    return [...assignedModels][0];
+  }
+  const configuredModels = new Set(taskIds.map((taskId) => profile.models?.[taskId]).filter(Boolean));
+  return configuredModels.size === 1 ? [...configuredModels][0] : "";
 }
 
 function providerUsesMicuImageGroup(profile = {}) {

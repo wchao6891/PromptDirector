@@ -33,9 +33,10 @@ test("AI configuration dialogs keep dirty credentials open until the user explic
   );
   assert.match(providerDialog, /dismissOnBackdrop:\s*false/);
   assert.match(providerDialog, /confirmDismissWhenDirty:\s*true/);
-  assert.match(providerDialog, /provider_\$\{key\}_analysisModel/);
+  assert.match(providerDialog, /provider_\$\{key\}_model_\$\{group\.id\}/);
   assert.match(providerDialog, /type:\s*"PREVIEW_AI_PROVIDER_MODELS"/);
-  assert.match(providerDialog, /connectionSelection:/);
+  assert.match(providerDialog, /connectionSelections:/);
+  assert.match(providerDialog, /replaceExisting:\s*true/);
   assert.doesNotMatch(providerDialog, /profile\.capabilities\.flatMap/);
   assert.doesNotMatch(providerDialog, /type:\s*"DISCOVER_AI_PROVIDER_MODELS"/);
 });

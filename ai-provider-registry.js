@@ -77,12 +77,13 @@ export function applyConnectionModelAssignments(assignmentsValue = {}, selection
   const allowManualUnverifiedTasks = new Set((Array.isArray(selectionValue?.allowManualUnverifiedTasks)
     ? selectionValue.allowManualUnverifiedTasks : [])
     .filter((taskId) => taskIds.has(taskId)));
+  const replaceExisting = selectionValue?.replaceExisting === true;
   const next = structuredClone(current);
   for (const taskId of taskIds) {
     const existing = current[taskId] ?? {};
     const empty = !existing.providerId || !existing.model;
     const managedByThisConnection = existing.managedBy === "connection" && existing.providerId === providerId;
-    if (!empty && !managedByThisConnection) continue;
+    if (!empty && !managedByThisConnection && !replaceExisting) continue;
     const assignment = createAiTaskAssignment(taskId, providerId, model, registry);
     if (assignment.evidence === "manual_unverified" && !allowManualUnverifiedTasks.has(taskId)) continue;
     next[taskId] = normalizeAiTaskAssignments({

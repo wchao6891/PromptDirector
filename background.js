@@ -4807,8 +4807,11 @@ async function updateAiProviderConfiguration(message = {}) {
   const current = await loadAiConfiguration();
   const registry = mergeAiProviderRegistry(current.registry, message.registry);
   let assignments = normalizeAiTaskAssignments(message.assignments ?? current.assignments, registry);
-  if (message.connectionSelection) {
-    assignments = applyConnectionModelAssignments(assignments, message.connectionSelection, registry);
+  const connectionSelections = Array.isArray(message.connectionSelections)
+    ? message.connectionSelections
+    : message.connectionSelection ? [message.connectionSelection] : [];
+  for (const selection of connectionSelections) {
+    assignments = applyConnectionModelAssignments(assignments, selection, registry);
   }
   for (const [taskId, assignment] of Object.entries(assignments)) {
     const requested = Number(assignment?.concurrency);

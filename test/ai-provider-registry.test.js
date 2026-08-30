@@ -205,6 +205,12 @@ test("registry v5 exposes task concurrency defaults and official model limits", 
   assert.equal(assignments.imageAnalysis.concurrency, 10);
   assert.equal(assignments.videoAnalysis.concurrency, 2);
   const deepSeekVision = getAiModelCapability("deepseek", "deepseek-v4-flash-vision-exp");
+  const deepSeekFlash = getAiModelCapability("deepseek", "deepseek-v4-flash");
+  const deepSeekPro = getAiModelCapability("deepseek", "deepseek-v4-pro");
+  assert.deepEqual(deepSeekFlash.inputModalities, ["text"]);
+  assert.deepEqual(deepSeekFlash.tasks, ["textTags", "skillExtraction", "creativePlanning"]);
+  assert.equal(deepSeekFlash.concurrencyLimit.value, 2500);
+  assert.equal(deepSeekPro.concurrencyLimit.value, 500);
   assert.equal(deepSeekVision.inputModalities.includes("image"), true);
   assert.equal(deepSeekVision.concurrencyLimit.value, 2500);
   assert.match(deepSeekVision.concurrencyLimit.source.url, /deepseek\.com\/quick_start\/pricing/);
@@ -272,6 +278,19 @@ test("assignment ownership protects existing task routes while one confirmed con
     taskIds: ["textTags", "skillExtraction", "creativePlanning"]
   }, registry);
   assert.deepEqual(anotherProvider, next);
+
+  const explicitlyReplaced = applyConnectionModelAssignments(next, {
+    providerId: "deepseek",
+    model: "deepseek-text",
+    taskIds: ["textTags", "skillExtraction", "creativePlanning"],
+    replaceExisting: true
+  }, registry);
+  for (const taskId of ["textTags", "skillExtraction", "creativePlanning"]) {
+    assert.equal(explicitlyReplaced[taskId].providerId, "deepseek");
+    assert.equal(explicitlyReplaced[taskId].model, "deepseek-text");
+    assert.equal(explicitlyReplaced[taskId].managedBy, "connection");
+  }
+  assert.deepEqual(explicitlyReplaced.imageAnalysis, next.imageAnalysis);
 });
 
 test("connection linking ignores unverified catalog guesses unless one explicit custom protocol role allows it", () => {

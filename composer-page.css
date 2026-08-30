@@ -221,16 +221,17 @@
 .composer-model-control { position: relative; min-width: 0; }
 .composer-model-trigger { display: flex; min-width: 0; max-width: 150px; min-height: 36px; align-items: center; gap: 5px; border-color: var(--line); padding: 5px 9px; font-size: 10px; font-weight: 850; }
 .composer-model-trigger > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-model-menu { position: absolute; z-index: 15; right: 0; bottom: calc(100% + 9px); display: grid; width: min(260px, calc(100vw - 20px)); min-width: 0; max-width: calc(100vw - 20px); border: 1px solid var(--line); border-radius: 14px; padding: 9px; background: var(--card); box-shadow: 0 14px 42px color-mix(in srgb, var(--ink) 20%, transparent); }
+.composer-model-menu { position: absolute; z-index: 15; right: 0; bottom: calc(100% + 9px); display: grid; width: min(260px, calc(100vw - 20px)); min-width: 0; max-width: calc(100vw - 20px); max-height: min(420px, calc(100dvh - 120px)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 14px; padding: 9px; background: var(--card); box-shadow: 0 14px 42px color-mix(in srgb, var(--ink) 20%, transparent); }
 .composer-model-menu[hidden] { display: none; }
 .composer-model-menu > strong { padding: 5px 7px 8px; font-size: 11px; }
-.composer-model-menu > button { display: flex; width: 100%; min-width: 0; max-width: 100%; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-radius: 9px; padding: 8px; color: var(--ink); background: transparent; text-align: left; white-space: normal; }
-.composer-model-menu > button:hover:not(:disabled) { background: var(--hover); }
-.composer-model-menu > button > span:first-child { display: grid; min-width: 0; gap: 2px; }
-.composer-model-menu > button > span:last-child { flex: none; }
+.composer-model-menu > button, .composer-model-dynamic > button { display: flex; width: 100%; min-width: 0; max-width: 100%; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-radius: 9px; padding: 8px; color: var(--ink); background: transparent; text-align: left; white-space: normal; }
+.composer-model-menu > button:hover:not(:disabled), .composer-model-dynamic > button:hover:not(:disabled) { background: var(--hover); }
+.composer-model-menu > button[aria-checked="true"], .composer-model-dynamic > button[aria-checked="true"] { background: var(--selection); box-shadow: inset 2px 0 var(--selection-indicator); }
+.composer-model-menu > button > span:first-child, .composer-model-dynamic > button > span:first-child { display: grid; min-width: 0; gap: 2px; }
+.composer-model-menu > button > span:last-child, .composer-model-dynamic > button > span:last-child { flex: none; }
 .composer-model-menu b { min-width: 0; font-size: 11px; overflow-wrap: anywhere; white-space: normal; }
 .composer-model-menu small, .composer-model-menu > p { min-width: 0; color: var(--muted); font-size: 9px; line-height: 1.45; overflow-wrap: anywhere; white-space: normal; }
-.composer-model-menu > button[aria-checked="false"] > span:last-child { visibility: hidden; }
+.composer-model-menu > button[aria-checked="false"] > span:last-child, .composer-model-dynamic > button[aria-checked="false"] > span:last-child { visibility: hidden; }
 .composer-model-menu > p { margin: 7px 7px 3px; border-top: 1px solid var(--line); padding-top: 9px; }
 .composer-status-line { display: flex; width: min(920px, 100%); min-height: 20px; align-items: start; justify-content: space-between; gap: 14px; margin: 7px auto 0; }
 .composer-status-line p { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
@@ -310,7 +311,7 @@
 .composer-selection-chip { display: inline-flex; align-items: center; gap: 3px; }
 .composer-selection-chip b { overflow: hidden; text-overflow: ellipsis; font-size: inherit; font-weight: 700; }
 .composer-selection-chip button { min-width: 20px; min-height: 20px; border: 0; padding: 0; color: inherit; background: transparent; font-size: 10px; }
-.composer-model-dynamic { display: contents; }
+.composer-model-dynamic { display: grid; gap: 2px; }
 .composer-model-dynamic[hidden] { display: none; }
 .composer-model-empty { padding: 8px 10px; color: var(--muted); font-size: 10px; }
 .composer-assembly-dialog { width: min(820px, calc(100% - 28px)); max-height: min(760px, calc(100dvh - 28px)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; padding: 0; color: var(--ink); background: var(--paper); box-shadow: var(--shadow); }

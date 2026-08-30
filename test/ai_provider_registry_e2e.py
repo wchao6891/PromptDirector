@@ -579,8 +579,9 @@ def main() -> None:
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="官方服务 · Kimi")).to_have_count(1)
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="聚合平台 · OpenRouter")).to_have_count(1)
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="自定义兼容服务 · 自定义兼容服务（图片与生成）")).to_have_count(1)
-        expect(dialog.locator('[data-field-id^="provider_"]:visible')).to_have_count(3)
-        expect(dialog.locator('[data-field-id="provider_openrouter_analysisModel"]')).to_be_visible()
+        expect(dialog.locator('[data-field-id="provider_openrouter_model_textAnalysis"]')).to_be_visible()
+        expect(dialog.locator('[data-field-id="provider_openrouter_model_imageAnalysis"]')).to_be_visible()
+        expect(dialog.locator('[data-field-id="provider_openrouter_model_videoAnalysis"]')).to_be_visible()
         expect(dialog.locator('[data-field-id^="assignment_"]')).to_have_count(0)
         password_values = dialog.locator('input[type="password"]').evaluate_all("nodes => nodes.map(node => node.value)")
         assert all(value == "" for value in password_values), password_values
@@ -651,7 +652,7 @@ def main() -> None:
         expect(openai_dialog).to_be_visible()
         expect(openai_dialog.locator("#promptdirector-app-dialog-providerEditor")).to_have_value("openai")
         openai_dialog.get_by_role("button", name="读取模型").click()
-        openai_analysis_model = openai_dialog.locator("#promptdirector-app-dialog-provider_openai_analysisModel")
+        openai_analysis_model = openai_dialog.locator("#promptdirector-app-dialog-provider_openai_model_textAnalysis")
         expect(openai_analysis_model.locator("option")).to_have_count(2)
         openai_analysis_model.select_option("gpt-text-catalog-only")
         openai_image_model = openai_dialog.locator("#promptdirector-app-dialog-provider_openai_model_imageGeneration")
@@ -674,7 +675,17 @@ def main() -> None:
             "gpt-text-catalog-only": "available",
             "openai-vision": "unavailable",
         }, openai_catalog
-        assert assignment_routes(openai_saved["aiTaskAssignments"]) == assignment_routes(openai_assignments_before_save)
+        for task_id in ["textTags", "skillExtraction", "creativePlanning"]:
+            assert assignment_routes(openai_saved["aiTaskAssignments"])[task_id] == {
+                "providerId": "openai", "model": "gpt-text-catalog-only"
+            }
+        assert assignment_routes({
+            task: value for task, value in openai_saved["aiTaskAssignments"].items()
+            if task not in ["textTags", "skillExtraction", "creativePlanning"]
+        }) == assignment_routes({
+            task: value for task, value in openai_assignments_before_save.items()
+            if task not in ["textTags", "skillExtraction", "creativePlanning"]
+        })
 
         library.locator('[data-ai-routing-tab="tasks"]').click()
         generation_task = library.locator("#ai-assignment-list .ai-assignment-row", has_text="图片生成")
@@ -699,7 +710,7 @@ def main() -> None:
         stored = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
         assert stored["aiProviderRegistry"]["providers"]["deepseek"]["apiKey"] == "deepseek-secret"
         assert set(stored["aiTaskAssignments"].keys()) == TASK_IDS
-        assert assignment_routes(stored["aiTaskAssignments"]) == assignment_routes(assignments_before_save)
+        assert assignment_routes(stored["aiTaskAssignments"]) == assignment_routes(openai_saved["aiTaskAssignments"])
 
         assignments_before_nano = stored["aiTaskAssignments"]
         library.locator('[data-ai-routing-tab="providers"]').click()
