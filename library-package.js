@@ -778,6 +778,10 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       assetId: visualIdMap[note.assetId] ?? note.assetId,
       ...(note.frameAssetId ? { frameAssetId: visualIdMap[note.frameAssetId] ?? note.frameAssetId } : {})
     }));
+    entry.videoAnalyses = (entry.videoAnalyses ?? []).map((analysis) => ({
+      ...analysis,
+      ...(analysis.assetId ? { assetId: visualIdMap[analysis.assetId] ?? analysis.assetId } : {})
+    }));
     entry.facetAssignments = (entry.facetAssignments ?? []).map((item) => {
       const facetId = facetIds.get(item.facetId);
       const nodeId = nodeIds.get(item.nodeId);
@@ -1218,6 +1222,10 @@ function remapTrashedEntrySnapshot(entryValue, targetEntryId, usedVisualIds, pre
   entry.mediaPrompts = (entry.mediaPrompts ?? []).map((prompt) => ({
     ...prompt,
     assetId: visualIdMap[prompt.assetId] ?? prompt.assetId
+  }));
+  entry.videoAnalyses = (entry.videoAnalyses ?? []).map((analysis) => ({
+    ...analysis,
+    ...(analysis.assetId ? { assetId: visualIdMap[analysis.assetId] ?? analysis.assetId } : {})
   }));
   entry.facetAssignments = (entry.facetAssignments ?? []).map((assignment) => ({
     ...assignment,

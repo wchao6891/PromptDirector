@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import {
   analysisBatchSummary,
   analysisRebuildRecovery,
+  bindAnalysisItemAttempt,
   cancelAnalysisBatch,
   claimAnalysisItems,
   createAnalysisBatchUndo,
@@ -23,6 +24,8 @@ import {
   textFingerprint,
   previewVisionBatch,
   createVisionBatchJob,
+  previewVideoBatch,
+  createVideoBatchJob,
   normalizeAnalysisBatchJob,
   reconcileVisionBatchResults,
   recoverInterruptedAnalysisBatch
@@ -50,7 +53,146 @@ test("manual text and vision batches run from the persistent background queue", 
   assert.match(backgroundSource, /scheduleAnalysisBatchRunner\(\)/);
   assert.match(backgroundSource, /runPersistedTextBatchSlice\(initial\.id\)/);
   assert.match(backgroundSource, /runPersistedVisionBatchSlice\(initial\.id\)/);
+  assert.match(backgroundSource, /runPersistedVideoBatchSlice\(initial\.id\)/);
   assert.match(backgroundSource, /chrome\.alarms\.create\(ANALYSIS_BATCH_ALARM/);
+});
+
+test("video batch preview selects primary local videos and excludes current reconstructions by default", () => {
+  const entries = [{
+    id: "case:video",
+    primaryMediaId: "video:primary",
+    mediaAssets: [
+      { id: "video:primary", kind: "video", storageMode: "managed", mimeType: "video/mp4", byteSize: 12, durationMs: 1000 },
+      { id: "video:second", kind: "video", storageMode: "managed", mimeType: "video/mp4", byteSize: 20 },
+      { id: "image:one", kind: "image", storageMode: "managed" }
+    ],
+    videoAnalyses: [{
+      id: "analysis:old",
+      assetId: "video:second",
+      mode: "visual-reconstruction",
+      contractVersion: "visual-reconstruction-tags-json-v3-1-evidence-guard",
+      reconstructionPrompt: "第二支视频已有逆推",
+      tags: [{ g: "visual.style", t: "写实" }],
+      uncertainties: [],
+      analysisScope: "visual",
+      finishReason: "stop",
+      createdAt: "2026-08-30T00:00:00.000Z"
+    }]
+  }];
+  const primary = previewVideoBatch(entries, {
+    entryIds: ["case:video"],
+    sendableAssetIds: ["video:primary", "video:second"],
+    providerId: "zhipu",
+    model: "glm-5.3-flash",
+    concurrency: 2
+  });
+  assert.deepEqual(primary.items.map((item) => item.assetId), ["video:primary"]);
+  assert.equal(primary.totalBytes, 12);
+  assert.equal(primary.knownDurationMs, 1000);
+
+  const all = previewVideoBatch(entries, {
+    entryIds: ["case:video"],
+    sendableAssetIds: ["video:primary", "video:second"],
+    includeAllVideos: true,
+    reanalyze: true,
+    providerId: "zhipu",
+    model: "glm-5.3-flash",
+    protocol: "chat_completions",
+    sourcePlan: "local-video",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    localVideo: "base64",
+    preferPublicVideoUrl: false,
+    publicVideoUrl: "direct",
+    assetSnapshots: [
+      { entryId: "case:video", assetId: "video:primary", byteSize: 120, durationMs: 1100, fingerprint: "hash-primary" },
+      { entryId: "case:video", assetId: "video:second", byteSize: 240, durationMs: 2200, fingerprint: "hash-second" }
+    ]
+  });
+  assert.deepEqual(all.items.map((item) => item.assetId), ["video:primary", "video:second"]);
+  const job = createVideoBatchJob(entries, {
+    ...all,
+    entryIds: ["case:video"],
+    sendableAssetIds: ["video:primary", "video:second"],
+    includeAllVideos: true,
+    reanalyze: true,
+    protocol: all.protocol,
+    sourcePlan: all.sourcePlan,
+    assetSnapshots: all.items,
+    instruction: "批量逆推可见画面"
+  });
+  assert.equal(job.kind, "video");
+  assert.equal(job.concurrency, 2);
+  assert.equal(job.items.length, 2);
+  assert.equal(job.protocol, "chat_completions");
+  assert.equal(job.sourcePlan, "local-video");
+  assert.equal(job.endpoint, "https://open.bigmodel.cn/api/paas/v4/chat/completions");
+  assert.equal(job.localVideo, "base64");
+  assert.equal(job.preferPublicVideoUrl, false);
+  assert.equal(job.publicVideoUrl, "direct");
+  assert.deepEqual(job.items.map((item) => item.sourcePlan), ["local-video", "local-video"]);
+  assert.deepEqual(job.items.map((item) => item.fingerprint), ["hash-primary", "hash-second"]);
+  const claimed = claimAnalysisItems(job, 2, () => "claim:video");
+  const first = succeedAnalysisItem(claimed.job, "case:video", "claim:video", {
+    promptTokens: 10,
+    completionTokens: 20,
+    totalTokens: 30
+  }, undefined, { serviceRequests: 1, cost: 0.25 });
+  const secondItem = first.items.find((item) => item.assetId === "video:second");
+  const completed = succeedAnalysisItem(first, "case:video", secondItem.claimId, {}, undefined, {
+    serviceRequests: 1,
+    cost: null
+  });
+  const summary = analysisBatchSummary(completed);
+  assert.equal(summary.totalCost, 0.25);
+  assert.equal(summary.unknownCostCount, 1);
+  assert.equal(summary.requestAttempts, 2);
+});
+
+test("video batch binds the exact task and attempt and retries only selected failures", () => {
+  const entries = [{
+    id: "case:video",
+    primaryMediaId: "video:a",
+    mediaAssets: [
+      { id: "video:a", kind: "video", usage: "content", storageMode: "managed" },
+      { id: "video:b", kind: "video", usage: "content", storageMode: "managed" }
+    ]
+  }];
+  let job = createVideoBatchJob(entries, {
+    id: "video-selective-retry",
+    entryIds: ["case:video"],
+    includeAllVideos: true,
+    reanalyze: true,
+    sendableAssetIds: ["video:a", "video:b"],
+    assetSnapshots: [
+      { entryId: "case:video", assetId: "video:a", fingerprint: "hash-a" },
+      { entryId: "case:video", assetId: "video:b", fingerprint: "hash-b" }
+    ],
+    instruction: "逆推"
+  });
+  let claimed = claimAnalysisItems(job, 2, (() => { let index = 0; return () => `claim-${++index}`; })());
+  job = bindAnalysisItemAttempt(claimed.job, "case:video", "claim-1", {
+    taskId: "task-a",
+    attemptId: "attempt-a",
+    requestId: "attempt-a"
+  });
+  assert.deepEqual(
+    Object.fromEntries(["taskId", "attemptId", "requestId"].map((key) => [key, job.items[0][key]])),
+    { taskId: "task-a", attemptId: "attempt-a", requestId: "attempt-a" }
+  );
+  job = failAnalysisItem(job, "case:video", "claim-1", { message: "状态未知，服务商可能已收到", status: 0 });
+  job = failAnalysisItem(job, "case:video", "claim-2", { message: "格式错误", status: 422 });
+  assert.throws(() => retryFailedAnalysisItems(job, {
+    itemKeys: ["case:video\u0000video:a"],
+    requireSelection: true
+  }), /确认可能重复计费/);
+  job = retryFailedAnalysisItems(job, {
+    itemKeys: ["case:video\u0000video:b"],
+    requireSelection: true,
+    confirmDuplicateCharge: false
+  });
+  assert.equal(job.items[0].status, "failed");
+  assert.equal(job.items[1].status, "pending");
+  assert.equal(job.items[1].taskId, "");
 });
 
 test("batch preview selects only text cases that are new or changed", async () => {

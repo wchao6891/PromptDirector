@@ -1,6 +1,7 @@
 import { readImageDimensions as readStoredImageDimensions } from "./image-metadata.js";
 import {
   ASSET_IMPORT_FAILURE_CODES,
+  MEDIA_FINGERPRINT_CHUNK_BYTES,
   assetImportError,
   assertImageDimensions,
   formatBytes,
@@ -253,6 +254,19 @@ export async function findExactMediaDuplicate(file, entries = [], options = {}) 
 export async function sha256Blob(blob) {
   if (!(blob instanceof Blob)) throw new Error("无法计算无效媒体的内容摘要");
   const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export async function chunkedBlobFingerprint(blob, options = {}) {
+  if (!(blob instanceof Blob) || !blob.size) throw new Error("无法计算空媒体的内容指纹");
+  const chunkBytes = Math.max(1, Number(options.chunkBytes) || MEDIA_FINGERPRINT_CHUNK_BYTES);
+  const chunkDigests = [];
+  for (let offset = 0; offset < blob.size; offset += chunkBytes) {
+    const chunk = blob.slice(offset, Math.min(blob.size, offset + chunkBytes));
+    chunkDigests.push(`${chunk.size}:${await sha256Blob(chunk)}`);
+  }
+  const descriptor = `${blob.size}:${blob.type}:${chunkDigests.join(":")}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(descriptor));
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 

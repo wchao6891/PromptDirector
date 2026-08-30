@@ -83,12 +83,27 @@ def main() -> None:
                 )
                 return
             if isinstance(content, list) and any(item.get("type") == "video_url" for item in content):
+                result = {
+                    "reconstructionPrompt": "00:01 黑场出现主体，00:03 镜头稳定推进。",
+                    "tags": [
+                        {"g": "style.render", "t": "电影写实"},
+                        {"g": "camera.shot", "t": "近景主体"},
+                        {"g": "camera.motion", "t": "稳定推进"},
+                        {"g": "light.palette", "t": "深色背景"},
+                    ],
+                    "uncertainties": [],
+                }
                 route.fulfill(
                     status=200,
                     content_type="application/json",
                     body=json.dumps({
                         "model": "glm-5.3-flash",
-                        "choices": [{"message": {"content": "00:01 黑场出现主体，00:03 镜头推进。"}}],
+                        "choices": [{
+                            "message": {"content": json.dumps(result, ensure_ascii=False)
+                                if payload.get("response_format") == {"type": "json_object"}
+                                else "00:01 黑场出现主体，00:03 镜头推进。"},
+                            "finish_reason": "stop",
+                        }],
                         "usage": {"prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18},
                     }, ensure_ascii=False),
                 )
@@ -184,12 +199,25 @@ def main() -> None:
         assert image_request["response_format"] == {"type": "json_object"}, image_request
 
         video_result = setup.evaluate(
-            """() => chrome.runtime.sendMessage({
-              type: 'ANALYZE_ENTRY_VIDEO', entryId: 'zhipu-video-entry', assetId: 'zhipu-video',
-              mode: 'content-summary', customQuestion: '', singleConfirmation: true
-            })"""
+            """async () => {
+              const started = await chrome.runtime.sendMessage({
+                type: 'START_OR_JOIN_ANALYSIS_TASK', kind: 'entry_video',
+                entryId: 'zhipu-video-entry', assetId: 'zhipu-video', mode: 'content-summary',
+                instruction: '只用一句中文概括视频可见内容。', includeTags: false,
+                consumerId: 'zhipu-e2e', clientRequestId: 'zhipu-e2e-public-video',
+                priority: 'interactive', outputLocale: 'zh-CN'
+              });
+              if (!started?.ok) return started;
+              for (let index = 0; index < 100; index += 1) {
+                const current = await chrome.runtime.sendMessage({type: 'GET_ANALYSIS_TASK', taskId: started.task.id});
+                if (!['queued', 'running'].includes(current?.task?.status)) return current;
+                await new Promise(resolve => setTimeout(resolve, 20));
+              }
+              return {ok: false, message: '视频分析任务等待超时'};
+            }"""
         )
         assert video_result["ok"] is True, video_result
+        assert video_result["task"]["status"] == "completed", video_result
         video_request = next(item["payload"] for item in requests if any(
             part.get("type") == "video_url"
             for part in item["payload"].get("messages", [{}])[-1].get("content", [])
@@ -201,11 +229,10 @@ def main() -> None:
         library = run.open_page("library.html", wait_until="networkidle")
         library.evaluate("() => { chrome.permissions.request = async () => true; }")
         library.locator('.case-card[data-entry-id="zhipu-local-video-entry"]').click()
-        library.get_by_role("button", name="分析视频", exact=True).click()
-        expect(library.locator("#promptdirector-app-dialog")).to_be_visible()
-        expect(library.locator("#promptdirector-app-dialog")).to_contain_text("本地视频文件（将编码发送）")
-        library.get_by_role("button", name="开始分析", exact=True).click()
-        expect(library.locator(".video-analysis-record")).to_contain_text("00:01 黑场出现主体")
+        library.get_by_role("button", name="逆推提示词", exact=True).click()
+        expect(library.locator(".video-reconstruction-current .video-reconstruction-editor")).to_have_value(
+            "00:01 黑场出现主体，00:03 镜头稳定推进。"
+        )
         assert len(requests) == requests_before_local_preflight + 1, requests
         local_video_request = requests[-1]["payload"]
         local_video_part = next(part for part in local_video_request["messages"][-1]["content"] if part["type"] == "video_url")

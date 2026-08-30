@@ -23,6 +23,7 @@ const MANUAL_ASSIGNMENT_TASKS = new Set([
 const TEXT_ANALYSIS_TASKS = new Set(["textTags", "skillExtraction", "creativePlanning"]);
 export const DEFAULT_TEXT_ANALYSIS_CONCURRENCY = 20;
 export const DEFAULT_MEDIA_ANALYSIS_CONCURRENCY = 10;
+export const DEFAULT_VIDEO_ANALYSIS_CONCURRENCY = 2;
 
 export function normalizeAiProviderRegistry(value = {}) {
   const source = value?.providers && typeof value.providers === "object" ? value.providers : {};
@@ -52,6 +53,9 @@ export function normalizeAiTaskAssignments(value = {}, registryValue = {}) {
       ? source.evidence
       : inferredEvidence === "manual_unverified" ? inferredEvidence : "";
     if (evidence) assignment.evidence = evidence;
+    if (assignment.providerId && assignment.model) {
+      assignment.managedBy = source.managedBy === "connection" ? "connection" : "task";
+    }
     assignment.concurrency = normalizeTaskConcurrency(
       task.id,
       source.concurrency,
@@ -59,6 +63,37 @@ export function normalizeAiTaskAssignments(value = {}, registryValue = {}) {
     );
     return [task.id, assignment];
   }));
+}
+
+export function applyConnectionModelAssignments(assignmentsValue = {}, selectionValue = {}, registryValue = {}) {
+  const registry = normalizeAiProviderRegistry(registryValue);
+  const current = normalizeAiTaskAssignments(assignmentsValue, registry);
+  const providerId = clean(selectionValue?.providerId);
+  const model = clean(selectionValue?.model);
+  const taskIds = new Set((Array.isArray(selectionValue?.taskIds) ? selectionValue.taskIds : [])
+    .filter((taskId) => AI_ASSIGNMENT_TASKS.some((task) => task.id === taskId)));
+  if (!providerId || !model || taskIds.size === 0) return current;
+  if (registry.providers[providerId]?.consent !== true) return current;
+  const allowManualUnverifiedTasks = new Set((Array.isArray(selectionValue?.allowManualUnverifiedTasks)
+    ? selectionValue.allowManualUnverifiedTasks : [])
+    .filter((taskId) => taskIds.has(taskId)));
+  const next = structuredClone(current);
+  for (const taskId of taskIds) {
+    const existing = current[taskId] ?? {};
+    const empty = !existing.providerId || !existing.model;
+    const managedByThisConnection = existing.managedBy === "connection" && existing.providerId === providerId;
+    if (!empty && !managedByThisConnection) continue;
+    const assignment = createAiTaskAssignment(taskId, providerId, model, registry);
+    if (assignment.evidence === "manual_unverified" && !allowManualUnverifiedTasks.has(taskId)) continue;
+    next[taskId] = normalizeAiTaskAssignments({
+      [taskId]: {
+        ...assignment,
+        managedBy: "connection",
+        concurrency: existing.concurrency
+      }
+    }, registry)[taskId];
+  }
+  return next;
 }
 
 export function modelConcurrencyLimit(providerIdValue, modelValue, registryValue = {}) {
@@ -277,7 +312,9 @@ function normalizeConcurrencyLimit(value) {
 }
 
 function normalizeTaskConcurrency(taskId, value, documentedLimit) {
-  const fallback = TEXT_ANALYSIS_TASKS.has(taskId)
+  const fallback = taskId === "videoAnalysis"
+    ? DEFAULT_VIDEO_ANALYSIS_CONCURRENCY
+    : TEXT_ANALYSIS_TASKS.has(taskId)
     ? DEFAULT_TEXT_ANALYSIS_CONCURRENCY
     : DEFAULT_MEDIA_ANALYSIS_CONCURRENCY;
   const requested = Number(value);

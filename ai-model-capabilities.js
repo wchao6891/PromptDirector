@@ -83,7 +83,7 @@ export const AI_MODEL_CAPABILITIES = Object.freeze([
     supportedAspectRatios: Object.freeze([]),
     contextLength: 1_000_000,
     structuredOutput: "json_object",
-    structuredOutputTokenBudget: 4096,
+    structuredOutputTokenBudget: 8192,
     mediaInput: Object.freeze({
       imageBase64: "data_url",
       localVideo: "base64",

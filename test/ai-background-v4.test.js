@@ -38,6 +38,18 @@ test("background keeps service profiles for job execution but stops publishing o
   assert.doesNotMatch(source, /aiTaskRoutes:/);
 });
 
+test("connection model preview reads the account catalog without persisting credentials or routes", () => {
+  const preview = source.slice(
+    source.indexOf("async function previewAiProviderModels"),
+    source.indexOf("async function discoverAiProviderModels")
+  );
+  assert.match(source, /case "PREVIEW_AI_PROVIDER_MODELS"/);
+  assert.match(preview, /aiProviderModule\.discoverModels/);
+  assert.match(preview, /publicAiProviderRegistry\(previewRegistry\)/);
+  assert.doesNotMatch(preview, /persistAiConfiguration/);
+  assert.doesNotMatch(preview, /chrome\.storage/);
+});
+
 test("persisted batch recovery wakes the runner while runner exceptions become visible failures", () => {
   const recovery = source.slice(
     source.indexOf("async function recoverDeepSeekBatch"),

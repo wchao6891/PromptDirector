@@ -59,10 +59,12 @@ import {
   analysisBatchSummary,
   analysisRebuildRecovery,
   backfillLegacyAnalysisMeta,
+  bindAnalysisItemAttempt,
   cancelAnalysisBatch,
   claimAnalysisItems,
   createAnalysisBatchUndo,
   createAnalysisBatchJob,
+  createVideoBatchJob,
   createVisionBatchJob,
   failAnalysisItem,
   failUnfinishedAnalysisItems,
@@ -71,6 +73,7 @@ import {
   normalizeAnalysisBatchJob,
   pauseAnalysisBatch,
   previewAnalysisBatch,
+  previewVideoBatch,
   previewVisionBatch,
   reconcileVisionBatchResults,
   recoverInterruptedAnalysisBatch,
@@ -83,7 +86,7 @@ import {
 } from "./analysis-batch.js";
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import { buildAutomaticVisionJob } from "./automatic-vision.js";
-import { coalesceAnalysisRequest, runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
+import { coalesceAnalysisRequest, runScheduledAnalysisWithRetries, scheduleAnalysis } from "./analysis-scheduler.js";
 import {
   completeAnalysisAttempt,
   failAnalysisAttempt,
@@ -106,7 +109,7 @@ import {
   markEntryTextChanged,
   updateEntryText
 } from "./analysis-revision.js";
-import { applyDetailOrganizationMappings } from "./tag-taxonomy.js";
+import { applyDetailOrganizationMappings, applyFixedAnalysisTags } from "./tag-taxonomy.js";
 import {
   buildEntry,
   defaultSettingsForLocale,
@@ -134,6 +137,7 @@ import {
 import { deleteLocalAssetHandle } from "./local-asset-store.js";
 import {
   LOCAL_ASSET_REFERENCE_RECORD_TYPE,
+  chunkedBlobFingerprint,
   findExactMediaDuplicate,
   sha256Blob
 } from "./local-media.js";
@@ -167,6 +171,7 @@ import {
 import {
   addEntryMedia,
   addTimeNote,
+  editCurrentVideoReconstruction,
   entryMediaAssets,
   normalizeEntryMedia,
   removeTimeNote,
@@ -302,6 +307,7 @@ import {
 import { PAGE_CAPTURE_LIMITS, PAGE_CAPTURE_QUALITY_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { publicAiServiceProfiles } from "./ai-service-profiles.js";
 import {
+  applyConnectionModelAssignments,
   availableAiModelsForTask,
   availableAiProvidersForTask,
   mergeAiProviderRegistry,
@@ -316,13 +322,15 @@ import {
   projectAiRuntime,
   resolveTextTaskSettings,
   resolveVideoAnalysisTask,
-  resolveVisionTaskSettings
+  resolveVisionTaskSettings,
+  videoAnalysisRouteMatches
 } from "./ai-runtime.js";
 import {
   analyzeVideoWithChatCompletions,
   analyzeVideoWithGemini,
   analyzeVideoWithOpenRouter,
-  requireVideoAnalysisConfirmation
+  chatCompletionsVideoSourcePlan,
+  VIDEO_RECONSTRUCTION_CONTRACT_VERSION
 } from "./video-analysis.js";
 import { detectMediaReferenceProvider } from "./media-reference-resolver.js";
 import {
@@ -538,10 +546,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 scheduleLibraryMaintenanceRunner();
 scheduleAutomaticVisionRunner();
-scheduleAnalysisBatchRunner();
 recoverCreativeJobs().catch((error) => console.error("PromptDirector creative job recovery failed", error));
 enqueue(recoverImportJobs).catch((error) => console.error("PromptDirector local import recovery failed", error));
-enqueue(recoverAnalysisTasks).catch((error) => console.error("PromptDirector analysis task recovery failed", error));
+enqueue(async () => {
+  await recoverAnalysisTasks();
+  await recoverVideoBatchExecutionState();
+  scheduleAnalysisBatchRunner();
+}).catch((error) => console.error("PromptDirector analysis task recovery failed", error));
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   handleContextMenuCapture(info, tab, {
@@ -786,6 +797,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => verifyAiImageGenerationCredential(message));
     case "DISCOVER_AI_PROVIDER_MODELS":
       return discoverAiProviderModels(message.providerId, message.force === true);
+    case "PREVIEW_AI_PROVIDER_MODELS":
+      return previewAiProviderModels(message);
     case "GET_AI_TASK_RUNTIME":
       return enqueue(async () => getAiTaskRuntime(message.taskId, message.allowUnconfigured === true, message.assignment));
     case "GET_COMPOSER_AI_RUNTIME":
@@ -828,6 +841,8 @@ async function handleMessage(message, interaction = {}) {
       return startOrJoinAnalysisTaskAction(message);
     case "GET_ANALYSIS_TASK":
       return enqueue(async () => getAnalysisTaskAction(message.taskId));
+    case "GET_ENTRY_VIDEO_ANALYSIS_TASK":
+      return enqueue(async () => getEntryVideoAnalysisTaskAction(message.entryId, message.assetId));
     case "DETACH_ANALYSIS_CONSUMER":
       return enqueue(async () => detachAnalysisConsumerAction(message));
     case "STOP_ANALYSIS_TASK":
@@ -895,8 +910,8 @@ async function handleMessage(message, interaction = {}) {
       }
     case "ANALYZE_ENTRY_VISUAL_SET":
       return analyzeEntryVisualSet(message);
-    case "ANALYZE_ENTRY_VIDEO":
-      return analyzeEntryVideo(message);
+    case "UPDATE_VIDEO_RECONSTRUCTION_PROMPT":
+      return enqueue(async () => updateVideoReconstructionPrompt(message));
     case "UPDATE_VISION_RECONSTRUCTION_PROMPT":
       return enqueue(async () => updateVisionReconstructionPrompt(message.entryId, message.visualId, message.reconstructionPrompt));
     case "UPDATE_ENTRY_TEXT":
@@ -997,6 +1012,10 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => previewVisionBatchTask(message));
     case "CREATE_VISION_BATCH":
       return enqueue(async () => createVisionBatchTask(message));
+    case "PREVIEW_VIDEO_BATCH":
+      return enqueue(async () => previewVideoBatchTask(message));
+    case "CREATE_VIDEO_BATCH":
+      return enqueue(async () => createVideoBatchTask(message));
     case "CLAIM_VISION_BATCH_ITEM":
       return enqueue(async () => claimVisionBatchItem(message.jobId));
     case "COMPLETE_VISION_BATCH_ITEM":
@@ -1010,7 +1029,10 @@ async function handleMessage(message, interaction = {}) {
     case "CANCEL_VISION_BATCH":
       return enqueue(async () => updateVisionBatch("cancel", message.jobId));
     case "RETRY_VISION_BATCH_FAILURES":
-      return enqueue(async () => updateVisionBatch("retry", message.jobId));
+      return enqueue(async () => updateVisionBatch("retry", message.jobId, {
+        itemKeys: message.itemKeys,
+        confirmDuplicateCharge: message.confirmDuplicateCharge
+      }));
     case "IMPORT_ANALYSIS_CANDIDATES":
       return enqueue(async () => importAnalysisCandidates(message.payload));
     case "PREVIEW_FACET_CHANGE":
@@ -2994,7 +3016,7 @@ async function readState() {
     restoredArchivedFacetCount: recoveredVocabulary.restoredFacetIds.length,
     analysisBatchJob: textBatchSummary,
     maintenanceJob: libraryMaintenanceSummary(stored[STORAGE_KEYS.libraryMaintenanceJob]),
-    visionBatchJob: analysisBatchSummary(stored[STORAGE_KEYS.batchJob])?.kind === "vision"
+    visionBatchJob: ["vision", "video"].includes(analysisBatchSummary(stored[STORAGE_KEYS.batchJob])?.kind)
       ? analysisBatchSummary(stored[STORAGE_KEYS.batchJob])
       : null,
     canUndoAnalysisBatch: Boolean(textBatchSummary && analysisUndo?.jobId === textBatchSummary.id),
@@ -3746,11 +3768,30 @@ async function saveTempReferenceAsCaseAction(message) {
 
 async function startOrJoinAnalysisTaskAction(message) {
   const created = await enqueue(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await chrome.storage.local.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
+    if (message.kind === "entry_video" && String(message.batchJobId ?? "").trim()) {
+      const busy = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]).items.find((task) =>
+        task.request?.kind === "entry_video"
+        && ["queued", "running"].includes(task.status)
+        && task.request.entryId === String(message.entryId ?? "").trim()
+        && task.request.assetId === String(message.assetId ?? "").trim()
+        && task.request.batchJobId !== String(message.batchJobId).trim());
+      if (busy) return { state: stored[STORAGE_KEYS.analysisTasks], task: busy, created: false };
+    }
     const result = createOrJoinAnalysisTask(stored[STORAGE_KEYS.analysisTasks], message, {
       taskId: `analysis-task:${crypto.randomUUID()}`
     });
-    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: result.state }, { markSyncDirty: false });
+    const changes = { [STORAGE_KEYS.analysisTasks]: result.state };
+    if (message.kind === "entry_video" && String(message.batchJobId ?? "").trim()) {
+      const batchJob = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.batchJobId, "video");
+      changes[STORAGE_KEYS.batchJob] = bindAnalysisItemAttempt(
+        batchJob,
+        message.entryId,
+        message.batchClaimId,
+        { taskId: result.task.id }
+      );
+    }
+    await commitLocalChanges(changes, { markSyncDirty: false });
     return result;
   });
   if (created.created) scheduleAnalysisTaskRun(created.task.id);
@@ -3760,8 +3801,18 @@ async function startOrJoinAnalysisTaskAction(message) {
 async function getAnalysisTaskAction(taskId) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
   const task = analysisTaskById(stored[STORAGE_KEYS.analysisTasks], taskId);
-  if (!task) return { ok: false, message: "没有找到图片分析任务" };
+  if (!task) return { ok: false, message: "没有找到分析任务" };
   return analysisTaskResponse(task);
+}
+
+async function getEntryVideoAnalysisTaskAction(entryIdValue, assetIdValue) {
+  const entryId = String(entryIdValue ?? "").trim();
+  const assetId = String(assetIdValue ?? "").trim();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+  const task = state.items.slice().reverse().find((item) => item.request?.kind === "entry_video"
+    && item.request.entryId === entryId && item.request.assetId === assetId);
+  return task ? analysisTaskResponse(task) : { ok: true, task: null };
 }
 
 async function detachAnalysisConsumerAction(message) {
@@ -3781,7 +3832,7 @@ async function stopAnalysisTaskAction(message) {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, message.taskId);
-    if (!current) throw new Error("没有找到图片分析任务");
+    if (!current) throw new Error("没有找到分析任务");
     const task = stopAnalysisTask(current);
     const next = replaceAnalysisTask(state, task);
     await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
@@ -3798,10 +3849,10 @@ async function retryAnalysisTaskAction(message) {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, message.taskId);
-    if (!current) throw new Error("没有找到图片分析任务");
+    if (!current) throw new Error("没有找到分析任务");
     const previousAttemptId = current.attempts.at(-1)?.id ?? "";
     if (String(message.previousAttemptId ?? "").trim() !== previousAttemptId) {
-      throw new Error("图片分析任务已经变化，请刷新后再重试");
+      throw new Error("分析任务已经变化，请刷新后再重试");
     }
     const task = retryAnalysisAttempt(current, {
       attemptId: `analysis-attempt:${crypto.randomUUID()}`,
@@ -3832,7 +3883,7 @@ async function runQueuedAnalysisTasks() {
 async function runAnalysisTask(taskId, preparedAttemptId = "") {
   if (analysisTaskRunners.has(taskId)) return;
   const claimed = await enqueue(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await chrome.storage.local.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, taskId);
     if (!current) return null;
@@ -3843,7 +3894,20 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
       return null;
     }
     const next = replaceAnalysisTask(state, task);
-    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
+    const changes = { [STORAGE_KEYS.analysisTasks]: next };
+    if (task.request.kind === "entry_video" && task.request.batchJobId && task.request.batchClaimId) {
+      const batchJob = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+      if (!batchJob || batchJob.id !== task.request.batchJobId || batchJob.kind !== "video") {
+        throw new Error("批量视频任务已经变化，未发送请求");
+      }
+      changes[STORAGE_KEYS.batchJob] = bindAnalysisItemAttempt(
+        batchJob,
+        task.request.entryId,
+        task.request.batchClaimId,
+        { taskId: task.id, attemptId: task.activeAttemptId, requestId: task.activeAttemptId }
+      );
+    }
+    await commitLocalChanges(changes, { markSyncDirty: false });
     return task;
   });
   if (!claimed) return;
@@ -3851,7 +3915,10 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
   analysisTaskRunners.set(taskId, { attemptId: claimed.activeAttemptId, controller });
   let actionResult;
   try {
-    actionResult = await analyzeTempReferencesAction({
+    const execute = claimed.request.kind === "entry_video"
+      ? analyzeEntryVideoTaskAction
+      : analyzeTempReferencesAction;
+    actionResult = await execute({
       ...claimed.request,
       taskId: claimed.id,
       attemptId: claimed.activeAttemptId,
@@ -3859,7 +3926,7 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
       signal: controller.signal
     });
   } catch (error) {
-    actionResult = { ok: false, message: userMessage(error) };
+    actionResult = { ok: false, message: userMessage(error), status: Number(error?.status) || 0, usage: error?.usage };
   }
   let settled;
   try {
@@ -3879,6 +3946,10 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
     analysisTaskRunners.delete(taskId);
   }
   if (settled) await notifyAnalysisTaskUpdated(settled);
+  if (claimed.request.kind === "entry_video" && claimed.request.batchJobId) {
+    await enqueue(() => settleVideoBatchTask(claimed, actionResult)).catch((error) =>
+      console.error("PromptDirector video batch settlement failed", error));
+  }
 }
 
 async function recoverAnalysisTasks() {
@@ -3892,6 +3963,55 @@ async function recoverAnalysisTasks() {
     }
   }
   for (const task of recovered.items.filter((item) => item.status === "queued")) scheduleAnalysisTaskRun(task.id);
+}
+
+async function recoverVideoBatchExecutionState() {
+  const [stored, state] = await Promise.all([
+    chrome.storage.local.get([STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisTasks]),
+    readState()
+  ]);
+  let job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  if (!job || job.kind !== "video" || !job.items.some((item) => item.status === "running")) return;
+  const tasks = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]).items;
+  const entryById = new Map(state.entries.map((entry) => [entry.id, normalizeEntryMedia(entry)]));
+  let changed = false;
+  let hasUnknownExecution = false;
+  for (const item of job.items.filter((candidate) => candidate.status === "running")) {
+    const task = item.taskId ? tasks.find((candidate) => candidate.id === item.taskId) : null;
+    const identityMatches = Boolean(task
+      && task.request?.kind === "entry_video"
+      && task.request.batchJobId === job.id
+      && task.request.batchClaimId === item.claimId
+      && task.request.entryId === item.entryId
+      && task.request.assetId === item.assetId
+      && item.requestId
+      && task.attempts.some((attempt) => attempt.id === item.requestId));
+    const record = identityMatches
+      ? entryById.get(item.entryId)?.videoAnalyses?.find((analysis) =>
+          analysis.batchJobId === job.id && analysis.assetId === item.assetId && analysis.requestId === item.requestId)
+      : null;
+    if (record) {
+      job = succeedAnalysisItem(job, item.entryId, item.claimId, {
+        promptTokens: record.usage?.inputTokens,
+        completionTokens: record.usage?.outputTokens,
+        totalTokens: record.usage?.totalTokens
+      }, undefined, { serviceRequests: 1, cost: record.cost ?? null });
+      changed = true;
+      continue;
+    }
+    if (identityMatches && ["queued", "running"].includes(task.status)) continue;
+    job = failAnalysisItem(job, item.entryId, item.claimId, {
+      message: "上次执行状态未知，未自动重试；服务商可能已收到请求",
+      status: 0,
+      attempts: { serviceRequests: identityMatches ? 1 : 0 }
+    });
+    changed = true;
+    hasUnknownExecution = true;
+  }
+  if (!changed) return;
+  if (hasUnknownExecution) job = { ...job, status: "paused", updatedAt: new Date().toISOString() };
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job }, { markSyncDirty: false });
+  await ensureAnalysisBatchAlarm(job.status === "running");
 }
 
 async function analysisTaskAttemptIsActive(taskId, attemptId) {
@@ -4686,21 +4806,24 @@ async function applyDetailTagOrganization(message) {
 async function updateAiProviderConfiguration(message = {}) {
   const current = await loadAiConfiguration();
   const registry = mergeAiProviderRegistry(current.registry, message.registry);
-  for (const [taskId, assignment] of Object.entries(message.assignments ?? {})) {
+  let assignments = normalizeAiTaskAssignments(message.assignments ?? current.assignments, registry);
+  if (message.connectionSelection) {
+    assignments = applyConnectionModelAssignments(assignments, message.connectionSelection, registry);
+  }
+  for (const [taskId, assignment] of Object.entries(assignments)) {
     const requested = Number(assignment?.concurrency);
     const limit = modelConcurrencyLimit(assignment?.providerId, assignment?.model, registry);
     if (Number.isInteger(requested) && Number.isInteger(limit) && requested > limit) {
       throw new Error(`${taskId} 的并发数 ${requested} 超过所选模型官方上限 ${limit}`);
     }
   }
-  const assignments = normalizeAiTaskAssignments(message.assignments ?? current.assignments, registry);
   const configuration = {
     registry,
     assignments,
     preferences: normalizeAiPreferences(message.preferences ?? current.preferences)
   };
   await persistAiConfiguration(configuration);
-  return aiConfigurationResponse(configuration, "AI 服务与七项默认任务已统一保存");
+  return aiConfigurationResponse(configuration, "AI 服务配置已保存");
 }
 
 async function verifyAiImageGenerationCredential(message = {}) {
@@ -4726,6 +4849,43 @@ async function verifyAiImageGenerationCredential(message = {}) {
     verification: result.verification,
     executionVerified: result.executionVerified,
     message: `模型目录中可见 ${model}；这只证明目录可见，不代表米醋已授权该 Key 进入生图分组`
+  };
+}
+
+async function previewAiProviderModels(message = {}) {
+  const providerId = String(message.providerId ?? "").trim();
+  const current = await loadAiConfiguration();
+  const registry = mergeAiProviderRegistry(current.registry, message.registry);
+  const profile = registry.providers[providerId];
+  if (!profile) throw new Error("所选 AI 服务不存在");
+  let result;
+  try {
+    result = await aiProviderModule.discoverModels({
+      ...profile,
+      models: {
+        ...profile.models,
+        ...assignedModelsForProvider(current.assignments, providerId)
+      }
+    }, { etag: "" });
+  } catch (error) {
+    throw new Error(discoveryErrorMessage(error, profile.apiKey), { cause: error });
+  }
+  const previewRegistry = mergeAiProviderRegistry(registry, { providers: {
+    [providerId]: {
+      discoveredModels: result.models,
+      discovery: {
+        discoveredAt: result.discoveredAt,
+        source: result.source,
+        etag: result.cache?.etag,
+        cacheControl: result.cache?.cacheControl,
+        error: ""
+      }
+    }
+  } });
+  return {
+    ok: true,
+    message: `${profile.label} 已读取 ${result.models.length} 个模型；保存前请选择分析模型`,
+    provider: publicAiProviderRegistry(previewRegistry).providers[providerId]
   };
 }
 
@@ -5139,49 +5299,139 @@ async function analyzeEntryVisualSet(message) {
   return { ok: true, message: "整组图片关系分析已保存", entry: updated, analysis };
 }
 
-async function analyzeEntryVideo(message) {
-  requireVideoAnalysisConfirmation(message.singleConfirmation);
+async function analyzeEntryVideoTaskAction(message) {
   const state = await readState();
   const entry = normalizeEntryMedia(findEntry(state, message.entryId));
   const assetId = String(message.assetId ?? "").trim() || entry.primaryMediaId;
   const asset = entry.mediaAssets.find((item) => item.id === assetId && item.kind === "video" && item.usage !== "poster");
   if (!asset) return { ok: false, message: "没有找到要分析的视频" };
-  const route = resolveVideoAnalysisTask(await loadAiConfiguration());
-  const videoBlob = asset.storageMode === "managed" ? await getMediaBlob(asset.id) : null;
-  if (asset.storageMode === "managed" && !videoBlob) return { ok: false, message: "本地视频文件缺失，无法分析" };
-  const sourceUrl = asset.reference?.url || asset.sourceUrl;
+  const configuration = await loadAiConfiguration();
+  const route = resolveVideoAnalysisTask(configuration);
+  if (message.protocol && message.protocol !== route.protocol) {
+    return { ok: false, message: "视频分析请求协议已经变化，未发送" };
+  }
+  const requestRouteSnapshot = {
+    providerId: message.routeProviderId,
+    model: message.routeModel,
+    protocol: message.protocol,
+    endpoint: message.routeEndpoint,
+    localVideo: message.localVideo,
+    preferPublicVideoUrl: message.preferPublicVideoUrl,
+    publicVideoUrl: message.publicVideoUrl
+  };
+  if (message.hasRouteSnapshot === true && !videoAnalysisRouteMatches(requestRouteSnapshot, route)) {
+    return { ok: false, message: "视频分析服务的发送路径已经变化，未发送" };
+  }
+  const concurrency = configuration.assignments?.videoAnalysis?.concurrency;
   const analyzeVideo = VIDEO_ANALYSIS_ADAPTERS[route.protocol];
   if (!analyzeVideo) throw new Error(`${route.provider} 的视频理解请求协议当前版本尚未适配`);
-  const analysis = await analyzeVideo({
-    apiKey: route.apiKey,
-    endpoint: route.endpoint,
-    providerLabel: route.providerLabel,
-    model: route.model,
-    mode: message.mode,
-    customQuestion: message.customQuestion,
-    videoBlob,
-    videoUrl: sourceUrl,
-    referenceProvider: asset.reference?.provider,
-    referencePlaybackMode: asset.reference?.playbackMode,
-    localVideo: route.localVideo,
-    preferPublicVideoUrl: route.preferPublicVideoUrl,
-    publicVideoUrl: route.publicVideoUrl,
-    onStage: (phase) => chrome.runtime.sendMessage({
-      type: "VIDEO_ANALYSIS_CHANGED", entryId: entry.id, assetId: asset.id, phase,
-      provider: route.provider, model: route.model
-    }).catch(() => undefined)
-  });
+  const sourceUrl = message.sourceKind === "local-video" ? "" : asset.reference?.url || asset.sourceUrl;
+  const preferPublicVideoUrl = message.sourceKind === "local-video" ? false : route.preferPublicVideoUrl;
+  const requestId = String(message.attemptId ?? "").trim();
+  if (!requestId || !await analysisTaskAttemptIsActive(message.taskId, requestId)) {
+    return { ok: false, message: "本次视频分析已经停止，未发送" };
+  }
+  const analysis = await scheduleAnalysis(
+    `${route.providerId}:${route.model}:videoAnalysis`,
+    concurrency,
+    async () => {
+      if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      const sendConfiguration = await loadAiConfiguration();
+      const sendRoute = resolveVideoAnalysisTask(sendConfiguration);
+      if (!videoAnalysisRouteMatches(route, sendRoute)
+          || (message.hasRouteSnapshot === true && !videoAnalysisRouteMatches(requestRouteSnapshot, sendRoute))) {
+        throw new Error("视频分析服务在排队期间已经变化，未发送");
+      }
+      if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      const videoBlob = asset.storageMode === "managed" ? await getMediaBlob(asset.id) : null;
+      if (asset.storageMode === "managed" && !videoBlob) throw new Error("本地视频文件缺失，无法分析");
+      const sourcePlan = sendRoute.protocol === "chat_completions"
+        ? chatCompletionsVideoSourcePlan({
+            providerLabel: sendRoute.providerLabel,
+            videoBlob,
+            videoUrl: sourceUrl,
+            videoMimeType: videoBlob?.type || asset.mimeType,
+            referenceProvider: asset.reference?.provider,
+            referencePlaybackMode: asset.reference?.playbackMode,
+            localVideo: sendRoute.localVideo,
+            preferPublicVideoUrl,
+            publicVideoUrl: sendRoute.publicVideoUrl
+          }).sourceKind
+        : videoBlob ? "local-video" : "public-video-url";
+      if (message.sourceKind && message.sourceKind !== sourcePlan) {
+        throw new Error("视频来源发送方式已经变化，未发送");
+      }
+      if (message.sourceFingerprint && (!videoBlob || await videoAssetFingerprint(videoBlob) !== message.sourceFingerprint)) {
+        throw new Error("视频文件在发送前已经变化，未发送");
+      }
+      if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      return analyzeVideo({
+        apiKey: sendRoute.apiKey,
+        endpoint: sendRoute.endpoint,
+        providerLabel: sendRoute.providerLabel,
+        model: sendRoute.model,
+        mode: message.mode,
+        customQuestion: message.mode === "custom" ? message.instruction : "",
+        instruction: message.instruction,
+        includeTags: message.includeTags,
+        requestId,
+        maxOutputTokens: sendRoute.maxOutputTokens,
+        catalog: state.facetCatalog,
+        locale: message.outputLocale,
+        durationMs: asset.durationMs,
+        width: asset.width,
+        height: asset.height,
+        videoBlob,
+        videoUrl: sourceUrl,
+        videoMimeType: asset.mimeType,
+        referenceProvider: asset.reference?.provider,
+        referencePlaybackMode: asset.reference?.playbackMode,
+        localVideo: sendRoute.localVideo,
+        preferPublicVideoUrl,
+        publicVideoUrl: sendRoute.publicVideoUrl,
+        signal: message.signal,
+        onStage: (phase) => chrome.runtime.sendMessage({
+          type: "VIDEO_ANALYSIS_CHANGED",
+          taskId: message.taskId,
+          attemptId: requestId,
+          entryId: entry.id,
+          assetId: asset.id,
+          phase,
+          provider: sendRoute.provider,
+          model: sendRoute.model
+        }).catch(() => undefined)
+      });
+    },
+    { priority: message.priority }
+  );
   return await enqueue(async () => {
-    const currentState = await readState();
+    if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
+      return { ok: false, message: "本次视频分析已经停止，迟到结果未保存" };
+    }
+    let currentState = await readState();
     const current = normalizeEntryMedia(findEntry(currentState, entry.id));
-    if (!current.mediaAssets.some((item) => item.id === asset.id)) {
+    const currentAsset = current.mediaAssets.find((item) => item.id === asset.id && item.kind === "video");
+    if (!currentAsset) {
       return { ok: false, message: "分析期间视频已被移除，本次结果没有写入" };
     }
+    if (message.sourceFingerprint) {
+      const currentBlob = currentAsset.storageMode === "managed" ? await getMediaBlob(currentAsset.id) : null;
+      if (!currentBlob || await videoAssetFingerprint(currentBlob) !== message.sourceFingerprint) {
+        return { ok: false, message: "分析期间视频文件已经变化，本次结果没有写入" };
+      }
+    }
+    const mode = String(message.mode || "creative-breakdown");
+    const createdAt = new Date().toISOString();
     const record = {
       id: `video-analysis:${crypto.randomUUID()}`,
       assetId: asset.id,
-      text: analysis.text,
-      mode: String(message.mode || "creative-breakdown"),
+      mode,
       prompt: analysis.prompt,
       sourceKind: analysis.sourceKind,
       provider: analysis.provider,
@@ -5189,15 +5439,64 @@ async function analyzeEntryVideo(message) {
       usage: analysis.usage,
       cost: analysis.cost ?? null,
       routing: analysis.routing ?? null,
-      version: 1,
-      createdAt: new Date().toISOString()
+      requestId,
+      ...(message.batchJobId ? { batchJobId: message.batchJobId } : {}),
+      version: current.videoAnalyses.filter((item) => item.assetId === asset.id && item.mode === mode).length + 1,
+      createdAt,
+      ...(mode === "visual-reconstruction" ? {
+        contractVersion: analysis.contractVersion,
+        reconstructionPrompt: analysis.reconstructionPrompt,
+        tags: analysis.tags,
+        uncertainties: analysis.uncertainties,
+        includeTags: analysis.includeTags,
+        analysisScope: analysis.analysisScope,
+        finishReason: analysis.finishReason,
+        userEdited: false
+      } : { text: analysis.text })
     };
-    const updated = normalizeEntryMedia({ ...current, videoAnalyses: [...current.videoAnalyses, record] });
+    let updated = normalizeEntryMedia({ ...current, videoAnalyses: [...current.videoAnalyses, record] });
+    if (mode === "visual-reconstruction" && analysis.includeTags) {
+      const entryIndex = currentState.entries.findIndex((item) => item.id === current.id);
+      const preservedAssignments = (updated.facetAssignments ?? []).filter((item) =>
+        item.source !== "vision_model" || item.visualId !== asset.id
+      );
+      currentState.entries[entryIndex] = { ...updated, facetAssignments: preservedAssignments };
+      const assignmentStart = preservedAssignments.length;
+      const applied = applyFixedAnalysisTags(currentState, current.id, analysis.tags, {
+        source: "vision_model",
+        maxTags: 8,
+        replaceExisting: false
+      });
+      currentState = applied.state;
+      updated = normalizeEntryMedia(currentState.entries[entryIndex]);
+      updated.facetAssignments = updated.facetAssignments.map((item, index) =>
+        index >= assignmentStart && item.source === "vision_model" ? { ...item, visualId: asset.id } : item
+      );
+      currentState.entries[entryIndex] = updated;
+    } else {
+      currentState.entries = currentState.entries.map((item) => item.id === current.id ? updated : item);
+    }
     await commitLocalChanges({
-      [STORAGE_KEYS.entries]: currentState.entries.map((item) => item.id === current.id ? updated : item)
+      [STORAGE_KEYS.entries]: currentState.entries,
+      [STORAGE_KEYS.facetCatalog]: currentState.facetCatalog
     });
-    return { ok: true, message: "视频分析已保存为新版本", entry: updated, analysis: record };
+    return {
+      ok: true,
+      message: mode === "visual-reconstruction" ? "AI 视觉逆推已保存" : "视频分析已保存为新版本",
+      entry: updated,
+      analysis: record,
+      result: { entryId: current.id, assetId: asset.id, analysisId: record.id }
+    };
   });
+}
+
+async function updateVideoReconstructionPrompt(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const updated = editCurrentVideoReconstruction(current, message.assetId, message.reconstructionPrompt);
+  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: "AI 视觉逆推提示词已保存", entry: updated, entries };
 }
 
 async function updateVisionReconstructionPrompt(entryId, visualIdValue, reconstructionPrompt) {
@@ -5839,6 +6138,21 @@ async function recoverDeepSeekBatch() {
   if (!job || !job.items.some((item) => item.status === "running")) {
     return { ok: true, analysisBatchJob: analysisBatchSummary(job) };
   }
+  if (job.kind === "video") {
+    const recovered = structuredClone(job);
+    for (const item of recovered.items) {
+      if (item.status !== "running") continue;
+      item.status = "failed";
+      item.claimId = "";
+      item.error = "上次执行状态未知，未自动重试；服务商可能已收到请求";
+      item.statusCode = 0;
+    }
+    recovered.status = "paused";
+    recovered.updatedAt = new Date().toISOString();
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: recovered }, { markSyncDirty: false });
+    await ensureAnalysisBatchAlarm(false);
+    return { ok: true, message: "视频批量任务已暂停，未知项未自动重发", visionBatchJob: analysisBatchSummary(recovered) };
+  }
   const recovered = recoverInterruptedAnalysisBatch(job);
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: recovered });
   if (recovered.status === "running") {
@@ -5890,6 +6204,148 @@ async function previewVisionBatchTask(message) {
     model: provider.model
   });
   return { ok: true, preview };
+}
+
+async function previewVideoBatchTask(message) {
+  const [state, configuration, stored] = await Promise.all([
+    readState(),
+    loadAiConfiguration(),
+    chrome.storage.local.get(STORAGE_KEYS.analysisTasks)
+  ]);
+  const route = resolveVideoAnalysisTask(configuration);
+  const selected = new Set((Array.isArray(message.entryIds) ? message.entryIds : []).map(String));
+  const busy = new Set(normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]).items
+    .filter((task) => task.request?.kind === "entry_video" && ["queued", "running"].includes(task.status))
+    .map((task) => `${task.request.entryId}\u0000${task.request.assetId}`));
+  const sendableAssetIds = [];
+  const assetSnapshots = [];
+  const exclusions = [];
+  for (const entry of state.entries.filter((item) => selected.has(String(item.id)))) {
+    const videos = entryMediaAssets(entry).filter((item) => item.kind === "video" && item.usage !== "poster");
+    const primary = videos.find((asset) => asset.id === entry.primaryMediaId) || videos[0];
+    const candidates = message.includeAllVideos ? videos : [primary].filter(Boolean);
+    for (const asset of candidates) {
+      const exclude = (category, reason) => exclusions.push({ entryId: entry.id, assetId: asset.id, title: entry.title, category, reason });
+      if (asset.storageMode !== "managed") {
+        exclude("non_local", "批量视频分析只发送案例库中的本地视频");
+        continue;
+      }
+      if (busy.has(`${entry.id}\u0000${asset.id}`)) {
+        exclude("busy", "这支视频已有单项或批量分析任务在运行");
+        continue;
+      }
+      const blob = await getMediaBlob(asset.id);
+      if (!blob) {
+        exclude("missing", "本地视频文件缺失");
+        continue;
+      }
+      let sourcePlan = "local-video";
+      if (route.protocol === "chat_completions") {
+        try {
+          sourcePlan = chatCompletionsVideoSourcePlan({
+            providerLabel: route.providerLabel,
+            hasLocalVideo: true,
+            videoMimeType: blob.type || asset.mimeType,
+            localVideo: route.localVideo,
+            preferPublicVideoUrl: route.preferPublicVideoUrl,
+            publicVideoUrl: route.publicVideoUrl
+          }).sourceKind;
+        } catch (error) {
+          exclude("incompatible", userMessage(error));
+          continue;
+        }
+      }
+      sendableAssetIds.push(asset.id);
+      assetSnapshots.push({
+        entryId: entry.id,
+        assetId: asset.id,
+        byteSize: blob.size,
+        durationMs: asset.durationMs,
+        fingerprint: await videoAssetFingerprint(blob),
+        sourcePlan
+      });
+    }
+  }
+  const preview = previewVideoBatch(state.entries, {
+    entryIds: message.entryIds,
+    includeAllVideos: message.includeAllVideos,
+    reanalyze: message.reanalyze,
+    includeTags: message.includeTags,
+    providerId: route.providerId,
+    model: route.model,
+    protocol: route.protocol,
+    sourcePlan: new Set(assetSnapshots.map((item) => item.sourcePlan)).size === 1 ? assetSnapshots[0]?.sourcePlan || "" : "per-asset",
+    endpoint: route.endpoint,
+    localVideo: route.localVideo,
+    preferPublicVideoUrl: route.preferPublicVideoUrl,
+    publicVideoUrl: route.publicVideoUrl,
+    concurrency: configuration.assignments.videoAnalysis.concurrency,
+    sendableAssetIds,
+    assetSnapshots
+  });
+  preview.exclusions = exclusions;
+  preview.exclusionCounts = exclusions.reduce((counts, item) => {
+    counts[item.category] = (counts[item.category] || 0) + 1;
+    return counts;
+  }, { busy: 0, missing: 0, incompatible: 0, non_local: 0 });
+  return { ok: true, preview };
+}
+
+async function videoAssetFingerprint(blob) {
+  if (!(blob instanceof Blob) || !blob.size) throw new Error("本地视频文件缺失");
+  return await chunkedBlobFingerprint(blob);
+}
+
+async function createVideoBatchTask(message) {
+  const state = await readState();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  if (previous && ["running", "paused"].includes(previous.status)
+      && previous.items.some((item) => ["pending", "running"].includes(item.status))) {
+    return { ok: false, message: "已有未完成的批量任务，请继续或取消后再新建" };
+  }
+  const previewResponse = await previewVideoBatchTask(message);
+  const preview = previewResponse.preview;
+  if (preview.excludedCount && message.confirmExclusions !== true) {
+    return { ok: false, requiresExclusionConfirmation: true, preview, message: "部分视频不会发送，请确认排除项后继续" };
+  }
+  if (!String(message.instruction ?? "").trim()) return { ok: false, message: "批量视频逆推指令不能为空" };
+  const job = createVideoBatchJob(state.entries, {
+    entryIds: message.entryIds,
+    includeAllVideos: message.includeAllVideos,
+    reanalyze: message.reanalyze,
+    includeTags: message.includeTags,
+    providerId: preview.providerId,
+    model: preview.model,
+    protocol: preview.protocol,
+    sourcePlan: preview.sourcePlan,
+    endpoint: preview.endpoint,
+    localVideo: preview.localVideo,
+    preferPublicVideoUrl: preview.preferPublicVideoUrl,
+    publicVideoUrl: preview.publicVideoUrl,
+    concurrency: preview.concurrency,
+    sendableAssetIds: preview.items.map((item) => item.assetId),
+    assetSnapshots: preview.items.map((item) => ({
+      entryId: item.entryId,
+      assetId: item.assetId,
+      byteSize: item.byteSize,
+      durationMs: item.durationMs,
+      fingerprint: item.fingerprint,
+      sourcePlan: item.sourcePlan
+    })),
+    instruction: message.instruction,
+    contractVersion: VIDEO_RECONSTRUCTION_CONTRACT_VERSION,
+    outputLocale: message.outputLocale
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
+  await chrome.storage.local.remove(STORAGE_KEYS.analysisBatchUndo);
+  await ensureAnalysisBatchAlarm(true);
+  scheduleAnalysisBatchRunner();
+  return {
+    ok: true,
+    message: `已创建 ${job.requestCount} 支视频逆推任务`,
+    visionBatchJob: analysisBatchSummary(job)
+  };
 }
 
 async function createVisionBatchTask(message) {
@@ -5991,17 +6447,40 @@ async function failVisionBatchItem(message) {
   return { ok: true, visionBatchJob: analysisBatchSummary(failed) };
 }
 
-async function updateVisionBatch(action, jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
-  const current = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "vision");
+async function updateVisionBatch(action, jobId, options = {}) {
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisTasks]);
+  const current = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  if (!current || current.id !== jobId || !["vision", "video"].includes(current.kind)) throw new Error("批量任务已经变化，请刷新后重试");
   const actions = {
     pause: pauseAnalysisBatch,
     resume: resumeAnalysisBatch,
     cancel: cancelAnalysisBatch,
     retry: retryFailedAnalysisItems
   };
-  const next = actions[action](current);
-  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
+  const next = action === "retry" && current.kind === "video"
+    ? retryFailedAnalysisItems(current, {
+        itemKeys: options.itemKeys,
+        requireSelection: true,
+        confirmDuplicateCharge: options.confirmDuplicateCharge
+      })
+    : actions[action](current);
+  const changes = { [STORAGE_KEYS.batchJob]: next };
+  if (current.kind === "video" && action === "cancel") {
+    const taskState = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    taskState.items = taskState.items.map((task) => task.request?.kind === "entry_video"
+      && task.request.batchJobId === current.id && ["queued", "running"].includes(task.status)
+      ? stopAnalysisTask(task)
+      : task);
+    changes[STORAGE_KEYS.analysisTasks] = taskState;
+  }
+  await commitLocalChanges(changes, { markSyncDirty: false });
+  if (current.kind === "video" && action === "cancel") {
+    for (const task of normalizeAnalysisTaskRegistry(changes[STORAGE_KEYS.analysisTasks]).items.filter((item) =>
+      item.request?.batchJobId === current.id && item.status === "stopped")) {
+      analysisTaskRunners.get(task.id)?.controller.abort();
+      await notifyAnalysisTaskUpdated(task);
+    }
+  }
   if (next.status === "running") {
     await ensureAnalysisBatchAlarm(true);
     scheduleAnalysisBatchRunner();
@@ -6010,7 +6489,9 @@ async function updateVisionBatch(action, jobId) {
   }
   return {
     ok: true,
-    message: ({ pause: "批量画面分析已暂停", resume: "批量画面分析已继续", cancel: "批量画面分析已取消", retry: "失败图片已重新加入队列" })[action],
+    message: current.kind === "video"
+      ? ({ pause: "批量视频逆推已暂停", resume: "批量视频逆推已继续", cancel: "批量视频逆推已取消；已完成结果仍保留", retry: "失败视频已重新加入队列" })[action]
+      : ({ pause: "批量画面分析已暂停", resume: "批量画面分析已继续", cancel: "批量画面分析已取消", retry: "失败图片已重新加入队列" })[action],
     visionBatchJob: analysisBatchSummary(next)
   };
 }
@@ -6036,6 +6517,8 @@ async function runPersistedAnalysisBatch() {
     }
     if (initial.kind === "vision") {
       continueRunning = await runPersistedVisionBatchSlice(initial.id);
+    } else if (initial.kind === "video") {
+      continueRunning = await runPersistedVideoBatchSlice(initial.id);
     } else {
       continueRunning = await runPersistedTextBatchSlice(initial.id);
     }
@@ -6045,7 +6528,7 @@ async function runPersistedAnalysisBatch() {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob).catch(() => ({}));
     const current = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
     if (current?.status === "running") {
-      const taskLabel = current.kind === "vision" ? "图片服务" : "文字服务";
+      const taskLabel = current.kind === "vision" ? "图片服务" : current.kind === "video" ? "视频服务" : "文字服务";
       const failed = failUnfinishedAnalysisItems(current, {
         message: `任务启动失败：${taskLabel}配置或后台运行状态无效，请检查 AI 服务后重试`,
         status: 500
@@ -6231,6 +6714,117 @@ async function runPersistedVisionBatchSlice(jobId) {
   }));
   const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
   return normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob])?.status === "running";
+}
+
+async function runPersistedVideoBatchSlice(jobId) {
+  const configuration = await loadAiConfiguration();
+  const prepared = await enqueue(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+    let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "video");
+    if (job.status !== "running") return { job, claims: [] };
+    let route;
+    try {
+      route = resolveVideoAnalysisTask(configuration);
+    } catch {
+      job = pauseAnalysisBatch(job);
+      await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
+      return { job, claims: [] };
+    }
+    if (!videoAnalysisRouteMatches(job, route)) {
+      job = pauseAnalysisBatch(job);
+      await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
+      return { job, claims: [] };
+    }
+    const available = Math.max(0, job.concurrency - job.items.filter((item) => item.status === "running").length);
+    if (!available) return { job, claims: [] };
+    const claimed = claimAnalysisItems(job, available);
+    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: claimed.job });
+    return { job: claimed.job, claims: claimed.claims };
+  });
+  for (const claim of prepared.claims) {
+    try {
+      const response = await startOrJoinAnalysisTaskAction({
+        kind: "entry_video",
+        entryId: claim.entryId,
+        assetId: claim.assetId,
+        mode: "visual-reconstruction",
+        instruction: prepared.job.instruction,
+        includeTags: prepared.job.includeTags,
+        batchJobId: prepared.job.id,
+        batchClaimId: claim.claimId,
+        sourceFingerprint: claim.fingerprint,
+        protocol: prepared.job.protocol,
+        sourceKind: claim.sourcePlan,
+        routeEndpoint: prepared.job.endpoint,
+        routeProviderId: prepared.job.providerId,
+        routeModel: prepared.job.model,
+        localVideo: prepared.job.localVideo,
+        preferPublicVideoUrl: prepared.job.preferPublicVideoUrl,
+        publicVideoUrl: prepared.job.publicVideoUrl,
+        hasRouteSnapshot: true,
+        outputLocale: prepared.job.outputLocale,
+        priority: "user_batch",
+        consumerId: `video-batch:${prepared.job.id}`,
+        clientRequestId: `video-batch:${prepared.job.id}:${claim.entryId}:${claim.assetId}:${claim.claimId}`
+      });
+      if (response.task?.request?.batchJobId !== prepared.job.id) {
+        const error = new Error("这支视频已有单项分析任务，未重复发送；完成后可重新预览批量分析");
+        error.status = 409;
+        throw error;
+      }
+    } catch (error) {
+      await failVideoBatchClaim(prepared.job.id, claim, error);
+    }
+  }
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const current = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  return Boolean(current?.status === "running" && current.items.some((item) => item.status === "pending"));
+}
+
+async function settleVideoBatchTask(task, actionResult) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
+  if (!job || job.kind !== "video" || job.id !== task.request.batchJobId || job.status === "canceled") return;
+  const item = job.items.find((candidate) => candidate.entryId === task.request.entryId
+    && candidate.assetId === task.request.assetId
+    && candidate.claimId === task.request.batchClaimId
+    && candidate.taskId === task.id
+    && candidate.requestId === task.activeAttemptId
+    && candidate.status === "running");
+  if (!item) return;
+  let next;
+  if (actionResult?.ok) {
+    const usage = actionResult.analysis?.usage ?? actionResult.usage ?? {};
+    next = succeedAnalysisItem(job, item.entryId, item.claimId, {
+      promptTokens: usage.inputTokens,
+      completionTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens
+    }, undefined, { serviceRequests: 1, cost: actionResult.analysis?.cost ?? null });
+  } else {
+    next = failAnalysisItem(job, item.entryId, item.claimId, {
+      message: actionResult?.message || "视频分析失败",
+      status: actionResult?.status,
+      usage: actionResult?.usage,
+      attempts: { serviceRequests: 1 }
+    });
+    if ([429, 500, 502, 503, 504].includes(Number(actionResult?.status))) next = pauseAnalysisBatch(next);
+  }
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
+  if (next.status === "running") {
+    await ensureAnalysisBatchAlarm(true);
+    scheduleAnalysisBatchRunner();
+  } else await ensureAnalysisBatchAlarm(false);
+}
+
+async function failVideoBatchClaim(jobId, claim, error) {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "video");
+  const next = failAnalysisItem(job, claim.entryId, claim.claimId, {
+    message: userMessage(error),
+    status: Number(error?.status) || 0,
+    attempts: { serviceRequests: 0 }
+  });
+  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
 }
 
 async function ensureAnalysisBatchAlarm(running) {

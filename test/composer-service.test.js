@@ -398,6 +398,21 @@ test("an assigned provider without creative-planning capability fails instead of
   }), /未声明创作规划能力/);
 });
 
+test("an unassigned creative-planning route fails before any provider request", async () => {
+  let calls = 0;
+  const session = createComposerSession({ aiProfile: { serviceId: "unassigned", model: "" } });
+
+  await assert.rejects(() => planComposerTurnWithService({
+    session, userMessage: "", composerSettings: settings
+  }, visualSettings(), {
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error("不应发起请求");
+    }
+  }), /创作规划未配置/);
+  assert.equal(calls, 0);
+});
+
 test("xAI is a real per-turn composer service and image generation uses its configured endpoints", async () => {
   const xaiSettings = visualSettings({
     xai: { apiKey: "xai-secret", textModel: "grok-text", imageModel: "grok-image", mediaConsent: true }
@@ -610,6 +625,51 @@ test("visual planning stays text-only while execution sends every selected image
   assert.equal(JSON.stringify(requests).includes("不应发送的本地标题"), false);
   assert.equal(JSON.stringify(requests).includes("composition"), false);
   assert.match(result.finalPrompt, /三人.*中间女性清晰聚焦/);
+});
+
+test("saved video sources stay text-only during Composer execution and never trigger a video upload", async () => {
+  let request;
+  const session = createComposerSession({
+    targetType: "video",
+    aiProfile: { serviceId: "compatible", model: "gpt-5.4-mini" },
+    messages: [{ role: "user", type: "request", content: "基于所选视频方法继续创作" }],
+    referenceSnapshots: [{
+      entryId: "private-case",
+      assetId: "private-video",
+      alias: "@参考1",
+      referenceKind: "video_sources",
+      referenceText: "[原始提示词]\n人物推门进入\n\n[AI 视觉逆推]\n镜头缓慢前推",
+      originalText: "人物推门进入",
+      referenceSources: [
+        { id: "original:private-video", kind: "original_prompt", label: "原始提示词", text: "人物推门进入" },
+        { id: "reconstruction:private-analysis", kind: "video_reconstruction", label: "AI 视觉逆推", text: "镜头缓慢前推" }
+      ]
+    }]
+  });
+  const result = await executeComposerTurnWithService({
+    session,
+    userMessage: "",
+    composerSettings: settings,
+    route: "compose",
+    instruction: "整理为新的视频提示词"
+  }, visualSettings(), [], {
+    stream: false,
+    fetchImpl: async (_url, options) => {
+      request = JSON.parse(options.body);
+      return response({ output_text: "人物推门进入，镜头缓慢前推。" });
+    }
+  });
+  const serialized = JSON.stringify(request);
+  assert.match(serialized, /原始提示词/);
+  assert.match(serialized, /AI 视觉逆推/);
+  assert.equal(serialized.match(/人物推门进入/g)?.length, 1);
+  assert.equal(serialized.includes("input_video"), false);
+  assert.equal(serialized.includes("video_url"), false);
+  assert.equal(serialized.includes("data:video"), false);
+  assert.equal(serialized.includes("private-case"), false);
+  assert.equal(serialized.includes("private-video"), false);
+  assert.equal(serialized.includes("private-analysis"), false);
+  assert.equal(result.finalPrompt, "人物推门进入，镜头缓慢前推。");
 });
 
 test("DeepSeek refuses a pure-image reference instead of silently composing without seeing it", async () => {

@@ -74,7 +74,8 @@ test("vision batch dialog only revives running or paused jobs and otherwise show
   assert.match(renderVisionBatchDialog, /elements\.visionBatchProgress\.hidden = !job/);
   assert.match(renderVisionBatchDialog, /elements\.visionBatchProgressBar\.max = Math\.max\(1, requestCount \|\| job\?\.requestCount \|\| 1\)/);
   assert.match(renderVisionBatchDialog, /elements\.visionBatchProgressBar\.value = Math\.min\(processedCount, elements\.visionBatchProgressBar\.max\)/);
-  assert.match(previewSelectedVisionBatch, /visionBatchJob\.providerType !== visionSettings\.activeProvider \|\| visionBatchJob\.model !== currentModel/);
+  assert.match(previewSelectedVisionBatch, /visionBatchJob\.kind !== "vision" \|\| visionBatchJob\.providerType !== visionSettings\.activeProvider/);
+  assert.match(previewSelectedVisionBatch, /if \(providerChanged \|\| visionBatchJob\.model !== currentModel\)/);
   assert.match(previewSelectedVisionBatch, /chrome\.runtime\.sendMessage\(\{ type: "CANCEL_VISION_BATCH", jobId: visionBatchJob\.id \}\)/);
 });
 

@@ -7,6 +7,7 @@ import {
   composerProfileForTaskAssignment,
   createComposerSession,
   createReferenceSnapshots,
+  referenceSourcePartsForAsset,
   imageReferenceModeAvailability,
   isMeaningfulComposerSession,
   isComposerEligibleEntry,
@@ -140,6 +141,7 @@ const composerAnalysisTaskBridge = createComposerAnalysisTaskBridge({
 });
 let referenceDraftSelections = new Map();
 let referenceDraftOrder = [];
+let referenceDraftSourceSelections = new Map();
 let referencePreviewAssetIds = new Map();
 let workspaceMode = "references";
 let feedbackTimer = 0;
@@ -388,7 +390,7 @@ async function initializeComposer() {
       ? [{ entryId: requestedIds[0], assetIds: [requestedAssetId] }]
       : requestedIds.map((entryId) => {
           const entry = entries.find((item) => item.id === entryId);
-          const assets = selectableReferenceImages(entry);
+          const assets = selectableReferenceAssets(entry, requestedType);
           const primary = assets.find((asset) => asset.id === entry?.primaryMediaId) ?? assets[0];
           return { entryId, assetIds: primary ? [primary.id] : [] };
         });
@@ -1927,6 +1929,7 @@ function openReferenceWorkspace() {
   clearComposerFeedback();
   referenceDraftSelections = new Map();
   referenceDraftOrder = [];
+  referenceDraftSourceSelections = new Map();
   referencePreviewAssetIds = new Map();
   for (const item of (composerSession?.referenceSnapshots ?? []).filter((reference) => reference.sourceType !== TEMP_REFERENCE_SOURCE_TYPES.temporary)) {
     const assetIds = [item.assetId, ...(item.imageRefs ?? []).map((imageRef) => imageRef.visualId)].filter(Boolean);
@@ -1936,6 +1939,9 @@ function openReferenceWorkspace() {
     if (assetIds.length) assetIds.forEach((assetId) => addDraftOrder(item.entryId, assetId));
     else addDraftOrder(item.entryId, "");
     if (assetIds[0]) referencePreviewAssetIds.set(item.entryId, assetIds[0]);
+    if (item.assetId && item.referenceSources?.length) {
+      referenceDraftSourceSelections.set(draftOrderKey(item.entryId, item.assetId), new Set(item.referenceSources.map((source) => source.id)));
+    }
   }
   elements.composerReferenceWorkspace.hidden = false;
   elements.composerReferenceWorkspace.inert = false;
@@ -2056,38 +2062,43 @@ function renderCasePicker() {
 function createCaseOption(entry) {
   const option = el("article", "composer-case-option");
   option.dataset.entryId = entry.id;
-  const imageAssets = selectableReferenceImages(entry);
-  const primaryAsset = imageAssets.find((asset) => asset.id === entry.primaryMediaId) ?? imageAssets[0];
-  const previewAsset = imageAssets.find((asset) => asset.id === referencePreviewAssetIds.get(entry.id)) ?? primaryAsset;
+  const referenceAssets = selectableReferenceAssets(entry, composerSession?.targetType);
+  const primaryAsset = referenceAssets.find((asset) => asset.id === entry.primaryMediaId) ?? referenceAssets[0];
+  const previewAsset = referenceAssets.find((asset) => asset.id === referencePreviewAssetIds.get(entry.id)) ?? primaryAsset;
   if (previewAsset) referencePreviewAssetIds.set(entry.id, previewAsset.id);
   option.dataset.selected = String(referenceDraftSelections.has(entry.id));
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.className = "composer-case-preview-checkbox";
-  checkbox.setAttribute("aria-label", `选择当前预览图片：${entry.title || t("未命名案例")}`);
+  checkbox.setAttribute("aria-label", `选择当前预览素材：${entry.title || t("未命名案例")}`);
   checkbox.checked = Boolean(previewAsset && referenceDraftSelections.get(entry.id)?.has(previewAsset.id));
   checkbox.addEventListener("change", () => {
     const assetId = referencePreviewAssetIds.get(entry.id);
     if (!assetId) return;
     setDraftAssetSelected(entry.id, assetId, checkbox.checked);
-    syncCaseOptionSelection(option, entry);
+    const asset = referenceAssets.find((item) => item.id === assetId);
+    if (asset?.kind === "video") renderCasePicker();
+    else syncCaseOptionSelection(option, entry);
     renderReferenceSelection();
   });
   const visual = el("div", "composer-case-visual");
   const selectPreview = el("button", "composer-case-select-preview");
   selectPreview.type = "button";
-  selectPreview.setAttribute("aria-label", "选择或取消当前预览图片");
+  selectPreview.setAttribute("aria-label", "选择或取消当前预览素材");
   selectPreview.addEventListener("click", () => {
     const assetId = referencePreviewAssetIds.get(entry.id);
     if (!assetId) return;
     const selected = referenceDraftSelections.get(entry.id)?.has(assetId) === true;
     setDraftAssetSelected(entry.id, assetId, !selected);
-    syncCaseOptionSelection(option, entry);
+    const asset = referenceAssets.find((item) => item.id === assetId);
+    if (asset?.kind === "video") renderCasePicker();
+    else syncCaseOptionSelection(option, entry);
     renderReferenceSelection();
   });
-  const inspect = textEl("button", "composer-case-inspect", "查看原图");
+  const inspect = textEl("button", "composer-case-inspect", previewAsset?.kind === "video" ? "查看封面" : "查看原图");
   inspect.type = "button";
-  inspect.addEventListener("click", () => openReferenceImagePreview(entry, referencePreviewAssetIds.get(entry.id)));
+  inspect.disabled = previewAsset?.kind === "video" && !posterAssetForVideo(entry, previewAsset);
+  inspect.addEventListener("click", () => openReferenceAssetPreview(entry, referencePreviewAssetIds.get(entry.id)));
   visual.append(selectPreview, inspect);
   option.append(checkbox, visual);
   renderCasePreviewImage(option, entry, previewAsset?.id || "");
@@ -2099,37 +2110,88 @@ function createCaseOption(entry) {
   const preview = entry.text || primaryVisionDescription(entry);
   copy.append(rawTextEl("strong", "", entry.title || t("未命名案例")), rawTextEl("small", "", type), rawTextEl("p", "", excerpt(preview, 240)));
   option.append(copy);
-  if (imageAssets.length > 1) {
+  if (referenceAssets.length > 1) {
     const assetPicker = el("div", "composer-case-assets");
-    assetPicker.setAttribute("aria-label", `${entry.title || t("未命名案例")}的图片`);
-    for (const [index, asset] of imageAssets.entries()) {
+    assetPicker.setAttribute("aria-label", `${entry.title || t("未命名案例")}的素材`);
+    for (const [index, asset] of referenceAssets.entries()) {
       const assetOption = el("label", "composer-case-asset");
       assetOption.dataset.assetId = asset.id;
       const assetCheckbox = document.createElement("input");
       assetCheckbox.type = "checkbox";
       assetCheckbox.checked = referenceDraftSelections.get(entry.id)?.has(asset.id) === true;
-      assetCheckbox.setAttribute("aria-label", `选择第 ${index + 1} 张图片`);
-      const image = document.createElement("img");
-      image.alt = "";
-      image.loading = "lazy";
-      image.decoding = "async";
-      image.dataset.visualId = asset.id;
-      const cached = thumbnailUrls.get(asset.id);
-      if (cached) image.src = cached;
-      else imageObserver.observe(image);
+      assetCheckbox.setAttribute("aria-label", asset.kind === "image"
+        ? `选择第 ${index + 1} 张图片`
+        : `选择第 ${index + 1} 支视频`);
+      const displayAsset = asset.kind === "video" ? posterAssetForVideo(entry, asset) : asset;
+      const thumbnail = displayAsset ? document.createElement("img") : rawTextEl("span", "", t("视频"));
+      if (displayAsset) {
+        thumbnail.alt = "";
+        thumbnail.loading = "lazy";
+        thumbnail.decoding = "async";
+        thumbnail.dataset.visualId = displayAsset.id;
+        const cached = thumbnailUrls.get(displayAsset.id);
+        if (cached) thumbnail.src = cached;
+        else imageObserver.observe(thumbnail);
+      }
       assetCheckbox.addEventListener("change", () => {
         referencePreviewAssetIds.set(entry.id, asset.id);
         setDraftAssetSelected(entry.id, asset.id, assetCheckbox.checked);
-        renderCasePreviewImage(option, entry, asset.id);
-        syncCaseOptionSelection(option, entry);
+        if (asset.kind === "video") renderCasePicker();
+        else {
+          renderCasePreviewImage(option, entry, asset.id);
+          syncCaseOptionSelection(option, entry);
+        }
         renderReferenceSelection();
       });
-      assetOption.append(assetCheckbox, image, rawTextEl("span", "", String(index + 1)));
+      assetOption.append(assetCheckbox, thumbnail, rawTextEl("span", "", asset.kind === "video" ? t("视频") : String(index + 1)));
       assetPicker.append(assetOption);
     }
     option.append(assetPicker);
   }
+  const sourceOptions = referenceAssets.flatMap((asset) => asset.kind === "video" && referenceDraftSelections.get(entry.id)?.has(asset.id)
+    ? composerVideoSourceOptions(entry, asset) : []);
+  if (sourceOptions.length) {
+    const sourcePicker = el("div", "composer-case-assets");
+    sourcePicker.setAttribute("aria-label", `${entry.title || t("未命名案例")}的视频文字来源`);
+    sourcePicker.append(...sourceOptions);
+    option.append(sourcePicker);
+  }
   return option;
+}
+
+function composerVideoSourceOptions(entry, asset) {
+  const key = draftOrderKey(entry.id, asset.id);
+  const analysisIds = (entry.videoAnalyses ?? [])
+    .filter((analysis) => String(analysis?.assetId ?? "") === asset.id)
+    .map((analysis) => String(analysis?.id ?? "")).filter(Boolean);
+  const parts = referenceSourcePartsForAsset(entry, asset.id, { analysisIds });
+  const defaultPartIds = new Set(referenceSourcePartsForAsset(entry, asset.id).map((source) => source.id));
+  let selected = referenceDraftSourceSelections.get(key);
+  if (!selected) {
+    selected = defaultPartIds;
+    referenceDraftSourceSelections.set(key, selected);
+  }
+  return parts.map((part) => {
+    const option = el("label", "composer-case-asset");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = selected.has(part.id);
+    const short = part.kind === "original_prompt" && [...part.text.replace(/\s+/g, "")].length <= 3;
+    const labelText = part.kind === "other_analysis"
+      ? `${part.label} · ${excerpt(part.text, 24)}`
+      : short ? `${part.label} · ${t("短内容")}` : part.label;
+    const label = rawTextEl("span", "", labelText);
+    input.addEventListener("change", () => {
+      input.checked ? selected.add(part.id) : selected.delete(part.id);
+      if (!selected.size) setDraftAssetSelected(entry.id, asset.id, false);
+      renderCasePicker();
+      renderReferenceSelection();
+    });
+    option.dataset.assetId = asset.id;
+    option.title = part.text;
+    option.append(input, label);
+    return option;
+  });
 }
 
 function setDraftAssetSelected(entryId, assetId, selected) {
@@ -2139,25 +2201,33 @@ function setDraftAssetSelected(entryId, assetId, selected) {
     selection.add(assetId);
     referenceDraftSelections.set(entryId, selection);
     addDraftOrder(entryId, assetId);
+    const entry = entries.find((item) => item.id === entryId);
+    const asset = selectableReferenceAssets(entry, composerSession?.targetType).find((item) => item.id === assetId);
+    if (asset?.kind === "video") {
+      referenceDraftSourceSelections.set(draftOrderKey(entryId, assetId), new Set(referenceSourcePartsForAsset(entry, assetId).map((source) => source.id)));
+    }
     return;
   }
   selection.delete(assetId);
   removeDraftOrder(entryId, assetId);
+  referenceDraftSourceSelections.delete(draftOrderKey(entryId, assetId));
   if (!selection.size) referenceDraftSelections.delete(entryId);
 }
 
 function renderCasePreviewImage(option, entry, assetId) {
   const surface = option.querySelector(".composer-case-select-preview");
   if (!surface) return;
-  const asset = selectableReferenceImages(entry).find((item) => item.id === assetId);
+  const asset = selectableReferenceAssets(entry, composerSession?.targetType).find((item) => item.id === assetId);
   if (!asset) return surface.replaceChildren(rawTextEl("span", "", t("这条案例没有截图")));
+  const displayAsset = asset.kind === "video" ? posterAssetForVideo(entry, asset) : asset;
+  if (!displayAsset) return surface.replaceChildren(rawTextEl("span", "", t("视频")));
   const image = document.createElement("img");
   image.className = "composer-case-image";
   image.alt = translateUiMessage(`${entry.title || t("未命名案例")} 对应画面`);
   image.loading = "lazy";
   image.decoding = "async";
-  image.dataset.visualId = asset.id;
-  const cached = thumbnailUrls.get(asset.id);
+  image.dataset.visualId = displayAsset.id;
+  const cached = thumbnailUrls.get(displayAsset.id);
   if (cached) image.src = cached;
   else imageObserver.observe(image);
   surface.replaceChildren(image);
@@ -2181,10 +2251,12 @@ function syncRenderedReferenceCards() {
   }
 }
 
-async function openReferenceImagePreview(entry, assetId) {
+async function openReferenceAssetPreview(entry, assetId) {
   if (!assetId) return;
   try {
-    const blob = await getScreenshotBlob(assetId);
+    const asset = selectableReferenceAssets(entry, composerSession?.targetType).find((item) => item.id === assetId);
+    const displayAsset = asset?.kind === "video" ? posterAssetForVideo(entry, asset) : asset;
+    const blob = displayAsset ? await getScreenshotBlob(displayAsset.id) : null;
     if (!blob) throw new Error("无法读取原图");
     const url = URL.createObjectURL(blob);
     const dialog = el("dialog", "composer-reference-preview-dialog");
@@ -2208,8 +2280,9 @@ async function openReferenceImagePreview(entry, assetId) {
   }
 }
 
-function selectableReferenceImages(entry) {
-  return entryMediaAssets(entry).filter((asset) => asset.kind === "image" && asset.usage !== "poster");
+function selectableReferenceAssets(entry, targetType = "") {
+  return entryMediaAssets(entry).filter((asset) => asset.usage !== "poster" &&
+    (asset.kind === "image" || targetType === "video" && asset.kind === "video"));
 }
 
 function draftOrderKey(entryId, assetId = "") {
@@ -2229,6 +2302,9 @@ function removeDraftOrder(entryId, assetId = "") {
 function removeDraftEntry(entryId) {
   referenceDraftSelections.delete(entryId);
   referenceDraftOrder = referenceDraftOrder.filter((item) => !item.startsWith(`${entryId}\u0000`));
+  for (const key of referenceDraftSourceSelections.keys()) {
+    if (key.startsWith(`${entryId}\u0000`)) referenceDraftSourceSelections.delete(key);
+  }
 }
 
 function orderedDraftItems() {
@@ -2271,10 +2347,11 @@ function renderReferenceSelection() {
   }
   elements.composerSelectionStrip.replaceChildren(...selectedItems.slice(0, 8).map((item, index) => {
     const entry = entries.find((candidate) => candidate.id === item.entryId);
-    const assets = selectableReferenceImages(entry);
+    const assets = selectableReferenceAssets(entry, composerSession?.targetType);
     const assetIndex = item.assetId ? assets.findIndex((asset) => asset.id === item.assetId) : -1;
+    const asset = assetIndex >= 0 ? assets[assetIndex] : null;
     const chip = el("span", "composer-selection-chip");
-    chip.append(rawTextEl("b", "", `${entry?.title || t("未命名案例")}${assetIndex >= 0 ? ` · 图${assetIndex + 1}` : ""}`));
+    chip.append(rawTextEl("b", "", `${entry?.title || t("未命名案例")}${assetIndex >= 0 ? asset?.kind === "video" ? " · 视频" : ` · 图${assetIndex + 1}` : ""}`));
     const moveLeft = textEl("button", "", "←");
     moveLeft.type = "button";
     moveLeft.disabled = index === 0;
@@ -2294,6 +2371,7 @@ function renderReferenceSelection() {
       else referenceDraftSelections.delete(item.entryId);
       if (selection && !selection.size) referenceDraftSelections.delete(item.entryId);
       removeDraftOrder(item.entryId, item.assetId);
+      referenceDraftSourceSelections.delete(item.key);
       syncRenderedReferenceCards();
       renderReferenceSelection();
     });
@@ -2304,7 +2382,10 @@ function renderReferenceSelection() {
 }
 
 function draftReferenceLimitState(items = orderedDraftItems()) {
-  const imageCount = items.filter((item) => item.assetId).length;
+  const imageCount = items.filter((item) => {
+    const entry = entries.find((candidate) => candidate.id === item.entryId);
+    return selectableReferenceAssets(entry, composerSession?.targetType).some((asset) => asset.id === item.assetId && asset.kind === "image");
+  }).length;
   if (composerSession?.outputMode !== "create_image" || composerSession.imageReferenceMode !== "conditioned") {
     return { imageCount, maximum: null, exceeded: false };
   }
@@ -2341,7 +2422,16 @@ async function applySelectedReferences() {
   composerSession = createComposerSession({
     ...composerSession,
     referenceSnapshots: [
-      ...createReferenceSnapshots(entries, selected.map((item) => ({ entryId: item.entryId, assetIds: item.assetId ? [item.assetId] : [] })), currentLocale(), composerSession.targetType),
+      ...createReferenceSnapshots(entries, selected.map((item) => ({
+        entryId: item.entryId,
+        assetIds: item.assetId ? [item.assetId] : [],
+        sourceIds: item.assetId ? [...(referenceDraftSourceSelections.get(item.key) ?? [])] : null,
+        analysisIds: item.assetId
+          ? (entries.find((entry) => entry.id === item.entryId)?.videoAnalyses ?? [])
+              .filter((analysis) => referenceDraftSourceSelections.get(item.key)?.has(`analysis:${String(analysis?.id ?? "")}`))
+              .map((analysis) => String(analysis.id))
+          : []
+      })), currentLocale(), composerSession.targetType),
       ...temporaryReferences
     ],
     currentInstruction: "",

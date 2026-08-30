@@ -368,7 +368,13 @@ test("imports remap both sides of a video poster relationship", () => {
       { id: "video-shared", kind: "video", storageMode: "managed", mimeType: "video/mp4", assetPath: `videos/${id}.mp4`, posterAssetId: "poster-shared" },
       { id: "poster-shared", kind: "image", usage: "poster", storageMode: "managed", mimeType: "image/webp", assetPath: `images/${id}.webp`, derivedFromAssetId: "video-shared" }
     ],
-    primaryMediaId: "video-shared"
+    primaryMediaId: "video-shared",
+    videoAnalyses: [{
+      id: `analysis:${id}`, assetId: "video-shared", mode: "visual-reconstruction",
+      requestId: `attempt:${id}`, contractVersion: "visual-reconstruction-tags-json-v3-1-evidence-guard",
+      reconstructionPrompt: `${id} 视觉逆推`, tags: [], uncertainties: [], includeTags: false,
+      analysisScope: "visual", finishReason: "stop", createdAt: "2026-08-30T00:00:00.000Z"
+    }]
   });
   const current = {
     entries: [videoEntry("local")], taxonomy: createDefaultTaxonomy(), facetCatalog: catalog(),
@@ -383,6 +389,8 @@ test("imports remap both sides of a video poster relationship", () => {
   assert.notEqual(video.id, "video-shared");
   assert.equal(video.posterAssetId, poster.id);
   assert.equal(poster.derivedFromAssetId, video.id);
+  assert.equal(remote.videoAnalyses[0].assetId, video.id);
+  assert.equal(remote.videoAnalyses[0].reconstructionPrompt, "remote 视觉逆推");
 });
 
 test("parseLibraryPackage enforces case and image byte limits before storage", () => {
@@ -544,6 +552,46 @@ test("non-empty restore remaps trashed case and project identities instead of dr
   assert.equal(restoredProject.snapshot.id, restoredProject.targetId);
   assert.deepEqual(restoredProject.snapshot.entryIds, [restoredEntry.targetId]);
   assert.equal(restoredEntry.relationships.collections[0].id, restoredProject.targetId);
+});
+
+test("trash import remaps structured video analysis to the restored video asset", () => {
+  const videoSnapshot = {
+    ...entry("deleted-video"), hasScreenshot: undefined, screenshotPath: undefined,
+    mediaAssets: [{
+      id: "video:trash-shared", kind: "video", storageMode: "managed", mimeType: "video/mp4",
+      assetPath: "videos/deleted-video.mp4"
+    }],
+    primaryMediaId: "video:trash-shared",
+    videoAnalyses: [{
+      id: "analysis:trash", assetId: "video:trash-shared", mode: "visual-reconstruction",
+      requestId: "attempt:trash", contractVersion: "visual-reconstruction-tags-json-v3-1-evidence-guard",
+      reconstructionPrompt: "回收站视频逆推", tags: [], uncertainties: [], includeTags: false,
+      analysisScope: "visual", finishReason: "stop", createdAt: "2026-08-30T00:00:00.000Z"
+    }]
+  };
+  const data = packageData([], catalog());
+  data.trashState = { version: 1, items: [{
+    id: "trash:entry:deleted-video", kind: "entry", targetId: "deleted-video",
+    deletedAt: "2026-08-30T00:01:00.000Z", snapshot: videoSnapshot, relationships: {}
+  }] };
+  const current = {
+    entries: [{
+      ...entry("local-video"), hasScreenshot: undefined, screenshotPath: undefined,
+      mediaAssets: [{
+        id: "video:trash-shared", kind: "video", storageMode: "managed", mimeType: "video/mp4",
+        assetPath: "videos/local-video.mp4"
+      }],
+      primaryMediaId: "video:trash-shared"
+    }],
+    trashState: { version: 1, items: [] }, taxonomy: createDefaultTaxonomy(), facetCatalog: catalog(),
+    classificationRules: [], settings: {}, organizerState: { collections: [] }, compoundCases: []
+  };
+
+  const result = mergeLibraryPackage(current, data);
+  const restored = result.state.trashState.items.find((item) => item.kind === "entry").snapshot;
+  assert.notEqual(restored.primaryMediaId, "video:trash-shared");
+  assert.equal(restored.videoAnalyses[0].assetId, restored.primaryMediaId);
+  assert.equal(restored.videoAnalyses[0].reconstructionPrompt, "回收站视频逆推");
 });
 
 test("restored trash relationships follow the imported project into its actual merged destination", () => {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  chunkedBlobFingerprint,
   createUnsupportedLocalAssetReference,
   detectLocalMediaFile,
   findExactMediaDuplicate,
@@ -37,6 +38,16 @@ test("local media detection keeps only supported formats and safe relative paths
   assert.equal(normalizeLocalRelativePath("folder/reference/frame.gif", "frame.gif"), "folder/reference/frame.gif");
   assert.throws(() => normalizeLocalRelativePath("/Users/private/frame.gif", "frame.gif"), /相对路径/);
   assert.throws(() => normalizeLocalRelativePath("../private/frame.gif", "frame.gif"), /相对路径/);
+});
+
+test("media fingerprints read current blob bytes even when metadata could retain an old hash", async () => {
+  const original = new Blob(["AAAA", "BBBB"], { type: "video/mp4" });
+  const replaced = new Blob(["AAAA", "BBBC"], { type: "video/mp4" });
+  assert.equal(original.size, replaced.size);
+  assert.notEqual(
+    await chunkedBlobFingerprint(original, { chunkBytes: 4 }),
+    await chunkedBlobFingerprint(replaced, { chunkBytes: 4 })
+  );
 });
 
 test("subtitle preparation extracts safe plain text as a document", async () => {

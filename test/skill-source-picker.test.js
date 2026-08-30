@@ -64,14 +64,26 @@ test("Skill source summary separates images videos documents and case text", () 
 });
 
 test("Skill source inspector edits an isolated draft until the user applies it", () => {
-  const source = { entryId: "compound", includeEntryText: true, assetIds: new Set(["compound:image:0"]) };
+  const source = {
+    entryId: "compound",
+    includeEntryText: true,
+    assetIds: new Set(["compound:image:0"]),
+    sourceIds: new Set(["original:compound:video:2"]),
+    analysisIds: new Set()
+  };
   const draft = cloneSkillSourceSelection(source);
   draft.assetIds.add("compound:video:2");
+  draft.sourceIds.delete("original:compound:video:2");
+  draft.analysisIds.add("analysis:one");
   draft.includeEntryText = false;
 
   assert.deepEqual([...source.assetIds], ["compound:image:0"]);
+  assert.deepEqual([...source.sourceIds], ["original:compound:video:2"]);
+  assert.deepEqual([...source.analysisIds], []);
   assert.equal(source.includeEntryText, true);
   assert.deepEqual([...draft.assetIds], ["compound:image:0", "compound:video:2"]);
+  assert.deepEqual([...draft.sourceIds], []);
+  assert.deepEqual([...draft.analysisIds], ["analysis:one"]);
   assert.equal(draft.includeEntryText, false);
 });
 

@@ -62,6 +62,7 @@ export const PORTABLE_LIBRARY_LIMITS = Object.freeze({
 
 export const SMART_VISUAL_SELECTION_LIMIT = 12;
 export const SMART_VISUAL_MINIMUM_EDGE = 64;
+export const MEDIA_FINGERPRINT_CHUNK_BYTES = 8 * MEBIBYTE;
 export const PAGE_CAPTURE_LIMITS = Object.freeze({
   maxCandidates: 100,
   maxMediaPerCandidate: 24,

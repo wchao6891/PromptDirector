@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   addEntryMedia,
   addTimeNote,
+  currentVideoReconstruction,
+  editCurrentVideoReconstruction,
   mediaDescriptions,
   mediaKindFromFile,
   normalizeEntryMedia,
@@ -132,6 +134,73 @@ test("video analysis keeps actual provider cost and routing metadata", () => {
   });
   assert.equal(entry.videoAnalyses[0].cost, 0.012);
   assert.deepEqual(entry.videoAnalyses[0].routing, { provider: "declared-provider" });
+});
+
+test("structured video reconstruction survives normalization and current selection stays asset-specific", () => {
+  const entry = normalizeEntryMedia({
+    id: "case:video-reconstruction",
+    mediaAssets: [
+      { id: "video:one", kind: "video", storageMode: "managed", mimeType: "video/mp4" },
+      { id: "video:two", kind: "video", storageMode: "managed", mimeType: "video/mp4" }
+    ],
+    videoAnalyses: [
+      {
+        id: "legacy:unlinked", text: "旧版无资产记录", mode: "visual-reconstruction",
+        createdAt: "2026-08-30T00:00:00.000Z"
+      },
+      {
+        id: "reconstruction:old", assetId: "video:one", mode: "visual-reconstruction",
+        requestId: "attempt:old", contractVersion: "visual-v3",
+        reconstructionPrompt: "旧版逆推", tags: [{ g: "style.render", t: "电影写实" }],
+        uncertainties: ["转场方式不确定"], includeTags: true, analysisScope: "visual",
+        finishReason: "stop", provider: "智谱 GLM", model: "glm-5.3-flash",
+        createdAt: "2026-08-30T00:01:00.000Z"
+      },
+      {
+        id: "temporary:newer", assetId: "video:one", mode: "creative-breakdown",
+        text: "临时创作拆解", createdAt: "2026-08-30T00:03:00.000Z"
+      },
+      {
+        id: "reconstruction:current", assetId: "video:one", mode: "visual-reconstruction",
+        requestId: "attempt:current", contractVersion: "visual-v3-1", batchJobId: "batch:one",
+        reconstructionPrompt: "当前逆推", tags: [{ g: "composition.shot", t: "近景" }],
+        uncertainties: [], includeTags: true, analysisScope: "visual", finishReason: "stop",
+        userEdited: false, provider: "智谱 GLM", model: "glm-5.3-flash",
+        createdAt: "2026-08-30T00:02:00.000Z"
+      }
+    ]
+  });
+
+  const current = currentVideoReconstruction(entry, "video:one");
+  assert.equal(current.id, "reconstruction:current");
+  assert.equal(current.reconstructionPrompt, "当前逆推");
+  assert.equal(current.requestId, "attempt:current");
+  assert.equal(current.batchJobId, "batch:one");
+  assert.deepEqual(current.tags, [{ g: "composition.shot", t: "近景" }]);
+  assert.equal(currentVideoReconstruction(entry, "video:two"), null);
+  assert.equal(currentVideoReconstruction(entry, ""), null);
+});
+
+test("editing current video reconstruction changes only its reusable prompt and keeps request evidence", () => {
+  const source = normalizeEntryMedia({
+    id: "case:edit-video",
+    mediaAssets: [{ id: "video:one", kind: "video", storageMode: "managed", mimeType: "video/mp4" }],
+    text: "ORIGINAL_PROMPT_SENTINEL",
+    videoAnalyses: [{
+      id: "reconstruction:one", assetId: "video:one", mode: "visual-reconstruction",
+      requestId: "attempt:one", contractVersion: "visual-v3-1", prompt: "ACTUAL_REQUEST_PROMPT",
+      reconstructionPrompt: "模型原结果", tags: [], uncertainties: [], includeTags: false,
+      analysisScope: "visual", finishReason: "stop", createdAt: "2026-08-30T00:00:00.000Z"
+    }]
+  });
+  const edited = editCurrentVideoReconstruction(source, "video:one", "人工调整后的逆推提示词");
+  const current = currentVideoReconstruction(edited, "video:one");
+  assert.equal(current.reconstructionPrompt, "人工调整后的逆推提示词");
+  assert.equal(current.prompt, "ACTUAL_REQUEST_PROMPT");
+  assert.equal(current.requestId, "attempt:one");
+  assert.equal(current.userEdited, true);
+  assert.match(current.editedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(edited.text, "ORIGINAL_PROMPT_SENTINEL");
 });
 
 test("external video references keep only supported playback modes", () => {

@@ -8,7 +8,9 @@ import {
   requireAiRuntimeProtocolVersion,
   resolveTextTaskSettings,
   resolveVideoAnalysisTask,
-  resolveVisionTaskSettings
+  resolveVisionTaskSettings,
+  videoAnalysisRouteMatches,
+  videoAnalysisRouteSnapshot
 } from "../ai-runtime.js";
 
 test("Composer and background share one AI runtime protocol version", () => {
@@ -16,6 +18,31 @@ test("Composer and background share one AI runtime protocol version", () => {
   assert.equal(requireAiRuntimeProtocolVersion(2), true);
   assert.throws(() => requireAiRuntimeProtocolVersion(undefined), /扩展后台不是同一版本/);
   assert.throws(() => requireAiRuntimeProtocolVersion(1), /没有发起付费请求/);
+});
+
+test("video route snapshots normalize omitted media policy before comparison", () => {
+  const route = {
+    providerId: "gemini",
+    model: "gemini-video",
+    protocol: "gemini",
+    endpoint: "https://generativelanguage.googleapis.com"
+  };
+  assert.deepEqual(videoAnalysisRouteSnapshot(route), {
+    providerId: "gemini",
+    model: "gemini-video",
+    protocol: "gemini",
+    endpoint: "https://generativelanguage.googleapis.com",
+    localVideo: "",
+    preferPublicVideoUrl: false,
+    publicVideoUrl: ""
+  });
+  assert.equal(videoAnalysisRouteMatches(route, {
+    ...route,
+    localVideo: "",
+    preferPublicVideoUrl: false,
+    publicVideoUrl: ""
+  }), true);
+  assert.equal(videoAnalysisRouteMatches(route, { ...route, model: "gemini-video-next" }), false);
 });
 
 const storedConfiguration = {
@@ -182,13 +209,14 @@ test("GLM-5.3-Flash overrides older provider defaults with its model-specific mu
 
   const text = resolveTextTaskSettings("textTags", configuration);
   assert.equal(text.compatible.structuredOutput, "json_object");
-  assert.equal(text.compatible.structuredOutputTokenBudget, 4096);
+  assert.equal(text.compatible.structuredOutputTokenBudget, 8192);
   const vision = resolveVisionTaskSettings("imageAnalysis", configuration);
   assert.equal(vision.compatible.structuredOutput, "json_object");
   assert.equal(vision.compatible.imageBase64, "data_url");
   const video = resolveVideoAnalysisTask(configuration);
   assert.equal(video.preferPublicVideoUrl, true);
   assert.equal(video.localVideo, "base64");
+  assert.equal(video.maxOutputTokens, 8192);
 });
 
 test("changing the image-analysis assignment does not erase generation services", () => {

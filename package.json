@@ -1,6 +1,6 @@
 {
   "name": "prompt-case-collector",
-  "version": "1.19.4",
+  "version": "1.19.5",
   "private": false,
   "license": "Apache-2.0",
   "repository": "https://github.com/wchao6891/PromptDirector",
@@ -27,7 +27,7 @@
     "test:upgrade": "node tools/run-release-upgrade-e2e.mjs",
     "test:smart-picker": "python3 test/smart_visual_picker_e2e.py",
     "verify:source": "npm run check:public && npm run check && npm run check:brand && npm run check:documents && npm run check:pdfjs && npm run check:store && npm run check:compat && npm test",
-    "verify:release": "npm run verify:source && npm run test:e2e && npm run package:release && npm run package && npm run test:upgrade",
+    "verify:release": "npm run verify:source && npm run test:local-extension && npm run package:release && npm run test:upgrade",
     "verify": "npm run verify:release"
   },
   "dependencies": {

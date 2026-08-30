@@ -109,7 +109,8 @@
                   <summary aria-label="更多" data-i18n-aria-label="更多"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-ellipsis"></use></svg><span class="selection-action-label" data-i18n="更多">更多</span></summary>
                   <div class="project-menu-panel selection-menu-panel selection-more-panel">
                     <button id="selection-combine" class="button-secondary" type="button" disabled data-i18n="组合案例">组合案例</button>
-                    <button id="selection-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析画面">批量分析画面</button>
+                    <button id="selection-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析图片">批量分析图片</button>
+                    <button id="selection-video-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析视频">批量分析视频</button>
                     <button id="selection-trash" class="quiet-danger" type="button" disabled data-i18n="移入回收站">移入回收站</button>
                   </div>
                 </details>
@@ -379,13 +380,13 @@
         </section>
         <section id="settings-ai-panel" class="settings-panel settings-ai-panel" data-settings-panel="ai" hidden>
           <section class="ai-routing-card">
-            <div class="ai-routing-heading"><h3 data-i18n="AI 配置">AI 配置</h3><p id="ai-routing-summary" data-i18n="先按任务选择默认服务；API Key 只需在连接服务时填写一次。">先按任务选择默认服务；API Key 只需在连接服务时填写一次。</p></div>
+            <div class="ai-routing-heading"><h3 data-i18n="AI 配置">AI 配置</h3><p id="ai-routing-summary" data-i18n="AI 服务只连接一次；任务路由显示每类功能实际调用哪个服务与模型。">AI 服务只连接一次；任务路由显示每类功能实际调用哪个服务与模型。</p></div>
             <nav class="ai-routing-tabs" role="tablist" aria-label="AI 配置视图" data-i18n-aria-label="AI 配置视图">
-              <button type="button" data-ai-routing-tab="tasks" aria-selected="true" data-i18n="任务默认">任务默认</button>
+              <button type="button" data-ai-routing-tab="tasks" aria-selected="true" data-i18n="任务路由">任务路由</button>
               <button type="button" data-ai-routing-tab="providers" aria-selected="false" data-i18n="服务连接">服务连接</button>
             </nav>
             <div class="ai-routing-regions">
-              <section class="ai-task-region" data-ai-routing-panel="tasks"><h4 data-i18n="各任务默认模型">各任务默认模型</h4><div id="ai-assignment-list" class="ai-assignment-list"></div></section>
+              <section class="ai-task-region" data-ai-routing-panel="tasks"><h4 data-i18n="各任务实际路由">各任务实际路由</h4><div id="ai-assignment-list" class="ai-assignment-list"></div></section>
               <section data-ai-routing-panel="providers" hidden><div class="ai-provider-region-heading"><h4 data-i18n="服务连接">服务连接</h4><button id="open-ai-routing" type="button" data-i18n="连接 AI 服务">连接 AI 服务</button></div><div id="ai-provider-list" class="ai-provider-list"></div></section>
             </div>
           </section>
@@ -439,7 +440,7 @@
             </details>
           </form>
           <form id="vision-settings-form" class="analysis-settings-form" data-analysis-kind-panel="vision" hidden>
-            <div class="section-heading"><div><h3 data-i18n="图片视觉分析规则">图片视觉分析规则</h3><p data-i18n="这里只管理图片分析规则；服务连接与默认模型在上方配置。">这里只管理图片分析规则；服务连接与默认模型在上方配置。</p></div></div>
+            <div class="section-heading"><div><h3 data-i18n="图片视觉分析规则">图片视觉分析规则</h3><p data-i18n="这里只管理图片分析规则；服务连接与任务路由均在上方完成。">这里只管理图片分析规则；服务连接与任务路由均在上方完成。</p></div></div>
             <section data-analysis-locale-panel="zh-CN">
               <label><span data-i18n="中文图片分析规则">中文图片分析规则</span><textarea id="vision-instructions-zh" rows="10"></textarea></label>
             </section>
@@ -459,7 +460,7 @@
 
     <dialog id="vision-batch-dialog" class="data-safety-dialog vision-batch-dialog">
       <header class="data-safety-header">
-        <div><p class="eyebrow">VISION TASK</p><h2 data-i18n="批量分析画面">批量分析画面</h2></div>
+        <div><p class="eyebrow">VISION TASK</p><h2 id="vision-batch-title" data-i18n="批量分析图片">批量分析图片</h2></div>
         <button id="vision-batch-close" class="icon-button" type="button" aria-label="关闭批量画面分析" data-i18n-aria-label="关闭批量画面分析" title="关闭批量画面分析" data-i18n-title="关闭批量画面分析"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
       </header>
       <div class="data-safety-body">
@@ -469,6 +470,8 @@
         </section>
         <label class="task-option"><input id="vision-batch-all-images" type="checkbox" /><span data-i18n="分析所选案例中的全部未分析图片">分析所选案例中的全部未分析图片</span></label>
         <label class="task-option"><input id="vision-batch-reanalyze" type="checkbox" /><span data-i18n="重新分析已有反推提示词">重新分析已有反推提示词</span></label>
+        <label id="vision-batch-tags-option" class="task-option" hidden><input id="vision-batch-tags" type="checkbox" checked /><span data-i18n="同时生成 AI 标签">同时生成 AI 标签</span></label>
+        <label id="vision-batch-instruction-field" hidden><span data-i18n="本批视频逆推指令">本批视频逆推指令</span><textarea id="vision-batch-instruction" rows="3"></textarea></label>
         <p class="data-safety-note" data-i18n="每次分析一张图片；失败项需手动重试。">每次分析一张图片；失败项需手动重试。</p>
         <div id="vision-batch-progress" class="maintenance-progress" hidden><progress id="vision-batch-progress-bar" max="1" value="0"></progress></div>
         <div class="data-safety-primary-actions">

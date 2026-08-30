@@ -175,7 +175,7 @@ export function normalizeEntryMedia(entryValue = {}) {
   entry.timeNotes = normalizeTimeNotes(entry.timeNotes, ids);
   entry.mediaPrompts = normalizeMediaPrompts(entry.mediaPrompts, ids);
   entry.visualSetAnalyses = normalizeVersionedAnalyses(entry.visualSetAnalyses, "visual-set");
-  entry.videoAnalyses = normalizeVersionedAnalyses(entry.videoAnalyses, "video");
+  entry.videoAnalyses = normalizeVideoAnalyses(entry.videoAnalyses);
   for (const field of [
     "visuals", "primaryVisualId", "hasScreenshot", "screenshotWidth", "screenshotHeight",
     "screenshotMimeType", "screenshotByteSize", "screenshotReviewStatus", "screenshotUpdatedAt",
@@ -331,6 +331,37 @@ export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source 
   return entry;
 }
 
+export function currentVideoReconstruction(entryValue = {}, assetIdValue = "") {
+  const assetId = clean(assetIdValue);
+  if (!assetId) return null;
+  if (!entryMediaAssets(entryValue).some((asset) => asset.id === assetId && asset.kind === "video" && asset.usage !== "poster")) return null;
+  let current = null;
+  let currentTime = Number.NEGATIVE_INFINITY;
+  for (const analysis of normalizeVideoAnalyses(entryValue?.videoAnalyses)) {
+    if (analysis.assetId !== assetId || !completeVideoReconstruction(analysis)) continue;
+    const createdTime = Date.parse(analysis.createdAt);
+    if (createdTime < currentTime) continue;
+    current = analysis;
+    currentTime = createdTime;
+  }
+  return current ? structuredClone(current) : null;
+}
+
+export function editCurrentVideoReconstruction(entryValue, assetIdValue, reconstructionPromptValue) {
+  const entry = normalizeEntryMedia(entryValue);
+  const assetId = clean(assetIdValue);
+  const reconstructionPrompt = cleanMultiline(reconstructionPromptValue);
+  if (!assetId) throw new Error("没有指定要编辑的视频");
+  if (!reconstructionPrompt) throw new Error("AI 视觉逆推提示词不能为空");
+  const current = currentVideoReconstruction(entry, assetId);
+  if (!current) throw new Error("这个视频还没有可编辑的 AI 视觉逆推提示词");
+  const editedAt = new Date().toISOString();
+  entry.videoAnalyses = entry.videoAnalyses.map((analysis) => analysis.id === current.id
+    ? { ...analysis, reconstructionPrompt, userEdited: true, editedAt }
+    : analysis);
+  return entry;
+}
+
 export function mediaDescriptions(entryValue = {}) {
   return entryMediaAssets(entryValue)
     .map((asset) => asset.visionAnalysis?.invalidated || asset.visionAnalysis?.quality === "partial"
@@ -395,6 +426,84 @@ function normalizeVersionedAnalyses(values, kind) {
         : null,
       createdAt: validIso(value.createdAt) || new Date().toISOString()
     }];
+  });
+}
+
+function normalizeVideoAnalyses(values) {
+  return (Array.isArray(values) ? values : []).flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const id = clean(value.id);
+    const text = cleanMultiline(value.text);
+    const reconstructionPrompt = cleanMultiline(value.reconstructionPrompt);
+    const mode = clean(value.mode);
+    if (!id || (!text && !(mode === "visual-reconstruction" && reconstructionPrompt))) return [];
+    const tags = normalizeVideoReconstructionTags(value.tags);
+    const uncertainties = normalizeVideoReconstructionUncertainties(value.uncertainties);
+    const createdAt = validIso(value.createdAt) || new Date().toISOString();
+    return [{
+      id,
+      kind: "video",
+      ...(text ? { text } : {}),
+      assetId: clean(value.assetId),
+      mode,
+      prompt: cleanMultiline(value.prompt),
+      sourceKind: clean(value.sourceKind),
+      version: Math.max(1, positiveInteger(value.version)),
+      batchIndex: nonNegativeInteger(value.batchIndex),
+      batchCount: Math.max(1, positiveInteger(value.batchCount)),
+      model: clean(value.model),
+      provider: clean(value.provider),
+      usage: structuredClone(value.usage || {}),
+      cost: Number.isFinite(Number(value.cost)) && Number(value.cost) >= 0 ? Number(value.cost) : null,
+      routing: value.routing && typeof value.routing === "object" && !Array.isArray(value.routing)
+        ? structuredClone(value.routing)
+        : null,
+      createdAt,
+      ...(reconstructionPrompt ? { reconstructionPrompt } : {}),
+      ...(clean(value.requestId) ? { requestId: clean(value.requestId) } : {}),
+      ...(clean(value.contractVersion) ? { contractVersion: clean(value.contractVersion) } : {}),
+      ...(value.batchJobId && clean(value.batchJobId) ? { batchJobId: clean(value.batchJobId) } : {}),
+      ...(Array.isArray(value.tags) ? { tags } : {}),
+      ...(Array.isArray(value.uncertainties) ? { uncertainties } : {}),
+      ...(typeof value.includeTags === "boolean" ? { includeTags: value.includeTags } : {}),
+      ...(clean(value.analysisScope) ? { analysisScope: clean(value.analysisScope) } : {}),
+      ...(clean(value.finishReason) ? { finishReason: clean(value.finishReason) } : {}),
+      ...(typeof value.userEdited === "boolean" ? { userEdited: value.userEdited } : {}),
+      ...(validIso(value.editedAt) ? { editedAt: validIso(value.editedAt) } : {})
+    }];
+  });
+}
+
+function completeVideoReconstruction(value) {
+  if (value?.mode !== "visual-reconstruction" || !clean(value.assetId) || !cleanMultiline(value.reconstructionPrompt)) return false;
+  if (!clean(value.requestId) || !clean(value.contractVersion) || value.analysisScope !== "visual") return false;
+  if (typeof value.includeTags !== "boolean" || !Array.isArray(value.tags) || !Array.isArray(value.uncertainties)) return false;
+  const finishReason = clean(value.finishReason).toLocaleLowerCase("en-US");
+  if (!finishReason || ["length", "content_filter", "error", "cancelled", "canceled"].includes(finishReason)) return false;
+  return value.includeTags ? value.tags.length > 0 : value.tags.length === 0;
+}
+
+function normalizeVideoReconstructionTags(values) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : []).flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const groupId = clean(value.g);
+    const detail = clean(value.t);
+    if (!groupId) return [];
+    const key = `${groupId}:${detail}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ g: groupId, ...(detail ? { t: detail } : {}) }];
+  });
+}
+
+function normalizeVideoReconstructionUncertainties(values) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : []).flatMap((value) => {
+    const text = cleanMultiline(value);
+    if (!text || seen.has(text)) return [];
+    seen.add(text);
+    return [text];
   });
 }
 
