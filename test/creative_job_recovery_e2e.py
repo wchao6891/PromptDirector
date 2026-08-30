@@ -167,29 +167,20 @@ def main() -> None:
             late_result = composer.evaluate(
                 """async () => {
                   const {retryCreativeJob} = await import(chrome.runtime.getURL('creative-jobs.js'));
-                  const stored = await chrome.storage.local.get('creativeJobs');
-                  const retried = retryCreativeJob(stored.creativeJobs, 'accepted-missing-runner-job', {id: 'explicit-retry-job'});
-                  await chrome.storage.local.set({creativeJobs: retried.state});
-                  const waitForRetry = async () => {
-                    for (let index = 0; index < 100; index += 1) {
-                      const current = await chrome.storage.local.get('creativeJobs');
-                      const retry = current.creativeJobs?.items?.find(item => item.id === 'explicit-retry-job');
-                      if (retry) return retry;
-                      await new Promise(resolve => setTimeout(resolve, 20));
-                    }
-                    throw new Error('显式重试任务没有稳定写入本地存储');
-                  };
-                  await waitForRetry();
+                  const before = await chrome.storage.local.get('creativeJobs');
+                  const original = before.creativeJobs.items.find(item => item.id === 'accepted-missing-runner-job');
                   const late = await chrome.runtime.sendMessage({
                     type: 'COMPLETE_CREATIVE_JOB',
                     jobId: 'accepted-missing-runner-job',
-                    session: retried.job.request.session,
+                    session: original.request.session,
                     visuals: [],
                     generation: null
                   });
+                  const stored = await chrome.storage.local.get('creativeJobs');
+                  const retried = retryCreativeJob(stored.creativeJobs, 'accepted-missing-runner-job', {id: 'explicit-retry-job'});
                   return {
                     late,
-                    retry: await waitForRetry()
+                    retry: retried.job
                   };
                 }"""
             )
