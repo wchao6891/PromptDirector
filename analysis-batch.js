@@ -8,12 +8,13 @@ import {
   textAnalysisReason
 } from "./analysis-revision.js";
 import { prepareFacetRebuild, validateAnalysisTagResponse } from "./tag-taxonomy.js";
-import { entryMediaAssets, primaryImageAsset } from "./media.js";
+import { currentVideoReconstruction, entryMediaAssets, primaryImageAsset } from "./media.js";
 import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 
 export const ANALYSIS_BATCH_VERSION = 2;
 export const ANALYSIS_BATCH_CONCURRENCY = 20;
 export const VISION_BATCH_CONCURRENCY = 10;
+export const VIDEO_BATCH_CONCURRENCY = 2;
 
 export async function previewAnalysisBatch(entries = [], options = {}) {
   const eligible = [];
@@ -200,13 +201,127 @@ export function createVisionBatchJob(entries = [], options = {}) {
   };
 }
 
+export function previewVideoBatch(entries = [], options = {}) {
+  const selected = new Set((Array.isArray(options.entryIds) ? options.entryIds : []).map(String));
+  const includeAllVideos = options.includeAllVideos === true;
+  const reanalyze = options.reanalyze === true;
+  const sendable = new Set((Array.isArray(options.sendableAssetIds) ? options.sendableAssetIds : []).map(String));
+  const snapshots = new Map((Array.isArray(options.assetSnapshots) ? options.assetSnapshots : []).map((item) => [
+    `${String(item?.entryId ?? "")}\u0000${String(item?.assetId ?? "")}`,
+    item
+  ]));
+  const items = [];
+  let skippedAnalyzedCount = 0;
+  let excludedCount = 0;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!selected.has(String(entry?.id ?? ""))) continue;
+    const videos = entryMediaAssets(entry).filter((asset) => asset.kind === "video" && asset.usage !== "poster");
+    const primary = videos.find((asset) => asset.id === entry.primaryMediaId) || videos[0];
+    const candidates = includeAllVideos ? videos : [primary].filter(Boolean);
+    for (const asset of candidates) {
+      if (!asset?.id || asset.storageMode !== "managed" || !sendable.has(asset.id)) {
+        excludedCount += 1;
+        continue;
+      }
+      const alreadyAnalyzed = Boolean(currentVideoReconstruction(entry, asset.id));
+      if (!reanalyze && alreadyAnalyzed) {
+        skippedAnalyzedCount += 1;
+        continue;
+      }
+      items.push({
+        entryId: String(entry.id),
+        assetId: String(asset.id),
+        title: String(entry.title ?? ""),
+        byteSize: Math.max(0, Number(snapshots.get(`${entry.id}\u0000${asset.id}`)?.byteSize) || Number(asset.byteSize) || 0),
+        durationMs: Math.max(0, Number(snapshots.get(`${entry.id}\u0000${asset.id}`)?.durationMs) || Number(asset.durationMs) || 0),
+        fingerprint: String(snapshots.get(`${entry.id}\u0000${asset.id}`)?.fingerprint ?? ""),
+        sourcePlan: String(snapshots.get(`${entry.id}\u0000${asset.id}`)?.sourcePlan ?? options.sourcePlan ?? "").trim(),
+        alreadyAnalyzed
+      });
+    }
+  }
+  return {
+    kind: "video",
+    caseCount: new Set(items.map((item) => item.entryId)).size,
+    requestCount: items.length,
+    skippedAnalyzedCount,
+    excludedCount,
+    includeAllVideos,
+    reanalyze,
+    includeTags: options.includeTags !== false,
+    providerId: String(options.providerId ?? "").trim(),
+    model: String(options.model ?? "").trim(),
+    protocol: String(options.protocol ?? "").trim(),
+    sourcePlan: String(options.sourcePlan ?? "").trim(),
+    endpoint: String(options.endpoint ?? "").trim(),
+    localVideo: String(options.localVideo ?? "").trim(),
+    preferPublicVideoUrl: options.preferPublicVideoUrl === true,
+    publicVideoUrl: String(options.publicVideoUrl ?? "").trim(),
+    concurrency: normalizeConcurrency(options.concurrency, VIDEO_BATCH_CONCURRENCY),
+    totalBytes: items.reduce((sum, item) => sum + item.byteSize, 0),
+    knownDurationMs: items.reduce((sum, item) => sum + item.durationMs, 0),
+    unknownDurationCount: items.filter((item) => !item.durationMs).length,
+    items
+  };
+}
+
+export function createVideoBatchJob(entries = [], options = {}) {
+  const preview = previewVideoBatch(entries, options);
+  if (!preview.requestCount) throw new Error("没有需要批量逆推的本地视频");
+  const now = String(options.now ?? new Date().toISOString());
+  return {
+    version: ANALYSIS_BATCH_VERSION,
+    kind: "video",
+    id: String(options.id ?? "").trim() || `analysis:${globalThis.crypto.randomUUID()}`,
+    status: "running",
+    createdAt: now,
+    updatedAt: now,
+    outputLocale: options.outputLocale === "en" ? "en" : "zh-CN",
+    providerId: preview.providerId,
+    model: preview.model,
+    protocol: preview.protocol,
+    sourcePlan: preview.sourcePlan,
+    endpoint: preview.endpoint,
+    localVideo: preview.localVideo,
+    preferPublicVideoUrl: preview.preferPublicVideoUrl,
+    publicVideoUrl: preview.publicVideoUrl,
+    concurrency: preview.concurrency,
+    includeAllVideos: preview.includeAllVideos,
+    reanalyze: preview.reanalyze,
+    includeTags: preview.includeTags,
+    instruction: String(options.instruction ?? "").replace(/\r\n?/gu, "\n").trim(),
+    contractVersion: String(options.contractVersion ?? "").trim(),
+    requestCount: preview.requestCount,
+    skippedAnalyzedCount: preview.skippedAnalyzedCount,
+    excludedCount: preview.excludedCount,
+    totalBytes: preview.totalBytes,
+    knownDurationMs: preview.knownDurationMs,
+    unknownDurationCount: preview.unknownDurationCount,
+    items: preview.items.map((item) => ({
+      entryId: item.entryId,
+      assetId: item.assetId,
+      fingerprint: item.fingerprint,
+      sourcePlan: item.sourcePlan,
+      taskId: "",
+      attemptId: "",
+      requestId: "",
+      status: "pending",
+      attempts: 0,
+      claimId: "",
+      error: "",
+      statusCode: 0
+    })),
+    usage: emptyUsage()
+  };
+}
+
 export function normalizeAnalysisBatchJob(value) {
   if (!value || ![1, ANALYSIS_BATCH_VERSION].includes(value.version) || !value.id || !Array.isArray(value.items)) return null;
   const statuses = new Set(["pending", "running", "succeeded", "failed"]);
   const jobStatuses = new Set(["running", "paused", "completed", "partial", "failed", "canceled"]);
   return {
     version: ANALYSIS_BATCH_VERSION,
-    kind: value.kind === "vision" ? "vision" : "text_tags",
+    kind: ["vision", "video"].includes(value.kind) ? value.kind : "text_tags",
     mode: ["reanalyze", "rebuild"].includes(value.mode) ? "rebuild" : "incremental",
     id: String(value.id),
     status: jobStatuses.has(value.status) ? value.status : "paused",
@@ -214,16 +329,30 @@ export function normalizeAnalysisBatchJob(value) {
     updatedAt: String(value.updatedAt ?? ""),
     analysisModel: String(value.analysisModel ?? "") || DEFAULT_ANALYSIS_MODEL,
     providerId: String(value.providerId ?? ""),
+    protocol: String(value.protocol ?? ""),
+    sourcePlan: String(value.sourcePlan ?? ""),
+    endpoint: String(value.endpoint ?? ""),
+    localVideo: String(value.localVideo ?? ""),
+    preferPublicVideoUrl: value.preferPublicVideoUrl === true,
+    publicVideoUrl: String(value.publicVideoUrl ?? ""),
     outputProtocol: String(value.outputProtocol ?? "json_object"),
     retryPolicy: normalizeRetryPolicy(value.retryPolicy),
     outputLocale: value.outputLocale === "en" ? "en" : "zh-CN",
     providerType: value.providerType === "compatible" ? "compatible" : "openai",
     model: String(value.model ?? ""),
     includeAllImages: value.includeAllImages === true,
+    includeAllVideos: value.includeAllVideos === true,
     reanalyze: value.reanalyze === true,
-    concurrency: normalizeConcurrency(value.concurrency, value.kind === "vision" ? VISION_BATCH_CONCURRENCY : ANALYSIS_BATCH_CONCURRENCY),
+    includeTags: value.includeTags !== false,
+    instruction: String(value.instruction ?? "").replace(/\r\n?/gu, "\n").trim(),
+    contractVersion: String(value.contractVersion ?? "").trim(),
+    concurrency: normalizeConcurrency(value.concurrency, value.kind === "video" ? VIDEO_BATCH_CONCURRENCY : value.kind === "vision" ? VISION_BATCH_CONCURRENCY : ANALYSIS_BATCH_CONCURRENCY),
     requestCount: Math.max(0, Number(value.requestCount) || value.items.length),
     skippedAnalyzedCount: Math.max(0, Number(value.skippedAnalyzedCount) || 0),
+    excludedCount: Math.max(0, Number(value.excludedCount) || 0),
+    totalBytes: Math.max(0, Number(value.totalBytes) || 0),
+    knownDurationMs: Math.max(0, Number(value.knownDurationMs) || 0),
+    unknownDurationCount: Math.max(0, Number(value.unknownDurationCount) || 0),
     promptVersion: Number(value.promptVersion) || ANALYSIS_PROMPT_VERSION,
     profileFingerprint: String(value.profileFingerprint ?? "").trim(),
     catalogRevision: Number(value.catalogRevision) || 0,
@@ -237,6 +366,10 @@ export function normalizeAnalysisBatchJob(value) {
       ...(String(item.visualId ?? "").trim() ? { visualId: String(item.visualId).trim() } : {}),
       ...(String(item.assetId ?? "").trim() ? { assetId: String(item.assetId).trim() } : {}),
       fingerprint: String(item.fingerprint ?? ""),
+      sourcePlan: String(item.sourcePlan ?? value.sourcePlan ?? ""),
+      taskId: String(item.taskId ?? ""),
+      attemptId: String(item.attemptId ?? ""),
+      requestId: String(item.requestId ?? ""),
       textRevision: Math.max(1, Math.floor(Number(item.textRevision) || 1)),
       status: item.status === "partial"
         ? "failed"
@@ -249,7 +382,9 @@ export function normalizeAnalysisBatchJob(value) {
       statusCode: Math.max(0, Number(item.statusCode) || 0),
       serviceRequests: Math.max(0, Number(item.serviceRequests) || 0),
       outputCorrectionRequests: Math.max(0, Number(item.outputCorrectionRequests) || 0),
-      cacheHit: item.cacheHit === true
+      cacheHit: item.cacheHit === true,
+      costReturned: item.costReturned === true,
+      cost: item.costReturned === true && Number.isFinite(Number(item.cost)) ? Number(item.cost) : null
     }] : []),
     usage: normalizeUsage(value.usage)
   };
@@ -269,11 +404,15 @@ export function claimAnalysisItems(value, limit, idFactory = () => globalThis.cr
     item.claimId = String(idFactory());
     item.error = "";
     item.statusCode = 0;
+    item.taskId = "";
+    item.attemptId = "";
+    item.requestId = "";
     claims.push({
       entryId: item.entryId,
       ...(item.visualId ? { visualId: item.visualId } : {}),
       ...(item.assetId ? { assetId: item.assetId } : {}),
       fingerprint: item.fingerprint,
+      sourcePlan: item.sourcePlan,
       textRevision: item.textRevision,
       claimId: item.claimId,
       attempts: item.attempts
@@ -281,6 +420,22 @@ export function claimAnalysisItems(value, limit, idFactory = () => globalThis.cr
   }
   touch(job);
   return { job, claims };
+}
+
+export function bindAnalysisItemAttempt(value, entryId, claimId, identity = {}) {
+  const job = requireJob(value);
+  const item = claimedItem(job, entryId, claimId);
+  const taskId = String(identity.taskId ?? "").trim();
+  const attemptId = String(identity.attemptId ?? "").trim();
+  const requestId = String(identity.requestId ?? attemptId).trim();
+  if (!taskId) throw new Error("批量视频任务缺少精确任务编号");
+  if (item.taskId && item.taskId !== taskId) throw new Error("批量视频任务编号已经变化");
+  if (item.attemptId && attemptId && item.attemptId !== attemptId) throw new Error("批量视频执行编号已经变化");
+  item.taskId = taskId;
+  if (attemptId) item.attemptId = attemptId;
+  if (requestId) item.requestId = requestId;
+  touch(job);
+  return job;
 }
 
 export function succeedAnalysisItem(value, entryId, claimId, usage, catalogRevision, metadata = {}) {
@@ -441,14 +596,26 @@ export function recoverInterruptedAnalysisBatch(value) {
   return job;
 }
 
-export function retryFailedAnalysisItems(value) {
+export function retryFailedAnalysisItems(value, options = {}) {
   const job = requireJob(value);
+  const selected = new Set((Array.isArray(options.itemKeys) ? options.itemKeys : []).map(String));
+  const requireSelection = job.kind === "video" && options.requireSelection === true;
+  if (requireSelection && !selected.size) throw new Error("请选择要重新发送的视频");
   let count = 0;
   for (const item of job.items) {
     if (!["failed", "partial"].includes(item.status)) continue;
+    const itemKey = `${item.entryId}\u0000${item.assetId || item.visualId || ""}`;
+    if (selected.size && !selected.has(itemKey)) continue;
+    if (requireSelection && /状态未知|可能已收到/.test(item.error) && options.confirmDuplicateCharge !== true) {
+      throw new Error("状态未知的视频重新发送前必须确认可能重复计费");
+    }
     item.status = "pending";
     item.error = "";
     item.statusCode = 0;
+    item.claimId = "";
+    item.taskId = "";
+    item.attemptId = "";
+    item.requestId = "";
     count += 1;
   }
   if (!count) throw new Error("没有可重试的失败案例");
@@ -518,6 +685,8 @@ export function analysisBatchSummary(value) {
   return {
     ...job,
     counts,
+    unknownCostCount: job.items.filter((item) => item.status === "succeeded" && item.costReturned !== true).length,
+    totalCost: job.items.reduce((sum, item) => sum + (item.costReturned === true ? Number(item.cost) || 0 : 0), 0),
     total: job.items.length,
     requestAttempts: job.items.reduce((sum, item) => sum + item.serviceRequests, 0),
     outputCorrectionRequests: job.items.reduce((sum, item) => sum + item.outputCorrectionRequests, 0),
@@ -621,6 +790,10 @@ function recordItemExecution(item, metadata = {}) {
   item.serviceRequests += Math.max(0, Number(metadata.attempts?.serviceRequests ?? metadata.serviceRequests) || 0);
   item.outputCorrectionRequests += Math.max(0, Number(metadata.attempts?.outputCorrectionRequests ?? metadata.outputCorrectionRequests) || 0);
   item.cacheHit = item.cacheHit || metadata.cacheHit === true;
+  if (Object.hasOwn(metadata, "cost")) {
+    item.costReturned = metadata.cost !== null && Number.isFinite(Number(metadata.cost));
+    item.cost = item.costReturned ? Number(metadata.cost) : null;
+  }
 }
 
 function failureCategory(status) {

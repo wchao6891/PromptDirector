@@ -1,4 +1,9 @@
-import { COMPOSER_INPUT_MAX_CHARACTERS, createComposerSession, normalizeComposerSettings } from "./composer.js";
+import {
+  COMPOSER_INPUT_MAX_CHARACTERS,
+  createComposerSession,
+  normalizeComposerSettings,
+  referenceSourcePartsForAsset
+} from "./composer.js";
 import { executeComposerTurnWithService } from "./composer-service.js";
 import { entryMediaAssets } from "./media.js";
 
@@ -21,14 +26,19 @@ export function buildSkillExtractionRequest(input = {}) {
   const sources = (Array.isArray(input.sources) ? input.sources : []).flatMap((source, index) => {
     const prompt = multiline(source?.prompt);
     const analysis = multiline(source?.analysis);
-    return prompt || analysis ? [{ number: index + 1, prompt, analysis }] : [];
+    const parts = normalizeAnonymousSourceParts(source?.parts);
+    return prompt || analysis || parts.length ? [{ number: index + 1, prompt, analysis, parts }] : [];
   });
   if (!sources.length) throw new Error(locale === "en" ? "The selected cases have no usable text" : "所选案例没有可用于提炼的文字资料");
   const vision = (Array.isArray(input.visualAnalyses) ? input.visualAnalyses : []).map(multiline).filter(Boolean);
   const sourceText = sources.map((source) => [
     locale === "en" ? `Source ${source.number}` : `匿名来源 ${source.number}`,
-    source.prompt ? `${locale === "en" ? "Original prompt" : "原提示词"}:\n${source.prompt}` : "",
-    source.analysis ? `${locale === "en" ? "Existing visual analysis" : "已有画面分析"}:\n${source.analysis}` : ""
+    ...(source.parts.length
+      ? exactAnonymousSourceGroups(source.parts).map((group) => `[${group.labels.map((kind) => skillSourceLabel(kind, locale)).join(" + ")}]\n${group.text}`)
+      : [
+          source.prompt ? `${locale === "en" ? "Original prompt" : "原提示词"}:\n${source.prompt}` : "",
+          source.analysis ? `${locale === "en" ? "Existing visual analysis" : "已有画面分析"}:\n${source.analysis}` : ""
+        ])
   ].filter(Boolean).join("\n")).join("\n\n");
   const visualText = vision.length ? `\n\n${locale === "en" ? "Confirmed visual contact-sheet analyses" : "已确认的视觉联系表分析"}:\n${vision.map((item, index) => `${index + 1}. ${item}`).join("\n")}` : "";
   const extractionInstruction = multiline(input.instructionOverride) || defaultSkillExtractionInstruction(locale);
@@ -53,7 +63,7 @@ export const SKILL_EXTRACTION_BATCH_TARGET_CHARACTERS = Math.floor(COMPOSER_INPU
 export function skillExtractionWorkload(input = {}) {
   const sources = normalizeSkillSources(input.sources);
   const batches = partitionSkillSources(sources, input.maxBatchCharacters);
-  const textCharacters = sources.reduce((sum, source) => sum + source.prompt.length + source.analysis.length, 0);
+  const textCharacters = sources.reduce((sum, source) => sum + skillSourceCharacters(source), 0);
   return {
     sourceCount: sources.length,
     textCharacters,
@@ -65,7 +75,7 @@ export function skillExtractionWorkload(input = {}) {
     tokenEstimate: estimateSkillTokens([
       clean(input.goal),
       multiline(input.instructionOverride) || defaultSkillExtractionInstruction(input.locale),
-      ...sources.flatMap((source) => [source.prompt, source.analysis])
+      ...sources.flatMap((source) => source.parts?.length ? source.parts.map((part) => part.text) : [source.prompt, source.analysis])
     ].join("\n"))
   };
 }
@@ -177,24 +187,39 @@ export function anonymousSkillSources(entriesValue = [], selectionsValue = [], o
   return (Array.isArray(entriesValue) ? entriesValue : []).flatMap((entry) => {
     const selection = selections.get(String(entry?.id ?? ""));
     if (!selection) return [];
-    const selectedAssets = entryMediaAssets(entry).filter((asset) => selection.assetIds === null || selection.assetIds.has(String(asset.id)));
+    const selectedAssets = entryMediaAssets(entry).filter((asset) => asset.usage !== "poster" && (selection.assetIds === null || selection.assetIds.has(String(asset.id))));
     const mediaPrompts = new Map((Array.isArray(entry?.mediaPrompts) ? entry.mediaPrompts : [])
       .map((item) => [String(item?.assetId ?? ""), multiline(item?.text)]));
-    const prompt = [
-      selection.includeEntryText ? multiline(entry?.text) : "",
-      ...selectedAssets.map((asset) => mediaPrompts.get(String(asset.id)) || ""),
-      ...selectedAssets.filter((asset) => asset.kind === "document").map((asset) => multiline(documents.get(String(asset.id))))
-    ].filter(Boolean).join("\n\n");
-    const selectedIds = new Set(selectedAssets.map((asset) => String(asset.id)));
-    const analysis = [
-      ...selectedAssets.filter((asset) => !asset?.visionAnalysis?.invalidated)
-        .map((asset) => multiline(asset?.visionAnalysis?.reconstructionPrompt || asset?.visionAnalysis?.description)),
-      ...(Array.isArray(entry?.timeNotes) ? entry.timeNotes : [])
-        .filter((note) => selectedIds.has(String(note?.assetId ?? ""))).map((note) => multiline(note?.text)),
-      ...(Array.isArray(entry?.videoAnalyses) ? entry.videoAnalyses : [])
-        .filter((item) => selectedIds.has(String(item?.assetId ?? ""))).map((item) => multiline(item?.description || item?.summary || item?.text))
-    ].filter(Boolean).join("\n");
-    return prompt || analysis ? [{ prompt, analysis }] : [];
+    const hasSelectedVideo = selectedAssets.some((asset) => asset.kind === "video");
+    const parts = [
+      selection.includeEntryText && multiline(entry?.text)
+        ? { kind: "original_prompt", text: multiline(entry.text) } : null,
+      ...selectedAssets.flatMap((asset) => {
+        if (asset.kind === "video") {
+          return referenceSourcePartsForAsset(entry, asset.id, {
+            sourceIds: selection.sourceIds,
+            analysisIds: selection.analysisIds
+          }).map(({ kind, text }) => ({ kind, text }));
+        }
+        const promptText = mediaPrompts.get(String(asset.id));
+        const documentText = asset.kind === "document" ? multiline(documents.get(String(asset.id))) : "";
+        const visualText = !asset?.visionAnalysis?.invalidated
+          ? multiline(asset?.visionAnalysis?.reconstructionPrompt || asset?.visionAnalysis?.description) : "";
+        return [
+          promptText ? { kind: "original_prompt", text: promptText } : null,
+          documentText ? { kind: "document_text", text: documentText } : null,
+          visualText ? { kind: "image_analysis", text: visualText } : null
+        ].filter(Boolean);
+      })
+    ].filter(Boolean);
+    const normalizedParts = normalizeAnonymousSourceParts(parts);
+    const prompt = normalizedParts.filter((part) => ["original_prompt", "document_text"].includes(part.kind)).map((part) => part.text).join("\n\n");
+    const analysis = normalizedParts.filter((part) => !["original_prompt", "document_text"].includes(part.kind)).map((part) => part.text).join("\n");
+    return normalizedParts.length ? [{
+      prompt,
+      analysis,
+      ...(hasSelectedVideo ? { parts: normalizedParts } : {})
+    }] : [];
   });
 }
 
@@ -208,7 +233,9 @@ function normalizeSourceSelections(values) {
     if (!entryId) return [];
     return [[entryId, {
       includeEntryText: selection?.includeEntryText !== false,
-      assetIds: new Set((Array.isArray(selection?.assetIds) ? selection.assetIds : []).map(String))
+      assetIds: new Set((Array.isArray(selection?.assetIds) ? selection.assetIds : []).map(String)),
+      sourceIds: Array.isArray(selection?.sourceIds) ? selection.sourceIds.map(String) : null,
+      analysisIds: (Array.isArray(selection?.analysisIds) ? selection.analysisIds : []).map(String)
     }]];
   }));
 }
@@ -267,7 +294,8 @@ function normalizeSkillSources(values) {
   return (Array.isArray(values) ? values : []).flatMap((source) => {
     const prompt = multiline(source?.prompt);
     const analysis = multiline(source?.analysis);
-    return prompt || analysis ? [{ prompt, analysis }] : [];
+    const parts = normalizeAnonymousSourceParts(source?.parts);
+    return prompt || analysis || parts.length ? [{ prompt, analysis, parts }] : [];
   });
 }
 
@@ -278,7 +306,7 @@ function partitionSkillSources(values, maxCharactersValue) {
   let current = [];
   let characters = 0;
   for (const source of fragments) {
-    const size = source.prompt.length + source.analysis.length;
+    const size = skillSourceCharacters(source);
     if (current.length && characters + size > maxCharacters) {
       batches.push(current);
       current = [];
@@ -292,15 +320,70 @@ function partitionSkillSources(values, maxCharactersValue) {
 }
 
 function splitSkillSource(source, maxCharacters) {
-  if (source.prompt.length + source.analysis.length <= maxCharacters) return [source];
+  if (skillSourceCharacters(source) <= maxCharacters) return [source];
   const chunks = [];
+  for (const part of source.parts ?? []) {
+    for (let offset = 0; offset < part.text.length; offset += maxCharacters) {
+      chunks.push({ prompt: "", analysis: "", parts: [{ ...part, text: part.text.slice(offset, offset + maxCharacters) }] });
+    }
+  }
+  if (source.parts?.length) return chunks;
   for (let offset = 0; offset < source.prompt.length; offset += maxCharacters) {
-    chunks.push({ prompt: source.prompt.slice(offset, offset + maxCharacters), analysis: "" });
+    chunks.push({ prompt: source.prompt.slice(offset, offset + maxCharacters), analysis: "", parts: [] });
   }
   for (let offset = 0; offset < source.analysis.length; offset += maxCharacters) {
-    chunks.push({ prompt: "", analysis: source.analysis.slice(offset, offset + maxCharacters) });
+    chunks.push({ prompt: "", analysis: source.analysis.slice(offset, offset + maxCharacters), parts: [] });
   }
   return chunks;
+}
+
+function skillSourceCharacters(source) {
+  return (source.parts ?? []).reduce((sum, part) => sum + part.text.length, 0)
+    || source.prompt.length + source.analysis.length;
+}
+
+function normalizeAnonymousSourceParts(values) {
+  const allowed = new Set(["original_prompt", "video_reconstruction", "time_notes", "other_analysis", "image_analysis", "document_text"]);
+  return (Array.isArray(values) ? values : []).flatMap((part) => {
+    const kind = String(part?.kind ?? "").trim();
+    const text = multiline(part?.text);
+    return allowed.has(kind) && text ? [{ kind, text }] : [];
+  });
+}
+
+function exactAnonymousSourceGroups(parts) {
+  const groups = [];
+  const byText = new Map();
+  for (const part of parts) {
+    const key = multiline(part.text);
+    let group = byText.get(key);
+    if (!group) {
+      group = { text: part.text, labels: [] };
+      byText.set(key, group);
+      groups.push(group);
+    }
+    if (!group.labels.includes(part.kind)) group.labels.push(part.kind);
+  }
+  return groups;
+}
+
+function skillSourceLabel(kind, locale) {
+  const labels = locale === "en" ? {
+    original_prompt: "Original prompt",
+    video_reconstruction: "AI visual reconstruction",
+    time_notes: "Human time notes",
+    other_analysis: "Other analysis",
+    image_analysis: "Image analysis",
+    document_text: "Selected document"
+  } : {
+    original_prompt: "原始提示词",
+    video_reconstruction: "AI 视觉逆推",
+    time_notes: "人工时间点笔记",
+    other_analysis: "其他分析",
+    image_analysis: "图片分析",
+    document_text: "所选文档"
+  };
+  return labels[kind] || (locale === "en" ? "Source" : "来源");
 }
 
 function addUsage(left = {}, right = {}) {

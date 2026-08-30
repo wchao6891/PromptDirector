@@ -235,10 +235,29 @@ export function resolveVideoAnalysisTask(configurationValue = {}) {
     protocol: profile.protocol,
     apiKey: profile.apiKey,
     endpoint: profile.endpoint,
+    ...(modelRuntime.structuredOutputTokenBudget ? { maxOutputTokens: modelRuntime.structuredOutputTokenBudget } : {}),
     ...(["unsupported", "base64"].includes(modelRuntime.mediaInput.localVideo) ? { localVideo: modelRuntime.mediaInput.localVideo } : {}),
     ...(modelRuntime.mediaInput.preferPublicVideoUrl === true ? { preferPublicVideoUrl: true } : {}),
     ...(modelRuntime.mediaInput.publicVideoUrl === "direct" ? { publicVideoUrl: "direct" } : {})
   };
+}
+
+export function videoAnalysisRouteSnapshot(value = {}) {
+  return {
+    providerId: clean(value.providerId),
+    model: clean(value.model),
+    protocol: clean(value.protocol),
+    endpoint: clean(value.endpoint),
+    localVideo: ["unsupported", "base64"].includes(value.localVideo) ? value.localVideo : "",
+    preferPublicVideoUrl: value.preferPublicVideoUrl === true,
+    publicVideoUrl: value.publicVideoUrl === "direct" ? "direct" : ""
+  };
+}
+
+export function videoAnalysisRouteMatches(left, right) {
+  const expected = videoAnalysisRouteSnapshot(left);
+  const actual = videoAnalysisRouteSnapshot(right);
+  return Object.keys(expected).every((key) => expected[key] === actual[key]);
 }
 
 function settingsForTextAssignment(assignmentValue, providers, preferences, strict) {

@@ -52,3 +52,81 @@ test("extraction payload contains anonymous selected text and no local identity 
   assert.match(request, /已有画面分析[\s\S]*visible composition/);
   assert.doesNotMatch(request, /local:secret|Secret Project|private\.example/);
 });
+
+test("selected video Skill sources stay asset-specific anonymous and exclude history tags and binary media", () => {
+  const entries = [{
+    id: "private:case-id",
+    title: "PRIVATE_TITLE_SENTINEL",
+    url: "https://private.example/video",
+    text: "案例级回退",
+    mediaAssets: [
+      { id: "private:video-one", kind: "video", usage: "content", mimeType: "video/mp4", assetPath: "private/video.mp4" },
+      { id: "private:video-two", kind: "video", usage: "content", mimeType: "video/mp4" }
+    ],
+    mediaPrompts: [
+      { assetId: "private:video-one", text: "所选视频原始提示词" },
+      { assetId: "private:video-two", text: "另一视频提示词" }
+    ],
+    timeNotes: [
+      { id: "private:note-one", assetId: "private:video-one", startMs: 0, text: "所选视频人工笔记", createdAt: "2026-08-30T00:00:00.000Z" },
+      { id: "private:note-two", assetId: "private:video-two", startMs: 0, text: "另一视频笔记", createdAt: "2026-08-30T00:00:00.000Z" }
+    ],
+    videoAnalyses: [
+      completeSkillReconstruction("private:old", "private:video-one", "旧逆推", "2026-08-30T00:00:01.000Z"),
+      completeSkillReconstruction("private:current", "private:video-one", "当前视觉逆推", "2026-08-30T00:00:03.000Z"),
+      { id: "private:review", assetId: "private:video-one", mode: "ad-review", text: "默认不进入的审片", createdAt: "2026-08-30T00:00:04.000Z" },
+      completeSkillReconstruction("private:other", "private:video-two", "另一视频逆推", "2026-08-30T00:00:05.000Z")
+    ],
+    facetAssignments: [{ source: "vision_model", facetId: "PRIVATE_TAG_SENTINEL" }]
+  }];
+  const selections = [{ entryId: "private:case-id", includeEntryText: false, assetIds: ["private:video-one"] }];
+  assert.deepEqual(selectedSkillContentImages(entries, selections), []);
+  const [source] = anonymousSkillSources(entries, selections);
+  assert.deepEqual(source.parts.map((part) => part.kind), ["original_prompt", "video_reconstruction", "time_notes"]);
+  const request = buildSkillExtractionRequest({ goal: "提炼视频方法", sources: [source], locale: "zh-CN" });
+  assert.match(request, /\[原始提示词\][\s\S]*所选视频原始提示词/);
+  assert.match(request, /\[AI 视觉逆推\][\s\S]*当前视觉逆推/);
+  assert.match(request, /\[人工时间点笔记\][\s\S]*所选视频人工笔记/);
+  assert.doesNotMatch(request, /旧逆推|审片|另一视频|PRIVATE_TAG_SENTINEL|PRIVATE_TITLE_SENTINEL|private:|private\.example|video\.mp4/);
+
+  const [customized] = anonymousSkillSources(entries, [{
+    ...selections[0],
+    sourceIds: ["reconstruction:private:current", "notes:private:video-one"],
+    analysisIds: ["private:review"]
+  }]);
+  assert.deepEqual(customized.parts.map((part) => part.kind), ["video_reconstruction", "time_notes", "other_analysis"]);
+  assert.doesNotMatch(customized.prompt, /所选视频原始提示词/);
+  assert.match(customized.analysis, /当前视觉逆推[\s\S]*所选视频人工笔记[\s\S]*默认不进入的审片/);
+});
+
+test("Skill source exact dedupe keeps both labels without repeating the body", () => {
+  const request = buildSkillExtractionRequest({
+    goal: "提炼共同方法",
+    locale: "zh-CN",
+    sources: [{
+      parts: [
+        { kind: "original_prompt", text: "相同正文" },
+        { kind: "video_reconstruction", text: "相同正文" }
+      ]
+    }]
+  });
+  assert.match(request, /\[原始提示词 \+ AI 视觉逆推\]\n相同正文/);
+  assert.equal(request.match(/相同正文/g)?.length, 1);
+});
+
+function completeSkillReconstruction(id, assetId, reconstructionPrompt, createdAt) {
+  return {
+    id,
+    assetId,
+    mode: "visual-reconstruction",
+    requestId: `request:${id}`,
+    contractVersion: "visual-v3-1",
+    reconstructionPrompt,
+    tags: [],
+    uncertainties: [],
+    includeTags: false,
+    analysisScope: "visual",
+    finishReason: "stop",
+    createdAt
+  };
+}

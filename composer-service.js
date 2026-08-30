@@ -150,6 +150,7 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
 
 export function composerServiceCapabilities(profileValue, visionSettingsValue = {}) {
   const profile = normalizeComposerAiProfile(profileValue);
+  if (profile.serviceId === "unassigned") return { serviceId: "unassigned", model: "", image: null, video: null };
   const settings = normalizeVisionSettings(visionSettingsValue);
   const xai = normalizeXaiComposerSettings(visionSettingsValue?.xai);
   if (profile.serviceId === "deepseek") return { serviceId: "deepseek", model: profile.model, image: null, video: null };
@@ -419,6 +420,20 @@ export function composerImageEditCapabilities(profileValue, visionSettingsValue 
 
 export function selectedComposerService(profileValue, aiSettingsValue, visionSettingsValue) {
   const profile = normalizeComposerAiProfile(profileValue);
+  if (profile.serviceId === "unassigned") {
+    return {
+      serviceId: "unassigned",
+      model: "",
+      label: "未选择模型",
+      shortLabel: "未选择模型",
+      configured: false,
+      vision: false,
+      planning: false,
+      reasoning: false,
+      imageGeneration: false,
+      videoGeneration: false
+    };
+  }
   const catalog = composerServiceCatalog(aiSettingsValue, visionSettingsValue);
   return catalog.find((item) => item.serviceId === profile.serviceId && item.model === profile.model)
     ?? catalog.find((item) => item.serviceId === profile.serviceId)
@@ -427,6 +442,9 @@ export function selectedComposerService(profileValue, aiSettingsValue, visionSet
 
 export async function planComposerTurnWithService(input, settingsValue, options = {}) {
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
+  if (profile.serviceId === "unassigned") {
+    throw new ComposerServiceError("创作规划未配置，请在 AI 服务的任务路由中选择模型", 422, { retryable: false });
+  }
   if (profile.serviceId === "deepseek") return planDeepSeekTurn(input, settingsValue.ai, options);
   const service = requireVisualService(profile, settingsValue.vision, "规划");
   if (service.planning === false) {
@@ -1096,7 +1114,10 @@ function executionRequest(input) {
     references: (input.session?.referenceSnapshots ?? []).map((item) => ({
       alias: item.alias,
       referenceKind: item.referenceKind,
-      referenceText: item.originalText || "",
+      referenceText: item.referenceKind === "video_sources" ? item.referenceText || "" : item.originalText || "",
+      sources: item.referenceKind === "video_sources"
+        ? (item.referenceSources ?? []).map(({ kind, label }) => ({ kind, label }))
+        : [],
       imageCount: item.imageRefs?.length || 0
     }))
   };
@@ -1106,6 +1127,7 @@ function multimodalContent(session, request, preparedImages, protocol) {
   const content = [{ type: "text", text: JSON.stringify(request) }];
   const images = new Map((Array.isArray(preparedImages) ? preparedImages : []).map((item) => [item.visualId, item]));
   for (const reference of session?.referenceSnapshots ?? []) {
+    if (reference.referenceKind === "video_sources") continue;
     const textOnly = session?.imageReferenceMode === "text_only";
     const savedReconstructions = (reference.assets ?? []).map((asset, index) => String(asset?.reconstructionPrompt ?? "").trim()
       ? `[图片${index + 1}重建提示词]\n${String(asset.reconstructionPrompt).trim()}` : "").filter(Boolean).join("\n\n");

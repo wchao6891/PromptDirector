@@ -5,14 +5,14 @@ import { readFile } from "node:fs/promises";
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const e2eSupport = await readFile(new URL("./e2e_support.py", import.meta.url), "utf8");
 
-test("the only release verification gate runs source tests and browser E2E before packaging", () => {
+test("the only release verification gate runs source tests and the packaged fixed-id lab before the store package", () => {
   const scripts = packageJson.scripts;
   assert.equal(scripts.verify, "npm run verify:release");
   assert.match(scripts["verify:source"], /npm test/);
   assert.match(scripts["verify:release"], /npm run verify:source/);
-  assert.match(scripts["verify:release"], /npm run test:e2e/);
+  assert.match(scripts["verify:release"], /npm run test:local-extension/);
   assert.match(scripts["verify:release"], /npm run package:release/);
-  assert.ok(scripts["verify:release"].indexOf("npm run test:e2e") < scripts["verify:release"].indexOf("npm run package:release"));
+  assert.ok(scripts["verify:release"].indexOf("npm run test:local-extension") < scripts["verify:release"].indexOf("npm run package:release"));
   assert.equal((scripts["verify:release"].match(/package:release/g) ?? []).length, 1);
 });
 
@@ -33,9 +33,9 @@ test("release verification cannot bypass the historical data compatibility gate"
 test("release verification rehearses an installed-profile upgrade with the final fixed-id package", () => {
   const scripts = packageJson.scripts;
   assert.equal(scripts["test:upgrade"], "node tools/run-release-upgrade-e2e.mjs");
-  assert.match(scripts["verify:release"], /npm run package/);
+  assert.match(scripts["test:local-extension"], /npm run package/);
   assert.match(scripts["verify:release"], /npm run test:upgrade/);
-  assert.ok(scripts["verify:release"].indexOf("npm run package") < scripts["verify:release"].indexOf("npm run test:upgrade"));
+  assert.ok(scripts["verify:release"].indexOf("npm run test:local-extension") < scripts["verify:release"].indexOf("npm run test:upgrade"));
 });
 
 test("GitHub runs source contracts and packaged Chromium journeys before main can advance", async () => {
@@ -44,7 +44,7 @@ test("GitHub runs source contracts and packaged Chromium journeys before main ca
   assert.match(workflow, /push:[\s\S]*branches:[\s\S]*main/);
   assert.match(workflow, /fetch-depth:\s*0/);
   assert.match(workflow, /npm run verify:source/);
-  assert.match(workflow, /npm run test:e2e/);
+  assert.match(workflow, /npm run test:local-extension/);
   assert.match(workflow, /npm run package:release/);
   assert.match(workflow, /npm run package/);
   assert.match(workflow, /npm run test:upgrade/);

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   AI_ASSIGNMENT_TASKS,
+  applyConnectionModelAssignments,
   availableAiModelsForTask,
   availableAiProvidersForTask,
   createAiTaskAssignment,
@@ -136,6 +137,7 @@ test("task model candidates separate declared catalog capability from explicit m
     providerId: "deepseek",
     model: "opaque-account-model",
     evidence: "manual_unverified",
+    managedBy: "task",
     concurrency: 10
   });
   assert.throws(() => createAiTaskAssignment(
@@ -200,7 +202,7 @@ test("registry v5 exposes task concurrency defaults and official model limits", 
   assert.equal(publicAiProviderRegistry(registry).providers.kimi.category, "official");
   assert.equal(assignments.textTags.concurrency, 20);
   assert.equal(assignments.imageAnalysis.concurrency, 10);
-  assert.equal(assignments.videoAnalysis.concurrency, 10);
+  assert.equal(assignments.videoAnalysis.concurrency, 2);
   const deepSeekVision = getAiModelCapability("deepseek", "deepseek-v4-flash-vision-exp");
   assert.equal(deepSeekVision.inputModalities.includes("image"), true);
   assert.equal(deepSeekVision.concurrencyLimit.value, 2500);
@@ -210,6 +212,94 @@ test("registry v5 exposes task concurrency defaults and official model limits", 
     kimi: { discoveredModels: [{ id: "declared-model", tasks: ["videoAnalysis", "imageGeneration", "videoGeneration"] }] }
   } });
   assert.deepEqual(bounded.providers.kimi.discoveredModels[0].tasks, ["videoAnalysis"]);
+});
+
+test("assignment ownership protects existing task routes while one confirmed connection fills compatible gaps", () => {
+  const registry = normalizeAiProviderRegistry({ providers: {
+    zhipu: {
+      apiKey: "zhipu-secret",
+      consent: true,
+      discoveredModels: [{
+        id: "glm-5.3-flash",
+        status: "available",
+        confidence: "declared",
+        tasks: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"],
+        inputModalities: ["text", "image", "video"],
+        outputModalities: ["text"]
+      }]
+    },
+    deepseek: {
+      apiKey: "deepseek-secret",
+      consent: true,
+      discoveredModels: [{
+        id: "deepseek-text",
+        status: "available",
+        confidence: "declared",
+        tasks: ["textTags", "skillExtraction", "creativePlanning"],
+        inputModalities: ["text"],
+        outputModalities: ["text"]
+      }]
+    }
+  } });
+  const existing = normalizeAiTaskAssignments({
+    textTags: { providerId: "deepseek", model: "deepseek-text" },
+    imageAnalysis: {
+      providerId: "zhipu", model: "legacy-connection-model", managedBy: "connection"
+    }
+  }, registry);
+
+  assert.equal(existing.textTags.managedBy, "task");
+  assert.equal(existing.imageAnalysis.managedBy, "connection");
+  assert.equal(Object.hasOwn(existing.videoAnalysis, "managedBy"), false);
+
+  const next = applyConnectionModelAssignments(existing, {
+    providerId: "zhipu",
+    model: "glm-5.3-flash",
+    taskIds: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"]
+  }, registry);
+
+  assert.deepEqual(next.textTags, existing.textTags);
+  for (const taskId of ["skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"]) {
+    assert.equal(next[taskId].providerId, "zhipu");
+    assert.equal(next[taskId].model, "glm-5.3-flash");
+    assert.equal(next[taskId].managedBy, "connection");
+  }
+
+  const anotherProvider = applyConnectionModelAssignments(next, {
+    providerId: "deepseek",
+    model: "deepseek-text",
+    taskIds: ["textTags", "skillExtraction", "creativePlanning"]
+  }, registry);
+  assert.deepEqual(anotherProvider, next);
+});
+
+test("connection linking ignores unverified catalog guesses unless one explicit custom protocol role allows it", () => {
+  const registry = normalizeAiProviderRegistry({ providers: {
+    "custom-text": {
+      endpoint: "https://compatible.example/v1/chat/completions",
+      protocol: "chat_completions",
+      apiKey: "compatible-secret",
+      consent: true,
+      discoveredModels: [{ id: "opaque-model", confidence: "manual_unverified", tasks: [] }]
+    }
+  } });
+  const ignored = applyConnectionModelAssignments({}, {
+    providerId: "custom-text",
+    model: "opaque-model",
+    taskIds: ["textTags", "creativePlanning"]
+  }, registry);
+  assert.equal(ignored.textTags.providerId, "");
+  assert.equal(ignored.creativePlanning.providerId, "");
+
+  const explicit = applyConnectionModelAssignments({}, {
+    providerId: "custom-text",
+    model: "opaque-model",
+    taskIds: ["creativePlanning"],
+    allowManualUnverifiedTasks: ["creativePlanning"]
+  }, registry);
+  assert.equal(explicit.creativePlanning.providerId, "custom-text");
+  assert.equal(explicit.creativePlanning.managedBy, "connection");
+  assert.equal(explicit.textTags.providerId, "");
 });
 
 test("new installs retain both custom connection entries without inventing a saved generic profile", () => {

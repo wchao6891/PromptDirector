@@ -1,7 +1,7 @@
 import { CONTENT_ROLES, contentRoleForEntry } from "./taxonomy.js";
 import { normalizeAppliedSkillSnapshots } from "./creative-skills.js";
 import { primaryVisionDescription } from "./visuals.js";
-import { entryMediaAssets } from "./media.js";
+import { currentVideoReconstruction, entryMediaAssets } from "./media.js";
 import { TEMP_REFERENCE_SOURCE_TYPES } from "./temp-references.js";
 import { normalizeLocalRelativePath } from "./local-media.js";
 import {
@@ -37,6 +37,7 @@ export const COMPOSER_SERVICE_IDS = Object.freeze([
   "compatible"
 ]);
 export const DEFAULT_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "deepseek", model: "deepseek-v4-flash", thinking: false });
+export const UNASSIGNED_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "unassigned", model: "", thinking: false });
 export const COMPOSER_INPUT_MAX_CHARACTERS = 750_000;
 const COMPOSER_REQUEST_MAX_CHARACTERS = 775_000;
 export { DEFAULT_AGENT_INSTRUCTION, DEFAULT_TASK_METHODS, normalizePlannerResult };
@@ -55,6 +56,7 @@ export function normalizeComposerSettings(value = {}) {
 
 export function normalizeComposerAiProfile(value = {}) {
   const requestedServiceId = String(value?.serviceId ?? "").trim();
+  if (requestedServiceId === UNASSIGNED_COMPOSER_AI_PROFILE.serviceId) return { ...UNASSIGNED_COMPOSER_AI_PROFILE };
   const serviceId = requestedServiceId && COMPOSER_SERVICE_IDS.includes(requestedServiceId)
     ? requestedServiceId
     : "deepseek";
@@ -70,12 +72,13 @@ export function normalizeComposerAiProfile(value = {}) {
 
 export function composerProfileForTaskAssignment(assignmentValue = {}, fallbackValue = {}) {
   const providerId = String(assignmentValue?.providerId ?? "").trim();
-  if (!providerId) return normalizeComposerAiProfile(fallbackValue);
+  const model = String(assignmentValue?.model ?? "").trim();
+  if (!providerId || !model) return { ...UNASSIGNED_COMPOSER_AI_PROFILE };
   const serviceId = providerId === "custom-media" ? "compatible" : providerId;
-  if (!COMPOSER_SERVICE_IDS.includes(serviceId)) return normalizeComposerAiProfile(fallbackValue);
+  if (!COMPOSER_SERVICE_IDS.includes(serviceId)) return { ...UNASSIGNED_COMPOSER_AI_PROFILE };
   return normalizeComposerAiProfile({
     serviceId,
-    model: assignmentValue?.model,
+    model,
     thinking: fallbackValue?.thinking === true
   });
 }
@@ -112,7 +115,9 @@ export function isComposerEligibleEntry(entry, targetType = "") {
   if (Array.isArray(entry?.memberEntries)) {
     return Boolean(referenceTextForEntry(entry, targetType) || imageRefsForEntry(entry).length);
   }
-  if (targetType === "video" && videoNoteReferenceText(entry)) return true;
+  if (targetType === "video" && entryMediaAssets(entry).some((asset) =>
+    asset.kind === "video" && referenceSourcePartsForAsset(entry, asset.id).length
+  )) return true;
   const contentRole = contentRoleForEntry(entry);
   if (![CONTENT_ROLES.promptImage, CONTENT_ROLES.promptVideo, CONTENT_ROLES.imageCase, CONTENT_ROLES.reference].includes(contentRole)) return false;
   return Boolean(String(entry?.text ?? "").trim() || imageRefsForEntry(entry).length);
@@ -125,7 +130,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
     const selection = normalizeReferenceSelection(selectionValue);
     const entry = byId.get(selection.entryId);
     if (!Array.isArray(entry?.memberEntries) && selection.assetIds.length > 1) {
-      return selection.assetIds.map((assetId) => ({ entryId: selection.entryId, assetIds: [assetId] }));
+      return selection.assetIds.map((assetId) => ({ ...selection, assetIds: [assetId] }));
     }
     return [selection];
   });
@@ -152,10 +157,33 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
       continue;
     }
     const contentRole = contentRoleForEntry(entry);
-    const videoNotes = targetType === "video" ? videoNoteReferenceText(entry) : "";
-    const selectedAssets = selectedImageAssets(entry, selection.assetIds);
+    const selectedAssets = selectedReferenceAssets(entry, selection.assetIds, targetType);
     if (selection.assetIds.length && selectedAssets.length !== selection.assetIds.length) {
-      throw new Error("选择的参考图片已经失效，请重新选择");
+      throw new Error("选择的参考素材已经失效，请重新选择");
+    }
+    if (selectedAssets.length === 1 && selectedAssets[0].kind === "video") {
+      const asset = selectedAssets[0];
+      const referenceSources = referenceSourcePartsForAsset(entry, asset.id, {
+        sourceIds: selection.sourceIds,
+        analysisIds: selection.analysisIds
+      });
+      if (!referenceSources.length) continue;
+      const referenceText = formatReferenceSourceParts(referenceSources, locale);
+      snapshots.push({
+        referenceId: referenceSnapshotId(entry.id, asset.id),
+        entryId: entry.id,
+        assetId: asset.id,
+        alias: locale === "en" ? `@Reference${snapshots.length + 1}` : `@参考${snapshots.length + 1}`,
+        title: String(entry.title ?? "").trim(),
+        referenceKind: "video_sources",
+        referenceText,
+        originalText: referenceSources.find((source) => source.kind === "original_prompt")?.text ?? "",
+        scope: "asset",
+        imageRefs: [],
+        assets: [],
+        referenceSources
+      });
+      continue;
     }
     const mediaPrompts = new Map((entry.mediaPrompts ?? []).map((item) => [item.assetId, String(item.text ?? "").trim()]));
     const selectedPrompts = selectedAssets.map((asset) => mediaPrompts.get(asset.id)).filter(Boolean);
@@ -165,9 +193,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
         ? selectedPrompts.map((text, index) => `[图片${index + 1}独立提示词]\n${text}`).join("\n\n")
         : String(entry.text ?? "").trim();
     const visualFacts = imageVisualFacts(entry, selection.assetIds);
-    const referenceKind = videoNotes && !originalPrompt
-      ? "video_notes"
-      : originalPrompt && visualFacts.length ? "prompt_vision"
+    const referenceKind = originalPrompt && visualFacts.length ? "prompt_vision"
         : contentRole === CONTENT_ROLES.imageCase ? "vision"
         : contentRole === CONTENT_ROLES.reference ? "reference" : "prompt";
     const baseText = referenceKind === "prompt_vision"
@@ -175,8 +201,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
       : referenceKind === "vision"
         ? visualFacts.map((fact, index) => `[图片${index + 1}可见事实]\n${fact}`).join("\n\n") || primaryVisionDescription(entry)
         : originalPrompt;
-    const referenceText = [baseText, videoNotes]
-      .map((value) => String(value ?? "").trim()).filter(Boolean).join("\n\n");
+    const referenceText = String(baseText ?? "").trim();
     snapshots.push({
       referenceId: referenceSnapshotId(entry.id, selectedAssets.length === 1 ? selectedAssets[0].id : ""),
       entryId: entry.id,
@@ -236,12 +261,27 @@ function imageVisualFacts(entry, assetIds = []) {
 }
 
 function normalizeReferenceSelection(value) {
-  if (typeof value === "string") return { entryId: value.trim(), assetIds: [] };
+  if (typeof value === "string") return { entryId: value.trim(), assetIds: [], sourceIds: null, analysisIds: [] };
   return {
     entryId: String(value?.entryId ?? "").trim(),
     assetIds: [...new Set((Array.isArray(value?.assetIds) ? value.assetIds : [])
+      .map((item) => String(item ?? "").trim()).filter(Boolean))],
+    sourceIds: Array.isArray(value?.sourceIds)
+      ? [...new Set(value.sourceIds.map((item) => String(item ?? "").trim()).filter(Boolean))]
+      : null,
+    analysisIds: [...new Set((Array.isArray(value?.analysisIds) ? value.analysisIds : [])
       .map((item) => String(item ?? "").trim()).filter(Boolean))]
   };
+}
+
+function selectedReferenceAssets(entry, assetIds = [], targetType = "") {
+  const selected = new Set(Array.isArray(assetIds) ? assetIds : []);
+  const assets = entryMediaAssets(entry).filter((asset) => asset.usage !== "poster" &&
+    (asset.kind === "image" || targetType === "video" && asset.kind === "video"));
+  if (selected.size) return assets.filter((asset) => selected.has(asset.id));
+  if (targetType !== "video") return assets;
+  const primary = assets.find((asset) => asset.id === entry?.primaryMediaId);
+  return primary ? [primary] : assets.slice(0, 1);
 }
 
 function selectedImageAssets(entry, assetIds = []) {
@@ -249,6 +289,132 @@ function selectedImageAssets(entry, assetIds = []) {
   return entryMediaAssets(entry).filter((asset) =>
     asset.kind === "image" && asset.usage !== "poster" && (!selected.size || selected.has(asset.id))
   );
+}
+
+export function referenceSourcePartsForAsset(entry, assetIdValue, options = {}) {
+  const assetId = String(assetIdValue ?? "").trim();
+  const asset = entryMediaAssets(entry).find((item) => item.id === assetId && item.usage !== "poster");
+  if (!asset) return [];
+  const allowedSourceIds = Array.isArray(options.sourceIds) ? new Set(options.sourceIds.map(String)) : null;
+  const selectedAnalysisIds = new Set((Array.isArray(options.analysisIds) ? options.analysisIds : []).map(String));
+  const mediaPrompt = (Array.isArray(entry?.mediaPrompts) ? entry.mediaPrompts : [])
+    .find((item) => String(item?.assetId ?? "") === assetId && String(item?.text ?? "").trim());
+  const originalText = String(mediaPrompt?.text ?? entry?.text ?? "").trim();
+  const current = asset.kind === "video" ? currentVideoReconstruction(entry, assetId) : null;
+  const notes = asset.kind === "video" ? videoNotesForAsset(entry, assetId) : [];
+  const defaultParts = [
+    originalText ? {
+      id: `original:${assetId}`,
+      kind: "original_prompt",
+      label: "原始提示词",
+      text: originalText,
+      provenance: [{
+        type: mediaPrompt ? "asset_prompt" : "case_text",
+        ...(mediaPrompt?.textRevision ? { version: Math.max(1, Number(mediaPrompt.textRevision) || 1) } : {})
+      }]
+    } : null,
+    current?.reconstructionPrompt ? {
+      id: `reconstruction:${String(current.id ?? "current")}`,
+      kind: "video_reconstruction",
+      label: "AI 视觉逆推",
+      text: String(current.reconstructionPrompt).trim(),
+      analysisId: String(current.id ?? "").trim(),
+      analysisVersion: Math.max(1, Number(current.version) || 1),
+      provenance: [{ type: "video_analysis", recordId: String(current.id ?? "").trim(), version: Math.max(1, Number(current.version) || 1) }]
+    } : null,
+    notes.length ? {
+      id: `notes:${assetId}`,
+      kind: "time_notes",
+      label: "人工时间点笔记",
+      text: notes.map((note) => `[${formatReferenceNoteRange(note)}] ${String(note.text ?? "").trim()}`).join("\n"),
+      recordIds: notes.map((note) => String(note.id ?? "").trim()).filter(Boolean),
+      provenance: notes.map((note) => ({ type: "time_note", recordId: String(note.id ?? "").trim() })).filter((item) => item.recordId)
+    } : null
+  ].filter(Boolean);
+  const otherParts = (Array.isArray(entry?.videoAnalyses) ? entry.videoAnalyses : []).flatMap((analysis) => {
+    const analysisId = String(analysis?.id ?? "").trim();
+    if (!analysisId || analysisId === String(current?.id ?? "") || String(analysis?.assetId ?? "") !== assetId || !selectedAnalysisIds.has(analysisId)) return [];
+    const text = String(analysis?.reconstructionPrompt ?? analysis?.text ?? analysis?.description ?? analysis?.summary ?? "").trim();
+    if (!text) return [];
+    return [{
+      id: `analysis:${analysisId}`,
+      kind: "other_analysis",
+      label: "其他分析",
+      text,
+      analysisId,
+      analysisVersion: Math.max(1, Number(analysis.version) || 1),
+      provenance: [{ type: "video_analysis", recordId: analysisId, version: Math.max(1, Number(analysis.version) || 1) }]
+    }];
+  });
+  return [
+    ...defaultParts.filter((part) => !allowedSourceIds || allowedSourceIds.has(part.id)),
+    ...otherParts
+  ]
+    .map(normalizeReferenceSourcePart).filter(Boolean);
+}
+
+export function formatReferenceSourceParts(partsValue = [], locale = "zh-CN") {
+  const groups = [];
+  const byText = new Map();
+  for (const part of (Array.isArray(partsValue) ? partsValue : []).map(normalizeReferenceSourcePart).filter(Boolean)) {
+    const key = part.text.replace(/\r\n?/g, "\n").trim();
+    let group = byText.get(key);
+    if (!group) {
+      group = { text: part.text, labels: [] };
+      byText.set(key, group);
+      groups.push(group);
+    }
+    const label = locale === "en" ? referenceSourceLabelEn(part.kind) : part.label;
+    if (!group.labels.includes(label)) group.labels.push(label);
+  }
+  return groups.map((group) => `[${group.labels.join(" + ")}]\n${group.text}`).join("\n\n");
+}
+
+function videoNotesForAsset(entry, assetId) {
+  return (Array.isArray(entry?.timeNotes) ? entry.timeNotes : [])
+    .filter((note) => String(note?.assetId ?? "") === assetId && String(note?.text ?? "").trim())
+    .toSorted((left, right) => Number(left.startMs) - Number(right.startMs) || String(left.createdAt ?? "").localeCompare(String(right.createdAt ?? "")));
+}
+
+function formatReferenceNoteRange(note) {
+  return Number(note?.endMs) > Number(note?.startMs)
+    ? `${formatReferenceTime(note.startMs)}-${formatReferenceTime(note.endMs)}`
+    : formatReferenceTime(note?.startMs);
+}
+
+function referenceSourceLabelEn(kind) {
+  return ({
+    original_prompt: "Original prompt",
+    video_reconstruction: "AI visual reconstruction",
+    time_notes: "Human time notes",
+    other_analysis: "Other analysis"
+  })[kind] || "Source";
+}
+
+function normalizeReferenceSourcePart(value) {
+  const id = String(value?.id ?? "").trim();
+  const text = String(value?.text ?? "").replace(/\r\n?/g, "\n").trim();
+  const kind = ["original_prompt", "video_reconstruction", "time_notes", "other_analysis"].includes(value?.kind)
+    ? value.kind : "";
+  if (!id || !kind || !text) return null;
+  return {
+    id,
+    kind,
+    label: String(value?.label ?? "").trim() || referenceSourceLabelEn(kind),
+    text,
+    ...(String(value?.analysisId ?? "").trim() ? { analysisId: String(value.analysisId).trim() } : {}),
+    ...(Number(value?.analysisVersion) > 0 ? { analysisVersion: Math.max(1, Number(value.analysisVersion) || 1) } : {}),
+    ...(Array.isArray(value?.recordIds) ? { recordIds: uniqueStrings(value.recordIds) } : {}),
+    provenance: (Array.isArray(value?.provenance) ? value.provenance : []).flatMap((item) => {
+      const type = String(item?.type ?? "").trim();
+      if (!type) return [];
+      return [{
+        type,
+        ...(String(item?.recordId ?? "").trim() ? { recordId: String(item.recordId).trim() } : {}),
+        ...(Number(item?.version) > 0 ? { version: Math.max(1, Number(item.version) || 1) } : {})
+      }];
+    })
+  };
 }
 
 function referenceAssetSnapshot(asset) {
@@ -467,10 +633,11 @@ export function plannerRequestPayload(sessionValue, userMessage, settingsValue) 
       sourceType: skill.source,
       textMode: skill.textMode
     })),
-    references: session.referenceSnapshots.map(({ alias, referenceKind, referenceText, imageRefs }) => ({
+    references: session.referenceSnapshots.map(({ alias, referenceKind, referenceText, imageRefs, referenceSources }) => ({
       alias,
       referenceKind,
       referenceText,
+      ...(referenceSources.length ? { sources: referenceSources.map(({ kind, label }) => ({ kind, label })) } : {}),
       imageCount: imageRefs.length
     })),
     retrievedSources: session.retrievedSources.map(({ alias, role, referenceKind, text }) => ({ alias, role, referenceKind, text })),
@@ -611,7 +778,7 @@ function normalizeReferenceSnapshots(values) {
     const assets = normalizeReferenceAssets(item?.assets);
     if (!entryId || !referenceId || !alias || (!referenceText && !imageRefs.length && !assetRefs.length) || seen.has(referenceId)) return [];
     seen.add(referenceId);
-    const referenceKind = ["vision", "video_notes", "prompt_vision", "reference"].includes(item?.referenceKind)
+    const referenceKind = ["vision", "video_notes", "video_sources", "prompt_vision", "reference"].includes(item?.referenceKind)
       ? item.referenceKind
       : "prompt";
     return [{
@@ -629,7 +796,9 @@ function normalizeReferenceSnapshots(values) {
       scope: item?.scope === "asset" ? "asset" : "case",
       imageRefs,
       assetRefs,
-      assets
+      assets,
+      referenceSources: (Array.isArray(item?.referenceSources) ? item.referenceSources : [])
+        .map(normalizeReferenceSourcePart).filter(Boolean)
     }];
   });
 }

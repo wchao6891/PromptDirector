@@ -63,7 +63,7 @@ import {
   organizeDetailTagsWithDeepSeek
 } from "./deepseek.js";
 import { runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
-import { chatCompletionsVideoSourcePlan } from "./video-analysis.js";
+import { chatCompletionsVideoSourcePlan, videoAnalysisPrompt } from "./video-analysis.js";
 import { getAiModelCapability } from "./ai-model-capabilities.js";
 import {
   COMPOSER_METHOD_VERSION,
@@ -102,6 +102,7 @@ import {
 import {
   entryMediaAssets,
   entryHasMedia,
+  currentVideoReconstruction,
   normalizeEntryMedia,
   normalizeMediaAsset,
   posterAssetForVideo,
@@ -210,12 +211,12 @@ const elements = Object.fromEntries([
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library",
   "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
+  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
   "project-section", "project-root-drop", "manage-project-order", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
   "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "restore-library-replacement-point", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
-  "vision-batch-dialog", "vision-batch-close", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze",
+  "vision-batch-dialog", "vision-batch-close", "vision-batch-title", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze", "vision-batch-tags-option", "vision-batch-tags", "vision-batch-instruction-field", "vision-batch-instruction",
   "vision-batch-progress", "vision-batch-progress-bar", "vision-batch-start", "vision-batch-pause", "vision-batch-resume", "vision-batch-retry", "vision-batch-cancel", "vision-batch-feedback",
   "library-drop-target", "import-dialog", "import-dialog-title", "import-close", "import-source", "import-choose-files", "import-last-job", "import-actions", "import-preparing", "import-confirmation", "import-supported-count", "import-skipped-count", "import-duplicate-count", "import-byte-size", "import-project", "import-project-hint", "import-auto-analyze", "import-label-editor", "import-file-list", "import-feedback", "import-job-panel", "import-job-title", "import-job-count", "import-job-progress", "import-job-feedback", "import-cancel", "import-retry", "import-undo", "import-view-project", "import-start"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
@@ -308,7 +309,6 @@ let activeAnalysisLocale = currentLocale() === "en" ? "en" : "zh-CN";
 let activeAnalysisKind = "text";
 let activeSettingsTab = "general";
 let activeAiRoutingTab = "tasks";
-let activeVideoAnalysisUi = null;
 let selectionMode = "";
 let projectSelectionId = "";
 const selectedCaseIds = new Set();
@@ -318,6 +318,7 @@ let shareLocalAssetRecords = [];
 let submissionDownloadIds = [];
 let analysisBatchJob = null;
 let visionBatchJob = null;
+let activeMediaBatchKind = "image";
 let canUndoAnalysisBatch = false;
 let analysisBatchPreview = null;
 let analysisDiagnostics = [];
@@ -344,6 +345,10 @@ let syncStatus = {};
 let dataSafetyOperationActive = false;
 let dataSafetyOperationType = "";
 const activeDetailMediaIdByEntry = new Map();
+const videoAnalysisTaskStateByAsset = new Map();
+const videoAnalysisTaskQueries = new Set();
+const videoAnalysisDrafts = new Map();
+const videoAnalysisIncludeTagsByAsset = new Map();
 let promptEditState = null;
 const visionStatusByEntry = new Map();
 let activeFilterCount = 0;
@@ -672,8 +677,17 @@ function bindEvents() {
   elements.visionBatchDialog.addEventListener("click", (event) => {
     if (event.target === elements.visionBatchDialog) elements.visionBatchDialog.close();
   });
-  for (const checkbox of [elements.visionBatchAllImages, elements.visionBatchReanalyze]) {
-    checkbox.addEventListener("change", previewSelectedVisionBatch);
+  for (const checkbox of [elements.visionBatchAllImages, elements.visionBatchReanalyze, elements.visionBatchTags]) {
+    checkbox.addEventListener("change", () => {
+      if (checkbox === elements.visionBatchTags && activeMediaBatchKind === "video") {
+        elements.visionBatchInstruction.value = videoAnalysisPrompt("visual-reconstruction", "", {
+          includeTags: checkbox.checked,
+          catalog: facetCatalog,
+          locale: currentLocale()
+        });
+      }
+      void previewSelectedVisionBatch();
+    });
   }
   elements.visionBatchStart.addEventListener("click", startSelectedVisionBatch);
   elements.visionBatchPause.addEventListener("click", () => updateVisionBatchAction("PAUSE_VISION_BATCH"));
@@ -712,6 +726,7 @@ function bindEvents() {
   elements.selectionRemoveProject.addEventListener("click", removeSelectionFromProject);
   elements.selectionNewProject.addEventListener("click", createProjectFromSelection);
   elements.selectionAnalyze.addEventListener("click", analyzeSelectedCases);
+  elements.selectionVideoAnalyze.addEventListener("click", analyzeSelectedVideos);
   elements.selectionTrash.addEventListener("click", moveSelectionToTrash);
   elements.selectionProjectTarget.addEventListener("change", () => {
     selectionProjectTargetTouched = true;
@@ -2164,8 +2179,14 @@ function updateSelectionBar() {
   elements.selectionNewProject.disabled = !selectedCaseIds.size;
   const selectionHasAnalyzableImage = [...selectedCaseIds]
     .some((id) => isVisionSelectableEntry(logicalCases.find((entry) => entry.id === id)));
+  const selectionHasAnalyzableVideo = [...selectedCaseIds].some((id) => {
+    const entry = logicalCases.find((item) => item.id === id);
+    return entry && entryMediaAssets(entry).some((asset) => asset.kind === "video" && asset.usage !== "poster" && asset.storageMode === "managed");
+  });
   elements.selectionAnalyze.disabled = !selectionHasAnalyzableImage;
   elements.selectionAnalyze.title = selectionHasAnalyzableImage ? "" : t("所选案例中没有可分析的图片");
+  elements.selectionVideoAnalyze.disabled = !selectionHasAnalyzableVideo;
+  elements.selectionVideoAnalyze.title = selectionHasAnalyzableVideo ? "" : t("所选案例中没有可分析的本地视频");
   elements.shareExport.textContent = t("分享");
   elements.shareExport.disabled = !selectedCaseIds.size;
   elements.selectionTrash.disabled = !selectedCaseIds.size;
@@ -2302,11 +2323,26 @@ async function createProjectFromSelection() {
 }
 
 async function analyzeSelectedCases() {
+  activeMediaBatchKind = "image";
   const eligibleIds = [...selectedCaseIds].filter((id) => {
     const entry = logicalCases.find((item) => item.id === id);
     return entry && isVisionSelectableEntry(entry);
   });
   if (!eligibleIds.length) return showFeedback("所选案例中没有可分析的图片", true);
+  selectedCaseIds.clear();
+  eligibleIds.forEach((id) => selectedCaseIds.add(id));
+  await openVisionBatchConfirmation();
+}
+
+async function analyzeSelectedVideos() {
+  activeMediaBatchKind = "video";
+  const eligibleIds = [...selectedCaseIds].filter((id) => {
+    const entry = logicalCases.find((item) => item.id === id);
+    return entry && entryMediaAssets(entry).some((asset) =>
+      asset.kind === "video" && asset.usage !== "poster" && asset.storageMode === "managed"
+    );
+  });
+  if (!eligibleIds.length) return showFeedback("所选案例中没有可分析的本地视频", true);
   selectedCaseIds.clear();
   eligibleIds.forEach((id) => selectedCaseIds.add(id));
   await openVisionBatchConfirmation();
@@ -2651,18 +2687,54 @@ async function openRequestedLibraryTarget() {
 }
 
 async function openVisionBatchConfirmation() {
-  if (!selectedCaseIds.size) return showFeedback("请先选择至少一个带图片的案例", true);
+  if (!selectedCaseIds.size) return showFeedback(t(activeMediaBatchKind === "video" ? "请先选择至少一个带本地视频的案例" : "请先选择至少一个带图片的案例"), true);
   elements.visionBatchFeedback.textContent = "";
   elements.visionBatchAllImages.checked = false;
   elements.visionBatchReanalyze.checked = false;
+  elements.visionBatchTags.checked = true;
+  const videoMode = activeMediaBatchKind === "video";
+  elements.visionBatchTitle.textContent = t(videoMode ? "批量分析视频" : "批量分析图片");
+  elements.visionBatchAllImages.nextElementSibling.textContent = t(videoMode ? "包含案例中的全部视频" : "分析所选案例中的全部未分析图片");
+  elements.visionBatchReanalyze.nextElementSibling.textContent = t(videoMode ? "包含已有 AI 视觉逆推的视频" : "重新分析已有反推提示词");
+  elements.visionBatchTagsOption.hidden = !videoMode;
+  elements.visionBatchInstructionField.hidden = !videoMode;
+  if (videoMode) {
+    elements.visionBatchInstruction.value = videoAnalysisPrompt("visual-reconstruction", "", {
+      includeTags: true,
+      catalog: facetCatalog,
+      locale: currentLocale()
+    });
+  }
   await previewSelectedVisionBatch();
   if (!elements.visionBatchDialog.open) elements.visionBatchDialog.showModal();
 }
 
 async function previewSelectedVisionBatch() {
   if (visionBatchJob && ["running", "paused"].includes(visionBatchJob.status)) {
-    const currentModel = visionSettings.activeProvider === "openai" ? visionSettings.openai.model : visionSettings.compatible.model;
-    if (visionBatchJob.providerType !== visionSettings.activeProvider || visionBatchJob.model !== currentModel) {
+    const requestedKind = activeMediaBatchKind === "video" ? "video" : "vision";
+    if (visionBatchJob.kind !== requestedKind) {
+      activeMediaBatchKind = visionBatchJob.kind === "video" ? "video" : "image";
+      const videoMode = activeMediaBatchKind === "video";
+      elements.visionBatchTitle.textContent = t(videoMode ? "批量分析视频" : "批量分析图片");
+      elements.visionBatchTagsOption.hidden = !videoMode;
+      elements.visionBatchInstructionField.hidden = !videoMode;
+      showVisionBatchFeedback("已有未完成的批量任务，请继续或取消后再创建另一类任务");
+      renderVisionBatchDialog();
+      return;
+    }
+    const assignment = activeMediaBatchKind === "video" ? aiTaskAssignments.videoAnalysis : aiTaskAssignments.imageAnalysis;
+    const currentModel = activeMediaBatchKind === "video"
+      ? assignment?.model || ""
+      : visionSettings.activeProvider === "openai" ? visionSettings.openai.model : visionSettings.compatible.model;
+    const providerChanged = activeMediaBatchKind === "video"
+      ? visionBatchJob.kind !== "video" || visionBatchJob.providerId !== assignment?.providerId
+      : visionBatchJob.kind !== "vision" || visionBatchJob.providerType !== visionSettings.activeProvider;
+    if (providerChanged || visionBatchJob.model !== currentModel) {
+      if (activeMediaBatchKind === "video") {
+        showVisionBatchFeedback("视频分析路由已经变化；旧任务不会切换模型，请先取消后重新预览", true);
+        renderVisionBatchDialog();
+        return;
+      }
       try {
         const response = await chrome.runtime.sendMessage({ type: "CANCEL_VISION_BATCH", jobId: visionBatchJob.id });
         if (!response?.ok) throw new Error(response?.message || "无法取消旧批量任务");
@@ -2677,12 +2749,14 @@ async function previewSelectedVisionBatch() {
     return;
   }
   const response = await chrome.runtime.sendMessage({
-    type: "PREVIEW_VISION_BATCH",
+    type: activeMediaBatchKind === "video" ? "PREVIEW_VIDEO_BATCH" : "PREVIEW_VISION_BATCH",
     entryIds: expandLogicalCaseIds([...selectedCaseIds], compoundCases),
-    includeAllImages: elements.visionBatchAllImages.checked,
-    reanalyze: elements.visionBatchReanalyze.checked
+    includeAllImages: activeMediaBatchKind !== "video" && elements.visionBatchAllImages.checked,
+    includeAllVideos: activeMediaBatchKind === "video" && elements.visionBatchAllImages.checked,
+    reanalyze: elements.visionBatchReanalyze.checked,
+    includeTags: elements.visionBatchTags.checked
   });
-  if (!response?.ok) return showVisionBatchFeedback(response?.message || "无法生成图片分析预览", true);
+  if (!response?.ok) return showVisionBatchFeedback(response?.message || (activeMediaBatchKind === "video" ? "无法生成视频分析预览" : "无法生成图片分析预览"), true);
   renderVisionBatchDialog(response.preview);
 }
 
@@ -2691,6 +2765,7 @@ function renderVisionBatchDialog(preview = null) {
   const job = activeJob ?? (preview ? null : visionBatchJob);
   const active = Boolean(activeJob);
   const source = activeJob ?? preview ?? visionBatchJob ?? {};
+  const videoMode = source.kind === "video" || activeMediaBatchKind === "video";
   const counts = job?.counts ?? {};
   const requestCount = job?.requestCount ?? preview?.requestCount ?? 0;
   const caseCount = preview?.caseCount ?? new Set(job?.items?.map((item) => item.entryId) ?? []).size;
@@ -2706,12 +2781,32 @@ function renderVisionBatchDialog(preview = null) {
       : currentLocale() === "en"
         ? `${counts.succeeded ?? 0}/${requestCount} completed · ${counts.failed ?? 0} failed · ${job.requestAttempts || 0} requests · ${job.cacheHitCount || 0} cache hits${analysisFailureCategorySummary(job, "en") ? ` · ${analysisFailureCategorySummary(job, "en")}` : ""}`
         : `${counts.succeeded ?? 0}/${requestCount} 已完成 · ${counts.failed ?? 0} 失败 · 请求 ${job.requestAttempts || 0} 次 · 缓存 ${job.cacheHitCount || 0} 次${analysisFailureCategorySummary(job, "zh-CN") ? ` · ${analysisFailureCategorySummary(job, "zh-CN")}` : ""}`
-    : currentLocale() === "en"
-      ? `${caseCount} cases · ${requestCount} image requests`
-      : `${caseCount} 个案例 · ${requestCount} 次图片请求`;
-  elements.visionBatchService.textContent = [source.providerType, source.model].filter(Boolean).join(" · ");
+    : videoMode
+      ? `${caseCount} 个案例 · ${requestCount} 支视频 / ${requestCount} 次请求 · ${formatBytes(source.totalBytes || 0)} · 已知时长 ${formatMediaTime(source.knownDurationMs || 0)}${source.unknownDurationCount ? ` · ${source.unknownDurationCount} 支时长未知` : ""} · 并发 ${source.concurrency || 2}`
+      : currentLocale() === "en"
+        ? `${caseCount} cases · ${requestCount} image requests`
+        : `${caseCount} 个案例 · ${requestCount} 次图片请求`;
+  if (videoMode && source.excludedCount) {
+    const reasons = [...new Set((source.exclusions ?? []).map((item) => translateUiMessage(item.reason)).filter(Boolean))];
+    const categories = source.exclusionCounts ?? {};
+    const categorySummary = currentLocale() === "en"
+      ? [`${categories.busy || 0} busy`, `${categories.missing || 0} missing`, `${categories.incompatible || 0} incompatible`, `${categories.non_local || 0} non-local`].filter((item) => !item.startsWith("0 ")).join(" · ")
+      : [`处理中 ${categories.busy || 0}`, `文件缺失 ${categories.missing || 0}`, `格式不兼容 ${categories.incompatible || 0}`, `非本地视频 ${categories.non_local || 0}`].filter((item) => !item.endsWith(" 0")).join(" · ");
+    elements.visionBatchSummary.textContent += t(" · 排除 {count} 支：{reasons}", {
+      count: source.excludedCount,
+      reasons: categorySummary || reasons.join("；") || t("来源或当前状态不符合本次批量条件")
+    });
+  }
+  if (videoMode && job?.counts?.succeeded) {
+    elements.visionBatchSummary.textContent += job.unknownCostCount
+      ? ` · 服务商未返回 ${job.unknownCostCount} 项费用`
+      : ` · 服务返回费用 ${job.totalCost}`;
+  }
+  elements.visionBatchService.textContent = [source.providerId || source.providerType, source.model, videoMode ? t(source.includeTags === false ? "不生成 AI 标签" : "同时生成 AI 标签") : ""].filter(Boolean).join(" · ");
   elements.visionBatchAllImages.disabled = Boolean(active);
   elements.visionBatchReanalyze.disabled = Boolean(active);
+  elements.visionBatchTags.disabled = Boolean(active);
+  elements.visionBatchInstruction.disabled = Boolean(active);
   elements.visionBatchProgress.hidden = !job;
   elements.visionBatchProgressBar.max = Math.max(1, requestCount || job?.requestCount || 1);
   elements.visionBatchProgressBar.value = Math.min(processedCount, elements.visionBatchProgressBar.max);
@@ -2722,7 +2817,7 @@ function renderVisionBatchDialog(preview = null) {
   elements.visionBatchRetry.hidden = !job || !counts.failed || job.status === "running";
   elements.visionBatchRetry.textContent = currentLocale() === "en"
     ? `Retry failed (${counts.failed || 0} expected items)`
-    : `重试失败项（预计新增 ${counts.failed || 0} 项）`;
+    : `重试失败项（预计新增 ${counts.failed || 0} 次请求）`;
   elements.visionBatchCancel.hidden = !active;
   if (job && !active) {
     const total = job.usage?.totalTokens ?? 0;
@@ -2738,14 +2833,33 @@ function renderVisionBatchDialog(preview = null) {
 async function startSelectedVisionBatch() {
   elements.visionBatchStart.disabled = true;
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "CREATE_VISION_BATCH",
+    const payload = {
+      type: activeMediaBatchKind === "video" ? "CREATE_VIDEO_BATCH" : "CREATE_VISION_BATCH",
       entryIds: expandLogicalCaseIds([...selectedCaseIds], compoundCases),
-      includeAllImages: elements.visionBatchAllImages.checked,
+      includeAllImages: activeMediaBatchKind !== "video" && elements.visionBatchAllImages.checked,
+      includeAllVideos: activeMediaBatchKind === "video" && elements.visionBatchAllImages.checked,
       reanalyze: elements.visionBatchReanalyze.checked,
+      includeTags: elements.visionBatchTags.checked,
+      instruction: elements.visionBatchInstruction.value,
       outputLocale: currentLocale()
-    });
-    if (!response?.ok) throw new Error(response?.message || "无法创建批量画面分析");
+    };
+    let response = await chrome.runtime.sendMessage(payload);
+    if (response?.requiresExclusionConfirmation) {
+      renderVisionBatchDialog(response.preview);
+      const reasons = [...new Set((response.preview?.exclusions ?? []).map((item) => translateUiMessage(item.reason)).filter(Boolean))];
+      const categories = response.preview?.exclusionCounts ?? {};
+      const categorySummary = [`处理中 ${categories.busy || 0}`, `文件缺失 ${categories.missing || 0}`, `格式不兼容 ${categories.incompatible || 0}`, `非本地视频 ${categories.non_local || 0}`]
+        .filter((item) => !item.endsWith(" 0"))
+        .join("；");
+      const confirmed = await confirmAppAction({
+        title: t("有 {count} 支视频不会发送", { count: response.preview?.excludedCount || 0 }),
+        description: categorySummary || reasons.join("；") || t("来源或当前状态不符合本次批量条件"),
+        confirmLabel: t("只分析其余视频")
+      });
+      if (!confirmed) return;
+      response = await chrome.runtime.sendMessage({ ...payload, confirmExclusions: true });
+    }
+    if (!response?.ok) throw new Error(response?.message || (activeMediaBatchKind === "video" ? "无法创建批量视频分析" : "无法创建批量画面分析"));
     visionBatchJob = response.visionBatchJob;
     renderVisionBatchDialog();
   } catch (error) {
@@ -2758,7 +2872,37 @@ async function startSelectedVisionBatch() {
 async function updateVisionBatchAction(type) {
   if (!visionBatchJob) return;
   try {
-    const response = await chrome.runtime.sendMessage({ type, jobId: visionBatchJob.id });
+    let retryOptions = {};
+    if (type === "RETRY_VISION_BATCH_FAILURES" && visionBatchJob.kind === "video") {
+      const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+      const failedItems = (visionBatchJob.items ?? []).filter((item) => item.status === "failed");
+      const choice = await showAppDialog({
+        title: `选择要重新发送的视频`,
+        description: "每个勾选项会创建一次新的模型请求；已成功结果不会重跑。状态未知项可能已经被服务商接收。",
+        confirmLabel: "重新发送所选项",
+        fields: failedItems.map((item, index) => ({
+          id: `retry_${index}`,
+          type: "checkbox",
+          value: true,
+          label: (() => {
+            const entry = entryById.get(item.entryId);
+            const asset = entry ? entryMediaAssets(entry).find((candidate) => candidate.id === item.assetId) : null;
+            return `${entry?.title || item.entryId} · ${asset?.sourceTitle || item.assetId}`;
+          })(),
+          help: /状态未知|可能已收到/.test(item.error)
+            ? `${item.error}；重新发送可能重复计费`
+            : item.error
+        }))
+      });
+      if (choice === null) return;
+      const selectedItems = failedItems.filter((_, index) => choice[`retry_${index}`] === true);
+      if (!selectedItems.length) return showVisionBatchFeedback("请至少选择一支要重新发送的视频", true);
+      retryOptions = {
+        itemKeys: selectedItems.map((item) => `${item.entryId}\u0000${item.assetId}`),
+        confirmDuplicateCharge: selectedItems.some((item) => /状态未知|可能已收到/.test(item.error))
+      };
+    }
+    const response = await chrome.runtime.sendMessage({ type, jobId: visionBatchJob.id, ...retryOptions });
     if (!response?.ok) throw new Error(response?.message || "无法更新批量任务");
     visionBatchJob = response.visionBatchJob;
     showVisionBatchFeedback(response.message);
@@ -4744,7 +4888,6 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   const stage = el("div", "detail-visual-stage");
   const rail = el("div", "detail-visual-rail");
   const notes = el("section", "time-notes");
-  const videoAnalysis = el("section", "video-analysis-history");
   rail.setAttribute("aria-label", "案例媒体");
   const imageUrls = await Promise.all(entry.mediaAssets.map((asset) =>
     asset.kind === "image" && asset.storageMode === "managed" ? originalScreenshotUrl(asset.id) : ""
@@ -4838,7 +4981,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     }
     activeController = body.mediaController || (localVideo ? localVideoController(localVideo) : null);
     const caption = el("figcaption", "detail-visual-caption");
-    const position = asset.id === entry.primaryMediaId ? `主要媒体 · ${activeIndex + 1}/${entry.mediaAssets.length}` : `${activeIndex + 1}/${entry.mediaAssets.length}`;
+    const position = asset.id === entry.primaryMediaId ? `${t("主要媒体")} · ${activeIndex + 1}/${entry.mediaAssets.length}` : `${activeIndex + 1}/${entry.mediaAssets.length}`;
     caption.append(rawTextEl("span", "", [position, mediaMetadataText(asset)].filter(Boolean).join(" · ")));
     const actions = el("span", "detail-visual-actions");
     if (!entry.compoundCase && asset.id !== entry.primaryMediaId) {
@@ -4876,7 +5019,6 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       else body.addEventListener("load", () => syncImageStageSize(asset, body), { once: true });
     }
     renderTimeNotes(notes, entry, asset, () => activeController);
-    renderVideoAnalysisPanel(videoAnalysis, entry, asset, () => activeController);
     for (const [index, button] of [...rail.children].entries()) {
       button.classList.toggle("is-active", index === activeIndex);
       button.setAttribute("aria-pressed", String(index === activeIndex));
@@ -4918,7 +5060,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   }
   gallery.append(stage);
   if (entry.mediaAssets.length > 1) gallery.append(rail);
-  gallery.append(notes, videoAnalysis);
+  gallery.append(notes);
   await renderActive();
   return gallery;
 }
@@ -4936,34 +5078,129 @@ function refreshActiveDetailAssetSections(entry) {
 }
 
 function handleVideoAnalysisProgress(message) {
-  if (message?.type !== "VIDEO_ANALYSIS_CHANGED" || !activeVideoAnalysisUi) return;
-  if (message.entryId !== activeVideoAnalysisUi.entryId || message.assetId !== activeVideoAnalysisUi.assetId) return;
-  const label = ({ uploading: "正在上传本地视频…", processing: "服务正在处理视频…", analyzing: "正在理解画面与声音…", completed: "分析完成，正在保存版本…" })[message.phase];
-  if (label) activeVideoAnalysisUi.status.textContent = `${label} · ${message.provider} · ${message.model}`;
+  if (message?.type === "VIDEO_ANALYSIS_CHANGED") {
+    const key = videoAnalysisAssetKey(message.entryId, message.assetId);
+    const current = videoAnalysisTaskStateByAsset.get(key);
+    if (current) videoAnalysisTaskStateByAsset.set(key, { ...current, phase: message.phase });
+    if (currentDetailId === message.entryId) void renderDetail();
+    return;
+  }
+  if (message?.type !== "ANALYSIS_TASK_UPDATED" || message.task?.request?.kind !== "entry_video") return;
+  const task = message.task;
+  videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(task.request.entryId, task.request.assetId), task);
+  if (task.status === "completed") void refreshLibrary();
+  else if (currentDetailId === task.request.entryId) void renderDetail();
 }
 
-function renderVideoAnalysisPanel(container, entry, asset, getController) {
-  if (asset.kind !== "video" || entry.compoundCase) return container.replaceChildren();
+function videoAnalysisAssetKey(entryId, assetId) {
+  return `${entryId}:${assetId}`;
+}
+
+function videoAnalysisDraftKey(entry, asset, mode, includeTags = false) {
+  return `${videoAnalysisAssetKey(entry.id, asset.id)}:${mode}:${includeTags ? "tags" : "plain"}`;
+}
+
+function defaultVideoAnalysisInstruction(entry, asset, mode, includeTags) {
+  if (mode === "custom") return "";
+  return videoAnalysisPrompt(mode, "", {
+    includeTags,
+    catalog: facetCatalog,
+    locale: currentLocale(),
+    durationMs: asset.durationMs,
+    width: asset.width,
+    height: asset.height
+  });
+}
+
+function requestVideoAnalysisTaskState(entry, asset) {
+  const key = videoAnalysisAssetKey(entry.id, asset.id);
+  if (videoAnalysisTaskQueries.has(key)) return;
+  videoAnalysisTaskQueries.add(key);
+  chrome.runtime.sendMessage({
+    type: "GET_ENTRY_VIDEO_ANALYSIS_TASK",
+    entryId: entry.id,
+    assetId: asset.id
+  }).then((response) => {
+    if (response?.ok && response.task) videoAnalysisTaskStateByAsset.set(key, response.task);
+    if (currentDetailId === entry.id) return renderDetail();
+  }).catch(() => undefined);
+}
+
+function createVideoAnalysisWorkspace(entry, asset) {
+  requestVideoAnalysisTaskState(entry, asset);
+  const workspace = el("div", "video-analysis-workspace");
+  const assignment = aiTaskAssignments.videoAnalysis ?? {};
+  const provider = aiProviderRegistry.providers?.[assignment.providerId];
+  const taskKey = videoAnalysisAssetKey(entry.id, asset.id);
+  const task = videoAnalysisTaskStateByAsset.get(taskKey);
+  const running = ["queued", "running"].includes(task?.status);
+  const includeTags = videoAnalysisIncludeTagsByAsset.get(taskKey) !== false;
   const header = el("div", "video-analysis-header");
-  const title = textEl("h3", "", "视频分析");
-  const analyze = textEl("button", "", "分析视频");
-  analyze.addEventListener("click", () => startVideoAnalysis(entry, asset));
-  header.append(title, analyze);
-  const records = (entry.videoAnalyses ?? []).filter((item) => !item.assetId || item.assetId === asset.id).slice().reverse();
-  const list = el("div", "video-analysis-list");
-  for (const [index, record] of records.entries()) {
-    const item = el("article", "video-analysis-record");
-    const heading = el("header", "");
-    heading.append(
-      rawTextEl("strong", "", `${videoAnalysisModeLabel(record.mode)} · 版本 ${records.length - index}`),
-      rawTextEl("span", "", `${record.provider || t("未知服务")} · ${record.model || t("未知模型")} · ${formatDate(record.createdAt)}`)
-    );
-    item.append(heading, renderTimestampedAnalysis(record.text, entry, asset, getController));
-    if (record.usage?.totalTokens) item.append(rawTextEl("small", "", `本次用量：${record.usage.totalTokens} tokens`));
-    list.append(item);
+  header.append(
+    textEl("h3", "", "视频分析"),
+    rawTextEl("small", "", provider && assignment.model
+      ? `${providerDisplayLabel(provider)} · ${assignment.model} · ${t("每次点击发送 1 次请求，费用由服务商账户产生")}`
+      : t("尚未分配视频分析服务"))
+  );
+  workspace.append(header);
+
+  const actions = el("div", "video-analysis-actions");
+  for (const mode of ["visual-reconstruction", "creative-breakdown", "ad-review", "custom"]) {
+    const row = el("div", "video-analysis-action");
+    const modeIncludeTags = mode === "visual-reconstruction" && includeTags;
+    const draftKey = videoAnalysisDraftKey(entry, asset, mode, modeIncludeTags);
+    const textarea = document.createElement("textarea");
+    textarea.rows = mode === "visual-reconstruction" ? 2 : 1;
+    textarea.className = "video-analysis-instruction";
+    textarea.value = videoAnalysisDrafts.has(draftKey)
+      ? videoAnalysisDrafts.get(draftKey)
+      : defaultVideoAnalysisInstruction(entry, asset, mode, modeIncludeTags);
+    textarea.placeholder = t(mode === "custom" ? "输入只针对这支视频的具体问题" : "本次分析指令");
+    textarea.setAttribute("aria-label", t("{mode}指令", { mode: videoAnalysisModeLabel(mode) }));
+    textarea.addEventListener("input", () => videoAnalysisDrafts.set(draftKey, textarea.value));
+    const run = textEl("button", mode === "visual-reconstruction" ? "" : "button-secondary",
+      mode === "visual-reconstruction" && currentVideoReconstruction(entry, asset.id) ? "重新逆推" : videoAnalysisModeLabel(mode));
+    run.disabled = running;
+    run.addEventListener("click", async () => {
+      try {
+        const selectedTags = mode === "visual-reconstruction" && videoAnalysisIncludeTagsByAsset.get(taskKey) !== false;
+        await startVideoAnalysis(entry, asset, mode, textarea.value, selectedTags, run);
+      } catch (error) {
+        run.disabled = false;
+        showFeedback(translateUiMessage(error?.message) || t("视频分析任务创建失败"), true);
+      }
+    });
+    const controls = el("div", "video-analysis-action-controls");
+    controls.append(run);
+    if (mode === "visual-reconstruction") {
+      const tagToggle = document.createElement("label");
+      tagToggle.className = "video-analysis-tag-toggle";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = includeTags;
+      checkbox.disabled = running;
+      checkbox.addEventListener("change", () => {
+        videoAnalysisDrafts.set(draftKey, textarea.value);
+        videoAnalysisIncludeTagsByAsset.set(taskKey, checkbox.checked);
+        const nextKey = videoAnalysisDraftKey(entry, asset, mode, checkbox.checked);
+        textarea.value = videoAnalysisDrafts.has(nextKey)
+          ? videoAnalysisDrafts.get(nextKey)
+          : defaultVideoAnalysisInstruction(entry, asset, mode, checkbox.checked);
+      });
+      tagToggle.append(checkbox, document.createTextNode(t("同时生成 AI 标签")));
+      controls.append(tagToggle);
+    }
+    row.append(controls, textarea);
+    actions.append(row);
   }
-  if (!records.length) list.append(textEl("p", "video-analysis-empty", "尚无分析记录。每次重跑都会保存为新版本。"));
-  container.replaceChildren(header, list);
+  workspace.append(actions);
+
+  if (task) workspace.append(createVideoAnalysisTaskStatus(task));
+  const current = currentVideoReconstruction(entry, asset.id);
+  if (current) workspace.append(createCurrentVideoReconstruction(entry, asset, current));
+  const history = createVideoAnalysisHistory(entry, asset, current?.id || "", task);
+  if (history) workspace.append(history);
+  return workspace;
 }
 
 function renderTimestampedAnalysis(text, entry, asset, getController) {
@@ -4990,29 +5227,167 @@ function renderTimestampedAnalysis(text, entry, asset, getController) {
   return body;
 }
 
-async function startVideoAnalysis(entry, asset) {
+function activeDetailVideoController() {
+  const video = elements.detailContent.querySelector(".detail-visual-stage video");
+  return video ? { seekToMs: async (milliseconds) => { video.currentTime = milliseconds / 1000; } } : null;
+}
+
+function createVideoAnalysisTaskStatus(task) {
+  const status = el("div", "video-analysis-task-status");
+  const attempt = task.attempts?.find((item) => item.id === task.activeAttemptId) || task.attempts?.at(-1);
+  if (["queued", "running"].includes(task.status)) {
+    const phase = task.phase || (task.status === "queued" ? "queued" : "analyzing");
+    const label = ({
+      queued: "正在排队…",
+      encoding: "正在编码本地视频…",
+      uploading: "正在上传…",
+      processing: "服务正在处理…",
+      analyzing: "正在分析画面…",
+      completed: "分析完成，正在保存…"
+    })[phase] || "正在分析画面…";
+    status.append(rawTextEl("span", "", t(label)));
+    const stop = textEl("button", "button-secondary", "停止");
+    stop.addEventListener("click", async () => {
+      stop.disabled = true;
+      const response = await chrome.runtime.sendMessage({ type: "STOP_ANALYSIS_TASK", taskId: task.id });
+      if (!response?.ok) showFeedback(translateUiMessage(response?.message) || t("停止失败"), true);
+      else {
+        videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(task.request.entryId, task.request.assetId), response.task);
+        await renderDetail();
+      }
+    });
+    status.append(stop);
+    return status;
+  }
+  if (["failed", "stopped"].includes(task.status)) {
+    const unknown = task.executionState === "execution_state_unknown";
+    const message = unknown
+      ? "上次执行状态未知，未自动重试；服务商可能已收到请求"
+      : attempt?.error || (task.providerMayHaveAccepted ? "已停止等待，未保存结果；服务商可能已收到请求" : "已取消，未发送");
+    status.append(rawTextEl("span", "", t(message)));
+    const retry = textEl("button", "button-secondary", "重新发送");
+    retry.addEventListener("click", async () => {
+      if (!await confirmAppAction({
+        title: "重新发送这次视频分析？",
+        description: unknown || task.providerMayHaveAccepted
+          ? "服务商可能已收到上一次请求，重新发送可能再次计费。"
+          : "将创建一次新的模型请求，不会覆盖已经保存的结果。",
+        confirmLabel: "重新发送"
+      })) return;
+      retry.disabled = true;
+      const response = await chrome.runtime.sendMessage({
+        type: "RETRY_ANALYSIS_TASK",
+        taskId: task.id,
+        previousAttemptId: attempt?.id || "",
+        confirmDuplicateCharge: true,
+        consumerId: `library-detail:${task.request.entryId}:${task.request.assetId}`,
+        clientRequestId: `video-retry:${crypto.randomUUID()}`
+      });
+      if (!response?.ok) showFeedback(translateUiMessage(response?.message) || t("重新发送失败"), true);
+      else {
+        videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(task.request.entryId, task.request.assetId), response.task);
+        await renderDetail();
+      }
+    });
+    status.append(retry);
+    return status;
+  }
+  return document.createDocumentFragment();
+}
+
+function createCurrentVideoReconstruction(entry, asset, record) {
+  const card = el("article", "video-reconstruction-current");
+  const heading = el("div", "video-analysis-record-heading");
+  heading.append(
+    textEl("h4", "", "AI 视觉逆推提示词"),
+    rawTextEl("small", "", [record.provider, record.model, formatDate(record.createdAt), record.userEdited ? t("已人工修改") : "", t("仅分析画面，未分析声音")].filter(Boolean).join(" · "))
+  );
+  const textarea = document.createElement("textarea");
+  textarea.className = "video-reconstruction-editor";
+  textarea.rows = 7;
+  textarea.value = record.reconstructionPrompt;
+  textarea.setAttribute("aria-label", t("编辑 AI 视觉逆推提示词"));
+  const save = textEl("button", "button-secondary", "保存修改");
+  save.disabled = true;
+  textarea.addEventListener("input", () => { save.disabled = textarea.value.trim() === record.reconstructionPrompt; });
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    const response = await chrome.runtime.sendMessage({
+      type: "UPDATE_VIDEO_RECONSTRUCTION_PROMPT",
+      entryId: entry.id,
+      assetId: asset.id,
+      reconstructionPrompt: textarea.value
+    });
+    if (!response?.ok) {
+      showFeedback(translateUiMessage(response?.message) || t("AI 视觉逆推提示词保存失败"), true);
+      save.disabled = false;
+      return;
+    }
+    showFeedback(response.message);
+    await refreshLibrary();
+  });
+  card.append(heading, textarea, save);
+  if (record.tags?.length) {
+    const tags = el("div", "detail-tags video-analysis-tags");
+    for (const tag of record.tags) {
+      const pill = rawTextEl("span", "attribute-pill", tag.t || tag.g);
+      pill.style.setProperty("--facet-color", "var(--accent)");
+      tags.append(pill);
+    }
+    card.append(tags);
+  }
+  if (record.uncertainties?.length) {
+    const uncertainties = el("details", "video-analysis-uncertainties");
+    uncertainties.append(rawTextEl("summary", "", t("不确定项（{count}）", { count: record.uncertainties.length })));
+    const list = document.createElement("ul");
+    for (const item of record.uncertainties) list.append(rawTextEl("li", "", item));
+    uncertainties.append(list);
+    card.append(uncertainties);
+  }
+  return card;
+}
+
+function createVideoAnalysisHistory(entry, asset, currentId, task) {
+  const records = (entry.videoAnalyses ?? [])
+    .filter((item) => (!item.assetId || item.assetId === asset.id) && item.id !== currentId)
+    .toReversed();
+  if (!records.length) return null;
+  const details = el("details", "video-analysis-history");
+  details.open = task?.status === "completed" && task.request?.mode !== "visual-reconstruction";
+  details.append(rawTextEl("summary", "", t("历史分析（{count}）", { count: records.length })));
+  const list = el("div", "video-analysis-list");
+  for (const record of records) {
+    const item = el("article", "video-analysis-record");
+    const heading = el("header", "");
+    heading.append(
+      rawTextEl("strong", "", t("{mode} · 版本 {version}", { mode: videoAnalysisModeLabel(record.mode), version: record.version || 1 })),
+      rawTextEl("span", "", `${record.provider || t("未知服务")} · ${record.model || t("未知模型")} · ${formatDate(record.createdAt)}${record.assetId ? "" : ` · ${t("未关联旧记录")}`}`)
+    );
+    item.append(heading, renderTimestampedAnalysis(record.reconstructionPrompt || record.text, entry, asset, activeDetailVideoController));
+    if (record.usage?.totalTokens) item.append(rawTextEl("small", "", t("本次用量：{tokens} tokens", { tokens: record.usage.totalTokens })));
+    list.append(item);
+  }
+  details.append(list);
+  return details;
+}
+
+async function startVideoAnalysis(entry, asset, mode, instructionValue, includeTags, button) {
   const assignment = aiTaskAssignments.videoAnalysis ?? {};
   const provider = aiProviderRegistry.providers?.[assignment.providerId];
-  const model = assignment.model || provider?.models?.videoAnalysis || "";
-  if (!provider?.configured || !provider.capabilities?.includes("videoAnalysis") || !model) {
-    openSettingsDialog("ai");
+  const model = assignment.model || "";
+  if (!providerConnectionReady(provider) || !provider.capabilities?.includes("videoAnalysis") || !model) {
     showFeedback("请先在 AI 服务与任务分工中连接并分配视频分析服务", true);
+    void openAiTaskAssignmentDialog("videoAnalysis");
     return;
   }
-  if (provider.consent !== true) {
-    openSettingsDialog("ai");
-    showFeedback("请先允许所选 AI 服务接收本次明确提交的资料", true);
-    return;
-  }
+  const instruction = String(instructionValue ?? "").trim();
+  if (!instruction) return showFeedback(t(mode === "custom" ? "请先填写自定义问题" : "本次分析指令不能为空"), true);
   const sourceUrl = asset.reference?.url || asset.sourceUrl;
   const modelMediaInput = getAiModelCapability(provider.id, model)?.mediaInput ?? {};
   const mediaInput = { ...(provider.mediaInput ?? {}), ...modelMediaInput };
-  let sourceKind = asset.storageMode === "managed"
-    ? "本地视频文件（将上传）"
-    : asset.reference?.provider === "youtube" ? "公共 YouTube URL" : "当前视频链接";
   if (provider.protocol === "chat_completions") {
     try {
-      const sourcePlan = chatCompletionsVideoSourcePlan({
+      chatCompletionsVideoSourcePlan({
         providerLabel: provider.label,
         videoUrl: sourceUrl,
         hasLocalVideo: asset.storageMode === "managed",
@@ -5024,51 +5399,39 @@ async function startVideoAnalysis(entry, asset) {
         preferPublicVideoUrl: mediaInput.preferPublicVideoUrl,
         publicVideoUrl: mediaInput.publicVideoUrl
       });
-      sourceKind = sourcePlan.sourceKind === "local-video"
-        ? "本地视频文件（将编码发送）"
-        : mediaInput.publicVideoUrl === "direct" ? "公网视频文件直链" : "公共视频 URL";
     } catch (error) {
       showFeedback(error.message || "所选模型不能分析这个视频来源", true);
       return;
     }
   }
-  await showAppDialog({
-    title: "分析视频",
-    description: `来源：${sourceKind} · 服务：${provider.label} · 模型：${model}。将发送上述视频来源与本次问题；费用由服务商账户产生。`,
-    fields: [
-      { id: "mode", label: "分析方式", type: "select", value: "creative-breakdown", options: [
-        { value: "creative-breakdown", label: "创意拆解" },
-        { value: "content-summary", label: "内容总结" },
-        { value: "ad-review", label: "广告评价" },
-        { value: "custom", label: "自定义问题" }
-      ] },
-      { id: "customQuestion", label: "自定义问题（仅自定义时必填）", type: "textarea", rows: 4, placeholder: "例如：比较前后两段节奏，找出转化弱点" }
-    ],
-    confirmLabel: "开始分析",
-    pendingLabel: "正在准备视频分析…",
-    onSubmit: async (values, context) => {
-      const permission = permissionPatternForProvider(provider.endpoint);
-      if (!await chrome.permissions.request({ origins: [permission] })) throw new Error("没有获得所选 AI 服务的访问权限，未发送视频");
-      const status = context.status();
-      activeVideoAnalysisUi = { entryId: entry.id, assetId: asset.id, status };
-      try {
-        const response = await chrome.runtime.sendMessage({
-          type: "ANALYZE_ENTRY_VIDEO", entryId: entry.id, assetId: asset.id,
-          mode: values.mode, customQuestion: values.customQuestion, singleConfirmation: true
-        });
-        if (!response?.ok) throw new Error(response?.message || "视频分析失败");
-        showFeedback(response.message);
-        await refreshLibrary();
-        return response;
-      } finally {
-        activeVideoAnalysisUi = null;
-      }
-    }
+  const permission = permissionPatternForProvider(provider.endpoint);
+  if (!await chrome.permissions.request({ origins: [permission] })) return showFeedback(t("没有获得所选 AI 服务的访问权限，未发送视频"), true);
+  button.disabled = true;
+  const fullInstruction = mode === "custom" ? videoAnalysisPrompt("custom", instruction) : instruction;
+  const response = await chrome.runtime.sendMessage({
+    type: "START_OR_JOIN_ANALYSIS_TASK",
+    kind: "entry_video",
+    entryId: entry.id,
+    assetId: asset.id,
+    mode,
+    instruction: fullInstruction,
+    includeTags: mode === "visual-reconstruction" && includeTags,
+    outputLocale: currentLocale(),
+    priority: "interactive",
+    consumerId: `library-detail:${entry.id}:${asset.id}`,
+    clientRequestId: `video-analysis:${crypto.randomUUID()}`
   });
+  if (!response?.ok) {
+    button.disabled = false;
+    showFeedback(translateUiMessage(response?.message) || t("视频分析任务创建失败"), true);
+    return;
+  }
+  videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(entry.id, asset.id), response.task);
+  await renderDetail();
 }
 
 function videoAnalysisModeLabel(value) {
-  return ({ "creative-breakdown": "创意拆解", "content-summary": "内容总结", "ad-review": "广告评价", custom: "自定义问题" })[value] || "视频分析";
+  return t(({ "visual-reconstruction": "逆推提示词", "creative-breakdown": "创意拆解", "content-summary": "内容总结", "ad-review": "广告审片", custom: "自定义问题" })[value] || "视频分析");
 }
 
 async function createMediaViewer(asset, imageUrl, entry) {
@@ -5385,7 +5748,7 @@ async function createPlaybackFallback(entry, asset, { providerLabel, reason, act
   label.append(
     textEl("small", "", providerLabel.toLocaleUpperCase("en-US")),
     rawTextEl("strong", "", entry.title || asset.sourceTitle || `${providerLabel} 视频`),
-    rawTextEl("span", "", reason)
+    rawTextEl("span", "", t(reason))
   );
   const actions = el("span", "platform-link-actions");
   if (actionLabel && onAction) {
@@ -7191,6 +7554,7 @@ function createPromptSection(entry, options = {}) {
   const section = el("section", "detail-section prompt-section");
   const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId;
   const activeImage = entryMediaAssets(entry).find((asset) => asset.id === activeAssetId && asset.kind === "image" && asset.usage !== "poster");
+  const activeVideo = entryMediaAssets(entry).find((asset) => asset.id === activeAssetId && asset.kind === "video" && asset.usage !== "poster");
   const imageAssets = entryMediaAssets(entry).filter((asset) => asset.kind === "image" && asset.usage !== "poster");
   const managedImageAssets = imageAssets.filter((asset) => asset.storageMode === "managed");
   const separatesCurrentAndShared = Boolean(activeImage && (imageAssets.length > 1 || options.compoundMember));
@@ -7243,7 +7607,9 @@ function createPromptSection(entry, options = {}) {
     return section;
   }
   const heading = el("div", "prompt-section-heading");
-  heading.append(textEl("h3", "", activeImage
+  heading.append(textEl("h3", "", activeVideo
+    ? "原始提示词"
+    : activeImage
     ? separatesCurrentAndShared ? (mediaPrompt ? "当前图片提示词" : entry.text ? "当前图片 · 使用共享提示词" : "当前图片提示词") : "提示词"
     : "提示词"));
   const copy = textEl("button", "button-secondary", "复制提示词");
@@ -7253,7 +7619,7 @@ function createPromptSection(entry, options = {}) {
     ? textEl("button", "button-secondary", vision ? "重新分析主图" : "分析主图")
     : null;
   const analyze = textEl("button", "button-secondary", "分析检索标签");
-  const edit = textEl("button", "button-secondary", separatesCurrentAndShared ? "编辑当前图片" : "编辑");
+  const edit = textEl("button", "button-secondary", activeVideo ? "编辑原始提示词" : separatesCurrentAndShared ? "编辑当前图片" : "编辑");
   const editShared = separatesCurrentAndShared && entry.text ? textEl("button", "button-secondary", "编辑共享提示词") : null;
   const promptReplacement = activeImage ? visualAnalysisPromptReplacement(entry, activeImage.id) : null;
   const replaceAnalyzedPrompt = promptReplacement ? textEl("button", "button-secondary", "更新为 V2 提示词") : null;
@@ -7305,9 +7671,10 @@ function createPromptSection(entry, options = {}) {
   section.append(
     heading,
     rawTextEl("pre", `prompt-text${displayedPrompt ? "" : " is-empty"}`, displayedPrompt || t("暂无提示词")),
-    coreActions,
-    analysisMenu
+    coreActions
   );
+  if (activeVideo && !entry.compoundCase) section.append(createVideoAnalysisWorkspace(entry, activeVideo));
+  section.append(analysisMenu);
   if (textAnalysisReason(entry) === "text_changed") section.append(textEl("small", "prompt-analysis-stale", "提示词已修改，需要重新分析标签"));
   return section;
 }
@@ -7960,15 +8327,26 @@ function renderAiRoutingSummary() {
     const assignment = aiTaskAssignments[task.id] ?? {};
     const profile = aiProviderRegistry.providers?.[assignment.providerId];
     const row = el("div", "ai-assignment-row");
-    const modelState = assignedModelState(profile, assignment.model);
+    const modelUnavailable = assignedModelUnavailable(profile, assignment.model);
+    const hasReadyProvider = Object.values(aiProviderRegistry.providers ?? {}).some((candidate) =>
+      providerConnectionReady(candidate) && taskModelOptions(candidate, task.id).length);
+    const routeState = !assignment.providerId
+      ? t(hasReadyProvider ? "未选择模型" : "未连接可用服务")
+      : !profile
+        ? t("连接需修复：服务已移除")
+        : !providerConnectionReady(profile)
+          ? `${providerDisplayLabel(profile)} · ${t("连接需修复：API Key 或发送授权无效")}`
+          : !assignment.model
+            ? t("未选择模型")
+            : modelUnavailable
+              ? `${providerDisplayLabel(profile)} · ${assignment.model} · ${t("已分配但模型不可用")}`
+              : `${providerDisplayLabel(profile)} · ${assignment.model}`;
     const change = textEl("button", "button-secondary", assignment.providerId ? "更换" : "配置");
     change.type = "button";
     change.addEventListener("click", () => openAiTaskAssignmentDialog(task.id));
     row.append(
       rawTextEl("strong", "", t(task.label)),
-      rawTextEl("span", "", !assignment.providerId
-        ? t("尚未分配")
-        : profile ? `${providerDisplayLabel(profile)} · ${assignment.model || t("模型未填写")}${modelState}` : t("已分配服务不存在")),
+      rawTextEl("span", "", routeState),
       change
     );
     return row;
@@ -7994,7 +8372,6 @@ function providerConnectionLabel(profile = {}) {
 function providerCatalogLabel(profile = {}) {
   const models = profile.discoveredModels ?? [];
   const unavailable = models.filter((model) => model.status === "unavailable").length;
-  const unverified = models.filter((model) => model.status === "unverified").length;
   if (profile.discovery?.error) {
     return t("模型目录读取失败：{error}；保留 {count} 个模型{unavailable}", {
       error: translateUiMessage(profile.discovery.error),
@@ -8003,20 +8380,17 @@ function providerCatalogLabel(profile = {}) {
     });
   }
   if (!profile.discovery?.discoveredAt) return t("模型目录未读取");
-  return t("模型目录已读取 · {count} 个模型 · 尚未执行模型调用验证{unavailable}", {
+  return t("模型目录已读取 · {count} 个模型{unavailable}", {
     count: models.length,
-    unavailable: `${unavailable ? t(" · {count} 个下架或当前不可用", { count: unavailable }) : ""}${unverified ? t(" · {count} 个来自官方能力说明，账号可用性待实测", { count: unverified }) : ""}`
+    unavailable: unavailable ? t(" · {count} 个下架或当前不可用", { count: unavailable }) : ""
   });
 }
 
-function assignedModelState(profile, modelValue) {
+function assignedModelUnavailable(profile, modelValue) {
   const model = String(modelValue ?? "").trim();
-  if (!profile || !model) return "";
+  if (!profile || !model) return false;
   const discovered = (profile.discoveredModels ?? []).find((item) => item.id === model);
-  if (discovered?.status === "unavailable") return t("（已下架或当前不可用）");
-  if (discovered?.status === "unverified") return t("（官方声明支持，账号可用性待实测）");
-  if (profile.discovery?.discoveredAt && !discovered) return t("（当前目录不可用）");
-  return "";
+  return discovered?.status === "unavailable" || Boolean(profile.discovery?.discoveredAt && !discovered);
 }
 
 async function openAiTaskAssignmentDialog(taskId) {
@@ -8034,27 +8408,29 @@ async function openAiTaskAssignmentDialog(taskId) {
     ? current.providerId : capable[0].id;
   const modelOptions = (providerId) => taskModelOptions(aiProviderRegistry.providers?.[providerId], taskId);
   const initialModels = modelOptions(selectedProviderId);
-  const supportsBatchConcurrency = ["textTags", "imageAnalysis"].includes(taskId);
-  const defaultConcurrency = ["textTags", "skillExtraction", "creativePlanning"].includes(taskId) ? 20 : 10;
+  const supportsBatchConcurrency = ["textTags", "imageAnalysis", "videoAnalysis"].includes(taskId);
+  const defaultConcurrency = taskId === "videoAnalysis"
+    ? 2
+    : ["textTags", "skillExtraction", "creativePlanning"].includes(taskId) ? 20 : 10;
   const initialConcurrency = Number.isInteger(Number(current.concurrency)) ? Number(current.concurrency) : defaultConcurrency;
   const result = await showAppDialog({
     title: t(task.label),
-    description: t("这里设置全局默认；创作台中的本轮切换不会改动此处。"),
+    description: t("这里更改该任务实际使用的服务与模型；创作台本轮切换只影响当前创作。"),
     fields: [
       { id: "providerId", label: t("AI 服务"), type: "select", value: selectedProviderId, options: capable.map((profile) => ({ value: profile.id, label: providerDisplayLabel(profile) })) },
       { id: "model", label: t("模型"), type: "select", value: initialModels.some((item) => item.value === current.model) ? current.model : initialModels[0]?.value || "", options: initialModels },
       ...(supportsBatchConcurrency ? [
-        { id: "concurrency", label: t("批量分析并发数"), type: "number", min: 2, step: 1, value: initialConcurrency, help: t("文字任务默认 20，图片和视频任务默认 10；调整只对新任务生效。") },
+        { id: "concurrency", label: t("批量分析并发数"), type: "number", min: 2, step: 1, value: initialConcurrency, help: t("文字任务默认 20，图片任务默认 10，视频任务初始为 2；调整只对新任务生效。") },
         { id: "highConcurrencyConfirmed", label: t("我确认高于 20 的并发可能明显增加瞬时费用、内存占用和错误数量"), type: "checkbox", value: false }
       ] : [])
     ],
-    confirmLabel: t("保存任务默认"),
+    confirmLabel: t("保存任务路由"),
     cancelLabel: t("取消"),
     dismissOnBackdrop: false,
     confirmDismissWhenDirty: true,
     dirtyDismissMessage: t("有未保存的更改，再次关闭或取消将放弃这些更改"),
     discardLabel: t("确认放弃"),
-    onReady: ({ dialog, controls }) => {
+    onReady: ({ dialog, controls, status }) => {
       localizeAiDialogClose(dialog);
       const provider = controls.get("providerId");
       const model = controls.get("model");
@@ -8107,14 +8483,14 @@ async function openAiTaskAssignmentDialog(taskId) {
       }
       const response = await chrome.runtime.sendMessage({
         type: "UPDATE_AI_PROVIDER_CONFIGURATION",
-        assignments: { ...aiTaskAssignments, [taskId]: { providerId: values.providerId, model: values.model, concurrency } }
+        assignments: { ...aiTaskAssignments, [taskId]: { providerId: values.providerId, model: values.model, concurrency, managedBy: "task" } }
       });
-      if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("任务默认保存失败"));
+      if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("任务路由保存失败"));
       applyAiConfigurationResponse(response);
       return response;
     }
   });
-  if (result) showFeedback(t("{task}默认模型已保存", { task: t(task.label) }));
+  if (result) showFeedback(t("{task}任务路由已保存", { task: t(task.label) }));
 }
 
 async function openAiProviderDialog(initialProviderId = "") {
@@ -8167,7 +8543,21 @@ async function openAiProviderDialog(initialProviderId = "") {
         { value: "chat_completions", label: "OpenAI Chat Completions" }
       ] }
     );
-    fields.push(...profile.capabilities.map((taskId) => {
+    const analysisTaskIds = connectionAnalysisTaskIds(profile);
+    if (analysisTaskIds.length) {
+      const analysisOptions = connectionAnalysisModelOptions(profile);
+      const currentModel = connectionManagedModel(profile);
+      fields.push({
+        id: `provider_${key}_analysisModel`,
+        label: t("分析模型"),
+        type: custom ? "text" : "select",
+        value: custom ? currentModel || analysisTaskIds.map((taskId) => profile.models?.[taskId]).find(Boolean) || ""
+          : analysisOptions.some((option) => option.value === currentModel) ? currentModel : "",
+        options: [{ value: "", label: t("读取模型后选择") }, ...analysisOptions],
+        placeholder: custom ? t("填写这个兼容接口实际调用的模型") : ""
+      });
+    }
+    for (const taskId of ["imageGeneration", "videoGeneration"].filter((taskId) => profile.capabilities.includes(taskId))) {
       const catalogRequired = profile.catalogRequiredTasks?.includes(taskId) === true;
       const assignedModel = aiTaskAssignments?.[taskId]?.providerId === profile.id
         ? aiTaskAssignments[taskId].model
@@ -8176,15 +8566,15 @@ async function openAiProviderDialog(initialProviderId = "") {
         || (profile.id === "custom-media" && taskId === "imageGeneration" ? profile.imageGeneration?.model : "")
         || assignedModel;
       const options = discoveredModelOptions(profile, taskId, catalogRequired ? "" : configuredModel);
-      return {
+      fields.push({
         id: `provider_${key}_model_${taskId}`,
         label: t("{task}模型（高级）", { task: taskDisplayLabel(taskId) }),
         type: catalogRequired || options.length ? "select" : "text",
         value: options.some((option) => option.value === configuredModel) ? configuredModel : "",
         options,
         advanced: true
-      };
-    }));
+      });
+    }
     if (profile.id === "custom-media") fields.push(
       { id: `provider_${key}_imageProtocol`, label: t("图片生成协议（高级）"), type: "select", value: profile.imageGeneration?.protocol || "none", advanced: true, options: [
         { value: "none", label: t("不启用图片生成") },
@@ -8234,7 +8624,7 @@ async function openAiProviderDialog(initialProviderId = "") {
       details.append(summary, advancedBody);
       body.append(details);
     },
-    onReady: ({ dialog, controls }) => {
+    onReady: ({ dialog, controls, status }) => {
       localizeAiDialogClose(dialog);
       const editor = controls.get("providerEditor");
       const advanced = dialog.querySelector(".app-dialog-advanced-settings");
@@ -8256,6 +8646,93 @@ async function openAiProviderDialog(initialProviderId = "") {
         controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
         controls.get(`${prefix}apiKey`).focus();
       });
+      const syncConnectionHelp = () => {
+        for (const profile of profiles) {
+          const key = keyFor(profile.id);
+          const input = controls.get(`provider_${key}_analysisModel`);
+          if (!input) continue;
+          const wrapper = input.closest(".app-dialog-field");
+          let help = wrapper.querySelector(":scope > .model-capability-help");
+          if (!help) {
+            help = document.createElement("small");
+            help.className = "model-capability-help";
+            wrapper.append(help);
+            input.addEventListener("input", syncConnectionHelp);
+            input.addEventListener("change", syncConnectionHelp);
+          }
+          const taskIds = profile.category === "custom"
+            ? connectionAnalysisTaskIds(profile)
+            : connectionModelTaskIds(profile, input.value);
+          help.textContent = input.value && taskIds.length
+            ? t("保存后联动：{tasks}；已单独更换的任务保持不变", { tasks: taskIds.map(taskDisplayLabel).join("、") })
+            : profile.category === "custom"
+              ? t("填写兼容接口实际调用的模型；保存后任务路由会同步更新")
+              : t("先读取当前账号模型，再选择本次连接使用的分析模型");
+        }
+      };
+      for (const profile of profiles) {
+        if (profile.category === "custom" || !connectionAnalysisTaskIds(profile).length) continue;
+        const key = keyFor(profile.id);
+        const input = controls.get(`provider_${key}_analysisModel`);
+        const wrapper = input?.closest(".app-dialog-field");
+        if (!wrapper) continue;
+        const readModels = textEl("button", "button-secondary", "读取模型");
+        readModels.type = "button";
+        readModels.dataset.providerModelPreview = profile.id;
+        readModels.addEventListener("click", async () => {
+          const statusLine = status();
+          const apiKeyInput = controls.get(`provider_${key}_apiKey`);
+          const consentInput = controls.get(`provider_${key}_consent`);
+          const previousText = readModels.textContent;
+          try {
+            statusLine.classList.remove("error");
+            statusLine.textContent = "";
+            if (!apiKeyInput.value && !profile.credentialConfigured) {
+              apiKeyInput.focus();
+              throw new Error(t("请先填写 API Key"));
+            }
+            if (!consentInput.checked) {
+              consentInput.focus();
+              throw new Error(t("请先确认发送授权"));
+            }
+            const endpoint = profile.endpoint;
+            const permission = permissionPatternForProvider(endpoint);
+            if (!await chrome.permissions.request({ origins: [permission] })) {
+              throw new Error(t("没有获得所选 AI 服务的访问权限，未读取模型"));
+            }
+            readModels.disabled = true;
+            readModels.textContent = t("正在读取…");
+            const response = await chrome.runtime.sendMessage({
+              type: "PREVIEW_AI_PROVIDER_MODELS",
+              providerId: profile.id,
+              registry: { providers: { [profile.id]: {
+                endpoint,
+                protocol: profile.protocol,
+                apiKey: apiKeyInput.value,
+                consent: true
+              } } }
+            });
+            if (!response?.ok || !response.provider) {
+              throw new Error(translateUiMessage(response?.message) || t("模型目录读取失败"));
+            }
+            Object.assign(profile, response.provider);
+            const options = connectionAnalysisModelOptions(profile);
+            input.replaceChildren(option("", t("请选择分析模型")), ...options.map((item) => option(item.value, item.label)));
+            input.value = options.some((item) => item.value === connectionManagedModel(profile))
+              ? connectionManagedModel(profile) : "";
+            syncConnectionHelp();
+            statusLine.textContent = t("已读取 {count} 个可选分析模型", { count: options.length });
+            input.focus();
+          } catch (error) {
+            statusLine.classList.add("error");
+            statusLine.textContent = translateUiMessage(error?.message) || t("模型目录读取失败");
+          } finally {
+            readModels.disabled = false;
+            readModels.textContent = previousText;
+          }
+        });
+        wrapper.append(readModels);
+      }
       const syncProviderFields = () => {
         for (const profile of profiles) {
           const prefix = `provider_${keyFor(profile.id)}_`;
@@ -8264,42 +8741,42 @@ async function openAiProviderDialog(initialProviderId = "") {
           }
         }
         if (micuPreset) micuPreset.hidden = editor.value !== "custom-media";
-        advanced.hidden = ![...advanced.querySelectorAll("[data-field-id]")].some((wrapper) => !wrapper.hidden);
-      };
-      const syncModelCapabilityHelp = () => {
-        for (const profile of profiles) {
-          const key = keyFor(profile.id);
-          for (const taskId of profile.capabilities) {
-            const input = controls.get(`provider_${key}_model_${taskId}`);
-            if (!input) continue;
-            const wrapper = input.closest(".app-dialog-field");
-            let help = wrapper.querySelector(":scope > .model-capability-help");
-            if (!help) {
-              help = document.createElement("small");
-              help.className = "model-capability-help";
-              wrapper.append(help);
-              input.addEventListener("change", syncModelCapabilityHelp);
-            }
-            help.textContent = modelAssignmentHelp(profile, taskId, input.value);
-            help.hidden = !help.textContent;
-          }
+        for (const button of dialog.querySelectorAll("[data-provider-model-preview]")) {
+          button.hidden = button.dataset.providerModelPreview !== editor.value;
         }
+        advanced.hidden = ![...advanced.querySelectorAll("[data-field-id]")].some((wrapper) => !wrapper.hidden);
       };
       editor.addEventListener("change", syncProviderFields);
       syncProviderFields();
-      syncModelCapabilityHelp();
+      syncConnectionHelp();
     },
     onSubmit: async (values) => {
       const registryUpdate = { providers: {} };
       const origins = new Set();
-      const profile = aiProviderRegistry.providers?.[values.providerEditor];
+      const profile = profiles.find((item) => item.id === values.providerEditor);
+      if (!profile) throw new Error(t("所选 AI 服务不存在"));
       const key = keyFor(profile.id);
       const apiKey = values[`provider_${key}_apiKey`];
       const endpoint = profile.id.startsWith("custom") ? values[`provider_${key}_endpoint`] : profile.endpoint;
-      const models = Object.fromEntries(profile.capabilities.flatMap((taskId) => {
-        const model = String(values[`provider_${key}_model_${taskId}`] ?? "").trim();
-        return model ? [[taskId, model]] : [];
-      }));
+      const consent = values[`provider_${key}_consent`] === true;
+      const analysisTaskIds = connectionAnalysisTaskIds(profile);
+      const analysisModel = String(values[`provider_${key}_analysisModel`] ?? "").trim();
+      const hasAnalysisConnection = Boolean(apiKey || profile.credentialConfigured);
+      if (analysisTaskIds.length && hasAnalysisConnection && !analysisModel) {
+        throw new Error(profile.category === "custom" ? t("请填写分析模型") : t("请先读取模型并选择分析模型"));
+      }
+      if (analysisModel && !consent) throw new Error(t("请先确认发送授权"));
+      const selectedTaskIds = profile.category === "custom"
+        ? analysisTaskIds
+        : connectionModelTaskIds(profile, analysisModel);
+      if (analysisModel && !selectedTaskIds.length) throw new Error(t("当前模型没有可确认的分析能力，请重新读取并选择"));
+      const models = {};
+      for (const taskId of analysisTaskIds) {
+        models[taskId] = profile.category === "custom" ? analysisModel : "";
+      }
+      for (const taskId of ["imageGeneration", "videoGeneration"].filter((taskId) => profile.capabilities.includes(taskId))) {
+        models[taskId] = String(values[`provider_${key}_model_${taskId}`] ?? "").trim();
+      }
       const imageGeneration = profile.id === "custom-media" ? {
         protocol: values[`provider_${key}_imageProtocol`],
         endpoint: values[`provider_${key}_imageEndpoint`],
@@ -8319,7 +8796,9 @@ async function openAiProviderDialog(initialProviderId = "") {
         protocol: profile.id.startsWith("custom") ? values[`provider_${key}_protocol`] : profile.protocol,
         apiKey,
         models,
-        consent: values[`provider_${key}_consent`],
+        consent,
+        discoveredModels: profile.discoveredModels,
+        discovery: profile.discovery,
         ...(imageGeneration ? { imageGeneration } : {})
       };
       if ((apiKey || profile.credentialConfigured) && endpoint) origins.add(permissionPatternForProvider(endpoint));
@@ -8344,30 +8823,20 @@ async function openAiProviderDialog(initialProviderId = "") {
       const response = await chrome.runtime.sendMessage({
         type: "UPDATE_AI_PROVIDER_CONFIGURATION",
         registry: registryUpdate,
-        assignments: aiTaskAssignments
+        assignments: aiTaskAssignments,
+        connectionSelection: {
+          providerId: profile.id,
+          model: analysisModel,
+          taskIds: selectedTaskIds,
+          allowManualUnverifiedTasks: profile.category === "custom" ? selectedTaskIds : []
+        }
       });
       if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("AI 服务配置保存失败"));
       applyAiConfigurationResponse(response);
       const savedMessage = imageCredentialVerification?.message
         ? `${t("配置已保存")}；${t("模型目录中可见 {model}；这只证明目录可见，不代表米醋已授权该 Key 进入生图分组", { model: imageGeneration.model })}`
         : t("配置已保存");
-      if (!(apiKey || profile.credentialConfigured)) return { ...response, message: savedMessage };
-      try {
-        const discovery = await chrome.runtime.sendMessage({
-          type: "DISCOVER_AI_PROVIDER_MODELS",
-          providerId: profile.id,
-          force: true
-        });
-        if (!discovery?.ok) throw new Error(translateUiMessage(discovery?.message) || t("模型目录读取失败"));
-        applyAiConfigurationResponse(discovery);
-        return { ...discovery, message: `${savedMessage}；${t("{provider} 已发现 {count} 个模型", { provider: providerDisplayLabel(profile), count: discovery.aiProviderRegistry?.providers?.[profile.id]?.discoveredModels?.length || 0 })}` };
-      } catch (error) {
-        return {
-          ...response,
-          message: `${savedMessage}；${t("模型目录暂时读取失败，可稍后手动刷新")}`,
-          discoveryWarning: translateUiMessage(error.message) || t("模型目录读取失败")
-        };
-      }
+      return { ...response, message: savedMessage };
     }
   });
   if (result) {
@@ -8392,6 +8861,46 @@ function providerDisplayLabel(profile = {}) {
 
 function taskDisplayLabel(taskId) {
   return t(AI_ASSIGNMENT_TASKS.find((task) => task.id === taskId)?.label || taskId);
+}
+
+const CONNECTION_ANALYSIS_TASK_IDS = Object.freeze([
+  "textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"
+]);
+
+function connectionAnalysisTaskIds(profile = {}) {
+  return CONNECTION_ANALYSIS_TASK_IDS.filter((taskId) => profile.capabilities?.includes(taskId));
+}
+
+function connectionAnalysisModelOptions(profile = {}) {
+  const byId = new Map();
+  for (const taskId of connectionAnalysisTaskIds(profile)) {
+    for (const model of availableAiModelsForTask(taskId, profile)) {
+      if (model.status !== "available") continue;
+      if (!["declared", "protocol_inferred"].includes(model.assignmentEvidence)) continue;
+      if (!byId.has(model.id)) byId.set(model.id, model);
+    }
+  }
+  return [...byId.values()].map((model) => ({
+    value: model.id,
+    label: `${model.name || model.id}${modelPriceLabel(model.pricing)}`
+  }));
+}
+
+function connectionModelTaskIds(profile = {}, modelValue = "") {
+  const model = String(modelValue ?? "").trim();
+  if (!model) return [];
+  return connectionAnalysisTaskIds(profile).filter((taskId) => availableAiModelsForTask(taskId, profile)
+    .some((item) => item.id === model && item.status === "available"
+      && ["declared", "protocol_inferred"].includes(item.assignmentEvidence)));
+}
+
+function connectionManagedModel(profile = {}) {
+  const models = new Set(connectionAnalysisTaskIds(profile).flatMap((taskId) => {
+    const assignment = aiTaskAssignments?.[taskId];
+    return assignment?.managedBy === "connection" && assignment.providerId === profile.id && assignment.model
+      ? [assignment.model] : [];
+  }));
+  return models.size === 1 ? [...models][0] : "";
 }
 
 function providerUsesMicuImageGroup(profile = {}) {

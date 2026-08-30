@@ -1,5 +1,5 @@
 import { DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS, normalizeAiSettings } from "./deepseek.js";
-import { normalizeComposerSettings } from "./composer.js";
+import { normalizeComposerSettings, referenceSourcePartsForAsset } from "./composer.js";
 import { requireAiRuntimeProtocolVersion } from "./ai-runtime.js";
 import {
   currentCreativeSkillVersion,
@@ -528,7 +528,7 @@ function caseCard(entry) {
   });
   card.append(button);
   const assets = availableSkillAssets(entry);
-  if (assets.length > 1 || String(entry.text ?? "").trim()) {
+  if (assets.length > 1 || String(entry.text ?? "").trim() || hasSelectableVideoSources(entry, assets)) {
     const details = textEl("button", sourceSelectionCountLabel(entry));
     details.type = "button";
     details.className = "skill-case-detail";
@@ -538,6 +538,13 @@ function caseCard(entry) {
   }
   renderCaseState(card, entry);
   return card;
+}
+
+function hasSelectableVideoSources(entry, assets = availableSkillAssets(entry)) {
+  return assets.some((asset) => asset.kind === "video" && (
+    referenceSourcePartsForAsset(entry, asset.id).length > 1 ||
+    (entry.videoAnalyses ?? []).some((analysis) => String(analysis?.assetId ?? "") === asset.id)
+  ));
 }
 
 function renderCaseState(card, entry) {
@@ -561,10 +568,13 @@ function selectSourceDefaults(entry) {
 function defaultSourceSelection(entry) {
   const assets = availableSkillAssets(entry);
   const primary = assets.find((asset) => asset.id === entry.primaryMediaId) ?? assets[0];
+  const selectedAssetIds = primary ? new Set([primary.id]) : new Set();
   return {
     entryId: entry.id,
-    includeEntryText: Boolean(String(entry.text ?? "").trim()),
-    assetIds: primary ? new Set([primary.id]) : new Set()
+    includeEntryText: primary?.kind !== "video" && Boolean(String(entry.text ?? "").trim()),
+    assetIds: selectedAssetIds,
+    sourceIds: defaultVideoSourceIds(entry, selectedAssetIds),
+    analysisIds: new Set()
   };
 }
 
@@ -578,7 +588,9 @@ function sourceSelectionSnapshots() {
   return [...sourceSelections.values()].map((selection) => ({
     entryId: selection.entryId,
     includeEntryText: selection.includeEntryText,
-    assetIds: [...selection.assetIds]
+    assetIds: [...selection.assetIds],
+    sourceIds: selection.sourceIds === null ? null : [...selection.sourceIds],
+    analysisIds: [...(selection.analysisIds ?? [])]
   }));
 }
 
@@ -668,7 +680,10 @@ function renderSourceInspector() {
   const hasText = Boolean(String(entry.text ?? "").trim());
   elements.skillSourceTextOption.hidden = !hasText;
   elements.skillSourceIncludeText.checked = hasText && selection.includeEntryText;
-  elements.skillSourceAssetList.replaceChildren(...availableSkillAssets(entry).map((asset, index) => sourceAssetOption(entry, asset, index)));
+  elements.skillSourceAssetList.replaceChildren(...availableSkillAssets(entry).flatMap((asset, index) => [
+    sourceAssetOption(entry, asset, index),
+    ...(asset.kind === "video" && selection.assetIds.has(asset.id) ? videoSourceOptions(entry, asset) : [])
+  ]));
 }
 
 function sourceAssetOption(entry, asset, index) {
@@ -688,11 +703,74 @@ function sourceAssetOption(entry, asset, index) {
   input.type = "checkbox";
   input.checked = selection.assetIds.has(asset.id);
   input.addEventListener("change", () => {
-    input.checked ? selection.assetIds.add(asset.id) : selection.assetIds.delete(asset.id);
+    if (input.checked) {
+      selection.assetIds.add(asset.id);
+      if (asset.kind === "video") {
+        if (selection.sourceIds === null) selection.sourceIds = new Set();
+        referenceSourcePartsForAsset(entry, asset.id).forEach((source) => selection.sourceIds.add(source.id));
+      }
+    } else {
+      selection.assetIds.delete(asset.id);
+      if (asset.kind === "video") {
+        const availableIds = new Set(referenceSourcePartsForAsset(entry, asset.id, {
+          analysisIds: (entry.videoAnalyses ?? []).map((analysis) => analysis.id)
+        }).map((source) => source.id));
+        if (selection.sourceIds !== null) {
+          for (const sourceId of availableIds) selection.sourceIds.delete(sourceId);
+        }
+        for (const analysis of entry.videoAnalyses ?? []) {
+          if (String(analysis?.assetId ?? "") === asset.id) selection.analysisIds?.delete(String(analysis.id));
+        }
+      }
+    }
     renderSourceInspector();
   });
   row.append(preview, copy, input);
   return row;
+}
+
+function videoSourceOptions(entry, asset) {
+  const selection = inspectorDraftSelection;
+  const allAnalysisIds = (Array.isArray(entry?.videoAnalyses) ? entry.videoAnalyses : [])
+    .filter((analysis) => String(analysis?.assetId ?? "") === asset.id)
+    .map((analysis) => String(analysis?.id ?? "")).filter(Boolean);
+  const currentParts = referenceSourcePartsForAsset(entry, asset.id);
+  const allParts = referenceSourcePartsForAsset(entry, asset.id, { analysisIds: allAnalysisIds });
+  const defaultIds = new Set(currentParts.map((part) => part.id));
+  return allParts.map((part) => {
+    const row = el("label", "skill-source-asset");
+    const preview = el("span", "skill-source-asset-preview");
+    preview.textContent = t("来源");
+    const short = part.kind === "original_prompt" && [...part.text.replace(/\s+/g, "")].length <= 3;
+    const copy = el("span", "skill-source-asset-copy");
+    copy.append(
+      textEl("strong", part.label),
+      textEl("small", short ? t("短内容 · 请确认是否保留") : excerpt(part.text, 80))
+    );
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = part.kind === "other_analysis"
+      ? selection.analysisIds?.has(part.analysisId) === true
+      : selection.sourceIds === null || selection.sourceIds.has(part.id);
+    input.addEventListener("change", () => {
+      if (part.kind === "other_analysis") {
+        input.checked ? selection.analysisIds.add(part.analysisId) : selection.analysisIds.delete(part.analysisId);
+      } else {
+        if (selection.sourceIds === null) selection.sourceIds = new Set(defaultIds);
+        input.checked ? selection.sourceIds.add(part.id) : selection.sourceIds.delete(part.id);
+      }
+      renderSourceInspector();
+    });
+    row.dataset.selected = String(input.checked);
+    row.append(preview, copy, input);
+    return row;
+  });
+}
+
+function defaultVideoSourceIds(entry, assetIds) {
+  const selected = assetIds instanceof Set ? assetIds : new Set(assetIds ?? []);
+  return new Set(availableSkillAssets(entry).filter((asset) => asset.kind === "video" && selected.has(asset.id))
+    .flatMap((asset) => referenceSourcePartsForAsset(entry, asset.id).map((source) => source.id)));
 }
 
 function updateInspectedTextSelection() {
@@ -705,6 +783,8 @@ function selectAllInspectedSource() {
   const selection = inspectorDraftSelection;
   if (!entry || !selection) return;
   selection.assetIds = new Set(availableSkillAssets(entry).map((asset) => asset.id));
+  selection.sourceIds = defaultVideoSourceIds(entry, selection.assetIds);
+  selection.analysisIds = new Set();
   if (String(entry.text ?? "").trim()) selection.includeEntryText = true;
   renderSourceInspector();
 }
@@ -713,6 +793,8 @@ function clearInspectedSource() {
   const selection = inspectorDraftSelection;
   if (!selection) return;
   selection.assetIds.clear();
+  selection.sourceIds = new Set();
+  selection.analysisIds = new Set();
   selection.includeEntryText = false;
   renderSourceInspector();
 }

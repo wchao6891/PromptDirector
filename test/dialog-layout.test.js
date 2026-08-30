@@ -33,6 +33,21 @@ test("AI configuration dialogs keep dirty credentials open until the user explic
   );
   assert.match(providerDialog, /dismissOnBackdrop:\s*false/);
   assert.match(providerDialog, /confirmDismissWhenDirty:\s*true/);
+  assert.match(providerDialog, /provider_\$\{key\}_analysisModel/);
+  assert.match(providerDialog, /type:\s*"PREVIEW_AI_PROVIDER_MODELS"/);
+  assert.match(providerDialog, /connectionSelection:/);
+  assert.doesNotMatch(providerDialog, /profile\.capabilities\.flatMap/);
+  assert.doesNotMatch(providerDialog, /type:\s*"DISCOVER_AI_PROVIDER_MODELS"/);
+});
+
+test("connected service summaries omit internal verification chatter", async () => {
+  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const summary = source.slice(
+    source.indexOf("function providerCatalogLabel"),
+    source.indexOf("async function openAiTaskAssignmentDialog")
+  );
+  assert.doesNotMatch(summary, /尚未执行模型调用验证/);
+  assert.doesNotMatch(summary, /账号可用性待实测/);
 });
 
 test("every model catalog refresh applies the complete AI configuration response", async () => {

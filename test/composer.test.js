@@ -6,6 +6,7 @@ import {
   COMPOSER_METHOD_VERSION,
   DEFAULT_AGENT_INSTRUCTION,
   DEFAULT_COMPOSER_AI_PROFILE,
+  UNASSIGNED_COMPOSER_AI_PROFILE,
   DEFAULT_TASK_METHODS,
   appendComposerMessage,
   appendDiagnosticEvent,
@@ -21,6 +22,7 @@ import {
   normalizeComposerSessions,
   normalizeComposerSettings,
   normalizePlannerResult,
+  formatReferenceSourceParts,
   plannerRequestPayload,
   resetComposerAgentInstruction,
   resetComposerTaskMethod,
@@ -77,6 +79,14 @@ test("composer AI profile preserves dynamically assigned planning models across 
     { providerId: "custom-text", model: "local-planner" },
     DEFAULT_COMPOSER_AI_PROFILE
   ), { serviceId: "custom-text", model: "local-planner", thinking: false });
+  assert.deepEqual(composerProfileForTaskAssignment(
+    {},
+    { serviceId: "zhipu", model: "glm-5.3-flash", thinking: true }
+  ), UNASSIGNED_COMPOSER_AI_PROFILE);
+  assert.deepEqual(createComposerSession({
+    aiProfile: UNASSIGNED_COMPOSER_AI_PROFILE,
+    generationAiProfile: UNASSIGNED_COMPOSER_AI_PROFILE
+  }).aiProfile, UNASSIGNED_COMPOSER_AI_PROFILE);
   assert.deepEqual(createComposerSession({ generationParameters: { size: "1536x1024", quality: "high", aspectRatio: "16:9", imageSize: "2K", secret: "drop" } }).generationParameters, {
     size: "1536x1024",
     quality: "high",
@@ -248,6 +258,99 @@ test("multiple selected images from one case become independent reference snapsh
   assert.deepEqual(references.map((item) => item.originalText), ["第一张", "第二张"]);
   assert.deepEqual(references.map((item) => item.alias), ["@参考1", "@参考2"]);
 });
+
+test("video reference snapshots freeze only the selected asset original prompt current reconstruction and human notes", () => {
+  const entry = {
+    id: "multi-video",
+    title: "private title",
+    text: "案例级回退提示词",
+    classification: { pathIds: [CONTENT_IDS.promptVideo] },
+    primaryMediaId: "video-one",
+    mediaAssets: [
+      { id: "video-one", kind: "video", usage: "content", mimeType: "video/mp4" },
+      { id: "video-two", kind: "video", usage: "content", mimeType: "video/mp4" }
+    ],
+    mediaPrompts: [
+      { assetId: "video-one", text: "第一条视频原提示词", textRevision: 3 },
+      { assetId: "video-two", text: "第二条视频原提示词" }
+    ],
+    timeNotes: [
+      { id: "note-one", assetId: "video-one", startMs: 1200, text: "第一条视频人工笔记", createdAt: "2026-08-30T00:00:00.000Z" },
+      { id: "note-two", assetId: "video-two", startMs: 2300, text: "第二条视频人工笔记", createdAt: "2026-08-30T00:00:01.000Z" }
+    ],
+    videoAnalyses: [
+      completeReconstruction("reverse-old", "video-one", "第一条旧逆推", "2026-08-30T00:00:01.000Z"),
+      { id: "breakdown", assetId: "video-one", mode: "creative-breakdown", text: "默认不应进入的创作拆解", version: 4, createdAt: "2026-08-30T00:00:04.000Z" },
+      completeReconstruction("reverse-current", "video-one", "第一条当前逆推", "2026-08-30T00:00:03.000Z"),
+      completeReconstruction("reverse-other", "video-two", "第二条视频逆推", "2026-08-30T00:00:05.000Z")
+    ],
+    facetAssignments: [{ source: "vision_model", facetId: "private-ai-tag" }]
+  };
+
+  const [reference] = createReferenceSnapshots([entry], [{ entryId: entry.id, assetIds: ["video-one"] }], "zh-CN", "video");
+  assert.equal(reference.referenceId, "multi-video:video-one");
+  assert.equal(reference.assetId, "video-one");
+  assert.equal(reference.referenceKind, "video_sources");
+  assert.deepEqual(reference.referenceSources.map((source) => source.kind), ["original_prompt", "video_reconstruction", "time_notes"]);
+  assert.deepEqual(reference.referenceSources.map((source) => source.text), ["第一条视频原提示词", "第一条当前逆推", "[0:01.200] 第一条视频人工笔记"]);
+  assert.match(reference.referenceText, /\[原始提示词\][\s\S]*\[AI 视觉逆推\][\s\S]*\[人工时间点笔记\]/);
+  assert.doesNotMatch(JSON.stringify(reference), /第二条视频|第一条旧逆推|创作拆解|private-ai-tag/);
+
+  entry.mediaPrompts[0].text = "编辑后的原文";
+  entry.videoAnalyses.push(completeReconstruction("reverse-later", "video-one", "后来新增的逆推", "2026-08-30T00:00:06.000Z"));
+  const restored = createComposerSession({ referenceSnapshots: [reference] }).referenceSnapshots[0];
+  assert.equal(restored.referenceText, reference.referenceText);
+  assert.equal(restored.referenceSources[1].analysisId, "reverse-current");
+});
+
+test("video references allow one source to be cancelled and selected other analysis to be frozen explicitly", () => {
+  const entry = {
+    id: "video-explicit-sources",
+    text: "短",
+    classification: { pathIds: [CONTENT_IDS.promptVideo] },
+    mediaAssets: [{ id: "video", kind: "video", usage: "content", mimeType: "video/mp4" }],
+    videoAnalyses: [
+      completeReconstruction("reverse", "video", "可见画面逆推", "2026-08-30T00:00:01.000Z"),
+      { id: "review", assetId: "video", mode: "ad-review", text: "显式广告审片", version: 2, createdAt: "2026-08-30T00:00:02.000Z" }
+    ]
+  };
+  const [reference] = createReferenceSnapshots([entry], [{
+    entryId: entry.id,
+    assetIds: ["video"],
+    sourceIds: ["reconstruction:reverse"],
+    analysisIds: ["review"]
+  }], "zh-CN", "video");
+  assert.deepEqual(reference.referenceSources.map((source) => source.kind), ["video_reconstruction", "other_analysis"]);
+  assert.doesNotMatch(reference.referenceText, /\[原始提示词\]|短/);
+  assert.match(reference.referenceText, /可见画面逆推[\s\S]*显式广告审片/);
+});
+
+test("exact duplicate video source bodies are sent once with both provenance labels", () => {
+  const formatted = formatReferenceSourceParts([
+    { id: "original", kind: "original_prompt", label: "原始提示词", text: "完全相同的正文" },
+    { id: "reverse", kind: "video_reconstruction", label: "AI 视觉逆推", text: "完全相同的正文" }
+  ]);
+  assert.equal(formatted, "[原始提示词 + AI 视觉逆推]\n完全相同的正文");
+  assert.equal(formatted.match(/完全相同的正文/g)?.length, 1);
+});
+
+function completeReconstruction(id, assetId, reconstructionPrompt, createdAt) {
+  return {
+    id,
+    assetId,
+    mode: "visual-reconstruction",
+    requestId: `request:${id}`,
+    contractVersion: "visual-v3-1",
+    reconstructionPrompt,
+    tags: [],
+    uncertainties: [],
+    includeTags: false,
+    analysisScope: "visual",
+    finishReason: "stop",
+    version: 2,
+    createdAt
+  };
+}
 
 test("image reference modes default to conditioned and unlock text-only modes for prompt-backed or independently analyzed assets", () => {
   const analyzedReference = {

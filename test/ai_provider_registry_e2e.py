@@ -195,7 +195,7 @@ def assert_deepseek_dynamic_image_analysis() -> None:
         expect(dialog.locator(".model-capability-help")).to_have_count(1)
         expect(dialog.locator(".model-capability-help")).to_contain_text("当前模型未声明这项能力；是否可用以真实执行结果为准")
         expect(dialog).not_to_contain_text("实验")
-        dialog.get_by_role("button", name="保存任务默认").click()
+        dialog.get_by_role("button", name="保存任务路由").click()
         expect(dialog).to_be_hidden()
         expect(image_task).to_contain_text(f"DeepSeek · {model_id}")
 
@@ -206,6 +206,7 @@ def assert_deepseek_dynamic_image_analysis() -> None:
             "providerId": "deepseek",
             "model": model_id,
             "evidence": "manual_unverified",
+            "managedBy": "task",
             "concurrency": 10,
         }, stored_assignment
         runtime = library.evaluate(
@@ -242,7 +243,7 @@ def assert_deepseek_dynamic_image_analysis() -> None:
         expect(deepseek_row).to_contain_text("1 个下架或当前不可用")
         library.locator('[data-ai-routing-tab="tasks"]').click()
         expect(image_task).to_contain_text(f"DeepSeek · {model_id}")
-        expect(image_task).to_contain_text("已下架或当前不可用")
+        expect(image_task).to_contain_text("已分配但模型不可用")
 
         disappeared = library.evaluate(
             """async () => {
@@ -295,7 +296,7 @@ def assert_new_install_defaults() -> None:
         expect(library.locator('#ai-provider-list [data-provider-category="custom"]')).to_contain_text("自定义兼容服务")
         expect(library.locator('[data-provider-id="kimi"]')).to_contain_text("Kimi")
         expect(library.locator("#ai-assignment-list .ai-assignment-row")).to_have_count(7)
-        expect(library.locator("#ai-assignment-list .ai-assignment-row", has_text="尚未分配")).to_have_count(7)
+        expect(library.locator("#ai-assignment-list .ai-assignment-row", has_text="未连接可用服务")).to_have_count(7)
         expect(library.locator("#ai-provider-list")).to_contain_text("模型目录未读取")
 
         stored = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
@@ -309,7 +310,7 @@ def assert_new_install_defaults() -> None:
             "skillExtraction": 20,
             "creativePlanning": 20,
             "imageAnalysis": 10,
-            "videoAnalysis": 10,
+            "videoAnalysis": 2,
             "imageGeneration": 10,
             "videoGeneration": 10,
         }, stored
@@ -351,8 +352,9 @@ def assert_new_install_defaults() -> None:
             library.locator("#open-settings").click()
         library.locator('[data-settings-tab="ai"]').click()
         expect(library.locator('[data-provider-id="deepseek"]')).to_contain_text("模型目录读取失败：目录服务暂时不可用；保留 1 个模型")
-        expect(library.locator('[data-provider-id="kimi"]')).to_contain_text("模型目录已读取 · 1 个模型 · 尚未执行模型调用验证")
-        expect(library.locator("#ai-assignment-list .ai-assignment-row", has_text="文字标签")).to_contain_text("已下架或当前不可用")
+        expect(library.locator('[data-provider-id="kimi"]')).to_contain_text("模型目录已读取 · 1 个模型")
+        expect(library.locator('[data-provider-id="kimi"]')).not_to_contain_text("尚未执行模型调用验证")
+        expect(library.locator("#ai-assignment-list .ai-assignment-row", has_text="文字标签")).to_contain_text("连接需修复：API Key 或发送授权无效")
 
 
 def assert_english_ai_settings() -> None:
@@ -368,7 +370,7 @@ def assert_english_ai_settings() -> None:
 
         expect(library.locator("html")).to_have_attribute("lang", "en")
         expect(library.locator("#settings-ai-panel")).not_to_contain_text(chinese, use_inner_text=True)
-        expect(library.locator("#ai-assignment-list .ai-assignment-row", has_text="Not assigned")).to_have_count(7)
+        expect(library.locator("#ai-assignment-list .ai-assignment-row", has_text="No usable service connected")).to_have_count(7)
         expect(library.locator('[data-provider-id="volcengine"]')).to_contain_text("Volcengine")
 
         library.locator("#ai-assignment-list .ai-assignment-row").first.get_by_role("button", name="Configure").click()
@@ -411,7 +413,10 @@ def main() -> None:
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body='{"data":[{"id":"gpt-text-catalog-only"}]}',
+                body=(
+                    '{"data":[{"id":"gpt-text-catalog-only",'
+                    '"input_modalities":["text"],"output_modalities":["text"]}]}'
+                ),
             )
 
         def mock_gemini_models(route) -> None:
@@ -574,7 +579,8 @@ def main() -> None:
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="官方服务 · Kimi")).to_have_count(1)
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="聚合平台 · OpenRouter")).to_have_count(1)
         expect(dialog.locator("#promptdirector-app-dialog-providerEditor option", has_text="自定义兼容服务 · 自定义兼容服务（图片与生成）")).to_have_count(1)
-        expect(dialog.locator('[data-field-id^="provider_"]:visible')).to_have_count(2)
+        expect(dialog.locator('[data-field-id^="provider_"]:visible')).to_have_count(3)
+        expect(dialog.locator('[data-field-id="provider_openrouter_analysisModel"]')).to_be_visible()
         expect(dialog.locator('[data-field-id^="assignment_"]')).to_have_count(0)
         password_values = dialog.locator('input[type="password"]').evaluate_all("nodes => nodes.map(node => node.value)")
         assert all(value == "" for value in password_values), password_values
@@ -633,10 +639,7 @@ def main() -> None:
         expect(dialog).to_be_hidden()
         expect(library.locator("#feedback")).to_contain_text("模型目录中可见 gpt-image-2")
         expect(library.locator("#feedback")).to_contain_text("不代表米醋已授权")
-        assert model_authorizations[-2:] == [
-            "Bearer replacement-image-secret",
-            "Bearer replacement-analysis-secret",
-        ], model_authorizations
+        assert model_authorizations[-1:] == ["Bearer replacement-image-secret"], model_authorizations
         saved_keys = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
         custom_media = saved_keys["aiProviderRegistry"]["providers"]["custom-media"]
         assert custom_media["apiKey"] == "replacement-analysis-secret"
@@ -647,6 +650,10 @@ def main() -> None:
         openai_dialog = library.locator("#promptdirector-app-dialog")
         expect(openai_dialog).to_be_visible()
         expect(openai_dialog.locator("#promptdirector-app-dialog-providerEditor")).to_have_value("openai")
+        openai_dialog.get_by_role("button", name="读取模型").click()
+        openai_analysis_model = openai_dialog.locator("#promptdirector-app-dialog-provider_openai_analysisModel")
+        expect(openai_analysis_model.locator("option")).to_have_count(2)
+        openai_analysis_model.select_option("gpt-text-catalog-only")
         openai_image_model = openai_dialog.locator("#promptdirector-app-dialog-provider_openai_model_imageGeneration")
         expect(openai_image_model).to_be_hidden()
         openai_dialog.locator(".app-dialog-advanced-settings > summary").click()
@@ -665,7 +672,7 @@ def main() -> None:
         }
         assert openai_catalog == {
             "gpt-text-catalog-only": "available",
-            "openai-account-image-model": "unavailable",
+            "openai-vision": "unavailable",
         }, openai_catalog
         assert assignment_routes(openai_saved["aiTaskAssignments"]) == assignment_routes(openai_assignments_before_save)
 
@@ -726,12 +733,13 @@ def main() -> None:
         expect(nano_model.locator("option")).to_have_count(1)
         expect(nano_model).to_have_value("gemini-3.1-flash-image")
         expect(nano_dialog).to_contain_text("Nano Banana 2")
-        nano_dialog.get_by_role("button", name="保存任务默认").click()
+        nano_dialog.get_by_role("button", name="保存任务路由").click()
         expect(nano_dialog).to_be_hidden()
 
         nano_saved = library.evaluate("() => chrome.storage.local.get(['aiProviderRegistry', 'aiTaskAssignments'])")
         assert nano_saved["aiTaskAssignments"]["imageGeneration"] == {
-            "providerId": "gemini", "model": "gemini-3.1-flash-image", "concurrency": 10
+            "providerId": "gemini", "model": "gemini-3.1-flash-image", "concurrency": 10,
+            "managedBy": "task",
         }
         assert assignment_routes({
             task: value for task, value in nano_saved["aiTaskAssignments"].items() if task != "imageGeneration"

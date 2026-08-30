@@ -35,6 +35,119 @@ test("the same client request joins one persisted task instead of creating dupli
   assert.deepEqual(second.task.request.tempReferenceIds, ["reference:one"]);
 });
 
+test("the same video joins one active task even when a second click has a new client request id", () => {
+  const videoRequest = {
+    kind: "entry_video",
+    entryId: "entry:one",
+    assetId: "video:one",
+    mode: "visual-reconstruction",
+    instruction: "只分析可见画面",
+    includeTags: true,
+    priority: "interactive",
+    consumerId: "detail:one",
+    clientRequestId: "video-request:one"
+  };
+  const first = createOrJoinAnalysisTask({}, videoRequest, { taskId: "task:video" });
+  const second = createOrJoinAnalysisTask(first.state, {
+    ...videoRequest,
+    clientRequestId: "video-request:two"
+  }, { taskId: "task:duplicate" });
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.task.id, "task:video");
+  assert.equal(second.state.items.length, 1);
+  assert.equal(second.task.request.instruction, "只分析可见画面");
+  assert.equal(second.task.request.includeTags, true);
+  assert.deepEqual(second.task.clientRequestIds, ["video-request:one", "video-request:two"]);
+});
+
+test("different video analysis semantics are blocked while the same asset is busy", () => {
+  const first = createOrJoinAnalysisTask({}, {
+    kind: "entry_video",
+    entryId: "entry:one",
+    assetId: "video:one",
+    mode: "visual-reconstruction",
+    instruction: "逆推可见画面",
+    includeTags: true,
+    outputLocale: "zh-CN",
+    clientRequestId: "video-request:one"
+  }, { taskId: "task:reconstruction" });
+  assert.throws(() => createOrJoinAnalysisTask(first.state, {
+      kind: "entry_video",
+      entryId: "entry:one",
+      assetId: "video:one",
+      mode: "ad-review",
+      instruction: "分析广告效果",
+      includeTags: false,
+      outputLocale: "zh-CN",
+      clientRequestId: "video-request:two"
+    }, { taskId: "task:review" }),
+    /当前视频已有分析在运行/);
+  assert.equal(first.state.items.length, 1);
+});
+
+test("a completed video allows an explicit new task and append-only analysis version", () => {
+  const videoRequest = {
+    kind: "entry_video",
+    entryId: "entry:one",
+    assetId: "video:one",
+    mode: "visual-reconstruction",
+    clientRequestId: "video-request:one"
+  };
+  const first = createOrJoinAnalysisTask({}, videoRequest, { taskId: "task:video" });
+  first.state.items[0].status = "completed";
+  first.state.items[0].executionState = "completed";
+  const second = createOrJoinAnalysisTask(first.state, {
+    ...videoRequest,
+    clientRequestId: "video-request:two"
+  }, { taskId: "task:next-video" });
+
+  assert.equal(second.created, true);
+  assert.equal(second.task.id, "task:next-video");
+  assert.equal(second.state.items.length, 2);
+});
+
+test("batch video tasks preserve the exact endpoint and transport snapshot", () => {
+  const created = createOrJoinAnalysisTask({}, {
+    kind: "entry_video",
+    entryId: "entry:one",
+    assetId: "video:one",
+    mode: "visual-reconstruction",
+    batchJobId: "batch:one",
+    batchClaimId: "claim:one",
+    sourceFingerprint: "fingerprint:one",
+    protocol: "chat_completions",
+    sourceKind: "local-video",
+    routeEndpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    routeProviderId: "zhipu",
+    routeModel: "glm-5.3-flash",
+    localVideo: "base64",
+    preferPublicVideoUrl: false,
+    publicVideoUrl: "direct",
+    hasRouteSnapshot: true,
+    clientRequestId: "video-request:batch"
+  }, { taskId: "task:batch-video" });
+
+  assert.deepEqual({
+    routeEndpoint: created.task.request.routeEndpoint,
+    routeProviderId: created.task.request.routeProviderId,
+    routeModel: created.task.request.routeModel,
+    localVideo: created.task.request.localVideo,
+    preferPublicVideoUrl: created.task.request.preferPublicVideoUrl,
+    publicVideoUrl: created.task.request.publicVideoUrl,
+    hasRouteSnapshot: created.task.request.hasRouteSnapshot
+  }, {
+    routeEndpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    routeProviderId: "zhipu",
+    routeModel: "glm-5.3-flash",
+    localVideo: "base64",
+    preferPublicVideoUrl: false,
+    publicVideoUrl: "direct",
+    hasRouteSnapshot: true
+  });
+});
+
 test("detaching removes only the consumer and leaves the running task intact", () => {
   const created = createOrJoinAnalysisTask({}, request, { taskId: "task:detach" });
   const running = startAnalysisAttempt(created.task, { attemptId: "attempt:detach" });

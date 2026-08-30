@@ -26,7 +26,9 @@ export function cloneSkillSourceSelection(selection = {}) {
   return {
     entryId: String(selection.entryId ?? ""),
     includeEntryText: Boolean(selection.includeEntryText),
-    assetIds: new Set(selection.assetIds ?? [])
+    assetIds: new Set(selection.assetIds ?? []),
+    sourceIds: selection.sourceIds === null ? null : new Set(selection.sourceIds ?? []),
+    analysisIds: new Set(selection.analysisIds ?? [])
   };
 }
 

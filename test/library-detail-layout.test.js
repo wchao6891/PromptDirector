@@ -202,6 +202,9 @@ test("detail editing and core prompt actions stay beside the content they change
   assert.match(prompt, /createComposerAction\(entry\)/);
   assert.match(prompt, /detail-analysis-menu/);
   assert.match(prompt, /完善分析/);
-  assert.match(promptDisplay, /section\.append\(\s*heading,\s*rawTextEl\("pre",[\s\S]*?coreActions,\s*analysisMenu\s*\)/);
+  assert.match(promptDisplay, /section\.append\(\s*heading,\s*rawTextEl\("pre",[\s\S]*?coreActions\s*\)/);
+  assert.match(promptDisplay, /if \(activeVideo && !entry\.compoundCase\) section\.append\(createVideoAnalysisWorkspace\(entry, activeVideo\)\)/);
+  assert.match(promptDisplay, /section\.append\(analysisMenu\)/);
+  assert.ok(promptDisplay.indexOf("createVideoAnalysisWorkspace") < promptDisplay.indexOf("section.append(analysisMenu)"));
   assert.match(rule(styles, ".detail-core-actions"), /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
 });

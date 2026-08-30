@@ -1227,10 +1227,31 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .detail-section h2 { font-size: 16px; }
 .detail-visual-item, .detail-image { background: var(--viewer-bg); }
 .detail-visual-caption { padding: 10px 12px; background: rgba(9, 11, 10, .92); }
-.video-analysis-history { display: grid; gap: 12px; padding: 16px; border-top: 1px solid var(--line); background: var(--viewer-bg); }
+.video-analysis-workspace { display: grid; gap: 12px; margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.video-analysis-history { display: grid; gap: 10px; }
 .video-analysis-history:empty { display: none; }
 .video-analysis-header, .video-analysis-record > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.video-analysis-header h3 { margin: 0; font-size: 14px; }
+.video-analysis-header h3 { margin: 0; font-size: 11px; }
+.video-analysis-header small { color: var(--muted); font-size: 10px; text-align: right; }
+.video-analysis-actions { display: grid; gap: 8px; }
+.video-analysis-action { display: grid; grid-template-columns: minmax(118px, .32fr) minmax(0, 1fr); align-items: start; gap: 8px; }
+.video-analysis-action-controls { display: grid; gap: 6px; }
+.video-analysis-action-controls > button { width: 100%; min-height: 32px; padding: 5px 8px; font-size: 11px; }
+.video-analysis-instruction { width: 100%; min-height: 32px; max-height: 260px; resize: vertical; padding: 7px 9px; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.video-analysis-tag-toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; line-height: 1.3; }
+.video-analysis-tag-toggle input { width: 14px; min-height: 14px; flex: 0 0 auto; accent-color: var(--accent-emphasis); }
+.video-analysis-task-status { display: flex; min-height: 34px; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: var(--ui-control-radius); padding: 7px 9px; color: var(--muted); background: var(--raised); font-size: 11px; }
+.video-analysis-task-status button { min-height: 28px; padding: 4px 8px; font-size: 10px; }
+.video-reconstruction-current { display: grid; gap: 9px; border: 1px solid var(--line); border-radius: var(--ui-container-radius); padding: 12px; background: var(--raised); }
+.video-analysis-record-heading { display: grid; gap: 3px; }
+.video-analysis-record-heading h4 { margin: 0; color: var(--ink); }
+.video-analysis-record-heading small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.video-reconstruction-editor { width: 100%; min-height: 150px; resize: vertical; padding: 10px; font: 11px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.video-reconstruction-current > button { justify-self: end; min-height: 30px; padding: 5px 9px; font-size: 11px; }
+.video-analysis-tags { margin-top: 2px; }
+.video-analysis-uncertainties > summary, .video-analysis-history > summary { color: var(--muted); cursor: pointer; font-size: 11px; }
+.video-analysis-uncertainties ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.video-analysis-history > .video-analysis-list { padding-top: 8px; }
 .video-analysis-list { display: grid; gap: 10px; }
 .video-analysis-record { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: var(--ui-container-radius); background: var(--raised); }
 .video-analysis-record > header span, .video-analysis-record small, .video-analysis-empty { color: var(--muted); font-size: 11px; }
@@ -1286,6 +1307,8 @@ details:not([open]) > .selection-menu-panel { display: none; }
   .trash-item-cover { width: 58px; }
   .trash-item-actions { grid-column: 1 / -1; justify-content: flex-end; }
   .ai-routing-card, .video-analysis-header, .video-analysis-record > header { align-items: stretch; flex-direction: column; }
+  .video-analysis-header small { text-align: left; }
+  .video-analysis-action { grid-template-columns: 1fr; }
   .import-dialog { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; }
   .import-dialog-body { max-height: none; }
   .import-summary { grid-template-columns: 1fr 1fr; }
