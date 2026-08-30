@@ -23,7 +23,7 @@ def wait_for_initial_gallery_batch(page, total: int) -> int:
 def save_pending_classification(page, entry_id: str) -> None:
     drawer = page.locator("#detail-drawer")
     expect(drawer).to_have_attribute("data-entry-id", entry_id)
-    panel = page.locator(".pending-classification-inline")
+    panel = drawer.locator(".pending-classification-inline")
     expect(panel).to_be_visible()
     select = panel.locator("select")
     select.select_option("content:image-case")
