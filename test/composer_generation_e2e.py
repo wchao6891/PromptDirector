@@ -83,6 +83,18 @@ def current_session(page) -> dict:
     )
 
 
+def completed_session(page) -> dict:
+    page.wait_for_function(
+        """async () => {
+          const sessionId = new URL(location.href).searchParams.get('session');
+          const response = await chrome.runtime.sendMessage({type: 'GET_COMPOSER_SESSION', sessionId});
+          return response?.ok === true && response.session?.activeTurn == null;
+        }""",
+        timeout=10_000,
+    )
+    return current_session(page)
+
+
 def main() -> None:
     local_service = ThreadingHTTPServer(("127.0.0.1", 0), CreativeServiceHandler)
     Thread(target=local_service.serve_forever, daemon=True).start()
@@ -274,7 +286,7 @@ def main() -> None:
         composer.get_by_role("button", name="继续重试", exact=True).click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
         assert len(requests) == 2
-        assert current_session(composer)["activeTurn"] is None
+        assert completed_session(composer)["activeTurn"] is None
         sent = json.dumps(requests, ensure_ascii=False)
         assert "精选场景案例" not in sent
         assert "即梦角色" not in sent
@@ -403,7 +415,7 @@ def main() -> None:
         retrieval_payload = json.loads(requests[-1]["messages"][-1]["content"])
         assert len(retrieval_payload["retrievedSources"]) == 2, retrieval_payload
         assert "雾夜角色穿银色披风" in json.dumps(retrieval_payload, ensure_ascii=False)
-        retrieval_session = current_session(composer)
+        retrieval_session = completed_session(composer)
         assert retrieval_session["retrievalSnapshot"]["status"] == "completed", retrieval_session
         assert retrieval_session["retrievalSnapshot"]["sourceCount"] == 2, retrieval_session
         assert retrieval_session["assemblySnapshot"]["status"] == "completed", retrieval_session
@@ -427,7 +439,7 @@ def main() -> None:
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.chat .composer-message-text")).to_have_text("自动模式降级为普通回答。")
         assert len(requests) == degraded_requests_before + 1
-        degraded_session = current_session(composer)
+        degraded_session = completed_session(composer)
         assert any(event["status"] == "degraded" for event in degraded_session["diagnosticEvents"]), degraded_session
 
         openai_requests: list[dict] = []
