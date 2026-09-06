@@ -83,7 +83,7 @@ def main():
                 stored = page.evaluate("id => chrome.storage.local.get('entries').then(s => s.entries.find(e => e.id === id))", entry["id"])
                 assert stored["text"] == entry["text"], "AI 编辑不能覆盖原始内容"
                 rules_action = panel.get_by_role("button", name="编辑分析规则", exact=True)
-                rules_action.scroll_into_view_if_needed()
+                rules_action.hover()
                 reading_position = page.locator("#detail-content").evaluate("e => e.scrollTop")
                 rules_action.click()
                 expect(page.locator('[data-settings-tab="rules"]')).to_have_attribute("aria-selected", "true")
