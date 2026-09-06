@@ -13,6 +13,7 @@ SCRIPTS = [
     "capture_and_cross_page_e2e.py",
     "library_core_e2e.py",
     "library_navigation_e2e.py",
+    "library_browse_return_e2e.py",
     "curated_workflow_e2e.py",
     "curated_skills_install_e2e.py",
     "curated_video_workflow_e2e.py",
@@ -72,6 +73,7 @@ SCRIPTS = [
 
 CASE_MANAGEMENT_SCRIPTS = [
     "library_navigation_e2e.py",
+    "library_browse_return_e2e.py",
     "historical_zip_salvage_e2e.py",
     "video_detail_layout_e2e.py",
     "library_detail_actions_e2e.py",

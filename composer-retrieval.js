@@ -1,6 +1,6 @@
 import { normalizeFacetCatalog } from "./facets.js";
 import { entrySearchText } from "./library-model.js";
-import { matchesSearchQuery, parseSearchQuery } from "./search-query.js";
+import { matchesSearchDocument, matchesSearchQuery, parseSearchQuery } from "./search-query.js";
 import { searchIndexedEntries } from "./search-index.js";
 import { CONTENT_ROLES, contentRoleForEntry } from "./taxonomy.js";
 import { primaryVisionDescription } from "./visuals.js";
@@ -40,7 +40,10 @@ export function retrieveComposerSources(input = {}) {
       const indexed = indexedById.get(entry.id);
       const documentText = String(input.documentTextByEntryId?.get?.(entry.id) ?? "").trim();
       const fullText = indexed?.fullText || `${entrySearchText(entry, catalog, nodeById)}\n${documentText}`.toLocaleLowerCase("zh-CN");
-      if (!matchingIds && !matchesSearchQuery(entry, { terms: [], filters: query.filters }, catalog, fullText)) continue;
+      if (!matchingIds) {
+        const conditions = { terms: [], filters: query.filters };
+        if (!(indexed ? matchesSearchDocument(indexed, conditions) : matchesSearchQuery(entry, conditions, catalog, fullText))) continue;
+      }
       const text = sourceText(entry, role, input.documentTextByEntryId);
       if (!text) continue;
       const rank = !query.terms.length && query.filters.length

@@ -115,3 +115,21 @@ test("one-click retrieval finds the distinctive subject inside a natural-languag
 
   assert.deepEqual(sources.map((item) => item.entryId).sort(), ["case", "guide"]);
 });
+
+test("natural-language retrieval keeps explicit derived-color filters when there is no exact phrase match", () => {
+  const entries = [
+    { id: "blue", text: "雨夜角色", classification: { pathIds: [CONTENT_IDS.promptImage] },
+      mediaAssets: [{ id: "blue-image", kind: "image", storageMode: "managed" }] },
+    { id: "red", text: "雨夜角色", classification: { pathIds: [CONTENT_IDS.promptImage] },
+      mediaAssets: [{ id: "red-image", kind: "image", storageMode: "managed" }] }
+  ];
+  const metadata = new Map([
+    ["blue-image", { palette: { colors: ["#123456"] } }],
+    ["red-image", { palette: { colors: ["#aa0000"] } }]
+  ]);
+  const sources = retrieveComposerSources({
+    entries, query: "请参考雨夜角色 color:123", contentRoles: ["case"], targetType: "image",
+    characterBudget: 2000, searchIndex: buildSearchIndex(entries, undefined, new Map(), metadata)
+  });
+  assert.deepEqual(sources.map(item => item.entryId), ["blue"]);
+});
