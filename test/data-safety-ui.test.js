@@ -61,14 +61,14 @@ test("share-package import is separate from the two backup actions while sync st
     html.indexOf('<footer class="settings-about"')
   );
 
-  assert.match(panel, /id="create-folder-backup"[^>]*>备份资料库/);
-  assert.match(panel, /id="restore-folder-backup"[^>]*>恢复资料库/);
+  assert.match(panel, /id="create-folder-backup"[\s\S]*?data-i18n="备份资料库"/);
+  assert.match(panel, /id="restore-folder-backup"[\s\S]*?data-i18n="恢复资料库"/);
   assert.match(panel, /class="share-package-import"/);
   assert.match(panel, /id="import-library-package"[^>]*>选择 ZIP/);
   assert.match(panel, /id="library-package-file"[^>]*accept="\.zip,application\/zip"/);
   assert.doesNotMatch(panel, /create-portable-backup|restore-portable-backup|小型 ZIP|从 ZIP/);
   assert.match(panel, /<details id="sync-settings"/);
-  assert.match(panel, /<summary[^>]*data-i18n="跨设备同步"/);
+  assert.match(panel, /<summary>[\s\S]*?data-i18n="跨设备同步"/);
   assert.equal((panel.match(/class="data-safety-primary-actions"/g) ?? []).length, 1);
   const primaryActions = panel.slice(
     panel.indexOf('class="data-safety-primary-actions"'),

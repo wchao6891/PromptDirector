@@ -11,3 +11,9 @@ PromptDirector 目前依赖 Chrome 的原生媒体解码能力。遇到浏览器
 案例库中的本地视频可以在用户确认后，以 Base64 发送给 GLM-5.3-Flash 做视频分析。智谱当前公开的 [GLM-5.3-Flash 模型页](https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash)和 [Chat Completions 接口页](https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8)没有声明直连视频的文件大小上限，因此 PromptDirector 不擅自设置 8 MB 等未公开限制。
 
 当前版本不会自动压缩、截断、抽帧或改用其他模型，因为这些降级会改变分析对象或产生额外费用。若服务端拒绝文件大小、格式或内容，请求会显示所选服务返回的错误且不会自动重试。只有公网视频文件直链可走 URL 分析；YouTube、Bilibili、抖音、X 或 Vimeo 的播放页面不等同于视频文件直链。
+
+## 本地程序升级
+
+本地升级需要 Chrome 开发者模式和当前安装目录的读写授权。旧版首次接入需原目录覆盖程序；以后使用设置页升级。不同扩展 ID、非当前安装目录或新增必要权限的更新包会停止自动写入。只创建程序恢复副本，不复制案例和媒体。
+
+若写入中断后无法运行，在扩展管理页加载原目录内的 `PromptDirector-Update-Recovery` 程序副本，以相同身份恢复原版本；不要先卸载插件。目录写权限在重启后可能需要再次授权才能清理临时程序文件。

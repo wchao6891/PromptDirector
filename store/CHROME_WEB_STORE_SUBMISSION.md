@@ -6,10 +6,8 @@ This file is the source-of-truth worksheet for the current PromptDirector manife
 
 - Chrome Web Store item public key: stored in the source `manifest.json` for local identity verification only; `package:release` removes `key` from the upload manifest.
 - Expected extension ID: `iahakaahijddcjjldidbclicedibgpjm`.
-- Current source build artifact: `dist/PromptDirector-1.20.0.zip`. Version 1.20.0 is a source checkpoint; no GitHub Release or Chrome Web Store submission is authorized for this checkpoint.
-- Candidate size: 9,018,284 bytes.
-- Candidate SHA-256: `6e7f037602d8b6e0d1b0ebfa5a66f34a511a14422052609ae57d189f75109b1e`.
-- Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest.
+- Current upload artifact: `dist/PromptDirector-1.20.1.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
+- Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest and excludes the local program installer. Record the generated ZIP size and SHA-256 from the final release assets.
 
 ## Store listing
 
@@ -69,14 +67,16 @@ Chinese Dashboard value:
 
 ## Privacy practices
 
-- Remote code: **No, the extension does not use remote code.** Remote JSON, media, curated archives, and AI responses are treated as data and are never executed as extension code.
+- Policy reference: [Manifest V3 requirements](https://developer.chrome.com/docs/webstore/program-policies/mv3-requirements/) require packaged executable logic; the upload build excludes the GitHub program installer.
+- Distribution updates: the Web Store archive contains no local program installer; updates are delivered by Chrome. The separate GitHub development archive supports user-authorized in-place program updates.
+- Remote code: **No, the Web Store extension does not use remote code.** Remote JSON, media, curated archives, and AI responses are treated as data and are never executed as extension code.
 - User data: disclose website content and resources, saved source URLs/browsing activity, user-provided prompts/notes/media, and locally stored AI-service authentication information. These categories are handled even when they remain on-device.
 - Data transfer: user-selected content is sent only to the AI service or compatible endpoint selected and authorized by the user. Curated catalog and Release requests contain no private library data.
 - Limited Use: certify all applicable statements. There is no sale of user data, personalized advertising, analytics collection, or developer-operated content server.
 
 Chinese remote-code declaration:
 
-> 不使用远程代码。所有可执行 JavaScript、CSS、PDF 与文档解析器和 ZIP 逻辑均随扩展包提供。远程 JSON、媒体、精选包和 AI 响应只作为经过校验的数据处理，绝不作为代码执行。
+> 商店包不包含本地程序安装器，更新由 Chrome 分发。不使用远程代码。所有可执行 JavaScript、CSS、PDF 与文档解析器和 ZIP 逻辑均随扩展包提供。远程 JSON、媒体、精选包和 AI 响应只作为经过校验的数据处理，绝不作为代码执行。
 
 Data types handled, including local-only handling:
 

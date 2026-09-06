@@ -29,8 +29,13 @@ export function compareExtensionVersions(left, right) {
   return 0;
 }
 
-export function extensionUpdateChannel(manifest = {}) {
-  return typeof manifest.key === "string" && manifest.key.trim() ? "development" : "store";
+export function extensionUpdateChannel(installation = {}) {
+  if (installation.installType === "development") return "development";
+  try {
+    const url = new URL(installation.updateUrl);
+    if (url.protocol === "https:" && url.hostname === "clients2.google.com" && url.pathname === "/service/update2/crx") return "store";
+  } catch { /* An unavailable source must not be presented as automatic updating. */ }
+  return "unknown";
 }
 
 export function githubLatestReleaseUrl(homepageUrl) {
@@ -87,10 +92,9 @@ function validVersionOrEmpty(value) {
   return parseExtensionVersion(version) ? version : "";
 }
 
-function normalizedState(stored, manifest) {
+function normalizedState(stored, manifest, channel) {
   const currentVersion = validVersionOrEmpty(manifest?.version);
   if (!currentVersion) throw new Error("当前扩展版本号无效");
-  const channel = extensionUpdateChannel(manifest);
   const source = stored && typeof stored === "object" ? stored : {};
   let pendingVersion = validVersionOrEmpty(source.pendingVersion);
   let latestVersion = validVersionOrEmpty(source.latestVersion);
@@ -129,7 +133,7 @@ function normalizedState(stored, manifest) {
     installedAt: normalizeTimestamp(source.installedAt),
     canApply: storeUpdateAvailable || developmentUpdateAvailable,
     applyBehavior: developmentUpdateAvailable
-      ? "reload_development_directory"
+      ? "upgrade_local_package"
       : storeUpdateAvailable ? "install_downloaded_update" : null
   };
 }
@@ -146,6 +150,7 @@ function errorMessage(error) {
 export function createExtensionUpdateLifecycle({
   runtime,
   storage,
+  getInstallation = () => globalThis.chrome.management.getSelf(),
   fetchFn = globalThis.fetch,
   now = () => Date.now(),
   notify = () => undefined,
@@ -156,6 +161,7 @@ export function createExtensionUpdateLifecycle({
   }
 
   let operationQueue = Promise.resolve();
+  const readChannel = async () => extensionUpdateChannel(await Promise.resolve().then(getInstallation).catch(() => ({})));
   const runExclusive = (operation) => {
     const run = operationQueue.then(operation, operation);
     operationQueue = run.catch(() => undefined);
@@ -165,11 +171,11 @@ export function createExtensionUpdateLifecycle({
   async function readStatus() {
     const manifest = runtime.getManifest();
     const stored = await storage.get(EXTENSION_UPDATE_STORAGE_KEY);
-    return normalizedState(stored?.[EXTENSION_UPDATE_STORAGE_KEY], manifest);
+    return normalizedState(stored?.[EXTENSION_UPDATE_STORAGE_KEY], manifest, await readChannel());
   }
 
   async function writeStatus(status) {
-    const normalized = normalizedState(status, runtime.getManifest());
+    const normalized = normalizedState(status, runtime.getManifest(), await readChannel());
     await storage.set({ [EXTENSION_UPDATE_STORAGE_KEY]: persistedState(normalized) });
     await Promise.resolve(notify(normalized)).catch(() => undefined);
     return normalized;
@@ -256,14 +262,16 @@ export function createExtensionUpdateLifecycle({
     },
 
     check() {
-      return runExclusive(async () => extensionUpdateChannel(runtime.getManifest()) === "development"
-        ? checkDevelopmentRelease()
-        : checkStoreUpdate());
+      return runExclusive(async () => {
+        const channel = await readChannel();
+        if (channel === "development") return checkDevelopmentRelease();
+        if (channel === "store") return checkStoreUpdate();
+        return writeStatus({ ...await readStatus(), checkStatus: "error", lastError: "无法确认安装来源，请重新打开设置后重试" });
+      });
     },
 
     handleStartup() {
-      if (extensionUpdateChannel(runtime.getManifest()) !== "development") return runExclusive(readStatus);
-      return runExclusive(checkDevelopmentRelease);
+      return runExclusive(async () => await readChannel() === "development" ? checkDevelopmentRelease() : readStatus());
     },
 
     handleUpdateAvailable(details) {
@@ -304,7 +312,7 @@ export function createExtensionUpdateLifecycle({
     apply() {
       return runExclusive(async () => {
         const status = await readStatus();
-        if (!status.canApply || !status.applyBehavior) {
+        if (status.channel !== "store" || !status.canApply) {
           return {
             ok: false,
             status,
@@ -312,19 +320,16 @@ export function createExtensionUpdateLifecycle({
             installsUpdate: false,
             message: status.channel === "store"
               ? "Chrome 尚未下载可安装的更新"
-              : "当前目录已是最新版本"
+              : "本地版需要先安装更新包，重新载入不会安装新版本"
           };
         }
         scheduleReload(() => runtime.reload());
-        const installsUpdate = status.channel === "store";
         return {
           ok: true,
           status,
           willReload: true,
-          installsUpdate,
-          message: installsUpdate
-            ? "即将重载并应用 Chrome 已下载的更新"
-            : "即将重载当前开发目录；这不会下载或安装新版本"
+          installsUpdate: true,
+          message: "即将重载并应用 Chrome 已下载的更新"
         };
       });
     }

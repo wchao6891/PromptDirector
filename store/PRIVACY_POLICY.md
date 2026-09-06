@@ -57,8 +57,8 @@
 - `scripting`：仅在用户主动启动采集、选图或截图工具时向当前页面注入所需脚本。
 - `storage` 与 `unlimitedStorage`：保存用户主动收藏的资料、媒体、设置和本地 AI 服务配置。
 - `https://wchao6891.github.io/*`：读取 PromptDirector 官方精选目录、目录指标、封面和只读预览数据。
-- `https://github.com/*`：读取用户明确选择保存的官方精选 Release 包，并打开公开的问题反馈或投稿页面。
-- `https://objects.githubusercontent.com/*` 与 `https://release-assets.githubusercontent.com/*`：跟随 GitHub Release 的受信下载链读取用户明确选择的精选包及其媒体；不会读取其他 GitHub 账号数据。
+- `https://github.com/*`：读取用户明确选择保存的官方精选 Release 包，并打开公开的问题反馈或投稿页面；本地开发版还会读取官方更新版本，并在用户确认后下载程序更新包。
+- `https://objects.githubusercontent.com/*` 与 `https://release-assets.githubusercontent.com/*`：跟随 GitHub Release 的受信下载链读取用户明确选择的精选包及其媒体，或本地开发版的程序更新包；不会读取其他 GitHub 账号数据。
 - 可选的 `<all_urls>`：不在安装时授予。只有用户主动使用需要相应站点权限的采集功能或保存第三方 AI 服务、自定义兼容接口时，扩展才会请求相应域名的运行时权限。
 - 可选的 `clipboardRead`：只在用户明确触发需要读取剪贴板内容的功能时请求。
 - 可选的 `declarativeNetRequestWithHostAccess`：只在用户已授予相应站点访问权限、且功能需要按该权限处理网络请求时使用。
@@ -106,8 +106,8 @@ PromptDirector complies with the Limited Use requirements of the Chrome Web Stor
 - `scripting`: inject the required capture, selection, or screenshot code only after a user starts that action.
 - `storage` and `unlimitedStorage`: retain the user's selected references, media, settings, and local AI configuration.
 - `https://wchao6891.github.io/*`: read the official curated catalog, metrics, covers, and read-only previews.
-- `https://github.com/*`: read an official curated Release package selected by the user and open public feedback or submission pages.
-- `https://objects.githubusercontent.com/*` and `https://release-assets.githubusercontent.com/*`: follow GitHub's trusted Release download chain for a curated package and its media selected by the user; no other GitHub account data is read.
+- `https://github.com/*`: read an official curated Release package selected by the user and open public feedback or submission pages. Local development builds also check official versions and download program updates after user confirmation.
+- `https://objects.githubusercontent.com/*` and `https://release-assets.githubusercontent.com/*`: follow GitHub's trusted Release download chain for user-selected curated packages and media, or local development program updates; no other GitHub account data is read.
 - Optional `<all_urls>`: not granted at installation. PromptDirector requests only the specific origin needed when the user starts a site-dependent capture or saves a third-party or compatible AI endpoint.
 - Optional `clipboardRead`: requested only for a user-triggered feature that reads clipboard content.
 - Optional `declarativeNetRequestWithHostAccess`: requested only when a user-granted site permission and the chosen feature require a bounded network rule.
