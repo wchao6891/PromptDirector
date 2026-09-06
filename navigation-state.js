@@ -76,7 +76,12 @@ export function createLibraryReturnRestore({
   let restored = false;
   return function restoreWhenReady(isReady) {
     if (!isReady || restored) return false;
-    const snapshot = parseLibraryReturnSnapshot(storage?.getItem?.(key) ?? "");
+    let snapshot;
+    try {
+      snapshot = parseLibraryReturnSnapshot(storage?.getItem?.(key) ?? "");
+    } catch {
+      return false;
+    }
     if (!snapshot) return false;
     applySnapshot(snapshot);
     restored = true;
@@ -97,5 +102,6 @@ function normalizeLibraryReturnSnapshot(value) {
     ? value.sortMode
     : "added-desc";
   if (collectionId === null || contentId === null || facetNodeIds === null || pendingOnly === null || query === null || scrollY === null) return null;
-  return { collectionId, contentId, facetNodeIds, pendingOnly, query, scrollY, sortMode };
+  const unassignedViewActive = !collectionId && value?.unassignedViewActive === true;
+  return { collectionId, unassignedViewActive, contentId, facetNodeIds, pendingOnly, query, scrollY, sortMode };
 }

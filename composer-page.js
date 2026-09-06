@@ -65,7 +65,7 @@ import { resolveComposerTurnPolicy } from "./composer-turn-policy.js";
 import { retrieveComposerSources } from "./composer-retrieval.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { readImageDimensions } from "./image-metadata.js";
-import { deleteMediaBlobs, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
+import { deleteMediaBlobs, getAllDerivedMetadata, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
 import { prepareLocalMedia } from "./local-media.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { extractPdfSearchText } from "./document-viewer.js";
@@ -1466,7 +1466,10 @@ async function createComposerSearchState(sourceEntries) {
   const documentIds = [...new Set(sourceEntries.flatMap((entry) => entryMediaAssets(entry))
     .filter((asset) => asset.kind === "document")
     .map((asset) => asset.id))];
-  const derived = await Promise.all(documentIds.map(async (id) => [id, await getDerivedMedia(id).catch(() => null)]));
+  const [derived, metadata] = await Promise.all([
+    Promise.all(documentIds.map(async (id) => [id, await getDerivedMedia(id).catch(() => null)])),
+    getAllDerivedMetadata()
+  ]);
   const documentText = new Map(derived.flatMap(([id, value]) => value?.searchText ? [[id, value.searchText]] : []));
   const documentTextByEntryId = new Map(sourceEntries.flatMap((entry) => {
     const text = entryMediaAssets(entry).map((asset) => documentText.get(asset.id)).filter(Boolean).join("\n").trim();
@@ -1474,7 +1477,7 @@ async function createComposerSearchState(sourceEntries) {
   }));
   return {
     documentTextByEntryId,
-    searchIndex: buildSearchIndex(sourceEntries, facetCatalog, documentText)
+    searchIndex: buildSearchIndex(sourceEntries, facetCatalog, documentText, metadata)
   };
 }
 

@@ -106,6 +106,8 @@ def main() -> None:
     jimeng_character["mediaAssets"] = [{"id": "character-image", "kind": "image", "usage": "content", "storageMode": "managed", "mimeType": "image/png", "width": 1, "height": 1, "byteSize": 68}]
     jimeng_character["primaryMediaId"] = "character-image"
     retrieved_case = base_entry("retrieval-case", "内部案例标题", "雾夜角色穿银色披风，轮廓清晰。", "content:prompt:image")
+    retrieved_case["mediaAssets"] = [{"id": "retrieval-color-image", "kind": "image", "usage": "content", "storageMode": "managed", "mimeType": "image/png", "width": 1, "height": 1}]
+    retrieved_case["primaryMediaId"] = "retrieval-color-image"
     retrieved_guide = base_entry("retrieval-guide", "内部教程标题", "雾夜角色布光教程：先确定轮廓光，再控制环境雾。", "content:tutorial")
     with extension_session("prompt-director-composer-") as session:
         setup = session.open_page("collector.html")
@@ -159,11 +161,14 @@ def main() -> None:
         )
         setup.evaluate(
             """async () => {
-              const {saveMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
+              const {saveMediaBlob, saveDerivedMetadata} = await import(chrome.runtime.getURL('media-store.js'));
               const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
               const bytes = Uint8Array.from(atob(data), character => character.charCodeAt(0));
               const blob = new Blob([bytes], {type: 'image/png'});
               await saveMediaBlob('composition-image', blob, {checkCapacity: false});
+              await saveMediaBlob('retrieval-color-image', blob, {checkCapacity: false});
+              // Synthetic palette tests indexing, not pixel color extraction.
+              await saveDerivedMetadata('retrieval-color-image', {palette: {colors: ['#123456'], version: 1}});
               await saveMediaBlob('character-image', blob, {checkCapacity: false});
             }"""
         )
@@ -432,6 +437,24 @@ def main() -> None:
         expect(composer.locator("#composer-assembly-content")).to_contain_text("预计 1 次模型请求")
         expect(composer.locator("#composer-assembly-content")).to_contain_text("实际终态：completed")
         composer.locator("#composer-assembly-close").click()
+
+        library = session.open_page("library.html", wait_until="networkidle")
+        library.locator("#search-input").fill("color:123")
+        expect(library.locator("#case-list > .case-card")).to_have_count(1)
+        expect(library.locator("#case-list > .case-card")).to_have_attribute("data-entry-id", "retrieval-case")
+        library.close()
+        for color, expected_count in [("123", 1), ("abcdef", 0)]:
+            composer.locator("#composer-new").click()
+            composer.locator("#composer-library-search").click()
+            composer.locator("#composer-instruction").fill(f"用私人资料补充雾夜角色 color:{color}")
+            composer.locator("#composer-action").click()
+            expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
+            color_payload = json.loads(requests[-1]["messages"][-1]["content"])
+            assert len(color_payload["retrievedSources"]) == expected_count, color_payload
+            if expected_count:
+                assert "雾夜角色穿银色披风" in json.dumps(color_payload["retrievedSources"], ensure_ascii=False)
+            color_session = completed_session(composer)
+            assert color_session["retrievalSnapshot"]["sourceCount"] == expected_count, color_session
 
         composer.locator("#composer-new").click()
         composer.locator("#composer-instruction").fill("协议降级测试")

@@ -104,6 +104,7 @@ test("library return snapshots serialize canonical collection, facets, query, an
 
   assert.deepEqual(JSON.parse(serialized), {
     collectionId: "collection:7",
+    unassignedViewActive: false,
     contentId: "content:prompt:image",
     facetNodeIds: ["facet:2", "facet:1"],
     pendingOnly: true,
@@ -149,6 +150,7 @@ test("library return restore waits for initialization readiness and only applies
   assert.equal(restore(true), true);
   assert.deepEqual(applied, [{
     collectionId: "collection:1",
+    unassignedViewActive: false,
     contentId: "",
     facetNodeIds: ["facet:1"],
     pendingOnly: false,
@@ -170,6 +172,7 @@ test("old library return snapshots gain safe default sorting", () => {
     scrollY: 0
   })), {
     collectionId: "",
+    unassignedViewActive: false,
     contentId: "",
     facetNodeIds: [],
     pendingOnly: false,
@@ -191,4 +194,36 @@ test("removed oldest-first snapshots fall back to recent-first", () => {
     projectSortMode: "manual"
   }));
   assert.equal(snapshot.sortMode, "added-desc");
+});
+
+test("returning from creation preserves the unassigned workspace alongside its filters", () => {
+  const snapshot = parseLibraryReturnSnapshot(serializeLibraryReturnSnapshot({
+    collectionId: "", unassignedViewActive: true, contentId: "content:prompt:image",
+    facetNodeIds: ["style:film"], pendingOnly: false, query: "雨夜", scrollY: 2800,
+    sortMode: "title", caseOrderManagementActive: true
+  }));
+  assert.equal(snapshot.unassignedViewActive, true);
+  assert.equal(snapshot.query, "雨夜");
+  assert.equal(snapshot.scrollY, 2800);
+  assert.equal(snapshot.sortMode, "title");
+  assert.equal("caseOrderManagementActive" in snapshot, false);
+});
+
+test("a saved project takes precedence over a contradictory unassigned flag", () => {
+  const snapshot = parseLibraryReturnSnapshot(serializeLibraryReturnSnapshot({
+    collectionId: "collection:1", unassignedViewActive: true, contentId: "",
+    facetNodeIds: [], pendingOnly: false, query: "", scrollY: 0
+  }));
+  assert.equal(snapshot.collectionId, "collection:1");
+  assert.equal(snapshot.unassignedViewActive, false);
+});
+
+test("unavailable session storage does not block opening the library", () => {
+  const applied = [];
+  const restore = createLibraryReturnRestore({
+    storage: { getItem() { throw new Error("storage unavailable"); } },
+    applySnapshot: snapshot => applied.push(snapshot)
+  });
+  assert.equal(restore(true), false);
+  assert.deepEqual(applied, []);
 });

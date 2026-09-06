@@ -1,4 +1,4 @@
-import { normalizeEntryMedia } from "./media.js";
+import { entryMediaAssets } from "./media.js";
 import { normalizeFacetCatalog } from "./facets.js";
 
 const OPERATORS = new Set(["type", "source", "tag", "color", "date", "note", "has"]);
@@ -17,60 +17,78 @@ export function parseSearchQuery(value = "") {
 }
 
 export function matchesSearchQuery(entryValue, queryValue, catalogValue, fullText = "") {
-  const query = typeof queryValue === "string" ? parseSearchQuery(queryValue) : queryValue;
-  const entry = normalizeEntryMedia(entryValue);
-  const searchable = String(fullText).toLocaleLowerCase("zh-CN");
-  if (query.terms.some((term) => !searchable.includes(term))) return false;
-  return query.filters.every((filter) => matchesFilter(entry, filter, catalogValue));
+  const catalog = normalizeFacetCatalog(catalogValue);
+  const nodeById = new Map(catalog.nodes.map(node => [node.id, node]));
+  return matchesSearchDocument({
+    ...searchFieldsForEntry(entryValue, nodeById),
+    fullText: searchText(fullText)
+  }, queryValue);
 }
 
-function matchesFilter(entry, filter, catalogValue) {
+export function searchFieldsForEntry(entry, nodeById, derivedMetadataByAsset = new Map()) {
+  const mediaAssets = entryMediaAssets(entry);
+  const sources = [entry.url, ...(entry.sourcePages ?? []).flatMap(source => [source.url, source.title]),
+    ...mediaAssets.flatMap(asset => [asset.sourceUrl, asset.sourceTitle, asset.reference?.url])];
+  const notes = [entry.text, ...(entry.timeNotes ?? []).map(note => note.text)];
+  const tags = [
+    ...(entry.customLabels ?? []),
+    ...(entry.facetAssignments ?? []).filter(item => item.status === "confirmed").flatMap(item => {
+      const node = nodeById.get(item.nodeId);
+      return node ? [node.name, ...(node.aliases ?? [])] : [];
+    })
+  ];
+  const timestamp = Date.parse(entry.savedAt);
+  return {
+    sources: searchText(sources.join("\n")),
+    notes: searchText(notes.join("\n")),
+    tags: searchText(tags.join("\n")),
+    colors: mediaAssets.flatMap(asset =>
+      asset.palette?.colors ?? derivedMetadataByAsset.get(asset.id)?.palette?.colors ?? []
+    ).map(normalizeSearchColor),
+    kinds: new Set(mediaAssets.map(asset => asset.kind)),
+    hasMedia: mediaAssets.length > 0,
+    isNote: !mediaAssets.length && Boolean(String(entry.text ?? "").trim()),
+    savedDate: Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : ""
+  };
+}
+
+export function matchesSearchDocument(document, queryValue = "") {
+  const query = typeof queryValue === "string" ? parseSearchQuery(queryValue) : queryValue;
+  return query.terms.every(term => document.fullText.includes(term)) &&
+    query.filters.every(filter => matchesFilter(document, filter));
+}
+
+function matchesFilter(document, filter) {
   const value = filter.value;
   if (filter.name === "type" || filter.name === "has") {
-    if (value === "media") return entry.mediaAssets.length > 0;
-    if (value === "note") return !entry.mediaAssets.length && Boolean(clean(entry.text));
-    return entry.mediaAssets.some((asset) => asset.kind === normalizeKind(value));
+    if (value === "media") return document.hasMedia;
+    if (value === "note") return document.isNote;
+    return document.kinds.has(normalizeKind(value));
   }
-  if (filter.name === "source") {
-    return [entry.url, ...(entry.sourcePages ?? []).flatMap((source) => [source.url, source.title]),
-      ...entry.mediaAssets.flatMap((asset) => [asset.sourceUrl, asset.sourceTitle, asset.reference?.url])]
-      .some((item) => clean(item).toLocaleLowerCase("zh-CN").includes(value));
-  }
-  if (filter.name === "note") {
-    return [entry.text, ...(entry.timeNotes ?? []).map((note) => note.text)]
-      .some((item) => clean(item).toLocaleLowerCase("zh-CN").includes(value));
-  }
+  if (filter.name === "source") return document.sources.includes(value);
+  if (filter.name === "note") return document.notes.includes(value);
+  if (filter.name === "tag") return document.tags.includes(value);
   if (filter.name === "color") {
-    const wanted = value.replace(/^#/, "");
-    return entry.mediaAssets.flatMap((asset) => asset.palette?.colors ?? [])
-      .some((color) => clean(color).toLocaleLowerCase("en-US").replace(/^#/, "").includes(wanted));
+    const wanted = normalizeSearchColor(value);
+    return document.colors.some(color => color.includes(wanted));
   }
-  if (filter.name === "date") return matchesDate(entry.savedAt, value);
-  if (filter.name === "tag") {
-    const catalog = normalizeFacetCatalog(catalogValue);
-    const nodeById = new Map(catalog.nodes.map((node) => [node.id, node]));
-    const labels = [
-      ...(entry.customLabels ?? []),
-      ...(entry.facetAssignments ?? []).filter((item) => item.status === "confirmed")
-        .flatMap((item) => {
-          const node = nodeById.get(item.nodeId);
-          return node ? [node.name, ...(node.aliases ?? [])] : [];
-        })
-    ];
-    return labels.some((label) => clean(label).toLocaleLowerCase("zh-CN").includes(value));
-  }
+  if (filter.name === "date") return matchesDate(document.savedDate, value);
   return false;
 }
 
-function matchesDate(savedAt, query) {
-  const timestamp = Date.parse(savedAt);
-  if (!Number.isFinite(timestamp)) return false;
-  if (!query.includes("..")) return new Date(timestamp).toISOString().slice(0, 10).startsWith(query);
-  const [startValue, endValue] = query.split("..", 2);
-  const start = startValue ? Date.parse(startValue) : Number.NEGATIVE_INFINITY;
-  const end = endValue ? Date.parse(`${endValue}T23:59:59.999Z`) : Number.POSITIVE_INFINITY;
-  return (Number.isFinite(start) || start === Number.NEGATIVE_INFINITY) &&
-    (Number.isFinite(end) || end === Number.POSITIVE_INFINITY) && timestamp >= start && timestamp <= end;
+function matchesDate(savedDate, query) {
+  if (!savedDate) return false;
+  if (!query.includes("..")) return savedDate.startsWith(query);
+  const [start, end] = query.split("..", 2);
+  return (!start || savedDate >= start) && (!end || savedDate <= end);
+}
+
+function normalizeSearchColor(value) {
+  return searchText(value).replace(/^#/, "");
+}
+
+function searchText(value) {
+  return String(value ?? "").toLocaleLowerCase("zh-CN");
 }
 
 function normalizeKind(value) {

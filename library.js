@@ -190,7 +190,7 @@ import {
 } from "./local-asset-store.js";
 import {
   LIBRARY_RETURN_STORAGE_KEY,
-  parseLibraryReturnSnapshot,
+  createLibraryReturnRestore,
   serializeLibraryReturnSnapshot
 } from "./navigation-state.js";
 import { CURATED_SUBMISSION_URL } from "./curated-config.js";
@@ -373,7 +373,10 @@ const videoAnalysisTaskQueries = new Map();
 let promptEditState = null;
 const visionStatusByEntry = new Map();
 let activeFilterCount = 0;
-let libraryReturnRestored = false;
+const restoreLibraryReturnSnapshot = createLibraryReturnRestore({
+  storage: { getItem: (key) => sessionStorage.getItem(key) },
+  applySnapshot: applyLibraryReturnSnapshot
+});
 let libraryReturnScrollY = null;
 let pendingLocalImport = null;
 let pendingLibraryPackageBatch = null;
@@ -994,7 +997,7 @@ async function refreshLibrary() {
   maintenanceJob = response.maintenanceJob ?? maintenanceJob;
   visionBatchJob = response.visionBatchJob ?? null;
   canUndoAnalysisBatch = Boolean(response.canUndoAnalysisBatch);
-  restoreLibraryReturnSnapshot();
+  restoreLibraryReturnSnapshot(true);
   const displayedLibraryTitle = libraryTitleForLocale(settings.libraryTitle, currentLocale());
   elements.libraryTitle.textContent = displayedLibraryTitle;
   if (document.activeElement !== elements.libraryNameSetting) elements.libraryNameSetting.value = displayedLibraryTitle;
@@ -1016,7 +1019,7 @@ async function refreshLibrary() {
   rebuildLibraryDerivedState();
   renderGallery();
   document.body.dataset.libraryState = "ready";
-  restoreLibraryScrollPosition();
+  if (!elements.searchInput.value.trim()) restoreLibraryScrollPosition();
   const cacheGeneration = ++documentCacheGeneration;
   void loadDocumentDerivedCache(entries).then(() => {
     if (cacheGeneration !== documentCacheGeneration) return;
@@ -1024,7 +1027,7 @@ async function refreshLibrary() {
     gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
     updateCachedDocumentCards();
     if (elements.searchInput.value.trim()) scheduleSearchRender();
-  }).catch(() => undefined);
+  }).catch(() => undefined).finally(() => restoreLibraryScrollPosition());
   if (elements.managerDialog.open) renderManager();
   if (elements.visionBatchDialog.open) renderVisionBatchDialog();
   if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
@@ -1133,6 +1136,7 @@ function scheduleSearchRender() {
   searchRenderFrame = requestAnimationFrame(() => {
     searchRenderFrame = 0;
     renderGalleryResults({ refreshNavigation: false });
+    restoreLibraryScrollPosition();
   });
 }
 
@@ -2916,6 +2920,7 @@ function saveLibraryReturnSnapshot() {
   try {
     sessionStorage.setItem(LIBRARY_RETURN_STORAGE_KEY, serializeLibraryReturnSnapshot({
       collectionId: selectedCollectionId,
+      unassignedViewActive,
       contentId: selectedContentId,
       facetNodeIds: [...selectedFacets.values()].flatMap((nodeIds) => [...nodeIds]),
       pendingOnly: elements.pendingFilter.checked,
@@ -2927,16 +2932,8 @@ function saveLibraryReturnSnapshot() {
   }
 }
 
-function restoreLibraryReturnSnapshot() {
-  if (libraryReturnRestored) return;
-  libraryReturnRestored = true;
-  let snapshot = null;
-  try {
-    snapshot = parseLibraryReturnSnapshot(sessionStorage.getItem(LIBRARY_RETURN_STORAGE_KEY));
-  } catch {
-  }
-  if (!snapshot) return;
-  unassignedViewActive = false;
+function applyLibraryReturnSnapshot(snapshot) {
+  unassignedViewActive = snapshot.unassignedViewActive;
   selectedCollectionId = organizerState.collections.some((item) => item.id === snapshot.collectionId)
     ? snapshot.collectionId
     : "";
@@ -2957,9 +2954,20 @@ function restoreLibraryReturnSnapshot() {
 
 function restoreLibraryScrollPosition() {
   if (!Number.isFinite(libraryReturnScrollY)) return;
-  const scrollY = libraryReturnScrollY;
-  libraryReturnScrollY = null;
-  requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top: scrollY, left: 0, behavior: "auto" })));
+  const generation = galleryGeneration;
+  requestAnimationFrame(() => {
+    if (generation !== galleryGeneration || !Number.isFinite(libraryReturnScrollY)) return;
+    // Load enough of the case wall before scrolling; the first batch may be shorter
+    // than the saved position. Exhausted results naturally clamp to the new end.
+    const availableScroll = document.scrollingElement.scrollHeight - window.innerHeight;
+    if (availableScroll < libraryReturnScrollY && renderedCount < visibleEntries.length) {
+      renderNextBatch(generation);
+      restoreLibraryScrollPosition();
+      return;
+    }
+    window.scrollTo({ top: libraryReturnScrollY, left: 0, behavior: "auto" });
+    libraryReturnScrollY = null;
+  });
 }
 
 function openRequestedSettings() {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { filterEntries } from "../library-model.js";
 import { parseSearchQuery } from "../search-query.js";
+import { buildSearchIndex, searchIndexedEntries } from "../search-index.js";
 
 const catalog = {
   facets: [{ id: "style", name: "风格", color: "#000", status: "active", order: 0 }],
@@ -29,4 +30,19 @@ test("combined media source tag color date and note filters are ANDed", () => {
 test("free words remain local full-text search alongside operators", () => {
   assert.equal(filterEntries([entry], { query: "雨夜 type:video" }, catalog).length, 1);
   assert.equal(filterEntries([entry], { query: "晴天 type:video" }, catalog).length, 0);
+});
+
+test("library indexing and direct conditions agree for combined and excluding filters", () => {
+  const index = buildSearchIndex([entry], catalog);
+  for (const [query, expected] of [
+    ["type:视频 source:x.com tag:cinematic color:#123 date:2026-08 note:加速 has:media", ["case-1"]],
+    ["date:2026-08-01..2026-08-02", ["case-1"]],
+    ["date:..2026-08-01", ["case-1"]],
+    ["date:2026-08-02..", []],
+    ["color:abc", []], ["tag:不存在", []], ["type:图片", []], ["has:note", []],
+    ["source:missing.invalid", []], ["note:静止", []]
+  ]) {
+    assert.deepEqual([...searchIndexedEntries(index, query)], expected, query);
+    assert.deepEqual(filterEntries([entry], { query }, catalog).map(item => item.id), expected, query);
+  }
 });
