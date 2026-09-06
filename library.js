@@ -227,7 +227,7 @@ const elements = Object.fromEntries([
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
+  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
   "project-section", "project-root-drop", "manage-project-order", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "video-instructions-en", "video-instructions-zh", "video-settings-form", "video-settings-status", "restore-video-default", "video-protocol",
@@ -387,6 +387,8 @@ let importDragDepth = 0;
 let externalLibraryRefreshTimer = 0;
 let externalLibraryRefreshPending = false;
 let extensionUpdateStatus = null;
+let localUpgradeFeedback = "";
+let localUpgradeCleanupRequired = false;
 
 const importTagEditor = createTagEditor({
   placeholder: "例如：风格不错，很喜欢",
@@ -458,7 +460,15 @@ elements.uiTheme.value = uiPreferences.theme;
 elements.uiMotion.value = uiPreferences.motion;
 elements.showAnalysisDiagnostics.checked = uiPreferences.analysisDiagnostics;
 elements.aboutVersion.textContent = `PromptDirector ${chrome.runtime.getManifest().version}`;
-void refreshExtensionUpdateStatus();
+void refreshExtensionUpdateStatus().then(async () => {
+  if (extensionUpdateStatus?.channel !== "development") return;
+  try {
+    const result = await (await import("./local-extension-upgrade-ui.js")).runningUpgradeFeedback();
+    localUpgradeFeedback = result.message;
+    localUpgradeCleanupRequired = result.cleanupRequired;
+    renderExtensionUpdateStatus(extensionUpdateStatus);
+  } catch (error) { showUpdateFeedback(error.message, true); }
+});
 await refreshLibrary();
 await openRequestedLibraryTarget();
 await resumeImportJob();
@@ -627,6 +637,14 @@ function bindEvents() {
   elements.openSettings.addEventListener("click", () => openSettingsDialog("general"));
   elements.settingsClose.addEventListener("click", () => elements.settingsDialog.close());
   elements.checkExtensionUpdate.addEventListener("click", checkExtensionUpdate);
+  elements.openAbout.addEventListener("click", showExtensionAbout);
+  elements.localExtensionPackage.addEventListener("change", async () => {
+    const archive = elements.localExtensionPackage.files?.[0];
+    elements.localExtensionPackage.value = "";
+    if (!archive) return;
+    try { await (await import("./local-extension-upgrade-ui.js")).openLocalUpgrade(extensionUpdateStatus, archive); }
+    catch (error) { showUpdateFeedback(error.message, true); }
+  });
   elements.applyExtensionUpdate.addEventListener("click", applyExtensionUpdate);
   elements.revokeCaptureWebPermission.addEventListener("click", () => void revokeCapturePermission("web"));
   elements.revokeCaptureClipboardPermission.addEventListener("click", () => void revokeCapturePermission("clipboard"));
@@ -3280,14 +3298,26 @@ async function checkExtensionUpdate() {
 }
 
 async function applyExtensionUpdate() {
+  if (localUpgradeCleanupRequired) {
+    elements.applyExtensionUpdate.disabled = true;
+    try {
+      if (await (await import("./local-extension-upgrade-ui.js")).finishLocalUpgrade()) {
+        localUpgradeCleanupRequired = false;
+        localUpgradeFeedback = t("已清理升级临时文件");
+        renderExtensionUpdateStatus(extensionUpdateStatus);
+      }
+    } catch (error) { showUpdateFeedback(error.message, true); }
+    finally { elements.applyExtensionUpdate.disabled = false; }
+    return;
+  }
   const status = extensionUpdateStatus;
-  if (!status?.canApply || !status.applyBehavior) return;
-  const development = status.applyBehavior === "reload_development_directory";
-  const confirmed = await confirmAppAction(development ? {
-    title: "安全重载当前目录？",
-    description: "当前资料库页面会关闭，Chrome 会重新载入你已经选择的本地目录。不会下载或覆盖代码，本地案例和素材不会丢失。",
-    confirmLabel: "安全重载"
-  } : {
+  if (!status?.canApply) return;
+  if (status.channel === "development") {
+    try { await (await import("./local-extension-upgrade-ui.js")).openLocalUpgrade(status); }
+    catch (error) { showUpdateFeedback(error.message, true); }
+    return;
+  }
+  const confirmed = await confirmAppAction({
     title: "立即应用更新并重启 PromptDirector？",
     description: "当前资料库页面会关闭，但本地案例和素材不会丢失。",
     confirmLabel: "应用并重启"
@@ -3295,11 +3325,10 @@ async function applyExtensionUpdate() {
   if (!confirmed) return;
   elements.applyExtensionUpdate.disabled = true;
   elements.applyExtensionUpdate.setAttribute("aria-busy", "true");
-  showUpdateFeedback(development ? "正在安全重载当前目录…" : "正在应用更新并重启…");
+  showUpdateFeedback("正在应用更新并重启…");
   try {
     const response = await chrome.runtime.sendMessage({ type: "APPLY_EXTENSION_UPDATE" });
-    if (response?.status) renderExtensionUpdateStatus(response.status);
-    if (!response?.ok) throw new Error(response?.status?.lastError || response?.message || "无法应用更新");
+    if (!response?.ok) throw new Error(response?.message || "无法应用更新");
   } catch (error) {
     showUpdateFeedback(error?.message || "无法应用更新", true);
     elements.applyExtensionUpdate.disabled = false;
@@ -3310,85 +3339,58 @@ async function applyExtensionUpdate() {
 function renderExtensionUpdateStatus(nextStatus, fallbackError = "") {
   if (nextStatus) extensionUpdateStatus = { ...(extensionUpdateStatus ?? {}), ...nextStatus };
   const status = extensionUpdateStatus;
-  const currentVersion = status?.currentVersion || chrome.runtime.getManifest().version;
-  elements.aboutVersion.textContent = `PromptDirector ${currentVersion}`;
-  if (!status) {
-    elements.updateChannel.textContent = t("安装方式暂不可用");
-    elements.updateStatus.textContent = t(fallbackError ? "状态不可用" : "正在检查");
-    elements.updateStatus.className = `update-status-badge${fallbackError ? " is-error" : ""}`;
-    elements.updateCheckedAt.textContent = t("最近检查：—");
-    elements.updateAvailableVersion.textContent = t("可用版本：—");
-    elements.updateExplanation.textContent = t("重新打开设置时会再次读取更新状态。");
-    showUpdateFeedback(translateUiMessage(fallbackError), Boolean(fallbackError));
-    return;
-  }
-
-  const development = status.channel === "development";
-  elements.updateChannel.textContent = t(development ? "本地开发版 · 手动替换代码" : "商店版 · Chrome 自动更新");
-  const updateVersion = status.pendingVersion || status.latestVersion || "—";
-  elements.updateCheckedAt.textContent = t("最近检查：{time}", { time: formatUpdateCheckTime(status.checkedAt) });
-  elements.updateAvailableVersion.textContent = t("可用版本：{version}", { version: updateVersion });
-
-  const display = updateStatusDisplay(status);
-  elements.updateStatus.textContent = t(display.label);
-  elements.updateStatus.className = `update-status-badge ${display.className}`.trim();
-  elements.updateExplanation.textContent = t(updateExplanation(status));
-
-  const releaseUrl = development && status.updateAvailable ? safeHttpUrl(status.releaseUrl) : "";
-  elements.updateReleaseLink.hidden = !releaseUrl;
-  if (releaseUrl) elements.updateReleaseLink.href = releaseUrl;
-  else elements.updateReleaseLink.removeAttribute("href");
-
-  elements.applyExtensionUpdate.hidden = !status.canApply;
-  elements.applyExtensionUpdate.disabled = false;
-  elements.applyExtensionUpdate.removeAttribute("aria-busy");
-  elements.applyExtensionUpdate.classList.toggle("button-secondary", development);
-  elements.applyExtensionUpdate.textContent = t(status.applyBehavior === "reload_development_directory"
-    ? "重新载入目录"
-    : "应用更新并重启");
-
-  const hasUpdate = Boolean(status.updateAvailable);
+  elements.aboutVersion.textContent = `PromptDirector ${status?.currentVersion || chrome.runtime.getManifest().version}`;
+  const development = status?.channel === "development";
+  const hasUpdate = Boolean(status?.updateAvailable);
+  elements.updateStatus.textContent = hasUpdate ? t("发现新版本") : status?.channel === "store" ? t("自动更新") : "";
+  elements.updateStatus.className = hasUpdate ? "is-available" : "";
+  elements.checkExtensionUpdate.hidden = status?.channel === "store";
+  elements.applyExtensionUpdate.hidden = !status?.canApply && !localUpgradeCleanupRequired;
+  elements.applyExtensionUpdate.textContent = t(localUpgradeCleanupRequired ? "清理升级临时文件" : development ? "升级本地版" : "应用更新并重启");
   elements.settingsUpdateBadge.hidden = !hasUpdate;
   elements.openSettings.setAttribute("aria-label", t(hasUpdate ? "设置，有可用更新" : "设置"));
-  elements.openSettings.title = hasUpdate ? t("设置 · {status}", { status: t(display.label) }) : t("设置");
-  showUpdateFeedback(translateUiMessage(status.lastError || ""), Boolean(status.lastError));
+  elements.openSettings.title = t(hasUpdate ? "设置，有可用更新" : "设置");
+  showUpdateFeedback(status?.lastError || fallbackError || localUpgradeFeedback, Boolean(status?.lastError || fallbackError));
 }
 
-function updateStatusDisplay(status) {
-  if (status.updateKind === "store_downloaded") return { label: "已下载，可应用", className: "is-available" };
-  if (status.updateKind === "development_release" || status.updateAvailable) return { label: "发现新版本", className: "is-available" };
-  if (status.checkStatus === "error") return { label: "检查失败", className: "is-error" };
-  if (status.checkStatus === "no_update") return { label: "已是最新", className: "is-current" };
-  if (status.checkStatus === "throttled") return { label: "刚刚检查过", className: "is-current" };
-  return { label: "自动更新", className: "" };
-}
-
-function updateExplanation(status) {
-  if (status.channel === "development") {
-    return status.updateAvailable
-      ? "发现新的 GitHub Release。扩展无法自行覆盖本机目录；请从链接下载并替换代码，再安全重载。固定 ID 升级无需导出、导入案例。"
-      : "本地开发版不会被扩展自行覆盖。安全重载只会重新载入当前目录，不会下载或安装新版本；固定 ID 升级无需导出、导入案例。";
-  }
-  return status.updateKind === "store_downloaded"
-    ? "新版本已由 Chrome 下载。立即应用会关闭当前资料库页面并重启扩展；案例和素材不会丢失。"
-    : "商店版由 Chrome 自动更新，无需反复下载插件；更新下载完成后也可以在这里立即应用。";
+async function showExtensionAbout() {
+  const manifest = chrome.runtime.getManifest();
+  const status = extensionUpdateStatus;
+  const result = await showAppDialog({
+    title: "关于 PromptDirector",
+    confirmLabel: "完成",
+    renderBody: ({ body }) => {
+      body.append(rawTextEl("p", "", `PromptDirector ${manifest.version}`));
+      body.append(rawTextEl("p", "", t("免费、开源、本地优先 · Apache-2.0")));
+      body.append(rawTextEl("p", "", t(status?.channel === "development" ? "本地版" : status?.channel === "store" ? "商店版 · Chrome 自动更新" : "安装方式暂不可用")));
+      if (status?.checkedAt) body.append(rawTextEl("p", "", t("最近检查：{time}", { time: new Date(status.checkedAt).toLocaleString() })));
+      const link = document.createElement("a");
+      link.textContent = t("查看源码");
+      link.href = safeHttpUrl(manifest.homepage_url);
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      body.append(link);
+      if (status?.channel === "development") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "button-secondary";
+        button.textContent = t("选择已下载的更新包");
+        button.addEventListener("click", () => { button.closest("form").requestSubmit(); elements.localExtensionPackage.click(); });
+        body.append(button);
+      }
+    }
+  });
+  return result;
 }
 
 function updateCheckFeedback(status) {
-  if (status?.updateAvailable) return t(status.channel === "development" ? "发现新版本，可打开 Release 下载。" : "新版本已下载，可以立即应用。");
+  if (status?.updateAvailable) return "";
   if (status?.checkStatus === "throttled") return t("刚刚检查过，已保留最近结果。");
   return t("已是最新版本。");
 }
 
-function formatUpdateCheckTime(value) {
-  if (!value) return t("尚未检查");
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return t("尚未检查");
-  return date.toLocaleString(currentLocale() === "en" ? "en" : "zh-CN");
-}
-
 function showUpdateFeedback(message, isError = false) {
-  elements.updateFeedback.textContent = message || "";
+  elements.updateFeedback.textContent = translateUiMessage(message || "");
   elements.updateFeedback.classList.toggle("error", isError);
 }
 
@@ -10213,6 +10215,7 @@ function renderReanalysisPreview() {
 }
 
 function updateLibrarySettingsSaveState() {
+  elements.librarySettingsFeedback.textContent = "";
   const titleChanged = elements.libraryNameSetting.value !== (elements.libraryNameSetting.dataset.savedValue ?? "");
   const pathChanged = elements.exportPathSetting.value !== (elements.exportPathSetting.dataset.savedValue ?? "");
   elements.saveLibrarySettings.disabled = !(titleChanged || pathChanged);
@@ -10224,20 +10227,26 @@ async function saveLibrarySettings() {
     elements.libraryNameSetting.dataset.storedValue,
     currentLocale()
   );
-  const response = await perform(elements.saveLibrarySettings, {
-    type: "UPDATE_SETTINGS",
-    settings: {
-      libraryTitle,
-      outputPath: elements.exportPathSetting.value
-    }
-  }, false);
-  if (!response?.ok) return;
+  const button = elements.saveLibrarySettings;
+  button.disabled = true;
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage({ type: "UPDATE_SETTINGS", settings: { libraryTitle, outputPath: elements.exportPathSetting.value } });
+    if (!response?.ok) throw new Error(response?.message || "保存失败");
+    elements.librarySettingsFeedback.textContent = t("已保存");
+    elements.librarySettingsFeedback.classList.remove("error");
+  } catch (error) {
+    updateLibrarySettingsSaveState();
+    elements.librarySettingsFeedback.textContent = translateUiMessage(error.message);
+    elements.librarySettingsFeedback.classList.add("error");
+    return;
+  }
   const displayedLibraryTitle = libraryTitleForLocale(response.settings.libraryTitle, currentLocale());
   elements.libraryNameSetting.value = displayedLibraryTitle;
   elements.libraryNameSetting.dataset.savedValue = displayedLibraryTitle;
   elements.libraryNameSetting.dataset.storedValue = response.settings.libraryTitle || "";
   elements.exportPathSetting.dataset.savedValue = elements.exportPathSetting.value;
-  updateLibrarySettingsSaveState();
+  button.disabled = true;
 }
 
 async function perform(button, message, refresh = true) {
@@ -10581,8 +10590,8 @@ async function renderDataSafetyStatus() {
   }
   syncStatus = response.syncStatus ?? {};
   elements.dataSafetyCount.textContent = currentLocale() === "en"
-    ? `${response.entryCount} cases · ${response.mediaCount} media (${response.videoCount} videos)`
-    : `${response.entryCount} 个案例 · ${response.mediaCount} 项媒体（${response.videoCount} 个视频）`;
+    ? `${response.entryCount} cases · ${response.mediaCount} media`
+    : `${response.entryCount} 个案例 · ${response.mediaCount} 项媒体`;
   elements.dataSafetyStatus.textContent = syncStatusMessage(syncStatus);
   const missingLocation = syncStatus.lastErrorCode === SYNC_ERROR_CODES.LOCATION_NOT_FOUND;
   const needsFolder = missingLocation || !syncStatus.connected || syncStatus.permission !== "granted";
@@ -10808,18 +10817,18 @@ function localizedImportReportDescription(report) {
 }
 
 function syncStatusMessage(status) {
-  if (!status.connected) return t("尚未连接同步文件夹");
+  if (!status.connected) return t("未连接");
   if (status.permission !== "granted") return t("同步文件夹需要重新授权");
-  if (!status.unlocked) return t("同步库已锁定，请输入密码解锁");
+  if (!status.unlocked) return t("待解锁");
   if (status.lastErrorCode === SYNC_ERROR_CODES.LOCATION_NOT_FOUND) {
     return t("同步文件夹中的文件或目录不存在，请重新选择同步文件夹后再同步");
   }
-  if (status.active) return status.cancelRequested ? "正在停止本次同步…" : "正在执行一次手动同步…";
+  if (status.active) return t(status.cancelRequested ? "正在停止同步…" : "正在同步…");
   if (status.lastError) return status.lastError;
-  if (status.state === "canceled") return "上次手动同步已停止，本机未提交的资料没有改变";
-  if (status.state === "up-to-date") return "已检查：两端没有变化，没有写入同步文件夹";
-  if (status.localDirty) return "本机有尚未同步的变化；只有点击并确认后才会同步";
-  if (!status.lastSyncAt) return t("同步库已连接，尚未完成首次同步");
+  if (status.state === "canceled") return t("同步已停止");
+  if (status.state === "up-to-date") return t("已同步");
+  if (status.localDirty) return t("待同步");
+  if (!status.lastSyncAt) return t("已连接");
   const date = new Date(status.lastSyncAt);
   const formatted = Number.isNaN(date.getTime()) ? status.lastSyncAt : date.toLocaleString(currentLocale() === "en" ? "en" : "zh-CN");
   return currentLocale() === "en" ? `Last synced ${formatted}` : `上次成功同步：${formatted}`;

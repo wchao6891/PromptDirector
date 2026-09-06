@@ -20,7 +20,7 @@ test("AI settings use full-width task and service views instead of a cramped spl
   assert.match(html, /data-ai-routing-tab="providers"[^>]*aria-selected="false"/);
   assert.match(html, /data-ai-routing-panel="tasks"/);
   assert.match(html, /data-ai-routing-panel="providers"[^>]*hidden/);
-  assert.match(css, /\.settings-dialog\s*\{[^}]*width:\s*min\(1040px, calc\(100vw - 40px\)\)/s);
+  assert.match(css, /\.settings-dialog\s*\{[^}]*width:\s*min\(880px, calc\(100vw - 40px\)\)/s);
   assert.match(css, /\.ai-routing-regions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
   assert.doesNotMatch(css, /\.ai-routing-regions\s*\{[^}]*1\.35fr/s);
 });

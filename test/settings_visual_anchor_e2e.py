@@ -44,7 +44,8 @@ def settings_metrics(page) -> dict:
 
 def assert_anchor_stable(baseline: dict, current: dict, label: str, viewport: dict) -> None:
     for surface in ("dialog", "header", "tabs"):
-        for dimension in ("top", "height"):
+        # General settings now size to their content; the header and tabs stay anchored.
+        for dimension in (("top",) if surface == "dialog" else ("top", "height")):
             shift = abs(current[surface][dimension] - baseline[surface][dimension])
             assert shift <= MAX_ANCHOR_SHIFT_PX, (
                 f"{viewport} {label} changed {surface}.{dimension} by {shift:.2f}px: "

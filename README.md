@@ -29,7 +29,13 @@ PromptDirector 是一个免费、开源、本地优先的 Chrome 扩展。它把
 
 需要检查源码或参与开发时，可从 [GitHub Releases](https://github.com/wchao6891/PromptDirector/releases) 下载名称带 `FIXED-ID-DEV` 的最新 ZIP 并解压。在 Chrome 或 Edge 的扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”，然后选择解压后的目录。这个包保留 Chrome Web Store 分配的固定扩展身份，适合本地开发验证。
 
-不带 `FIXED-ID-DEV` 的同版本 ZIP 仅供维护者上传 Chrome Web Store，清单中按商店要求移除了 `key`，不要把它作为本地解压安装包。升级前请先在“更多 → 备份与同步”创建并验证完整资料夹备份；如曾使用其他扩展 ID，请按[扩展身份迁移说明](docs/EXTENSION_ID_MIGRATION.md)恢复资料。
+不带 `FIXED-ID-DEV` 的同版本 ZIP 仅供维护者上传 Chrome Web Store，清单中按商店要求移除了 `key`，不要把它作为本地解压安装包。同一扩展身份下的常规更新不需要导出或重新导入案例；如曾使用其他扩展 ID，请按[扩展身份迁移说明](docs/EXTENSION_ID_MIGRATION.md)恢复资料。
+
+## 本地版更新
+
+已具备本地升级功能的版本：在“设置”检查更新，点击“升级本地版”，选择 Chrome 当前加载的安装文件夹并授权。程序更新后重启插件，重新打开设置核对版本；如出现“清理升级临时文件”，点击完成清理。案例和媒体继续使用当前浏览器中的原资料库。
+
+旧版本首次接入：下载新版 `FIXED-ID-DEV` ZIP，将包内程序文件覆盖到 Chrome 当前加载的原目录，再到扩展管理页点击重新加载。保持原插件与固定身份，无需卸载，也无需备份再导入案例。源码工作目录通过 Git 更新。
 
 ## 从源码构建
 
@@ -40,7 +46,7 @@ npm install
 npm run verify
 ```
 
-`npm run verify` 是完整验证门槛，构建与验证不会自动发布 GitHub Release 或上传商店：先完成源码、资源、历史数据兼容与单元测试，再把固定 ID 本地包加载到隔离的 Chrome for Testing 中跑完整浏览器 E2E；全部通过后生成商店包，并用上一正式版资料执行同一 Chrome Profile 的最终包升级演练。任一阶段失败都不会通过门禁。只需快速检查源码时可运行 `npm run verify:source`，只检查历史数据合同可运行 `npm run check:compat`。`npm run test:local-extension` 是打包后自动化主验收；`npm run package` 生成保留固定身份的本地安装包；`npm run package:release` 生成移除 `key` 的 Chrome Web Store 上传包。两者包含相同的运行代码，只有安装身份用途不同。正式身份缺失时命令会明确失败，避免用户资料被错误扩展 ID 隔离。
+`npm run verify` 是完整验证门槛，构建与验证不会自动发布 GitHub Release 或上传商店：先完成源码、资源、历史数据兼容与单元测试，再把固定 ID 本地包加载到隔离的 Chrome for Testing 中跑完整浏览器 E2E；全部通过后生成商店包，并用上一正式版资料执行同一 Chrome Profile 的最终包升级演练。任一阶段失败都不会通过门禁。只需快速检查源码时可运行 `npm run verify:source`，只检查历史数据合同可运行 `npm run check:compat`。`npm run test:local-extension` 是打包后自动化主验收；`npm run package` 生成保留固定身份的本地安装包；`npm run package:release` 生成移除 `key` 的 Chrome Web Store 上传包。两者共用案例、媒体和创作功能。商店包移除本地程序安装器，只保留 Chrome 更新；固定身份本地包保留原位升级。正式身份缺失时命令会明确失败，避免用户资料被错误扩展 ID 隔离。
 
 已发布数据的长期支持规则、权威夹具和升级门禁见[数据兼容说明](docs/DATA_COMPATIBILITY.md)。当前浏览器兼容边界和已确认但延期的增强记录在[已知限制](docs/KNOWN_LIMITATIONS.md)。
 

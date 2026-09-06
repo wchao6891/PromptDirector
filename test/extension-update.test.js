@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   compareExtensionVersions,
-  createExtensionUpdateLifecycle,
+  createExtensionUpdateLifecycle as actualLifecycle,
   EXTENSION_UPDATE_STATUS_CHANGED,
   EXTENSION_UPDATE_STORAGE_KEY,
   extensionUpdateChannel,
@@ -12,6 +12,11 @@ import {
   parseExtensionVersion,
   releaseVersionFromUrl
 } from "../extension-update.js";
+
+// Installation metadata is explicit in the test adapter; production uses getSelf().
+function createExtensionUpdateLifecycle(options) {
+  return actualLifecycle({ getInstallation: async () => options.runtime.installation, ...options });
+}
 
 function memoryStorage(initial = {}) {
   const values = structuredClone(initial);
@@ -28,6 +33,7 @@ function memoryStorage(initial = {}) {
 
 function fakeRuntime(manifest, updateResult = { status: "no_update" }) {
   return {
+    installation: manifest.key ? { installType: "development" } : { installType: "normal", updateUrl: "https://clients2.google.com/service/update2/crx" },
     reloadCount: 0,
     getManifest: () => structuredClone(manifest),
     requestUpdateCheck: async () => structuredClone(updateResult),
@@ -49,9 +55,9 @@ test("Chrome extension versions are parsed and compared with Chrome's strict rul
   assert.throws(() => compareExtensionVersions("v1.2", "1.1"), /版本号格式无效/u);
 });
 
-test("package identity selects the update channel and GitHub release tags remain strict", () => {
-  assert.equal(extensionUpdateChannel({ version: "1.0" }), "store");
-  assert.equal(extensionUpdateChannel({ version: "1.0", key: "public-key" }), "development");
+test("installation metadata selects the update channel and GitHub release tags remain strict", () => {
+  assert.equal(extensionUpdateChannel({ installType: "normal", updateUrl: "https://clients2.google.com/service/update2/crx" }), "store");
+  assert.equal(extensionUpdateChannel({ installType: "development" }), "development");
   assert.equal(
     githubLatestReleaseUrl("https://github.com/example/prompt-director/"),
     "https://github.com/example/prompt-director/releases/latest"
@@ -97,14 +103,14 @@ test("development startup discovers a newer GitHub release without downloading c
   assert.equal(status.updateAvailable, true);
   assert.equal(status.updateKind, "development_release");
   assert.equal(status.canApply, true);
-  assert.equal(status.applyBehavior, "reload_development_directory");
+  assert.equal(status.applyBehavior, "upgrade_local_package");
   assert.equal(status.checkStatus, "update_available");
   assert.equal(notifications.length, 1);
   assert.equal(storage.values[EXTENSION_UPDATE_STORAGE_KEY].latestVersion, "1.19.0");
   assert.equal("canApply" in storage.values[EXTENSION_UPDATE_STORAGE_KEY], false);
 });
 
-test("development apply only reloads the current directory and never claims to install", async () => {
+test("development apply rejects reloading unchanged code as a package upgrade", async () => {
   const runtime = fakeRuntime({
     version: "1.18.9",
     key: "fixed-development-id",
@@ -127,13 +133,12 @@ test("development apply only reloads the current directory and never claims to i
   });
 
   const result = await lifecycle.apply();
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, false);
   assert.equal(result.installsUpdate, false);
-  assert.equal(result.willReload, true);
-  assert.match(result.message, /不会下载或安装新版本/u);
+  assert.equal(result.willReload, false);
+  assert.match(result.message, /重新载入不会安装新版本/u);
   assert.equal(runtime.reloadCount, 0);
-  scheduledReload();
-  assert.equal(runtime.reloadCount, 1);
+  assert.equal(scheduledReload, undefined);
 });
 
 test("development current version has no reload or primary update action", async () => {
@@ -255,4 +260,16 @@ test("background wires update events and the public message protocol", async () 
     assert.match(source, new RegExp(`case "${type}"`, "u"));
   }
   assert.match(source, new RegExp(EXTENSION_UPDATE_STATUS_CHANGED, "u"));
+});
+
+test("actual installation metadata overrides the presence or absence of a manifest key", async () => {
+  const runtime = fakeRuntime({ version: "1.0", homepage_url: "https://github.com/example/prompt-director" });
+  runtime.installation = { installType: "development" };
+  assert.equal((await createExtensionUpdateLifecycle({ runtime, storage: memoryStorage() }).getStatus()).channel, "development");
+  assert.equal(extensionUpdateChannel({ key: "key", installType: "normal" }), "unknown");
+  let checks = 0;
+  runtime.requestUpdateCheck = async () => { checks++; };
+  const service = createExtensionUpdateLifecycle({ runtime, storage: memoryStorage(), getInstallation: async () => { throw new Error("unavailable"); } });
+  assert.equal((await service.check()).checkStatus, "error");
+  assert.equal(checks, 0);
 });

@@ -25,18 +25,15 @@ test("top navigation keeps search-adjacent actions focused on adding, creating, 
   assert.doesNotMatch(html, /动态视图|save-dynamic-view|dynamic-view-list/);
 });
 
-test("about information is inline at the bottom of general settings", async () => {
+test("about details are on demand while version stays at the bottom of general settings", async () => {
   const about = html.slice(html.indexOf('<footer class="settings-about"'), html.indexOf("</footer>", html.indexOf('<footer class="settings-about"')));
   const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
-  assert.equal((about.match(/<a\b/g) ?? []).length, 2);
   assert.match(about, /id="about-version">PromptDirector</);
-  assert.doesNotMatch(about, /PromptDirector\s+\d+\.\d+\.\d+/);
-  assert.match(script, /aboutVersion\.textContent\s*=\s*`PromptDirector \$\{chrome\.runtime\.getManifest\(\)\.version\}`/);
-  assert.match(about, /github\.com\/wchao6891\/PromptDirector/);
-  assert.match(about, /id="update-release-link"[^>]*github\.com\/wchao6891\/PromptDirector\/releases[^>]*hidden/);
-  assert.match(about, /Apache-2\.0/);
-  assert.doesNotMatch(about, /href="LICENSE"|href="NOTICE"|THIRD_PARTY_NOTICES/);
-  assert.doesNotMatch(html, /id="about-dialog"|id="open-about"/);
+  assert.match(about, /id="open-about"/);
+  assert.doesNotMatch(about, /Apache-2\.0|github\.com/);
+  assert.match(script, /async function showExtensionAbout/);
+  assert.match(script, /免费、开源、本地优先 · Apache-2\.0/);
+  assert.match(script, /safeHttpUrl\(manifest\.homepage_url\)/);
 });
 
 test("closed dialogs cannot enter the page layout", async () => {

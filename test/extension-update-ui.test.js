@@ -1,65 +1,49 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-
+import { load } from "cheerio";
 const root = new URL("../", import.meta.url);
-const [html, css, source] = await Promise.all([
-  readFile(new URL("library.html", root), "utf8"),
-  readFile(new URL("library.css", root), "utf8"),
-  readFile(new URL("library.js", root), "utf8")
-]);
+const [html, source, local] = await Promise.all(["library.html", "library.js", "local-extension-upgrade-ui.js"].map(path => readFile(new URL(path, root), "utf8")));
+const $ = load(html);
 
-test("about settings expose status and state-specific update actions", () => {
-  const about = html.slice(html.indexOf('<footer class="settings-about">'), html.indexOf("</footer>", html.indexOf('<footer class="settings-about">')));
-  assert.match(about, /id="about-version"/);
-  assert.match(about, /id="update-channel"/);
-  assert.match(about, /id="update-checked-at"/);
-  assert.match(about, /id="update-available-version"/);
-  assert.match(about, /id="check-extension-update"/);
-  assert.match(about, /id="apply-extension-update"/);
-  assert.match(about, /id="update-release-link"/);
-  assert.match(source, /"应用更新并重启"/);
-  assert.match(source, /"重新载入目录"/);
-  assert.match(about, /class="button-primary update-download-action"[^>]*hidden[^>]*>下载新版本/);
-  assert.match(css, /\.settings-update-actions/);
+test("settings footer is compact with named icons and on-demand about details", () => {
+  const about = $(".settings-about");
+  assert.equal(about.find("#about-version").length, 1);
+  assert.equal(about.find('#check-extension-update[aria-label="检查更新"] svg').length, 1);
+  assert.equal(about.find("#apply-extension-update[hidden]").length, 1);
+  assert.equal(about.find("#open-about").length, 1);
+  assert.equal(about.find("#update-explanation, #update-channel, #update-checked-at").length, 0);
+  assert.doesNotMatch(about.text(), /安全重载|私人灵感库|Apache|手动替换/);
 });
-
-test("green actions are visible only for a real store or development update", () => {
-  const render = source.slice(source.indexOf("function renderExtensionUpdateStatus"), source.indexOf("function updateStatusDisplay"));
-  assert.match(render, /updateReleaseLink\.hidden = !releaseUrl/);
-  assert.match(render, /applyExtensionUpdate\.hidden = !status\.canApply/);
-  assert.match(render, /classList\.toggle\("button-secondary", development\)/);
-  assert.match(render, /development && status\.updateAvailable/);
+test("store update remains browser managed; local update runs the package installer", () => {
+  assert.match(source, /checkExtensionUpdate\.hidden = status\?\.channel === "store"/);
+  assert.match(source, /applyExtensionUpdate\.hidden = !status\?\.canApply/);
+  assert.match(source, /openLocalUpgrade\(status\)/);
+  assert.doesNotMatch(source, /reload_development_directory|重新载入目录/);
+  assert.match(local, /installType !== "development"/);
+  assert.match(local, /installLocalUpgrade\(root, prepared/);
+  assert.match(local, /verifyRunningUpgrade\(record, chrome.runtime\)/);
+});
+test("store restart informs the user at the action, not in persistent footer prose", () => {
+  const apply = source.slice(source.indexOf("async function applyExtensionUpdate"), source.indexOf("function renderExtensionUpdateStatus"));
+  assert.match(apply, /confirmAppAction/);
+  assert.match(apply, /当前资料库页面会关闭，但本地案例和素材不会丢失/);
+  assert.match(apply, /type: "APPLY_EXTENSION_UPDATE"/);
+});
+test("settings update badge and background status events are preserved", () => {
+  assert.equal($("#settings-update-badge[hidden]").length, 1);
   assert.match(source, /settingsUpdateBadge\.hidden = !hasUpdate/);
-});
-
-test("update UI uses the background lifecycle protocol and refresh event", () => {
-  assert.match(source, /type: "GET_EXTENSION_UPDATE_STATUS"/);
-  assert.match(source, /type: "CHECK_EXTENSION_UPDATE"/);
-  assert.match(source, /type: "APPLY_EXTENSION_UPDATE"/);
   assert.match(source, /message\?\.type !== "EXTENSION_UPDATE_STATUS_CHANGED"/);
-  assert.match(source, /renderExtensionUpdateStatus\(message\.status\)/);
 });
-
-test("development update wording never claims the extension installs or overwrites local code", () => {
-  const explanation = source.slice(source.indexOf("function updateExplanation"), source.indexOf("function updateCheckFeedback"));
-  assert.match(explanation, /扩展无法自行覆盖本机目录/);
-  assert.match(explanation, /安全重载只会重新载入当前目录，不会下载或安装新版本/);
-  assert.match(explanation, /固定 ID 升级无需导出、导入案例/);
-  assert.doesNotMatch(explanation, /一键安装|自动覆盖本地代码/);
-});
-
-test("applying a downloaded store update discloses that the page closes but library data remains", () => {
-  const applyFlow = source.slice(source.indexOf("async function applyExtensionUpdate"), source.indexOf("function renderExtensionUpdateStatus"));
-  assert.match(applyFlow, /当前资料库页面会关闭/);
-  assert.match(applyFlow, /本地案例和素材不会丢失|案例和素材不会丢失/);
-  assert.match(applyFlow, /confirmAppAction/);
-  assert.match(applyFlow, /applyBehavior === "reload_development_directory"/);
-});
-
-test("the settings entry uses a low-interruption update badge", () => {
-  assert.match(html, /id="settings-update-badge"[^>]*hidden/);
-  assert.match(css, /\.settings-update-badge/);
-  assert.match(source, /settingsUpdateBadge\.hidden = !hasUpdate/);
-  assert.match(source, /设置，有可用更新/);
+test("compact settings preserve direct data actions and same-group permission/sync controls", () => {
+  assert.equal($(".capture-permission-row").length, 2);
+  $(".capture-permission-row").each((_i, row) => {
+    assert.equal($(row).children("strong").length, 1);
+    assert.equal($(row).children("button").length, 1);
+  });
+  assert.equal($(".data-heading #create-folder-backup").length, 1);
+  assert.equal($(".data-heading #restore-folder-backup").length, 1);
+  assert.equal($(".sync-settings-body > #connect-sync-folder").length, 1);
+  assert.equal($(".sync-settings-body > #data-safety-password").length, 1);
+  assert.equal($("#save-library-settings[aria-label] svg").length, 1);
 });

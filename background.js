@@ -471,6 +471,7 @@ let visionAnalysisInFlight = false;
 const aiProviderModule = createAiProviderModule();
 const extensionUpdateLifecycle = createExtensionUpdateLifecycle({
   runtime: chrome.runtime,
+  getInstallation: () => chrome.management.getSelf(),
   storage: chrome.storage.local,
   fetchFn: (...args) => fetch(...args),
   notify: (status) => chrome.runtime.sendMessage({

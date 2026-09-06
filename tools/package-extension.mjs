@@ -5,6 +5,7 @@ import { createZipBlob } from "../zip.js";
 import { validateChromeStoreManifest } from "./chrome-store-manifest.mjs";
 import { verifyPdfjsRuntime } from "./pdfjs-runtime.mjs";
 import { chromeStoreUploadManifest, extensionArchiveName } from "./release-identity.mjs";
+import { packageRuntimeFiles } from "./extension-package-variants.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceManifest = JSON.parse(await readFile(join(projectRoot, "manifest.json"), "utf8"));
@@ -58,10 +59,11 @@ const locales = Object.fromEntries(await Promise.all((await readdir(join(project
 validateChromeStoreManifest({ manifest, locales });
 validateManifest(manifest, files.map((file) => file.name));
 await mkdir(join(projectRoot, "dist"), { recursive: true });
-const archive = await createZipBlob(files);
+const runtimeFilesForDistribution = packageRuntimeFiles(files, { release });
+const archive = await createZipBlob(runtimeFilesForDistribution);
 const outputPath = join(projectRoot, "dist", extensionArchiveName(sourceManifest, { release }));
 await writeFile(outputPath, new Uint8Array(await archive.arrayBuffer()));
-process.stdout.write(`${outputPath}\n${files.length} 个运行文件，${archive.size} 字节\n`);
+process.stdout.write(`${outputPath}\n${runtimeFilesForDistribution.length} 个运行文件，${archive.size} 字节\n`);
 
 async function packageFile(path) {
   return {
