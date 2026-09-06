@@ -2,6 +2,12 @@ const GENERIC_MIME_TYPES = new Set([
   "application/octet-stream",
   "application/x-unknown"
 ]);
+const SHARE_PACKAGE_MIME_TYPES = new Set([
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/octet-stream",
+  ""
+]);
 
 const DEFINITIONS = [
   format("png", "image", "image", ["png"], ["image/png"]),
@@ -36,6 +42,7 @@ const DEFINITIONS = [
   format("ass", "document", "subtitle", ["ass", "ssa"], ["text/x-ssa", "text/plain"], { plainText: true }),
   format("sbv", "document", "subtitle", ["sbv"], ["text/plain"], { plainText: true }),
   format("lrc", "document", "subtitle", ["lrc"], ["text/plain", "application/lrc"], { plainText: true }),
+  format("skill", "attachment", "workflow", ["skill"], ["application/zip", "application/x-zip-compressed"], { extensionRequired: true }),
 
   format("photoshop", "attachment", "design-source", ["psd", "psb"], ["image/vnd.adobe.photoshop", "application/x-photoshop"]),
   format("illustrator", "attachment", "design-source", ["ai"], ["application/postscript", "application/illustrator"]),
@@ -112,13 +119,19 @@ export function assetFormatForFile(file = {}) {
   const extension = fileExtension(file.name);
   const byExtension = assetFormatForExtension(extension);
   if (byExtension) return byExtension;
-  const byMime = assetFormatsForMimeType(file.type);
+  const byMime = assetFormatsForMimeType(file.type).filter(definition => !definition.extensionRequired);
   return byMime.length === 1 ? byMime[0] : null;
 }
 
 export function assetKindFromFileMetadata(file = {}) {
   const definition = assetFormatForFile(file);
   return definition && isReportedMimeCompatible(definition, file.type) ? definition.kind : "";
+}
+
+export function importContainerKindForFile(file = {}) {
+  return fileExtension(file.name) === "zip" && SHARE_PACKAGE_MIME_TYPES.has(normalizeMimeType(file.type))
+    ? "share-package"
+    : "";
 }
 
 export function isReportedMimeCompatible(definition, value) {
@@ -213,6 +226,7 @@ function format(id, kind, category, extensions, mimeTypes, options = {}) {
     extensions: Object.freeze(extensions),
     mimeTypes: Object.freeze(mimeTypes),
     preview: kind === "attachment" ? "inert" : options.plainText ? "text" : "native",
-    plainText: options.plainText === true
+    plainText: options.plainText === true,
+    ...(options.extensionRequired ? { extensionRequired: true } : {})
   });
 }

@@ -222,6 +222,18 @@ export function setEntriesCollection(stateValue, collectionId, entryIds, selecte
   return state;
 }
 
+export function moveEntriesBetweenCollections(stateValue, sourceCollectionId, targetCollectionId, entryIds) {
+  const sourceId = cleanId(sourceCollectionId);
+  const targetId = cleanId(targetCollectionId);
+  let state = normalizeOrganizerState(stateValue);
+  if (!state.collections.some((item) => item.id === targetId)) throw new Error("目标项目不存在");
+  if (sourceId) {
+    if (!state.collections.some((item) => item.id === sourceId)) throw new Error("来源项目不存在");
+    state = setEntriesCollection(state, sourceId, entryIds, false);
+  }
+  return setEntriesCollection(state, targetId, entryIds, true);
+}
+
 export function replaceCollectionEntries(stateValue, collectionId, entryIds) {
   const state = structuredClone(normalizeOrganizerState(stateValue));
   const collection = state.collections.find((item) => item.id === cleanId(collectionId));

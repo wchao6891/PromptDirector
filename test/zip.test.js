@@ -3,6 +3,19 @@ import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
 
 import { createZipBlob, openZipBlob, readZipBlob } from "../zip.js";
+import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
+
+test("ZIP roundtrip preserves original image bytes above the document limit", async () => {
+  assert.equal(PORTABLE_LIBRARY_LIMITS.maxImageBytes, 32 * 1024 * 1024);
+  // ZIP transport fixture; image decoding is covered by the image validation tests.
+  const bytes = new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1).fill(137);
+  const archive = await createZipBlob([{ name: "images/original.png", data: new Blob([bytes]) }]);
+  const files = await readZipBlob(archive);
+  assert.deepEqual(new Uint8Array(await files.get("images/original.png").arrayBuffer()), bytes);
+  await assert.rejects(() => readZipBlob(archive, { maxImageBytes: bytes.length - 1 }), /单个文件超过/);
+  const document = await createZipBlob([{ name: "documents/notes.md", data: new Blob([bytes]) }]);
+  await assert.rejects(() => readZipBlob(document), /单个文件超过/);
+});
 
 test("createZipBlob produces a UTF-8 ZIP containing markdown and image paths", async () => {
   const archive = await createZipBlob([

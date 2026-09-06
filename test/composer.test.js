@@ -296,6 +296,21 @@ test("image prompt references carry the original prompt and every saved visual f
   assert.doesNotMatch(reference.referenceText, /private title/);
 });
 
+test("AI-only image prompts enter Composer as AI, including the currently edited adopted result", () => {
+  const asset = { id: "image-current", kind: "image", usage: "content", contentHash: "h",
+    visionAnalysis: { version: 2, imageFingerprint: "h", reconstructionPrompt: "旧分析正文" } };
+  const entry = { id: "image-only-ai", text: "", classification: { pathIds: [CONTENT_IDS.promptImage] }, mediaAssets: [asset],
+    mediaPrompts: [{ assetId: asset.id, source: "ai-suggestion", text: "当前 AI 人工修订" }] };
+  const [reference] = createReferenceSnapshots([entry], [{ entryId: entry.id, assetIds: [asset.id] }], "zh-CN", "image");
+  assert.equal(reference.originalText, "");
+  assert.match(reference.referenceText, /当前 AI 人工修订/);
+  assert.doesNotMatch(reference.referenceText, /旧分析正文/);
+  assert.equal(reference.assets[0].reconstructionPrompt, "当前 AI 人工修订");
+  asset.visionAnalysis.invalidated = true;
+  const [afterInvalidation] = createReferenceSnapshots([entry], [{ entryId: entry.id, assetIds: [asset.id] }], "zh-CN", "image");
+  assert.match(afterInvalidation.referenceText, /当前 AI 人工修订/);
+});
+
 test("asset-scoped reference snapshot freezes the active secondary image, its own prompt, and its own V2 analysis", () => {
   const entry = {
     id: "multi-image",
@@ -391,6 +406,7 @@ test("video reference snapshots freeze only the selected asset original prompt c
   assert.equal(reference.referenceId, "multi-video:video-one");
   assert.equal(reference.assetId, "video-one");
   assert.equal(reference.referenceKind, "video_sources");
+  assert.deepEqual(reference.assetRefs, [{ assetId: "video-one", kind: "video", mimeType: "video/mp4", name: "", byteSize: 0 }]);
   assert.deepEqual(reference.referenceSources.map((source) => source.kind), ["original_prompt", "video_reconstruction", "time_notes"]);
   assert.deepEqual(reference.referenceSources.map((source) => source.text), ["第一条视频原提示词", "第一条当前逆推", "[0:01.200] 第一条视频人工笔记"]);
   assert.match(reference.referenceText, /\[原始提示词\][\s\S]*\[AI 视觉逆推\][\s\S]*\[人工时间点笔记\]/);
@@ -403,7 +419,7 @@ test("video reference snapshots freeze only the selected asset original prompt c
   assert.equal(restored.referenceSources[1].analysisId, "reverse-current");
 });
 
-test("video references allow one source to be cancelled and selected other analysis to be frozen explicitly", () => {
+test("legacy other video analyses never enter new Composer snapshots", () => {
   const entry = {
     id: "video-explicit-sources",
     text: "短",
@@ -420,9 +436,10 @@ test("video references allow one source to be cancelled and selected other analy
     sourceIds: ["reconstruction:reverse"],
     analysisIds: ["review"]
   }], "zh-CN", "video");
-  assert.deepEqual(reference.referenceSources.map((source) => source.kind), ["video_reconstruction", "other_analysis"]);
+  assert.deepEqual(reference.referenceSources.map((source) => source.kind), ["video_reconstruction"]);
   assert.doesNotMatch(reference.referenceText, /\[原始提示词\]|短/);
-  assert.match(reference.referenceText, /可见画面逆推[\s\S]*显式广告审片/);
+  assert.match(reference.referenceText, /可见画面逆推/);
+  assert.doesNotMatch(reference.referenceText, /显式广告审片/);
 });
 
 test("exact duplicate video source bodies are sent once with both provenance labels", () => {
@@ -732,7 +749,7 @@ test("planning can be stopped before DeepSeek returns", async () => {
     options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
   }) });
   controller.abort();
-  await assert.rejects(promise, /Aborted/);
+  await assert.rejects(promise, { name: "AbortError" });
 });
 
 test("DeepSeek failures expose safe retry categories", () => {

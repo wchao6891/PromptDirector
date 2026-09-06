@@ -39,6 +39,18 @@ export function classifyContent(entry = {}, rules = [], taxonomy = createDefault
     return existing;
   }
 
+  const facts = entry.sourceFacts;
+  if (facts?.extractionMethod === "structured" && ["video", "artwork"].includes(facts.pageType)) {
+    const video = facts.pageType === "video";
+    const kind = video ? "video" : "image";
+    if (entryHasMedia(entry, kind)) {
+      const hasText = Boolean(String(entry.text || "").trim());
+      return classificationForRole(taxonomy, video
+        ? hasText ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.videoCase
+        : hasText ? CONTENT_ROLES.promptImage : CONTENT_ROLES.imageCase, "网页明确声明的作品类型与原始内容");
+    }
+  }
+
   const hostname = hostnameFor(entry.url);
   const sourceRule = (Array.isArray(rules) ? rules : []).find(
     (rule) => rule?.enabled !== false && rule.hostname === hostname && validPath(taxonomy, rule.pathIds)

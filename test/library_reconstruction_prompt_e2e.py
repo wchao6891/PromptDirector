@@ -89,7 +89,6 @@ def main() -> None:
         library.reload(wait_until="networkidle")
         library.locator(".case-card").click()
         expect(library.locator(".prompt-text").first).to_have_text("旧版简短分析提示词")
-        library.locator(".detail-analysis-menu > summary").click()
         library.get_by_role("button", name="更新为 V2 提示词").click()
         dialog = library.locator("#promptdirector-app-dialog")
         expect(dialog).to_contain_text("用户复制、采集、导入或手动编辑的提示词不会被覆盖")

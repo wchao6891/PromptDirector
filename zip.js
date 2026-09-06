@@ -1,4 +1,4 @@
-import { formatBytes, portableLibraryLimits } from "./resource-limits.js";
+import { formatBytes, portableLibraryLimits, portableAssetByteLimit } from "./resource-limits.js";
 import { assetFormatForExtension } from "./asset-formats.js";
 
 const encoder = new TextEncoder();
@@ -100,9 +100,6 @@ export async function openZipBlob(archive, limitsValue = {}) {
     const checksum = view.getUint32(cursor + 16, true);
     const compressedSize = view.getUint32(cursor + 20, true);
     const size = view.getUint32(cursor + 24, true);
-    if (size > limits.maxFileBytes) {
-      throw new Error(`ZIP 单个文件超过 ${formatBytes(limits.maxFileBytes)} 上限`);
-    }
     const nameLength = view.getUint16(cursor + 28, true);
     const extraLength = view.getUint16(cursor + 30, true);
     const entryCommentLength = view.getUint16(cursor + 32, true);
@@ -126,6 +123,11 @@ export async function openZipBlob(archive, limitsValue = {}) {
     }
     const name = normalizeArchivePath(decodedName);
     if (name !== decodedName || names.has(name)) throw new Error("ZIP 内包含不安全或重复的文件路径");
+    const format = assetFormatForExtension(name.split(".").at(-1));
+    const fileLimit = portableAssetByteLimit(format?.kind, limitsValue);
+    if (size > fileLimit) {
+      throw new Error(`ZIP 单个文件超过 ${formatBytes(fileLimit)} 上限`);
+    }
 
     if (localOffset + 30 > directoryOffset) throw invalidZip();
     declaredBytes += size;

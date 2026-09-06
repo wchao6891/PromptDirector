@@ -12,7 +12,7 @@ import {
 import { normalizeComposerSessions, normalizeComposerSettings } from "./composer.js";
 import { normalizeCreativeExperimentSettings, normalizeCreativeRuns } from "./creative-runs.js";
 import { mergeCreativeSkillsState, normalizeCreativeSkillsState } from "./creative-skills.js";
-import { formatBytes, portableLibraryLimits } from "./resource-limits.js";
+import { formatBytes, portableLibraryLimits, portableAssetByteLimit } from "./resource-limits.js";
 import { normalizeEntryVisuals } from "./visuals.js";
 import { normalizeEntryMedia, removeEntryMedia } from "./media.js";
 import { expandLogicalCaseIds, normalizeCompoundCases, removeEntriesFromCompoundCases } from "./compound-cases.js";
@@ -358,8 +358,9 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
           ));
           continue;
         }
-        if (blob.size > limits.maxFileBytes) {
-          if (!salvageInvalidMedia) throw new Error(`临时附件超过 ${formatBytes(limits.maxFileBytes)} 上限：${asset.name || asset.assetId}`);
+        const byteLimit = portableAssetByteLimit(asset.kind, limits);
+        if (blob.size > byteLimit) {
+          if (!salvageInvalidMedia) throw new Error(`临时附件超过 ${formatBytes(byteLimit)} 上限：${asset.name || asset.assetId}`);
           droppedAssetIds.add(asset.assetId);
           importStats.droppedMediaFiles += 1;
           importStats.droppedTemporaryAssets += 1;
@@ -416,8 +417,9 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         ));
         continue;
       }
-      if (!video && asset.size > limits.maxImageBytes) {
-        if (!salvageInvalidMedia) throw new Error(`创作结果图片超过 ${formatBytes(limits.maxImageBytes)} 上限`);
+      const byteLimit = portableAssetByteLimit(video ? "video" : "image", limits);
+      if (asset.size > byteLimit) {
+        if (!salvageInvalidMedia) throw new Error(`创作结果媒体超过 ${formatBytes(byteLimit)} 上限`);
         importStats.droppedMediaFiles += 1;
         importStats.droppedCreativeOutputs += 1;
         importDiagnostics.push(privateResourceDiagnostic("creative_output_dropped", visual, path, "size_limit"));
@@ -1386,13 +1388,11 @@ function portableMediaFileFailure(entry, asset, blob, format, packageVersion, li
   if (!blobMatchesKind(blob, asset, format, packageVersion)) {
     return { reason: "type_mismatch", message: `“${title}”的媒体文件缺失或类型不符` };
   }
-  if (asset.kind === "image" && blob.size > limits.maxImageBytes) {
-    return { reason: "too_large", message: `“${title}”的图片超过 ${formatBytes(limits.maxImageBytes)} 上限` };
-  }
-  if (asset.kind !== "image" && blob.size > limits.maxFileBytes) {
+  const byteLimit = portableAssetByteLimit(asset.kind, limits);
+  if (blob.size > byteLimit) {
     return {
       reason: "too_large",
-      message: `“${title}”的媒体超过 ${formatBytes(limits.maxFileBytes)} 小型分享包上限，请使用完整资料夹备份`
+      message: `“${title}”的${asset.kind === "image" ? "图片" : "媒体"}超过 ${formatBytes(byteLimit)} 分享包上限，请使用完整资料夹备份`
     };
   }
   if (!skipMediaByteValidation && packageVersion >= 3 && asset.byteSize && asset.byteSize !== blob.size) {

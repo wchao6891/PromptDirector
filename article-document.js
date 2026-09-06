@@ -1,7 +1,7 @@
 export const ARTICLE_DOCUMENT_VERSION = 1;
 
 const TEXT_BLOCK_KINDS = new Set(["heading", "paragraph", "list", "quote", "code", "table"]);
-const ASSET_BLOCK_KINDS = new Set(["image", "video", "document"]);
+const ASSET_BLOCK_KINDS = new Set(["image", "video", "document", "attachment"]);
 const BLOCK_KINDS = new Set([...TEXT_BLOCK_KINDS, ...ASSET_BLOCK_KINDS, "link"]);
 
 export function normalizeArticleDocument(value) {
@@ -74,7 +74,9 @@ function normalizeArticleBlock(value, index) {
   const kind = BLOCK_KINDS.has(value.kind) ? value.kind : "";
   if (!kind) return null;
   const id = clean(value.id) || `article-block:${index + 1}`;
-  const text = cleanMultiline(value.text);
+  const text = kind === "code"
+    ? String(value.text ?? "").replace(/\r\n?/gu, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "")
+    : cleanMultiline(value.text);
   const assetId = clean(value.assetId);
   const sourceUrl = safeHttpUrl(value.sourceUrl || value.url);
   if (TEXT_BLOCK_KINDS.has(kind) && !text) return null;

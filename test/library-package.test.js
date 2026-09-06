@@ -1363,3 +1363,32 @@ test("full backups restore external Skill files while case shares exclude every 
   const shared = selectLibraryPackage(data, ["one"]);
   assert.deepEqual(shared.creativeSkills, { version: 1, items: [] });
 });
+
+test("backup media kinds retain large temporary images, videos and generated videos under their own limits", () => {
+  // Small injected limits exercise the production byte policy without allocating large media.
+  const limits = { maxFileBytes: 4, maxImageBytes: 10, maxVideoBytes: 20 };
+  const data = packageData([], catalog());
+  data.composerSessions = [createComposerSession({
+    id: "session:kind-limits", referenceSnapshots: [{
+      entryId: "temp-reference:kind-limits", alias: "@参考1", sourceType: "temporary", referenceKind: "video_sources",
+      assetRefs: [
+        { assetId: "temp-image", kind: "image", mimeType: "image/png", archivePath: "temp-references/session/image.png", byteSize: 8 },
+        { assetId: "temp-video", kind: "video", mimeType: "video/mp4", archivePath: "temp-references/session/video.mp4", byteSize: 16 }
+      ]
+    }]
+  })];
+  data.creativeRuns = [{ id: "run:kind-limits", sessionId: "session:kind-limits", promptVersionId: "prompt:fixture", promptText: "Test video", targetType: "video", outputs: [{
+    visual: { id: "result:video", kind: "video", mimeType: "video/mp4", assetPath: "creative-results/run/video.mp4" }
+  }] }];
+  const files = new Map([
+    ["temp-references/session/image.png", new Blob([new Uint8Array(8)], { type: "image/png" })],
+    ["temp-references/session/video.mp4", new Blob([new Uint8Array(16)], { type: "video/mp4" })],
+    ["creative-results/run/video.mp4", new Blob([new Uint8Array(16)], { type: "video/mp4" })]
+  ]);
+  const parsed = parseLibraryPackage(data, files, limits);
+  assert.equal(parsed.composerSessions[0].referenceSnapshots[0].assetRefs.length, 2);
+  assert.equal(parsed.assets.get("temp-image").size, 8);
+  assert.equal(parsed.assets.get("temp-video").size, 16);
+  assert.equal(parsed.assets.get("result:video").size, 16);
+  assert.throws(() => parseLibraryPackage(data, files, { ...limits, maxVideoBytes: 12 }), /超过/);
+});

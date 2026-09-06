@@ -74,7 +74,7 @@ test("video detail sizes from media dimensions and separates native controls fro
   ]);
   assert.match(source, /localVideo\.videoWidth/);
   assert.match(css, /is-video-detail\.is-immersive \{ height: auto/);
-  assert.match(css, /border-top: 16px solid var\(--viewer-bg\)/);
+  assert.match(css, /\.detail-visual-gallery\.is-video-detail \.detail-visual-caption \{[^}]*position: static;[^}]*border-top: 1px solid var\(--line\)/);
   assert.match(css, /detail-visual-actions button \{ min-height: 36px/);
   const mobile = css.slice(css.lastIndexOf("@media (max-width: 390px)"));
   assert.match(mobile, /detail-visual-actions[\s\S]*min-height:\s*44px/);

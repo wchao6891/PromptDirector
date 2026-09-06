@@ -238,6 +238,124 @@ export function planLibraryTransfer({ currentState = {}, inspection, options = {
   };
 }
 
+export function planLibraryTransferBatch({ currentState = {}, inspections = [], options = {} } = {}) {
+  if (!Array.isArray(inspections) || !inspections.length) throw new Error("批次导入缺少检查通过的案例包");
+  if (inspections.some((inspection) => !inspection?.state || !inspection?.report)) {
+    throw new Error("批次导入包含未经检查的案例包");
+  }
+  if (inspections.some((inspection) => inspection.sourceType !== LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE)) {
+    throw new Error("批次导入只接受案例分享包");
+  }
+
+  const preferredPlan = options.preferredPlan && typeof options.preferredPlan === "object"
+    ? options.preferredPlan
+    : {};
+  const preferredItems = Array.isArray(preferredPlan.items) ? preferredPlan.items : [];
+  if (preferredItems.length && preferredItems.length !== inspections.length) {
+    throw new Error("批次导入计划与案例包数量不一致，请重新检查");
+  }
+  const libraryAddedAt = receiverTimestamp(preferredPlan.libraryAddedAt || options.now);
+  const importBatchId = clean(preferredPlan.importBatchId || options.importBatchId) ||
+    `library-import:${globalThis.crypto.randomUUID()}`;
+  const preserveLibraryConfiguration = preferredPlan.preserveLibraryConfiguration === true ||
+    (!Object.hasOwn(preferredPlan, "preserveLibraryConfiguration") && options.preserveLibraryConfiguration === true);
+  const requestedResolutions = preferredPlan.conflictResolutions && typeof preferredPlan.conflictResolutions === "object"
+    ? preferredPlan.conflictResolutions
+    : options.conflictResolutions && typeof options.conflictResolutions === "object"
+      ? options.conflictResolutions
+      : {};
+  const explicitConflictKeys = new Set(Array.isArray(preferredPlan.explicitConflictKeys)
+    ? preferredPlan.explicitConflictKeys.map(clean).filter(Boolean)
+    : Object.keys(requestedResolutions));
+  const originalEntryIds = new Set((Array.isArray(currentState?.entries) ? currentState.entries : [])
+    .map((entry) => clean(entry?.id)).filter(Boolean));
+
+  let targetState = currentState;
+  const itemResults = [];
+  const conflicts = [];
+  const resourceWrites = [];
+  for (let sourceIndex = 0; sourceIndex < inspections.length; sourceIndex += 1) {
+    const inspection = inspections[sourceIndex];
+    const preferredItem = preferredItems[sourceIndex];
+    const itemResolutions = Object.fromEntries((Array.isArray(inspection.state.entries) ? inspection.state.entries : [])
+      .map((entry) => clean(entry?.id)).filter(Boolean).flatMap((entryId) => {
+        const resolution = requestedResolutions[batchConflictKey(sourceIndex, entryId)];
+        return ["keep-local", "use-incoming", "keep-both"].includes(resolution)
+          ? [[entryId, resolution]]
+          : [];
+      }));
+    const result = planLibraryTransfer({
+      currentState: targetState,
+      inspection,
+      options: preferredItem
+        ? { preferredPlan: preferredItem }
+        : {
+            preserveLibraryConfiguration,
+            now: libraryAddedAt,
+            importBatchId,
+            conflictResolutions: itemResolutions
+          }
+    });
+    targetState = result.targetState;
+    for (const conflict of result.conflicts) {
+      const conflictKey = batchConflictKey(sourceIndex, conflict.entryId);
+      const requiresResolution = !originalEntryIds.has(conflict.entryId);
+      conflicts.push({
+        ...conflict,
+        sourceIndex,
+        conflictKey,
+        requiresResolution,
+        unresolved: requiresResolution && !explicitConflictKeys.has(conflictKey)
+      });
+    }
+    resourceWrites.push(...result.resourceWrites.map((write) => ({ ...write, sourceIndex })));
+    itemResults.push({ sourceIndex, ...result });
+  }
+  assertDistinctBatchResourceTargets(resourceWrites);
+
+  const conflictResolutions = Object.fromEntries(conflicts.map((conflict) => [
+    conflict.conflictKey,
+    conflict.resolution
+  ]));
+  const context = {
+    version: 1,
+    sourceType: "share-package-batch",
+    preserveLibraryConfiguration,
+    libraryAddedAt,
+    importBatchId,
+    conflictResolutions,
+    explicitConflictKeys: [...explicitConflictKeys].filter((key) => Object.hasOwn(conflictResolutions, key)).sort(),
+    items: itemResults.map((item) => item.context),
+    resourceWrites,
+    cleanupAssetIds: [],
+    rollback: { required: false, retainedAssetIds: [] }
+  };
+  const unresolvedConflicts = conflicts.filter((conflict) => conflict.unresolved);
+  return {
+    targetState,
+    packageResults: itemResults.map(batchPackageResult),
+    resourceWrites,
+    cleanupAssetIds: [],
+    rollback: context.rollback,
+    conflicts,
+    unresolvedConflicts,
+    canApply: unresolvedConflicts.length === 0,
+    context,
+    planToken: createLibraryImportPlanToken(currentState, inspections.map((inspection) => inspection.state), context),
+    createdEntryIds: uniqueValues(itemResults.flatMap((item) => item.createdEntryIds)),
+    importDiagnostics: itemResults.flatMap((item) => (item.importDiagnostics ?? [])
+      .map((diagnostic) => ({ ...structuredClone(diagnostic), sourceIndex: item.sourceIndex }))),
+    importStats: mergeBatchImportStats(itemResults.map((item) => item.importStats)),
+    importedCount: sumResult(itemResults, "importedCount"),
+    remappedCount: sumResult(itemResults, "remappedCount"),
+    skippedCount: sumResult(itemResults, "skippedCount"),
+    importedRunCount: sumResult(itemResults, "importedRunCount"),
+    importedOutputCount: sumResult(itemResults, "importedOutputCount"),
+    importedSkillCount: sumResult(itemResults, "importedSkillCount"),
+    skippedSkillCount: sumResult(itemResults, "skippedSkillCount")
+  };
+}
+
 export function libraryTransferWriteBytes(resourceWritesValue, resourcesValue = {}) {
   const assets = resourcesValue?.assets instanceof Map ? resourcesValue.assets : new Map();
   const skillAssets = resourcesValue?.skillAssets instanceof Map ? resourcesValue.skillAssets : new Map();
@@ -250,6 +368,61 @@ export function libraryTransferWriteBytes(resourceWritesValue, resourcesValue = 
     total += blob.size;
   }
   return total;
+}
+
+function batchConflictKey(sourceIndex, entryId) {
+  return `${sourceIndex}:${clean(entryId)}`;
+}
+
+function batchPackageResult(item) {
+  return {
+    sourceIndex: item.sourceIndex,
+    conflicts: item.conflicts.map((conflict) => ({
+      ...conflict,
+      conflictKey: batchConflictKey(item.sourceIndex, conflict.entryId)
+    })),
+    resourceWrites: item.resourceWrites.map((write) => ({ ...write, sourceIndex: item.sourceIndex })),
+    createdEntryIds: [...item.createdEntryIds],
+    importDiagnostics: structuredClone(item.importDiagnostics ?? []),
+    importStats: structuredClone(item.importStats ?? {}),
+    importedCount: item.importedCount,
+    remappedCount: item.remappedCount,
+    skippedCount: item.skippedCount,
+    importedRunCount: item.importedRunCount,
+    importedOutputCount: item.importedOutputCount,
+    importedSkillCount: item.importedSkillCount,
+    skippedSkillCount: item.skippedSkillCount
+  };
+}
+
+function assertDistinctBatchResourceTargets(resourceWrites) {
+  const targets = new Set();
+  for (const write of resourceWrites) {
+    if (!clean(write?.targetId) || targets.has(write.targetId)) {
+      throw new Error("批次导入资源映射发生冲突，请重新检查");
+    }
+    targets.add(write.targetId);
+  }
+}
+
+function sumResult(items, key) {
+  return items.reduce((sum, item) => sum + (Number(item?.[key]) || 0), 0);
+}
+
+function uniqueValues(values) {
+  return [...new Set(values.map(clean).filter(Boolean))];
+}
+
+function mergeBatchImportStats(values) {
+  const result = {};
+  for (const value of values) {
+    for (const [key, item] of Object.entries(value && typeof value === "object" ? value : {})) {
+      result[key] = Number.isFinite(Number(item))
+        ? (Number(result[key]) || 0) + Number(item)
+        : structuredClone(item);
+    }
+  }
+  return result;
 }
 
 function normalizeTransferMode(value) {

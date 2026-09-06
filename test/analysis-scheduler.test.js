@@ -10,6 +10,28 @@ import {
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+test("stopping one coalesced consumer preserves others; stopping all aborts the real request", async () => {
+  const first = new AbortController();
+  const second = new AbortController();
+  let providerSignal;
+  let ready;
+  const started = new Promise(resolve => { ready = resolve; });
+  const run = (controller) => coalesceAnalysisRequest("stop-shared", async signal => {
+    providerSignal = signal;
+    ready();
+    return new Promise(() => {});
+  }, { signal: controller.signal });
+  const one = run(first);
+  const two = run(second);
+  await started;
+  first.abort();
+  await assert.rejects(one, { name: "AbortError" });
+  assert.equal(providerSignal.aborted, false);
+  second.abort();
+  await assert.rejects(two, { name: "AbortError" });
+  assert.equal(providerSignal.aborted, true);
+});
+
 test("analysis scheduler enforces the shared provider-model-task limit", async () => {
   let active = 0;
   let maximum = 0;

@@ -115,7 +115,8 @@ test("compatible analysis errors name the selected provider and redact its API k
     headers: new Headers(),
     json: async () => ({ error: { message: "invalid never-print-this-zhipu-key" } })
   })), (error) => {
-    assert.match(error.message, /智谱 GLM 分析失败/);
+    assert.match(error.message, /智谱 GLM.*HTTP 400/);
+    assert.equal(error.diagnostic.httpStatus, 400);
     assert.doesNotMatch(error.message, /DeepSeek/);
     assert.doesNotMatch(error.message, /never-print-this-zhipu-key/);
     return true;

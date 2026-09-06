@@ -185,7 +185,13 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
       videoGeneration: false
     });
   }
-  return catalog;
+  return catalog.map((item) => {
+    const providerId = item.serviceId === "compatible" ? "custom-media" : item.serviceId;
+    const provider = visionSettingsValue?.providerProfiles?.[providerId];
+    const capability = getAiModelCapability(providerId, item.model)
+      ?? (provider?.discoveredModels ?? []).find((model) => model.id === item.model);
+    return { ...item, videoInput: (capability?.inputModalities ?? []).includes("video") };
+  });
 }
 
 export function composerServiceCapabilities(profileValue, visionSettingsValue = {}) {
@@ -536,6 +542,11 @@ export async function planComposerTurnWithService(input, settingsValue, options 
 }
 
 export async function executeComposerTurnWithService(input, settingsValue, preparedImages = [], options = {}) {
+  if ((input.session?.referenceSnapshots ?? []).some((reference) =>
+    (reference.assetRefs ?? []).some((asset) => asset.kind === "video"))) {
+    const selected = selectedComposerService(input.session.aiProfile, settingsValue.ai, settingsValue.vision);
+    if (!selected.videoInput) throw new ComposerServiceError(`${selected.label} 的所选模型未声明视频输入能力，请切换视频模型`, 422, { retryable: false });
+  }
   const planningProfile = normalizeComposerAiProfile(input.session?.aiProfile);
   const generationMode = ["create_image", "create_video"].includes(input.session?.outputMode);
   const executionProfile = generationMode
@@ -882,6 +893,9 @@ function normalizeRemoteVideo(value, expectedServiceId = "") {
 
 async function executeVisualTextTurn(input, service, preparedImages, options) {
   assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
+  if ((options.preparedVideos ?? []).length && service.videoInput !== true) {
+    throw new ComposerServiceError(`${service.label} 的所选模型未声明视频输入能力，请切换视频模型`, 422, { retryable: false });
+  }
   const request = executionRequest(input);
   const route = request.route;
   const automatic = route === "auto";
@@ -895,7 +909,7 @@ async function executeVisualTextTurn(input, service, preparedImages, options) {
   const systemInstruction = automatic
     ? compileAgentAutoExecutionPrompt(promptInput)
     : compileAgentExecutionPrompt(promptInput);
-  const content = multimodalContent(input.session, request, preparedImages, service.protocol);
+  const content = multimodalContent(input.session, request, preparedImages, service.protocol, options.preparedVideos);
   const projector = automatic ? createComposerAutoResponseProjector(options.onDelta) : null;
   const result = await requestText(service, systemInstruction, content, {
     signal: options.signal,
@@ -1236,11 +1250,22 @@ function executionRequest(input) {
   };
 }
 
-function multimodalContent(session, request, preparedImages, protocol) {
+function multimodalContent(session, request, preparedImages, protocol, preparedVideos = []) {
   const content = [{ type: "text", text: JSON.stringify(request) }];
   const images = new Map((Array.isArray(preparedImages) ? preparedImages : []).map((item) => [item.visualId, item]));
+  const videos = new Map((Array.isArray(preparedVideos) ? preparedVideos : []).map((item) => [item.assetId, item]));
   for (const reference of session?.referenceSnapshots ?? []) {
-    if (reference.referenceKind === "video_sources") continue;
+    if (reference.referenceKind === "video_sources") {
+      content.push({ type: "text", text: `${reference.alias}\n[本地视频参考]` });
+      for (const [index, assetRef] of (reference.assetRefs ?? []).filter((item) => item.kind === "video").entries()) {
+        const video = videos.get(assetRef.assetId);
+        if (!video?.dataUrl) throw new ComposerServiceError(`${reference.alias}/视频${index + 1} 读取失败，本次没有发送不完整参考`, 422, { retryable: true });
+        if (protocol === "responses") throw new ComposerServiceError("当前所选模型接口尚未声明视频输入，请切换视频模型", 422, { retryable: false });
+        content.push({ type: "text", text: `${reference.alias}/视频${index + 1}` });
+        content.push({ type: "video", dataUrl: video.dataUrl, mimeType: video.mimeType });
+      }
+      continue;
+    }
     const textOnly = session?.imageReferenceMode === "text_only";
     const savedReconstructions = (reference.assets ?? []).map((asset, index) => String(asset?.reconstructionPrompt ?? "").trim()
       ? `[图片${index + 1}重建提示词]\n${String(asset.reconstructionPrompt).trim()}` : "").filter(Boolean).join("\n\n");
@@ -1296,8 +1321,8 @@ async function requestText(service, instructions, content, options = {}) {
   }
   if (!response.ok) throw responseError(service.label, response.status, await response.json().catch(() => ({})), { secrets: [service.apiKey] });
   return service.protocol === "responses"
-    ? readResponsesSse(response, service, options.onDelta)
-    : readChatSse(response, service, options.onDelta);
+    ? readResponsesSse(response, service, options.onDelta, options.signal)
+    : readChatSse(response, service, options.onDelta, options.signal);
 }
 
 async function requestResponsesImage(service, instructions, content, fallbackPrompt, requestParameters, options, imageTool = { type: "image_generation" }) {
@@ -1448,7 +1473,7 @@ function chatBody(service, instructions, content, stream) {
       { role: "system", content: instructions },
       { role: "user", content: content.map((item) => item.type === "image"
         ? chatImagePart(service, item)
-        : { type: "text", text: item.text }) }
+        : item.type === "video" ? chatVideoPart(service, item) : { type: "text", text: item.text }) }
     ]
   };
 }
@@ -1459,6 +1484,14 @@ function chatImagePart(service, item) {
     return { type: "image_url", image_url: { url: raw } };
   }
   return { type: "image_url", image_url: { url: item.dataUrl, detail: item.detail } };
+}
+
+function chatVideoPart(service, item) {
+  const dataUrl = String(item.dataUrl ?? "");
+  const url = service.mediaInput?.localVideo === "base64"
+    ? dataUrl.split(",", 2)[1] || ""
+    : dataUrl;
+  return { type: "video_url", video_url: { url } };
 }
 
 async function requestJson(service, body, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -1548,6 +1581,7 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
     const provider = registryProvider;
     const model = profile.model;
     const modelCapability = getAiModelCapability(registryProviderId, model);
+    const discoveredCapability = (provider.discoveredModels ?? []).find((item) => item.id === model);
     const imageGenerationModel = String(provider.imageGeneration?.model || provider.models?.imageGeneration || "").trim();
     const imageGenerationReady = model === imageGenerationModel
       && provider.imageGeneration?.protocol
@@ -1578,6 +1612,7 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       reasoningEffort: "",
       structuredOutput: modelCapability?.structuredOutput ?? provider.structuredOutput,
       mediaInput: { ...(provider.mediaInput ?? {}), ...(modelCapability?.mediaInput ?? {}) },
+      videoInput: (modelCapability?.inputModalities ?? discoveredCapability?.inputModalities ?? []).includes("video"),
       provider,
       imageGeneration: profile.serviceId === "openrouter" ? {
         protocol: "openrouter_images",
@@ -1987,6 +2022,7 @@ function assertCredentialOrigin(endpoint, apiKey, credentialOrigin) {
 }
 
 function parseResponsesPayload(payload, service) {
+  assertTextCompletion(payload?.status, service, payload?.error);
   const content = String(payload?.output_text ?? extractResponsesText(payload) ?? "").trim();
   if (!content) throw new ComposerServiceError(`${service.label} 没有返回可用内容`, 503);
   return {
@@ -1999,6 +2035,7 @@ function parseResponsesPayload(payload, service) {
 
 function parseChatPayload(payload, service) {
   const choice = payload?.choices?.[0];
+  assertTextCompletion(choice?.finish_reason, service, payload?.error);
   const content = String(choice?.message?.content ?? "").trim();
   if (!content) throw new ComposerServiceError(`${service.label} 没有返回可用内容`, 503);
   return {
@@ -2009,8 +2046,11 @@ function parseChatPayload(payload, service) {
   };
 }
 
-async function readResponsesSse(response, service, onDelta = () => undefined) {
+async function readResponsesSse(response, service, onDelta = () => undefined, signal) {
   return readSse(response, (event, state) => {
+    if (["error", "response.failed", "response.incomplete"].includes(event.type)) {
+      throw new ComposerServiceError(`${service.label} 回复失败或中断，已保留收到的内容，请明确重试`, 422);
+    }
     if (event.type === "response.output_text.delta") {
       state.content += String(event.delta ?? "");
       onDelta(String(event.delta ?? ""), state.content);
@@ -2020,11 +2060,12 @@ async function readResponsesSse(response, service, onDelta = () => undefined) {
       state.usage = normalizeResponsesUsage(event.response?.usage);
       state.finishReason = String(event.response?.status ?? "completed");
     }
-  }, service);
+  }, service, signal);
 }
 
-async function readChatSse(response, service, onDelta = () => undefined) {
+async function readChatSse(response, service, onDelta = () => undefined, signal) {
   return readSse(response, (event, state) => {
+    if (event?.error) throw new ComposerServiceError(`${service.label} 回复失败，已保留收到的内容，请明确重试`, 502);
     const choice = event?.choices?.[0];
     const delta = String(choice?.delta?.content ?? "");
     if (delta) {
@@ -2034,31 +2075,63 @@ async function readChatSse(response, service, onDelta = () => undefined) {
     if (choice?.finish_reason) state.finishReason = String(choice.finish_reason);
     if (event?.usage) state.usage = normalizeChatUsage(event.usage);
     if (event?.model) state.model = String(event.model);
-  }, service);
+  }, service, signal);
 }
 
-async function readSse(response, applyEvent, service) {
+async function readSse(response, applyEvent, service, signal) {
   if (!response?.body?.getReader) throw new ComposerServiceError(`${service.label} 没有返回流式内容`, 503);
   const reader = response.body.getReader();
+  const onAbort = () => { void reader.cancel(signal.reason).catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   const decoder = new TextDecoder();
   const state = { content: "", usage: emptyUsage(), model: service.model, finishReason: "" };
   let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      try { applyEvent(JSON.parse(data), state); }
-      catch {}
+  let ended = false;
+  let receivedDone = false;
+  const consumeLine = (line) => {
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data) return;
+    if (data === "[DONE]") { receivedDone = true; return; }
+    let event;
+    try { event = JSON.parse(data); }
+    catch { throw new ComposerServiceError(`${service.label} 流式内容不完整，已保留收到的内容，请明确重试`, 502); }
+    applyEvent(event, state);
+  };
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) {
+        ended = true;
+        buffer += decoder.decode();
+        if (buffer) consumeLine(buffer);
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) consumeLine(line);
     }
+    assertTextCompletion(state.finishReason, service);
+    if ((!state.finishReason && !receivedDone) || !state.content.trim()) {
+      throw new ComposerServiceError(`${service.label} 没有返回完整内容，已保留收到的内容，请明确重试`, 503);
+    }
+    return state;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (!ended) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  if (!state.content.trim()) throw new ComposerServiceError(`${service.label} 没有返回完整内容`, 503);
-  return state;
+}
+
+function assertTextCompletion(reason, service, error) {
+  if (error) throw new ComposerServiceError(`${service.label} 回复失败，请明确重试`, 502);
+  if (reason === "length") throw new ComposerServiceError(`${service.label} 输出被截断，请明确重试`, 422, { retryable: true });
+  if (reason && !["stop", "completed"].includes(reason)) {
+    throw new ComposerServiceError(`${service.label} 回复被阻止或中断，请明确重试`, 422);
+  }
 }
 
 function extractResponsesText(payload) {

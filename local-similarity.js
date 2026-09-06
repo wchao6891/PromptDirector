@@ -1,11 +1,12 @@
 import { normalizeFacetCatalog } from "./facets.js";
 
-const PALETTE_WEIGHT = 0.2;
-const CONTENT_WEIGHT = 0.8;
-const PALETTE_ONLY_WEIGHT = 0.15;
 const SHARED_PARENT_SCORE = 0.7;
 const NEAR_TERM_SCORE = 0.5;
 const NEAR_TERM_THRESHOLD = 0.5;
+const GENERIC_FILENAME_TERMS = new Set([
+  "copy", "export", "final", "image", "img", "screenshot", "untitled",
+  "副本", "导出", "最终", "截图", "未命名"
+]);
 
 export function createSimilarityIndex(entries = [], catalogValue, options = {}) {
   const catalog = normalizeFacetCatalog(catalogValue);
@@ -21,6 +22,9 @@ export function createSimilarityIndex(entries = [], catalogValue, options = {}) 
   const profiles = new Map();
   const visualForEntry = options.visualForEntry ?? ((entry) => entry.discoveryVisualId);
   const colorsForEntry = options.colorsForEntry ?? ((entry) => entry.discoveryColors);
+  const mediaForEntry = options.mediaForEntry ?? ((entry) => entry.mediaAssets ?? []);
+  const contentTypesForEntry = options.contentTypesForEntry ?? ((entry) => entry.contentTypeIds ?? [entry.classification?.pathIds?.[0]].filter(Boolean));
+  const projectIdsForEntry = options.projectIdsForEntry ?? (() => []);
 
   for (const entry of entries) {
     const assignments = (entry.facetAssignments ?? []).flatMap((assignment) => {
@@ -33,45 +37,96 @@ export function createSimilarityIndex(entries = [], catalogValue, options = {}) 
       }];
     });
     const colors = (colorsForEntry(entry) ?? []).map(normalizeHex).filter(Boolean);
+    const media = (mediaForEntry(entry) ?? []).filter((asset) => asset && asset.usage !== "poster");
     profiles.set(entry.id, {
       entry,
       visualId: String(visualForEntry(entry) ?? "").trim(),
       assignments,
       colors,
-      labs: colors.map((color) => cachedLab(color, labByColor)).filter(Boolean)
+      labs: colors.map((color) => cachedLab(color, labByColor)).filter(Boolean),
+      customLabels: labeledTerms(entry.customLabels),
+      contentTypeIds: cleanSet(contentTypesForEntry(entry)),
+      projectIds: cleanSet(projectIdsForEntry(entry)),
+      mediaKinds: cleanSet(media.map((asset) => asset.kind)),
+      fileFormats: cleanSet(media.flatMap((asset) => [asset.sourceFormat, asset.mimeType])),
+      fileNameTokens: new Set(media.flatMap((asset) => fileNameTerms(asset.sourceTitle)))
     });
   }
   return { profiles };
 }
 
-export function rankSimilarEntries(index, entryId, limit = 4) {
+export function rankSimilarEntries(index, entryId, limit = Number.POSITIVE_INFINITY) {
   const current = index?.profiles?.get(entryId);
   if (!current) return [];
   return [...index.profiles.values()].flatMap((candidate) => {
-    if (candidate.entry.id === entryId || !candidate.visualId) return [];
+    if (candidate.entry.id === entryId) return [];
     const content = contentSimilarity(current.assignments, candidate.assignments);
     const palette = paletteSimilarityFromLabs(current.labs, candidate.labs);
-    const hasBothPalettes = current.labs.length > 0 && candidate.labs.length > 0;
-    const score = content.score > 0
-      ? hasBothPalettes
-        ? palette * PALETTE_WEIGHT + content.score * CONTENT_WEIGHT
-        : content.score
-      : hasBothPalettes
-        ? palette * PALETTE_ONLY_WEIGHT
-        : 0;
-    if (score <= 0) return [];
+    const sharedFacetNames = exactFacetNames(current.assignments, candidate.assignments);
+    const sharedLabels = intersectLabeledTerms(current.customLabels, candidate.customLabels);
+    const signals = {
+      exactFacet: sharedFacetNames.length > 0,
+      customLabel: sharedLabels.length > 0,
+      semanticFacet: content.score > 0,
+      contentType: intersects(current.contentTypeIds, candidate.contentTypeIds),
+      project: intersects(current.projectIds, candidate.projectIds),
+      mediaKind: intersects(current.mediaKinds, candidate.mediaKinds),
+      fileFormat: intersects(current.fileFormats, candidate.fileFormats),
+      fileName: jaccard(current.fileNameTokens, candidate.fileNameTokens) > 0,
+      palette: current.labs.length > 0 && candidate.labs.length > 0 && palette > 0
+    };
+    const evidenceBreadth = Object.values(signals).filter(Boolean).length;
+    if (!evidenceBreadth) return [];
+    const strong = signals.exactFacet || signals.customLabel;
+    const organizationalCount = Number(signals.contentType) + Number(signals.project);
+    const weakCount = Number(signals.mediaKind) + Number(signals.fileFormat) + Number(signals.fileName) + Number(signals.palette);
+    const tier = strong ? 4
+      : signals.semanticFacet ? 3
+        : organizationalCount >= 2 || (organizationalCount >= 1 && weakCount >= 1) ? 2 : 1;
+    const reason = strongestReason({
+      signals,
+      sharedFacetNames,
+      sharedLabels,
+      matchedFacetNames: content.matchedFacetNames,
+      sharedFormats: intersection(current.fileFormats, candidate.fileFormats)
+    });
     return [{
       entry: candidate.entry,
       visualId: candidate.visualId,
-      score,
+      score: tier,
+      tier,
+      evidenceBreadth,
+      reason,
       paletteSimilarity: palette,
       contentSimilarity: content.score,
-      matchedFacetNames: content.matchedFacetNames
+      matchedFacetNames: content.matchedFacetNames,
+      signals
     }];
-  }).toSorted((left, right) => right.score - left.score
+  }).toSorted((left, right) => right.tier - left.tier
+    || right.evidenceBreadth - left.evidenceBreadth
+    || right.contentSimilarity - left.contentSimilarity
+    || right.paletteSimilarity - left.paletteSimilarity
     || String(right.entry.savedAt || "").localeCompare(String(left.entry.savedAt || ""))
     || left.entry.id.localeCompare(right.entry.id))
     .slice(0, Math.max(0, Math.floor(Number(limit) || 0)));
+}
+
+function exactFacetNames(left, right) {
+  const rightIds = new Set(right.map((assignment) => assignment.node.id));
+  return [...new Set(left.filter((assignment) => rightIds.has(assignment.node.id))
+    .map((assignment) => assignment.facet?.name || assignment.node.name).filter(Boolean))].sort();
+}
+
+function strongestReason({ signals, sharedFacetNames, sharedLabels, matchedFacetNames, sharedFormats }) {
+  if (signals.customLabel) return `相同标签：${sharedLabels[0]}`;
+  if (signals.exactFacet) return `相同${sharedFacetNames[0]}`;
+  if (signals.semanticFacet) return `相近${matchedFacetNames[0] || "视觉属性"}`;
+  if (signals.contentType) return "相同内容类型";
+  if (signals.project) return "同一项目";
+  if (signals.fileName) return "文件名相近";
+  if (signals.fileFormat) return `相同文件类型${sharedFormats[0] ? `：${formatLabel(sharedFormats[0])}` : ""}`;
+  if (signals.mediaKind) return "相同媒体类型";
+  return "色彩相近";
 }
 
 export function paletteSimilarity(leftColors = [], rightColors = []) {
@@ -141,6 +196,48 @@ function jaccard(left, right) {
   if (!left.size || !right.size) return 0;
   const overlap = [...left].filter((value) => right.has(value)).length;
   return overlap / (left.size + right.size - overlap);
+}
+
+function intersects(left, right) {
+  return [...left].some((value) => right.has(value));
+}
+
+function intersection(left, right) {
+  return [...left].filter((value) => right.has(value));
+}
+
+function cleanSet(values = []) {
+  return new Set((Array.isArray(values) ? values : []).map(canonical).filter(Boolean));
+}
+
+function labeledTerms(values = []) {
+  const result = new Map();
+  for (const value of Array.isArray(values) ? values : []) {
+    const label = String(value ?? "").trim();
+    const key = canonical(label);
+    if (key && !result.has(key)) result.set(key, label);
+  }
+  return result;
+}
+
+function intersectLabeledTerms(left, right) {
+  return [...left].flatMap(([key, label]) => right.has(key) ? [label] : []);
+}
+
+function fileNameTerms(value) {
+  const name = String(value ?? "").normalize("NFKC").toLocaleLowerCase("zh-CN")
+    .replace(/\.[\p{L}\p{N}]{1,12}$/u, "")
+    .replace(/[([\{][^\])\}]*[\])\}]/gu, " ")
+    .replace(/\b(?:\d+|[a-f0-9]{8,})\b/gu, " ");
+  return name.split(/[^\p{L}\p{N}]+/gu)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2 && !GENERIC_FILENAME_TERMS.has(term));
+}
+
+function formatLabel(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+  return normalized.includes("/") ? normalized.split("/").at(-1).toLocaleUpperCase("en-US") : normalized.toLocaleUpperCase("en-US");
 }
 
 function paletteSimilarityFromLabs(left, right) {

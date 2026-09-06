@@ -69,8 +69,6 @@ def main() -> None:
         library.locator('[data-settings-tab="tasks"]').click()
 
         expect(library.locator("#analysis-diagnostics")).to_be_hidden()
-        library.locator('[data-settings-tab="ai"]').click()
-        library.locator(".ai-advanced-settings > summary").click()
         library.locator("#show-analysis-diagnostics").check()
         library.locator('[data-settings-tab="tasks"]').click()
         expect(library.locator("#analysis-diagnostics")).to_be_visible()

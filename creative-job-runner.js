@@ -18,6 +18,8 @@ import { prepareLocalMedia } from "./local-media.js";
 import { assertImageDimensions } from "./resource-limits.js";
 import { blobToDataUrl, normalizeVisionSettings } from "./vision.js";
 import { normalizeAiServiceProfiles } from "./ai-service-profiles.js";
+import { prepareComposerVideos, sessionHasVideoReferences } from "./composer-video-references.js";
+import { createComposerActiveTurn, updateComposerActiveTurn, createLatestCheckpointWriter } from "./composer-active-turn.js";
 
 export async function runCreativeJob(job, context = {}) {
   const signal = context.signal;
@@ -33,6 +35,23 @@ export async function runCreativeJob(job, context = {}) {
   };
   const composerSettings = normalizeComposerSettings(stored.composerSettings);
   let session = createComposerSession(job.request.session);
+  const videoDialogue = sessionHasVideoReferences(session) && !["create_image", "create_video"].includes(session.outputMode);
+  if (videoDialogue) {
+    const service = selectedComposerService(session.aiProfile, settings.ai, settings.vision);
+    if (!service.videoInput) throw new ComposerServiceError(`${service.label} 的所选模型未声明视频输入能力，请切换视频模型`, 422, { retryable: false });
+    session = createComposerSession({ ...session, activeTurn: createComposerActiveTurn({
+      turnId: job.id,
+      userMessageId: job.userMessageId,
+      route: session.currentRoute || "auto",
+      routeSource: session.currentRouteSource,
+      serviceId: service.serviceId,
+      model: service.model
+    }) });
+  }
+  const checkpoints = createLatestCheckpointWriter((snapshot) => context.progress({
+    phase: "generation", session: snapshot, providerMayHaveAccepted: snapshot.activeTurn?.providerMayHaveAccepted === true
+  }));
+  let checkpointError;
   const savedIds = [];
   const actualStages = [];
   const recordStage = (value) => {
@@ -43,7 +62,7 @@ export async function runCreativeJob(job, context = {}) {
     if (!job.remoteVideo || job.phase === "generation") {
       await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
     }
-    const route = session.currentRoute || "compose";
+    const route = session.currentRoute || (videoDialogue ? "auto" : "compose");
     const instruction = session.currentInstruction || latestUserMessage(session);
     session = appendDiagnosticEvent(session, {
       phase: "streaming",
@@ -55,7 +74,8 @@ export async function runCreativeJob(job, context = {}) {
     const executionSession = createComposerSession(session);
     recordStage("preparing_media");
     await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
-    const preparedImages = await prepareReferenceImages(executionSession, settings);
+    const preparedImages = session.imageReferenceMode === "text_only" ? [] : await prepareReferenceImages(executionSession, settings);
+    const preparedVideos = await prepareComposerVideos(executionSession, { signal });
     const imageEdit = await prepareImageEdit(job.request.imageEdit);
     recordStage("media_prepared");
     await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
@@ -64,6 +84,9 @@ export async function runCreativeJob(job, context = {}) {
     const markProviderRequestStarted = async () => {
       if (providerMayHaveAccepted) return;
       providerMayHaveAccepted = true;
+      if (session.activeTurn) session = createComposerSession({ ...session, activeTurn: updateComposerActiveTurn(session.activeTurn, {
+        status: "waiting", phase: "waiting", providerMayHaveAccepted: true
+      }) });
       recordStage("provider_request");
       try {
         await context.progress({
@@ -89,7 +112,15 @@ export async function runCreativeJob(job, context = {}) {
       imageEdit
     }, settings, preparedImages, {
       signal,
-      stream: false,
+      stream: videoDialogue,
+      preparedVideos,
+      onDelta: videoDialogue ? (_delta, content) => {
+        recordStage("receiving_text");
+        session = createComposerSession({ ...session, activeTurn: updateComposerActiveTurn(session.activeTurn, {
+          status: "receiving", phase: "streaming", partialText: content, updatedAt: new Date().toISOString()
+        }) });
+        checkpoints.schedule(session).catch((error) => { checkpointError = error; });
+      } : undefined,
       onPhase: (phase) => {
         recordStage(phase);
         const stages = [...actualStages];
@@ -109,12 +140,15 @@ export async function runCreativeJob(job, context = {}) {
       pollIntervalMs: context.pollIntervalMs
     });
     await phaseQueue;
+    await checkpoints.drain();
+    if (checkpointError) throw checkpointError;
+    signal?.throwIfAborted();
     session = appendDiagnosticEvent(session, {
       phase: "streaming",
       status: "completed",
       detail: `输入 ${result.usage.promptTokens} / 输出 ${result.usage.completionTokens} tokens`
     });
-    session = applyComposerServiceResult(session, result, composerSettings, route, instruction);
+    session = createComposerSession({ ...applyComposerServiceResult(session, result, composerSettings, route, instruction), activeTurn: null });
 
     if (!["image", "video"].includes(result.kind)) {
       session = createComposerSession({
@@ -190,6 +224,7 @@ export async function runCreativeJob(job, context = {}) {
       }
     };
   } catch (error) {
+    await checkpoints.drain().catch(() => undefined);
     await Promise.allSettled(savedIds.flatMap((id) => [deleteScreenshotBlob(id), deleteMediaBlob(id)]));
     error.actualStages = [...actualStages];
     throw error;

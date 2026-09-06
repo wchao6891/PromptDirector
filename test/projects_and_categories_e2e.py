@@ -4,7 +4,7 @@ import re
 
 from playwright.sync_api import expect
 
-from e2e_support import base_entry, extension_session
+from e2e_support import base_entry, extension_session, wait_for_async_condition
 
 
 def main() -> None:
@@ -110,10 +110,49 @@ def main() -> None:
         expect(library.locator(".case-reorder-controls:visible")).to_have_count(0)
         library.locator("#manage-case-order").click()
         expect(library.locator("#manage-case-order")).to_have_attribute("aria-label", "完成案例排序")
-        expect(library.locator(".case-reorder-controls:visible")).to_have_count(2)
-        library.locator(f".case-card[data-entry-id='{second_entry['id']}'] .case-move-up").click()
+        expect(library.locator(".case-reorder-controls")).to_have_count(0)
+        source_card = library.locator(f".case-card[data-entry-id='{second_entry['id']}']")
+        target_card = library.locator(f".case-card[data-entry-id='{entry['id']}']")
+        source_box = source_card.bounding_box()
+        target_box = target_card.bounding_box()
+        assert source_box and target_box
+        library.mouse.move(source_box["x"] + source_box["width"] / 2, source_box["y"] + source_box["height"] / 2)
+        library.mouse.down()
+        library.mouse.move(target_box["x"] + target_box["width"] / 2, target_box["y"] + 2, steps=5)
+        library.mouse.up()
+        expect(library.locator("#feedback")).to_contain_text("项目")
+        expect(library.locator('.case-card').first).to_have_attribute('data-entry-id', second_entry['id'])
+        moved_card = library.locator(f".case-card[data-entry-id='{second_entry['id']}']")
+        moved_card.focus()
+        moved_card.press("End")
+        wait_for_async_condition(library,
+            """({projectId, expected}) => chrome.storage.local.get('organizerState').then(
+              state => JSON.stringify(state.organizerState.collections.find(item => item.id === projectId).entryIds) === JSON.stringify(expected)
+            )""",
+            arg={"projectId": project_id, "expected": [entry["id"], second_entry["id"]]},
+        )
+        keyboard_last = library.evaluate(
+            "async (id) => (await chrome.storage.local.get('organizerState')).organizerState.collections.find(item => item.id === id).entryIds",
+            project_id,
+        )
+        assert keyboard_last == [entry["id"], second_entry["id"]], keyboard_last
+        expect(library.locator('.case-card').first).to_have_attribute('data-entry-id', entry['id'])
+        moved_card.focus()
+        moved_card.press("Home")
+        wait_for_async_condition(library,
+            """({projectId, expected}) => chrome.storage.local.get('organizerState').then(
+              state => JSON.stringify(state.organizerState.collections.find(item => item.id === projectId).entryIds) === JSON.stringify(expected)
+            )""",
+            arg={"projectId": project_id, "expected": [second_entry["id"], entry["id"]]},
+        )
+        keyboard_first = library.evaluate(
+            "async (id) => (await chrome.storage.local.get('organizerState')).organizerState.collections.find(item => item.id === id).entryIds",
+            project_id,
+        )
+        assert keyboard_first == [second_entry["id"], entry["id"]], keyboard_first
+        expect(library.locator('.case-card').first).to_have_attribute('data-entry-id', second_entry['id'])
         library.locator("#manage-case-order").click()
-        expect(library.locator(".case-reorder-controls:visible")).to_have_count(0)
+        expect(library.locator(".case-reorder-controls")).to_have_count(0)
         order = library.evaluate(
             "async (id) => (await chrome.storage.local.get('organizerState')).organizerState.collections.find(item => item.id === id).entryIds",
             project_id,

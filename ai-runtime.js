@@ -1,6 +1,8 @@
 import { normalizeAiSettings } from "./deepseek.js";
 import { getAiModelCapability } from "./ai-model-capabilities.js";
 import { normalizeVisionSettings } from "./vision.js";
+import { DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE } from "./video-analysis.js";
+import { migratedVideoMethod } from "./ai-preference-migrations.js";
 import {
   normalizeAiProviderRegistry,
   normalizeAiTaskAssignments,
@@ -32,7 +34,7 @@ export function normalizeAiPreferences(value = {}) {
   const vision = normalizeVisionSettings();
   const source = value && typeof value === "object" ? value : {};
   return {
-    version: 1,
+    version: 3,
     textInstructionsByLocale: {
       "zh-CN": clean(source.textInstructionsByLocale?.["zh-CN"]) || text.analysisInstructionsByLocale["zh-CN"],
       en: clean(source.textInstructionsByLocale?.en) || text.analysisInstructionsByLocale.en
@@ -40,6 +42,10 @@ export function normalizeAiPreferences(value = {}) {
     visionInstructionsByLocale: {
       "zh-CN": clean(source.visionInstructionsByLocale?.["zh-CN"]) || vision.instructionsByLocale["zh-CN"],
       en: clean(source.visionInstructionsByLocale?.en) || vision.instructionsByLocale.en
+    },
+    videoInstructionsByLocale: {
+      "zh-CN": migratedVideoMethod(source, "zh-CN", DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE),
+      en: migratedVideoMethod(source, "en", DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE)
     },
     autoAnalyzeImports: Object.hasOwn(source, "autoAnalyzeImports")
       ? source.autoAnalyzeImports === true
@@ -193,6 +199,7 @@ export function resolveVisionTaskSettings(taskId, configurationValue = {}, optio
     consent: true,
     autoAnalyzeImports: configuration.preferences.autoAnalyzeImports,
     instructionsByLocale: configuration.preferences.visionInstructionsByLocale,
+    maxOutputTokens: modelRuntime.structuredOutputTokenBudget,
     openai: {
       model: resolved.model,
       apiKey: openai ? profile.apiKey : "",

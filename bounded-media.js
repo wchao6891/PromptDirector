@@ -1,6 +1,6 @@
 import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 
-const MEDIA_KINDS = new Set(["image", "video", "document"]);
+const MEDIA_KINDS = new Set(["image", "video", "document", "attachment"]);
 export const SUPPORTED_DOCUMENT_MIME_TYPES = Object.freeze([
   "application/pdf",
   "application/rtf",
@@ -49,6 +49,11 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
   }
   const bytes = await readBoundedBytes(response, maxBytes, options.controller);
   const declaredType = cleanMimeType(response?.headers?.get?.("content-type"));
+  if (kind === "attachment") {
+    const zip = bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+    if (options.expectedMimeType !== "application/zip" || !zip) throw new Error("来源没有返回有效的 Skill 文件");
+    return new Blob([bytes], { type: "application/zip" });
+  }
   const detectedType = kind === "document" ? detectDocumentMimeType(bytes) : detectMediaMimeType(bytes);
   const mimeType = kind === "document"
     ? verifiedDocumentMimeType(bytes, detectedType, declaredType, options.expectedMimeType)
@@ -253,7 +258,7 @@ function mediaKind(value) {
 
 function defaultLimit(kind) {
   if (kind === "image") return PORTABLE_LIBRARY_LIMITS.maxImageBytes;
-  if (kind === "document") return PORTABLE_LIBRARY_LIMITS.maxFileBytes;
+  if (["document", "attachment"].includes(kind)) return PORTABLE_LIBRARY_LIMITS.maxFileBytes;
   return PORTABLE_LIBRARY_LIMITS.maxVideoBytes;
 }
 

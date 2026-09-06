@@ -22,7 +22,8 @@ test("all user-facing case, media, and project deletion routes move metadata to 
   const caseDeletion = functionBlock("deleteEntry", "deleteCollectionWithEntries");
   assert.match(caseDeletion, /moveEntryBatchToTrash/);
   assert.doesNotMatch(caseDeletion, /deleteMediaBlob|deleteScreenshotBlob/);
-  const mediaDeletion = functionBlock("moveEntryMediaToTrash", "addUploadedMedia");
+  // Scope the safety assertion to the deletion function, not unrelated helpers inserted after it.
+  const mediaDeletion = functionBlock("moveEntryMediaToTrash", "addUploadedMedia").split("\n}\n")[0];
   assert.match(mediaDeletion, /moveMediaToTrash/);
   assert.doesNotMatch(mediaDeletion, /deleteMediaBlob|deleteScreenshotBlob/);
   const projectDeletion = functionBlock("deleteCollectionWithEntries", "moveEntryBatchToTrash");
@@ -51,6 +52,7 @@ test("free-label and project batch actions are wired with add, remove, and move 
   const projects = functionBlock("batchSetProject", "updateOrganizer");
   assert.match(projects, /\["remove", "move"\]\.includes\(message\.mode\)/);
   assert.match(projects, /mode !== "remove"/);
-  assert.match(projects, /removeEntriesFromOrganizer/);
+  assert.match(projects, /moveEntriesBetweenCollections/);
+  assert.match(projects, /message\.sourceCollectionId/);
   assert.match(projects, /setEntriesCollection/);
 });

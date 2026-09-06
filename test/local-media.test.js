@@ -9,7 +9,7 @@ import {
   normalizeLocalRelativePath,
   prepareLocalMedia
 } from "../local-media.js";
-import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
+import { PORTABLE_LIBRARY_LIMITS, formatBytes } from "../resource-limits.js";
 
 test("local media detection keeps only supported formats and safe relative paths", () => {
   assert.deepEqual(detectLocalMediaFile(new File(["image"], "frame.gif", { type: "image/gif" })), {
@@ -128,7 +128,7 @@ test("local image preparation rejects files above the portable image limit befor
       assert.equal(error.forceAllowed, true);
       assert.equal(error.details.actualBytes, oversized.size);
       assert.equal(error.details.maxBytes, PORTABLE_LIBRARY_LIMITS.maxImageBytes);
-      assert.match(error.message, /16 MiB/);
+      assert.ok(error.message.includes(formatBytes(PORTABLE_LIBRARY_LIMITS.maxImageBytes)));
       return true;
     }
   );

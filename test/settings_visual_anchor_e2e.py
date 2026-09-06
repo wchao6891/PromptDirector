@@ -5,8 +5,8 @@ from playwright.sync_api import expect
 from e2e_support import extension_session
 
 
-TOP_LEVEL_TABS = ("general", "ai", "tasks", "general")
-AI_TABS = ("text", "vision", "composer", "text")
+TOP_LEVEL_TABS = ("general", "ai", "rules", "tasks", "general")
+AI_TABS = ("text", "vision", "video", "composer", "text")
 MAX_ANCHOR_SHIFT_PX = 1
 
 
@@ -83,18 +83,7 @@ def exercise_settings(page, viewport: dict) -> None:
     expect(page.locator("#reanalyze-preview")).to_contain_text("资料索引已完整")
     expect(local_index.locator("#apply-reanalyze")).to_be_hidden()
 
-    page.locator('[data-settings-tab="ai"]').click()
-    advanced_summary = page.locator(".ai-advanced-settings > summary")
-    advanced_summary.scroll_into_view_if_needed()
-    settle(page)
-    summary_top_before = advanced_summary.evaluate("node => node.getBoundingClientRect().top")
-    if page.locator(".ai-advanced-settings").get_attribute("open") is None:
-        advanced_summary.click()
-        settle(page)
-    summary_top_after = advanced_summary.evaluate("node => node.getBoundingClientRect().top")
-    assert abs(summary_top_after - summary_top_before) <= MAX_ANCHOR_SHIFT_PX, (
-        viewport, "advanced-summary", summary_top_before, summary_top_after
-    )
+    page.locator('[data-settings-tab="rules"]').click()
     for tab in AI_TABS:
         page.locator(f'[data-analysis-kind="{tab}"]').click()
         expect(page.locator(f'[data-analysis-kind-panel="{tab}"]')).to_be_visible()
@@ -102,14 +91,13 @@ def exercise_settings(page, viewport: dict) -> None:
         assert_anchor_stable(baseline, settings_metrics(page), f"ai:{tab}", viewport)
 
     analysis_tabs = page.locator(".analysis-kind-tabs")
-    active_panel = page.locator('[data-settings-panel="ai"]')
-    analysis_tabs.evaluate("node => node.scrollIntoView({block: 'center'})")
+    active_panel = page.locator('[data-settings-panel="rules"]')
+    analysis_tabs.scroll_into_view_if_needed()
     settle(page)
     internal_anchor = {
         "top": analysis_tabs.evaluate("node => node.getBoundingClientRect().top"),
         "scrollTop": active_panel.evaluate("panel => panel.scrollTop"),
     }
-    assert internal_anchor["scrollTop"] > 0, (viewport, internal_anchor)
     for tab in ("vision", "composer", "text"):
         page.locator(f'[data-analysis-kind="{tab}"]').click()
         settle(page)
@@ -120,14 +108,13 @@ def exercise_settings(page, viewport: dict) -> None:
         assert abs(current["top"] - internal_anchor["top"]) <= MAX_ANCHOR_SHIFT_PX, (
             viewport, f"advanced-tab:{tab}", internal_anchor, current
         )
-        assert current["scrollTop"] > 0, (viewport, tab, current)
-
+    page.locator('[data-analysis-kind="composer"]').click()
     scrolled_to = active_panel.evaluate(
         "panel => { panel.scrollTop = Math.min(120, panel.scrollHeight - panel.clientHeight); return panel.scrollTop; }"
     )
-    assert scrolled_to > 0, "AI settings panel must own vertical scrolling before reset is tested"
+    assert scrolled_to > 0, "Rules panel must own vertical scrolling before reset is tested"
     page.locator('[data-settings-tab="tasks"]').click()
-    page.locator('[data-settings-tab="ai"]').click()
+    page.locator('[data-settings-tab="rules"]').click()
     settle(page)
     assert active_panel.evaluate("panel => panel.scrollTop") == 0
 

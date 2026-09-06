@@ -71,11 +71,15 @@ test("case deletion is a visible one-step recycle-bin action and no longer lives
 });
 
 test("single-image prompts have one editor while multi-image prompts separate current and shared text", () => {
-  const prompt = source.slice(source.indexOf("function createPromptSection"), source.indexOf("async function analyzeEntryVisualSet"));
-  assert.match(prompt, /const separatesCurrentAndShared = Boolean/);
-  assert.match(prompt, /imageAssets\.length > 1 \|\| options\.compoundMember/);
-  assert.match(prompt, /separatesCurrentAndShared \? "编辑当前图片" : "编辑"/);
-  assert.match(prompt, /separatesCurrentAndShared && entry\.text \? textEl\("button", "button-secondary", "编辑共享提示词"\)/);
+  const prompt = source.slice(source.indexOf("function createMediaPromptSection"), source.indexOf("async function analyzeEntryVisualSet"));
+  assert.match(prompt, /images\.length > 1 \|\| options\.compoundMember/);
+  assert.match(prompt, /source\.originalAssetId \? "当前图片提示词" : "案例共享提示词"/);
+  assert.doesNotMatch(prompt, /promptIconButton\(t\("添加原始提示词"\), "plus"\)/);
+  assert.match(editor, /scope\.append\(option\("", t\("案例共享提示词"\)\)\)/);
+  assert.match(editor, /panelHost\.replaceChildren\(createPromptPanel/);
+  assert.match(editor, /assetId \? entry\.mediaPrompts\?\.find/);
+  assert.match(editor, /"当前图片提示词" : "当前视频提示词"/);
+  assert.match(prompt, /assetId: source\.originalAssetId/);
 });
 
 test("entry title editing keeps one visible heading and an inline save action", () => {

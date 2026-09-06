@@ -9,7 +9,7 @@ import {
   referenceHasPromptText,
   referenceHasUsableLegacyDescription
 } from "./reference-readiness.js";
-import { validReconstructionPrompt } from "./image-prompt.js";
+import { detailPromptSources } from "./prompt-sources.js";
 import { AI_PROVIDER_PRESETS } from "./ai-provider-presets.js";
 import { createComposerActiveTurn } from "./composer-active-turn.js";
 import {
@@ -117,7 +117,7 @@ export function isComposerEligibleEntry(entry, targetType = "") {
     return Boolean(referenceTextForEntry(entry, targetType) || imageRefsForEntry(entry).length);
   }
   if (targetType === "video" && entryMediaAssets(entry).some((asset) =>
-    asset.kind === "video" && referenceSourcePartsForAsset(entry, asset.id).length
+    asset.kind === "video" && asset.usage !== "poster"
   )) return true;
   const contentRole = contentRoleForEntry(entry);
   if (![CONTENT_ROLES.promptImage, CONTENT_ROLES.promptVideo, CONTENT_ROLES.imageCase, CONTENT_ROLES.reference].includes(contentRole)) return false;
@@ -165,10 +165,8 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
     if (selectedAssets.length === 1 && selectedAssets[0].kind === "video") {
       const asset = selectedAssets[0];
       const referenceSources = referenceSourcePartsForAsset(entry, asset.id, {
-        sourceIds: selection.sourceIds,
-        analysisIds: selection.analysisIds
+        sourceIds: selection.sourceIds
       });
-      if (!referenceSources.length) continue;
       const referenceText = formatReferenceSourceParts(referenceSources, locale);
       snapshots.push({
         referenceId: referenceSnapshotId(entry.id, asset.id),
@@ -181,12 +179,19 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
         originalText: referenceSources.find((source) => source.kind === "original_prompt")?.text ?? "",
         scope: "asset",
         imageRefs: [],
+        assetRefs: [{
+          assetId: asset.id,
+          kind: "video",
+          mimeType: String(asset.mimeType ?? "").trim(),
+          name: String(asset.sourceTitle ?? "").trim(),
+          byteSize: Math.max(0, Math.floor(Number(asset.byteSize) || 0))
+        }],
         assets: [],
         referenceSources
       });
       continue;
     }
-    const mediaPrompts = new Map((entry.mediaPrompts ?? []).map((item) => [item.assetId, String(item.text ?? "").trim()]));
+    const mediaPrompts = new Map((entry.mediaPrompts ?? []).filter(item => item.source !== "ai-suggestion").map((item) => [item.assetId, String(item.text ?? "").trim()]));
     const selectedPrompts = selectedAssets.map((asset) => mediaPrompts.get(asset.id)).filter(Boolean);
     const originalPrompt = selectedAssets.length === 1 && selectedPrompts[0]
       ? selectedPrompts[0]
@@ -195,7 +200,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
         : String(entry.text ?? "").trim();
     const visualFacts = imageVisualFacts(entry, selection.assetIds);
     const referenceKind = originalPrompt && visualFacts.length ? "prompt_vision"
-        : contentRole === CONTENT_ROLES.imageCase ? "vision"
+        : visualFacts.length || contentRole === CONTENT_ROLES.imageCase ? "vision"
         : contentRole === CONTENT_ROLES.reference ? "reference" : "prompt";
     const baseText = referenceKind === "prompt_vision"
       ? formatPromptAndVisualFacts(originalPrompt, visualFacts)
@@ -214,7 +219,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
       originalText: originalPrompt,
       scope: selection.assetIds.length ? "asset" : "case",
       imageRefs: imageRefsForEntry(entry, selection.assetIds),
-      assets: selectedAssets.map(referenceAssetSnapshot)
+      assets: selectedAssets.map(asset => referenceAssetSnapshot(asset, entry))
     });
   }
   return snapshots;
@@ -253,10 +258,10 @@ function originalReferenceTextForEntry(entry, targetType) {
 function imageVisualFacts(entry, assetIds = []) {
   const selected = new Set(Array.isArray(assetIds) ? assetIds : []);
   return entryMediaAssets(entry)
-    .filter((asset) => asset.kind === "image" && asset.usage !== "poster" && !asset.visionAnalysis?.invalidated && (!selected.size || selected.has(asset.id)))
+    .filter((asset) => asset.kind === "image" && asset.usage !== "poster" && (!selected.size || selected.has(asset.id)))
     .map((asset) => [
-      String(asset.visionAnalysis?.description ?? "").trim(),
-      validReconstructionPrompt(asset)
+      String(asset.visionAnalysis?.invalidated ? "" : asset.visionAnalysis?.description ?? "").trim(),
+      detailPromptSources(entry, asset).ai
     ].filter(Boolean).join("\n重建提示词："))
     .filter(Boolean);
 }
@@ -297,10 +302,9 @@ export function referenceSourcePartsForAsset(entry, assetIdValue, options = {}) 
   const asset = entryMediaAssets(entry).find((item) => item.id === assetId && item.usage !== "poster");
   if (!asset) return [];
   const allowedSourceIds = Array.isArray(options.sourceIds) ? new Set(options.sourceIds.map(String)) : null;
-  const selectedAnalysisIds = new Set((Array.isArray(options.analysisIds) ? options.analysisIds : []).map(String));
   const mediaPrompt = (Array.isArray(entry?.mediaPrompts) ? entry.mediaPrompts : [])
-    .find((item) => String(item?.assetId ?? "") === assetId && String(item?.text ?? "").trim());
-  const originalText = String(mediaPrompt?.text ?? entry?.text ?? "").trim();
+    .find((item) => String(item?.assetId ?? "") === assetId && item.source !== "ai-suggestion" && String(item?.text ?? "").trim());
+  const originalText = detailPromptSources(entry, asset).original;
   const current = asset.kind === "video" ? currentVideoReconstruction(entry, assetId) : null;
   const notes = asset.kind === "video" ? videoNotesForAsset(entry, assetId) : [];
   const defaultParts = [
@@ -332,25 +336,8 @@ export function referenceSourcePartsForAsset(entry, assetIdValue, options = {}) 
       provenance: notes.map((note) => ({ type: "time_note", recordId: String(note.id ?? "").trim() })).filter((item) => item.recordId)
     } : null
   ].filter(Boolean);
-  const otherParts = (Array.isArray(entry?.videoAnalyses) ? entry.videoAnalyses : []).flatMap((analysis) => {
-    const analysisId = String(analysis?.id ?? "").trim();
-    if (!analysisId || analysisId === String(current?.id ?? "") || String(analysis?.assetId ?? "") !== assetId || !selectedAnalysisIds.has(analysisId)) return [];
-    const text = String(analysis?.reconstructionPrompt ?? analysis?.text ?? analysis?.description ?? analysis?.summary ?? "").trim();
-    if (!text) return [];
-    return [{
-      id: `analysis:${analysisId}`,
-      kind: "other_analysis",
-      label: "其他分析",
-      text,
-      analysisId,
-      analysisVersion: Math.max(1, Number(analysis.version) || 1),
-      provenance: [{ type: "video_analysis", recordId: analysisId, version: Math.max(1, Number(analysis.version) || 1) }]
-    }];
-  });
-  return [
-    ...defaultParts.filter((part) => !allowedSourceIds || allowedSourceIds.has(part.id)),
-    ...otherParts
-  ]
+  return defaultParts
+    .filter((part) => !allowedSourceIds || allowedSourceIds.has(part.id))
     .map(normalizeReferenceSourcePart).filter(Boolean);
 }
 
@@ -418,7 +405,7 @@ function normalizeReferenceSourcePart(value) {
   };
 }
 
-function referenceAssetSnapshot(asset) {
+function referenceAssetSnapshot(asset, entry) {
   const analysis = asset.visionAnalysis && !asset.visionAnalysis.invalidated ? asset.visionAnalysis : null;
   const analysisImageFingerprint = String(analysis?.imageFingerprint ?? "").trim();
   return {
@@ -427,7 +414,7 @@ function referenceAssetSnapshot(asset) {
     analysisImageFingerprint,
     analysisVersion: Math.max(0, Number(analysis?.version) || 0),
     analysisFingerprint: String(analysis?.profileFingerprint ?? "").trim(),
-    reconstructionPrompt: validReconstructionPrompt(asset)
+    reconstructionPrompt: detailPromptSources(entry, asset).ai
   };
 }
 
@@ -1005,7 +992,7 @@ function normalizeReferenceAssetRefs(values) {
   const seen = new Set();
   return (Array.isArray(values) ? values : []).flatMap((item) => {
     const assetId = String(item?.assetId ?? "").trim();
-    const kind = item?.kind === "image" ? "image" : item?.kind === "document" ? "document" : "";
+    const kind = item?.kind === "image" ? "image" : item?.kind === "video" ? "video" : item?.kind === "document" ? "document" : "";
     if (!assetId || !kind || seen.has(assetId)) return [];
     seen.add(assetId);
     const archivePath = safeReferenceArchivePath(item?.archivePath);

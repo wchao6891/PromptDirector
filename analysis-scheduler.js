@@ -1,5 +1,5 @@
 import { analysisTaskPriorityRank, normalizeAnalysisPriority } from "./analysis-tasks.js";
-import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
+import { ANALYSIS_RETRY_POLICY, createAnalysisRequestBudget, analysisRequestCounts } from "./analysis-retry-policy.js";
 
 const schedulers = new Map();
 const inFlight = new Map();
@@ -94,31 +94,63 @@ export function scheduleAnalysis(keyValue, concurrencyValue, task, options = {})
 
 export function coalesceAnalysisRequest(keyValue, task, options = {}) {
   const key = String(keyValue ?? "").trim();
-  if (!key) return task();
-  if (inFlight.has(key)) {
-    options.onCoalesced?.();
-    return inFlight.get(key);
+  options.signal?.throwIfAborted();
+  if (!key) return task(options.signal);
+  let shared = inFlight.get(key);
+  if (shared) options.onCoalesced?.();
+  else {
+    shared = { controller: new AbortController(), consumers: 0, promise: null };
+    shared.promise = Promise.resolve().then(() => {
+      shared.controller.signal.throwIfAborted();
+      return task(shared.controller.signal);
+    }).finally(() => {
+      if (inFlight.get(key) === shared) inFlight.delete(key);
+    });
+    inFlight.set(key, shared);
   }
-  const promise = Promise.resolve().then(task).finally(() => inFlight.delete(key));
-  inFlight.set(key, promise);
-  return promise;
+  shared.consumers++;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      options.signal?.removeEventListener("abort", abort);
+      shared.consumers--;
+      callback(value);
+    };
+    const abort = () => {
+      settle(reject, options.signal.reason ?? new DOMException("已停止", "AbortError"));
+      if (!shared.consumers) {
+        shared.controller.abort(options.signal.reason);
+        if (inFlight.get(key) === shared) inFlight.delete(key);
+      }
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    shared.promise.then(value => settle(resolve, value), error => settle(reject, error));
+  });
 }
 
 export async function runScheduledAnalysisWithRetries(options = {}) {
   const wait = options.wait ?? defaultWait;
   const jitter = options.jitter ?? (() => Math.floor(Math.random() * 501));
+  const requestBudget = options.requestBudget ?? createAnalysisRequestBudget();
   let retries = 0;
   for (;;) {
     try {
-      return await scheduleAnalysis(options.key, options.concurrency, options.task, {
+      options.signal?.throwIfAborted();
+      return await scheduleAnalysis(options.key, options.concurrency, () => {
+        options.signal?.throwIfAborted();
+        return options.task(requestBudget);
+      }, {
         priority: options.priority
       });
     } catch (error) {
-      if (!isRetryable(error) || retries >= ANALYSIS_RETRY_POLICY.serviceRetries) throw error;
+      error.attempts = analysisRequestCounts(requestBudget);
+      if (!isRetryable(error) || retries >= ANALYSIS_RETRY_POLICY.serviceRetries || requestBudget.providerCalls >= requestBudget.maxProviderCalls) throw error;
       const retryAfter = Number(error?.retryAfterMs) || 0;
       const delay = retryAfter || ANALYSIS_RETRY_POLICY.backoffMs[retries] + Math.max(0, Number(jitter()) || 0);
       retries += 1;
-      await wait(delay);
+      await interruptibleWait(wait, delay, options.signal);
     }
   }
 }
@@ -236,9 +268,19 @@ function synchronizeLimit(state) {
 }
 
 function isRetryable(error) {
+  if (error?.recovery) return error.recovery === "retry";
   if (error?.status === undefined || error?.status === null) return false;
   const status = Number(error.status) || 0;
-  return error?.name !== "AbortError" && RETRYABLE_STATUSES.has(status);
+  return error?.name !== "AbortError" && ![0, 408].includes(status) && RETRYABLE_STATUSES.has(status);
+}
+
+async function interruptibleWait(wait, delay, signal) {
+  signal?.throwIfAborted();
+  if (!signal) return wait(delay);
+  let stop;
+  const aborted = new Promise((_, reject) => { stop = () => reject(signal.reason ?? abortError()); signal.addEventListener("abort", stop, { once: true }); });
+  try { await Promise.race([wait(delay), aborted]); }
+  finally { signal.removeEventListener("abort", stop); }
 }
 
 function normalizedConcurrency(value) {

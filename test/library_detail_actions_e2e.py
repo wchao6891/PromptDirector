@@ -71,8 +71,8 @@ def main() -> None:
         library = session.open_page("library.html", wait_until="networkidle")
         library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
         expect(library.locator(".detail-header-section .entry-editor-inline > summary")).to_be_visible()
-        expect(library.locator(".prompt-section-heading", has_text="提示词")).to_be_visible()
-        expect(library.locator(".detail-core-actions > button")).to_have_count(2)
+        expect(library.locator(".media-prompt-section > .original-prompt-panel > .prompt-section-heading")).to_be_visible()
+        expect(library.locator(".detail-core-actions > button")).to_have_count(1)
         expect(library.get_by_role("button", name="复制提示词")).to_be_enabled()
         expect(library.get_by_role("button", name="以此创作")).to_be_enabled()
         expect(library.get_by_role("button", name="编辑共享提示词", exact=True)).to_have_count(0)
@@ -118,17 +118,25 @@ def main() -> None:
         core_geometry = library.locator(".detail-core-actions > button").evaluate_all(
             "buttons => buttons.map(button => ({width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height}))"
         )
-        assert abs(core_geometry[0]["width"] - core_geometry[1]["width"]) < 1, core_geometry
-        assert core_geometry[0]["height"] == core_geometry[1]["height"] == 36, core_geometry
+        assert len(core_geometry) == 1 and core_geometry[0]["height"] == 36, core_geometry
+        expect(library.locator(".prompt-toolbar").get_by_role("button", name="复制提示词", exact=True)).to_be_visible()
 
         edit_geometry = library.evaluate(
             """() => {
               const title = document.querySelector('.detail-title').getBoundingClientRect();
               const edit = document.querySelector('.entry-editor-inline > summary').getBoundingClientRect();
-              return {titleTop: title.top, editTop: edit.top, delta: Math.abs(title.top - edit.top)};
+              const toolbarButtons = [...document.querySelectorAll('.drawer-toolbar > .icon-button')]
+                .filter(button => !button.hidden && getComputedStyle(button).display !== 'none')
+                .map(button => button.getBoundingClientRect());
+              const overlapsToolbar = toolbarButtons.some(button => !(
+                edit.right <= button.left || edit.left >= button.right ||
+                edit.bottom <= button.top || edit.top >= button.bottom
+              ));
+              return {titleTop: title.top, editTop: edit.top, delta: Math.abs(title.top - edit.top), overlapsToolbar};
             }"""
         )
         assert edit_geometry["delta"] < 8, edit_geometry
+        assert edit_geometry["overlapsToolbar"] is False, edit_geometry
         library.locator(".entry-editor-inline > summary").click()
         expect(library.locator(".entry-editor-inline .entry-editor-body")).to_be_visible()
         expect(library.locator(".entry-editor-inline h4", has_text="案例标题")).to_have_count(1)
@@ -140,15 +148,15 @@ def main() -> None:
         assert title_row == {"display": "grid", "columns": 2}, title_row
         library.locator(".entry-editor-inline > summary").click()
 
-        library.get_by_role("button", name="编辑", exact=True).click()
-        expect(library.get_by_role("textbox", name="编辑提示词")).to_be_visible()
+        library.get_by_role("button", name="编辑原始提示词", exact=True).click()
+        expect(library.get_by_role("textbox", name="编辑原始提示词")).to_be_visible()
         library.get_by_role("button", name="取消", exact=True).click()
 
-        analysis = library.locator(".detail-analysis-menu")
-        analysis.locator(":scope > summary").click()
-        expect(analysis.locator(".detail-analysis-actions > button")).to_have_count(2)
-        expect(analysis.get_by_role("button", name="分析主图")).to_be_visible()
-        expect(analysis.get_by_role("button", name="分析检索标签")).to_be_visible()
+        analysis = library.locator(".prompt-toolbar")
+        expect(library.locator(".detail-analysis-menu")).to_have_count(0)
+        expect(library.locator(".detail-analysis-actions")).to_have_count(0)
+        expect(library.locator(".prompt-toolbar").get_by_role("button", name="分析图片")).to_be_visible()
+        expect(analysis.get_by_role("button", name="分析文字标签")).to_be_visible()
 
         source = library.get_by_role("link", name="打开来源")
         expect(source).to_have_attribute("href", entry["url"])

@@ -67,14 +67,13 @@ test("project share preflight uses the same compound-complete member selection a
   assert.match(js, /projectPackageEntryIds\(\{ entries, compoundCases, organizerState \}, context\.collectionId\)/u);
 });
 
-test("share package import sizes only this user-selected package by its real file size", () => {
+test("share package import keeps archive and expanded-entry limits independent", () => {
   const imported = js.slice(js.indexOf("async function importSharedLibraryPackage"), js.indexOf("function backupMediaPaths"));
-  assert.match(imported, /maxArchiveBytes:\s*file\.size/);
-  assert.match(imported, /maxFileBytes:\s*file\.size/);
-  assert.match(imported, /maxImageBytes:\s*file\.size/);
-  assert.match(imported, /readZipBlob\(file, packageLimits\)/);
+  assert.match(imported, /const limits = \{ \.\.\.PORTABLE_LIBRARY_LIMITS \}/);
+  assert.doesNotMatch(imported, /max(?:Archive|File|Image|Video)Bytes:\s*file\.size/);
+  assert.match(imported, /readZipBlob\(file, limits\)/);
   assert.match(imported, /sourceType:\s*LIBRARY_TRANSFER_SOURCES\.SHARE_PACKAGE/);
-  assert.match(imported, /limits:\s*packageLimits/);
+  assert.match(imported, /limits/);
   assert.match(imported, /validateImage:\s*validateImportedImage/);
 });
 

@@ -21,10 +21,13 @@ test("library exposes four case sorts and keeps project structure management on 
   assert.match(html, /id="manage-project-order"[^>]*aria-label="管理项目结构"/);
 });
 
-test("sidebar keeps the recycle bin without smart or import-batch views", () => {
+test("sidebar derives an unassigned workspace without persisting smart or import-batch views", () => {
   assert.match(html, /id="open-trash"/);
-  assert.doesNotMatch(html, /智能入口|未归项目|id="smart-unassigned"|id="import-batch-filters"/);
-  assert.doesNotMatch(source, /renderSmartFilters|filterCasesByImportBatch|filterUnassignedCases/);
+  assert.match(html, /id="workspace-unassigned"[\s\S]*未归项目/);
+  assert.match(source, /organizerState\.collections\.flatMap\(\(collection\) => collection\.entryIds\)/);
+  assert.match(source, /every\(\(id\) => !assignedEntryIds\.has\(id\)\)/);
+  assert.doesNotMatch(html, /智能入口|id="smart-unassigned"|id="import-batch-filters"/);
+  assert.doesNotMatch(source, /renderSmartFilters|filterCasesByImportBatch/);
 });
 
 test("case manual ordering is gated to an unfiltered project and project tree uses direct drag", () => {
@@ -37,6 +40,16 @@ test("case manual ordering is gated to an unfiltered project and project tree us
   assert.match(source, /moveProjectLogicalCase/);
   assert.match(source, /type: "REPLACE_COLLECTION_ENTRIES"/);
   assert.match(source, /caseOrderManagementActive && projectManualOrderAvailable/);
+  assert.match(source, /function bindCaseOrderDrag/);
+  assert.match(source, /card\.addEventListener\("dragstart",[\s\S]*event\.preventDefault\(\)/);
+  assert.match(source, /card\.addEventListener\("pointerdown",[\s\S]*event\.preventDefault\(\)/);
+  assert.match(source, /drag\.y < bounds\.top \+ bounds\.height \/ 2 \? "up" : "down"/);
+  assert.match(source, /function updateCaseOrderDragAutoscroll/);
+  assert.match(source, /\["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"\]/);
+  assert.doesNotMatch(source, /case-reorder-controls|case-move-up|case-move-down/);
+  assert.match(css, /\.case-card\.manual-project-order\s*\{[^}]*cursor:\s*grab/);
+  assert.match(css, /\.case-card\.case-order-drop-before::before/);
+  assert.doesNotMatch(css, /\.case-reorder-controls/);
   assert.match(source, /projectOrderManagementActive/);
   assert.match(source, /createUiIcon\(caseOrderManagementActive \? "circle-check-big" : "sliders-horizontal"\)/);
   assert.match(source, /row\.addEventListener\("pointerdown"/);

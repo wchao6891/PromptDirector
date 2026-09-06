@@ -51,6 +51,7 @@ import {
   selectedComposerService
 } from "./composer-service.js";
 import { applyComposerServiceResult, planComposerSession, prepareComposerTurnStart } from "./composer-turn-core.js";
+import { sessionHasVideoReferences } from "./composer-video-references.js";
 import { createComposerImageWorkspace } from "./composer-image-workspace.js";
 import { createComposerAnalysisTaskBridge } from "./composer-analysis-task-bridge.js";
 import { composerAssemblyLayers } from "./composer-agent.js";
@@ -66,6 +67,7 @@ import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./i
 import { readImageDimensions } from "./image-metadata.js";
 import { deleteMediaBlobs, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
 import { prepareLocalMedia } from "./local-media.js";
+import { readVideoMedia } from "./browser-video-media.js";
 import { extractPdfSearchText } from "./document-viewer.js";
 import {
   composerPasteFiles,
@@ -349,7 +351,7 @@ async function syncCreativeJobState(expectedRevision = null) {
       executionRoute: active.request.session.currentRoute || "compose",
       userMessageId: active.userMessageId,
       session: composerSession?.id === active.sessionId ? composerSession : active.request.session,
-      streamingText: ""
+      streamingText: composerSession?.id === active.sessionId ? composerSession.activeTurn?.partialText || "" : ""
     };
     return true;
   }
@@ -558,6 +560,7 @@ async function hydrateTempReferenceImage(image, assetId) {
 
 function tempReferenceTypeLabel(asset) {
   const type = String(asset?.mimeType ?? "").toLocaleLowerCase("en-US");
+  if (type.startsWith("video/")) return "视频";
   if (type === "application/pdf") return "PDF";
   if (type === "text/markdown") return "MD";
   if (type === "text/html") return "HTML";
@@ -576,7 +579,8 @@ async function addTempReferences(filesValue) {
     const aliasIndex = composerSession.referenceSnapshots.length + index + 1;
     const alias = currentLocale() === "en" ? `@Reference${aliasIndex}` : `@参考${aliasIndex}`;
     const preparedFile = await prepareLocalMedia(file, assetId, {
-      allowVideo: false,
+      allowVideo: true,
+      readVideoMedia,
       relativePath: file.name,
       extractPdfText: extractPdfSearchText
     });
@@ -1006,6 +1010,10 @@ async function sendComposerTurn() {
   if (activeOperation) return composerFeedback("另一项创作任务正在运行，请先等待或停止", true);
   const instruction = elements.composerInstruction.value.trim();
   if (!instruction) return composerFeedback("请先输入本轮任务", true);
+  if (sessionHasVideoReferences(composerSession)) {
+    const service = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
+    if (!service.videoInput) return composerFeedback(`${service.label} 的所选模型未声明视频输入能力，请切换视频模型`, true);
+  }
   if (showImageTempReferenceBlock()) return;
   const answeringQuestion = composerSession.messages.at(-1)?.type === "question";
   const wasEmpty = composerSession.messages.length === 0 && composerSession.promptVersions.length === 0;
@@ -1066,7 +1074,7 @@ async function sendComposerTurn() {
   prerequisiteAnalysisRequestsNextTurn = 0;
   const prepared = prepareComposerTurnStart(working, turnPolicy);
   working = prepared.session;
-  if (["create_image", "create_video"].includes(working.outputMode)) {
+  if (["create_image", "create_video"].includes(working.outputMode) || sessionHasVideoReferences(working)) {
     composerSession = working;
     renderComposer();
     try {
@@ -1651,7 +1659,7 @@ async function startPersistentCreativeJob({ session, userMessageId, startPhase, 
   const response = await chrome.runtime.sendMessage({
     type: "START_CREATIVE_JOB",
     jobId,
-    request: { session, userMessageId, startPhase, imageEdit }
+    request: { session, userMessageId, startPhase: startPhase === "streaming" ? "generation" : startPhase, imageEdit }
   });
   if (!response?.ok) throw new Error(response?.message || "后台创作任务启动失败");
   creativeJobs = { ...creativeJobs, items: [...(creativeJobs.items ?? []), response.job] };
@@ -2409,7 +2417,6 @@ function composerVideoSourceOptions(entry, asset) {
     const label = rawTextEl("span", "", labelText);
     input.addEventListener("change", () => {
       input.checked ? selected.add(part.id) : selected.delete(part.id);
-      if (!selected.size) setDraftAssetSelected(entry.id, asset.id, false);
       renderCasePicker();
       renderReferenceSelection();
     });

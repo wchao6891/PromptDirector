@@ -27,7 +27,9 @@ test("the current project uses the product accent while other library selections
   assert.match(rule(source, ".case-card.selected-for-share::after"), /border-color:\s*var\(--selection-indicator\)/);
   assert.match(rule(source, ".case-card:focus-visible::after"), /border-width:\s*2px/);
   assert.match(rule(source, ".case-card:focus-visible::after"), /border-color:\s*var\(--focus-ring\)/);
-  assert.match(rule(source, ".detail-visual-thumb"), /border:\s*1px solid transparent/);
+  assert.match(rule(source, ".detail-visual-thumb"), /border:\s*1px solid var\(--line\)/);
+  assert.match(rule(source, ".detail-visual-thumb"), /color:\s*var\(--ink\)/);
+  assert.match(rule(source, ".detail-visual-thumb"), /background:\s*var\(--raised\)/);
   assert.match(rule(source, '.manager-tabs button[aria-selected="true"]::after'), /height:\s*1px/);
   assert.match(rule(source, '.analysis-kind-tabs button[aria-selected="true"]'), /background:\s*var\(--selection\)/);
   assert.match(rule(source, ".share-package-import"), /background:\s*var\(--raised\)/);

@@ -30,7 +30,7 @@ const ZHIPU_GLM_53_FLASH_SOURCE = Object.freeze({
   authority: "智谱 AI 开放平台",
   document: "GLM-5.3-Flash",
   url: "https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash",
-  reviewedAt: "2026-08-29"
+  reviewedAt: "2026-09-05"
 });
 const STANDARD_ASPECT_RATIOS = Object.freeze([
   "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"
@@ -113,7 +113,8 @@ export const AI_MODEL_CAPABILITIES = Object.freeze([
     supportedAspectRatios: Object.freeze([]),
     contextLength: 1_000_000,
     structuredOutput: "json_object",
-    structuredOutputTokenBudget: 8192,
+    // Documented 128K output capacity; structured output still needs room for reasoning.
+    structuredOutputTokenBudget: 131072,
     mediaInput: Object.freeze({
       imageBase64: "data_url",
       localVideo: "base64",

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+from e2e_support import EXTENSION_DIR
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1]
 
 
 def open_picker(page) -> None:
@@ -25,12 +24,21 @@ def open_picker(page) -> None:
     state = page.evaluate(
         """() => ({
           hasPicker: Boolean(document.getElementById('__prompt_case_visual_picker__')),
-          result: window.__smartPickerResult
+          result: window.__smartPickerResult,
+          candidate: (() => {
+            const video = document.querySelector('#x-video-frame');
+            if (!video) return null;
+            const rect = video.getBoundingClientRect();
+            return {width: rect.width, height: rect.height, display: getComputedStyle(video).display,
+              visibility: getComputedStyle(video).visibility, topElement: document.elementFromPoint(500, 300)?.outerHTML.slice(0, 400),
+              dialogs: [...document.querySelectorAll('dialog[open]')].map(d => d.id)};
+          })()
         })"""
     )
     assert state["hasPicker"], {
         "problem": "当前画面没有识别到足够大的图片",
         "result": state["result"],
+        "candidate": state["candidate"],
     }
 
 
@@ -56,7 +64,7 @@ def main() -> None:
                 service_worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
                 extension_id = service_worker.url.split("/")[2]
                 page = context.new_page()
-                page.goto(f"chrome-extension://{extension_id}/library.html")
+                page.goto(f"chrome-extension://{extension_id}/library.html", wait_until="networkidle")
                 page.locator("#settings-dialog").evaluate(
                     "dialog => { if (dialog.open) dialog.close(); }"
                 )
@@ -95,6 +103,7 @@ def main() -> None:
                       document.documentElement.append(video);
                     }"""
                 )
+                page.wait_for_function("() => document.elementsFromPoint(500, 300).includes(document.querySelector('#x-video-frame'))")
                 open_picker(page)
                 video_rects = page.locator(".prompt-case-visual-candidate").evaluate_all(
                     """elements => elements.map((element) => {

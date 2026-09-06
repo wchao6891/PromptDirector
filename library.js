@@ -1,5 +1,8 @@
+import { attachArticleEditor } from "./article-editor.js";
 import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
 import { readImageDimensions } from "./image-metadata.js";
+import { readVideoMedia } from "./browser-video-media.js";
+import { mediaFormatLabel, usesArticleReader } from "./case-presentation.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import {
   assertStorageCapacity,
@@ -30,6 +33,8 @@ import {
 import { buildLibraryImportReport, importReportDescription } from "./library-import-dialog.js";
 import { parseCreativeExperimentPackage } from "./creative-experiment-package.js";
 import { readZipBlob } from "./zip.js";
+import { analysisDiagnosticSummary } from "./analysis-response.js";
+import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 import {
   ASSET_IMPORT_FAILURE_CODES,
   PORTABLE_LIBRARY_LIMITS,
@@ -37,7 +42,7 @@ import {
   formatBytes,
   importFailureDetails
 } from "./resource-limits.js";
-import { resolvePortableAssetFormat } from "./asset-formats.js";
+import { importContainerKindForFile, resolvePortableAssetFormat } from "./asset-formats.js";
 import {
   facetNodes,
   formatFacetNodePath,
@@ -63,7 +68,10 @@ import {
   organizeDetailTagsWithDeepSeek
 } from "./deepseek.js";
 import { runScheduledAnalysisWithRetries } from "./analysis-scheduler.js";
-import { chatCompletionsVideoSourcePlan, videoAnalysisPrompt } from "./video-analysis.js";
+import {
+  DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE,
+  chatCompletionsVideoSourcePlan
+} from "./video-analysis.js";
 import { getAiModelCapability } from "./ai-model-capabilities.js";
 import {
   COMPOSER_METHOD_VERSION,
@@ -73,7 +81,7 @@ import {
 } from "./composer.js";
 import { textFingerprint } from "./analysis-batch.js";
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
-import { entryTextRevision, textAnalysisReason } from "./analysis-revision.js";
+import { entryTextRevision } from "./analysis-revision.js";
 import { createSimilarityIndex, rankSimilarEntries } from "./local-similarity.js";
 import {
   bindUiPreferenceReload,
@@ -96,7 +104,6 @@ import {
   entryHasVisual,
   entryPalette,
   primaryVisual,
-  primaryVisionAnalysis,
   primaryVisionDescription
 } from "./visuals.js";
 import {
@@ -121,6 +128,7 @@ import {
   buildLibraryBatchPayload,
   clearLibrarySelection,
   selectAllFilteredLogicalCases,
+  setLibraryCaseSelection,
   toggleLibraryCaseSelection
 } from "./library-selection.js";
 import { bindTransientMenus } from "./transient-menu.js";
@@ -154,7 +162,10 @@ import {
   collectionSubtreeIds,
   isEntryVisibleInLibrary
 } from "./organizer.js";
-import { promptForEntryImage, visualAnalysisPromptReplacement } from "./image-prompt.js";
+import { visualAnalysisPromptReplacement } from "./image-prompt.js";
+import { detailPromptSources } from "./prompt-sources.js";
+import { createPromptPanel, promptIconButton } from "./prompt-panel.js";
+import { replaceDetailSection } from "./detail-position.js";
 import {
   CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY,
   CLIPBOARD_READ_PERMISSIONS,
@@ -186,11 +197,16 @@ import { CURATED_SUBMISSION_URL } from "./curated-config.js";
 import { moveProjectLogicalCase, sortLibraryCases } from "./library-view.js";
 import { createTagEditor, normalizeTagValue } from "./tag-editor.js";
 import { attachProjectCombobox } from "./project-combobox.js";
-import { SIDEBAR_WIDTH_LIMITS, normalizeSidebarWidth } from "./preferences.js";
+import {
+  DETAIL_SIDEBAR_WIDTH_LIMITS,
+  SIDEBAR_WIDTH_LIMITS,
+  normalizeDetailSidebarWidth,
+  normalizeSidebarWidth
+} from "./preferences.js";
 
 let uiPreferences = await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".package-menu, .project-menu, .detail-analysis-menu, .detail-project-menu, .selection-menu");
+bindTransientMenus(document, ".package-menu, .project-menu, .detail-project-menu, .selection-menu");
 const libraryWindowId = (await chrome.windows.getCurrent()).id;
 
 const elements = Object.fromEntries([
@@ -202,20 +218,22 @@ const elements = Object.fromEntries([
   "analysis-batch-summary", "analysis-diagnostics", "analysis-diagnostic-events", "analysis-progress", "analysis-progress-bar", "analysis-runtime-version", "apply-staged-analysis-rebuild", "batch-status-badge", "cancel-analysis-batch", "composer-agent-instruction", "composer-method-default-text", "composer-method-migration", "composer-method-version", "composer-settings-form", "composer-settings-status", "composer-task-key", "composer-task-method", "copy-analysis-diagnostics", "restore-composer-agent", "restore-composer-task", "save-composer-agent",
   "creative-experiment-auto-analyze", "creative-experiment-enabled", "creative-experiment-status", "save-creative-experiment",
   "creative-experiment-file", "export-creative-experiments", "import-creative-experiments",
-  "create-node-form", "delete-content-type", "detail-close", "detail-content", "detail-drawer", "detail-navigation", "detail-next",
-  "detail-prev", "drawer-backdrop", "drawer-toolbar", "empty-filter", "empty-library", "empty-state",
+  "create-node-form", "delete-content-type", "detail-close", "detail-content", "detail-drawer", "detail-mode-toggle", "detail-navigation", "detail-next",
+  "detail-prev", "detail-resizer", "drawer-backdrop", "drawer-toolbar", "empty-filter", "empty-library", "empty-state",
   "facet-filters", "feedback", "filter-sidebar", "sidebar-resizer", "gallery-heading", "gallery-sort", "gallery-view-controls", "manage-case-order", "project-manual-sort-option", "legacy-candidates",
   "image-lightbox", "image-lightbox-close", "image-lightbox-image", "library-title", "load-more", "load-sentinel", "manage-facets", "manager-close", "manager-dialog", "manager-feedback",
   "manager-pending", "manager-content-types", "manager-vocabulary", "new-node-aliases",
   "new-node-name", "new-node-parent", "pending-count", "pending-filter",
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
-  "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library",
+  "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
+  "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "update-channel", "update-status", "update-checked-at", "update-available-version", "update-explanation", "check-extension-update", "apply-extension-update", "update-release-link", "update-feedback",
   "project-section", "project-root-drop", "manage-project-order", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
+  "video-instructions-en", "video-instructions-zh", "video-settings-form", "video-settings-status", "restore-video-default", "video-protocol",
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
   "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "restore-library-replacement-point", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
+  "library-package-import-dialog", "library-package-import-title", "library-package-import-close", "library-package-import-package-count", "library-package-import-case-count", "library-package-import-project-count", "library-package-import-media-count", "library-package-import-byte-size", "library-package-import-list", "library-package-import-feedback", "library-package-import-cancel", "library-package-import-confirm",
   "vision-batch-dialog", "vision-batch-close", "vision-batch-title", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze", "vision-batch-tags-option", "vision-batch-tags", "vision-batch-instruction-field", "vision-batch-instruction",
   "vision-batch-progress", "vision-batch-progress-bar", "vision-batch-start", "vision-batch-pause", "vision-batch-resume", "vision-batch-retry", "vision-batch-cancel", "vision-batch-feedback",
   "library-drop-target", "import-dialog", "import-dialog-title", "import-close", "import-source", "import-choose-files", "import-last-job", "import-actions", "import-preparing", "import-confirmation", "import-supported-count", "import-skipped-count", "import-duplicate-count", "import-byte-size", "import-project", "import-project-hint", "import-auto-analyze", "import-label-editor", "import-file-list", "import-feedback", "import-job-panel", "import-job-title", "import-job-count", "import-job-progress", "import-job-feedback", "import-cancel", "import-retry", "import-undo", "import-view-project", "import-start"
@@ -232,7 +250,6 @@ const aiRoutingPanels = [...document.querySelectorAll("[data-ai-routing-panel]")
 const analysisLocalePanels = [...document.querySelectorAll("[data-analysis-locale-panel]")];
 const analysisKindTabs = [...document.querySelectorAll("[data-analysis-kind]")];
 const analysisKindPanels = [...document.querySelectorAll("[data-analysis-kind-panel]")];
-const aiAdvancedSettingsSummary = document.querySelector(".ai-advanced-settings > summary");
 const pendingSwitch = document.querySelector(".pending-switch");
 const managerPanels = {
   pending: elements.managerPending,
@@ -267,6 +284,7 @@ let activeDocumentPreviews = 0;
 let entries = [];
 let compoundCases = [];
 let logicalCases = [];
+let libraryRefreshGeneration = 0;
 let taxonomy = { nodes: [] };
 let classificationRules = [];
 let facetCatalog = { facets: [], nodes: [] };
@@ -278,19 +296,24 @@ let visionSettings = normalizeVisionSettings();
 let aiServiceProfiles = { gemini: { configured: false, model: "" }, xai: { configured: false, textModel: "", imageModel: "", videoModel: "" } };
 let aiProviderRegistry = { version: 1, providers: {} };
 let aiTaskAssignments = {};
+let aiPreferences = { videoInstructionsByLocale: DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE };
 let aiModelCatalogRefreshStarted = false;
 let creativeExperimentSettings = { enabled: false, autoAnalyze: false };
 let visibleEntries = [];
 let renderedCount = 0;
 let selectedContentId = "";
 let selectedCollectionId = "";
+let unassignedViewActive = false;
 let caseSortMode = "added-desc";
 let caseOrderManagementActive = false;
+let caseOrderDragState = null;
 let projectOrderManagementActive = false;
 let projectOrderSaving = false;
 let projectDragState = null;
 const expandedProjectIds = new Set();
 let selectionProjectTargetTouched = false;
+let caseSelectionSweep = null;
+let caseSelectionSweepUiFrame = 0;
 let selectedFacets = new Map();
 let activeManagerTab = "content-types";
 let selectedVocabularyFacet = "";
@@ -346,15 +369,14 @@ let dataSafetyOperationActive = false;
 let dataSafetyOperationType = "";
 const activeDetailMediaIdByEntry = new Map();
 const videoAnalysisTaskStateByAsset = new Map();
-const videoAnalysisTaskQueries = new Set();
-const videoAnalysisDrafts = new Map();
-const videoAnalysisIncludeTagsByAsset = new Map();
+const videoAnalysisTaskQueries = new Map();
 let promptEditState = null;
 const visionStatusByEntry = new Map();
 let activeFilterCount = 0;
 let libraryReturnRestored = false;
 let libraryReturnScrollY = null;
 let pendingLocalImport = null;
+let pendingLibraryPackageBatch = null;
 let activeImportJob = null;
 let latestImportJob = null;
 let importPollTimer = 0;
@@ -387,6 +409,7 @@ if (mobileLayout.matches) workspace.classList.add("filters-collapsed");
 mobileLayout.addEventListener("change", (event) => {
   if (event.matches) workspace.classList.add("filters-collapsed");
   renderFilterToggleState();
+  applyDetailViewPreferences();
 });
 
 const imageObserver = new IntersectionObserver((records) => {
@@ -425,6 +448,7 @@ window.addEventListener("focus", () => {
 });
 
 bindEvents();
+applyDetailViewPreferences();
 renderAnalysisDiagnostics();
 elements.uiLocale.value = uiPreferences.locale;
 elements.uiTheme.value = uiPreferences.theme;
@@ -614,7 +638,6 @@ function bindEvents() {
     activeAiRoutingTab = button.dataset.aiRoutingTab || "tasks";
     renderAiRoutingView();
   }));
-  aiAdvancedSettingsSummary?.addEventListener("click", () => preserveSettingsAnchor(aiAdvancedSettingsSummary));
   elements.createCollection.addEventListener("click", () => createProjectCollection(elements.createCollection));
   elements.gallerySort.addEventListener("change", () => {
     caseSortMode = elements.gallerySort.value;
@@ -636,7 +659,9 @@ function bindEvents() {
         theme: elements.uiTheme.value,
         motion: elements.uiMotion.value,
         analysisDiagnostics: uiPreferences.analysisDiagnostics,
-        sidebarWidth: uiPreferences.sidebarWidth
+        sidebarWidth: uiPreferences.sidebarWidth,
+        detailMode: uiPreferences.detailMode,
+        detailSidebarWidth: uiPreferences.detailSidebarWidth
       });
     });
   }
@@ -647,6 +672,7 @@ function bindEvents() {
   });
   bindSidebarResize();
   elements.workspaceLibrary.addEventListener("click", clearFilters);
+  elements.workspaceUnassigned.addEventListener("click", openUnassignedView);
   elements.openCurated.addEventListener("click", () => {
     navigateWithinPromptDirector("curated.html");
   });
@@ -669,6 +695,13 @@ function bindEvents() {
   elements.restoreLibraryReplacementPoint.addEventListener("click", restoreLastLibraryReplacementPoint);
   elements.importLibraryPackage.addEventListener("click", () => elements.libraryPackageFile.click());
   elements.libraryPackageFile.addEventListener("change", importSharedLibraryPackage);
+  elements.libraryPackageImportClose.addEventListener("click", cancelLibraryPackageBatch);
+  elements.libraryPackageImportCancel.addEventListener("click", cancelLibraryPackageBatch);
+  elements.libraryPackageImportConfirm.addEventListener("click", applyLibraryPackageBatch);
+  elements.libraryPackageImportDialog.addEventListener("cancel", (event) => {
+    if (pendingLibraryPackageBatch?.submitting) event.preventDefault();
+    else cancelLibraryPackageBatch();
+  });
   elements.disconnectSyncFolder.addEventListener("click", async () => {
     if (!await confirmAppAction({ title: t("断开同步文件夹？"), description: t("本地案例不会删除。"), confirmLabel: t("断开") })) return;
     await runDataSafetyAction(elements.disconnectSyncFolder, { type: "DISCONNECT_SYNC_FOLDER" });
@@ -677,15 +710,8 @@ function bindEvents() {
   elements.visionBatchDialog.addEventListener("click", (event) => {
     if (event.target === elements.visionBatchDialog) elements.visionBatchDialog.close();
   });
-  for (const checkbox of [elements.visionBatchAllImages, elements.visionBatchReanalyze, elements.visionBatchTags]) {
+  for (const checkbox of [elements.visionBatchAllImages, elements.visionBatchReanalyze]) {
     checkbox.addEventListener("change", () => {
-      if (checkbox === elements.visionBatchTags && activeMediaBatchKind === "video") {
-        elements.visionBatchInstruction.value = videoAnalysisPrompt("visual-reconstruction", "", {
-          includeTags: checkbox.checked,
-          catalog: facetCatalog,
-          locale: currentLocale()
-        });
-      }
       void previewSelectedVisionBatch();
     });
   }
@@ -723,6 +749,7 @@ function bindEvents() {
   });
   elements.selectionAddLabels.addEventListener("click", addLabelsToSelection);
   elements.selectionAddProject.addEventListener("click", addSelectionToProject);
+  elements.selectionMoveProject.addEventListener("click", moveSelectionToProject);
   elements.selectionRemoveProject.addEventListener("click", removeSelectionFromProject);
   elements.selectionNewProject.addEventListener("click", createProjectFromSelection);
   elements.selectionAnalyze.addEventListener("click", analyzeSelectedCases);
@@ -841,6 +868,13 @@ function bindEvents() {
     target.focus();
     showFeedback(t("已恢复编辑框默认内容，点击保存后生效"));
   });
+  elements.videoSettingsForm.addEventListener("submit", saveAiRulePreferences);
+  elements.restoreVideoDefault.addEventListener("click", () => {
+    const target = activeAnalysisLocale === "en" ? elements.videoInstructionsEn : elements.videoInstructionsZh;
+    target.value = DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE[activeAnalysisLocale];
+    target.focus();
+    showFeedback(t("已恢复编辑框默认内容，点击保存后生效"));
+  });
   elements.previewAnalysisBatch.addEventListener("click", () => previewDeepSeekAnalysisBatch("incremental"));
   elements.previewAnalysisReanalyze.addEventListener("click", () => previewDeepSeekAnalysisBatch("rebuild"));
   elements.organizeDetailTags.addEventListener("click", organizeDetailTags);
@@ -859,6 +893,8 @@ function bindEvents() {
   ));
   elements.undoAnalysisBatch.addEventListener("click", () => controlAnalysisBatch("UNDO_ANALYSIS_BATCH"));
   elements.detailClose.addEventListener("click", closeDetail);
+  elements.detailModeToggle.addEventListener("click", toggleDetailMode);
+  bindDetailSidebarResize();
   elements.drawerBackdrop.addEventListener("click", closeDetail);
   elements.detailPrev.addEventListener("click", () => moveDetail(-1));
   elements.detailNext.addEventListener("click", () => moveDetail(1));
@@ -869,6 +905,7 @@ function bindEvents() {
   });
   elements.imageLightbox.addEventListener("close", () => {
     elements.imageLightboxImage.removeAttribute("src");
+    elements.imageLightbox.classList.remove("has-alpha-channel");
     lightboxTrigger?.focus();
     lightboxTrigger = null;
   });
@@ -887,15 +924,25 @@ function bindEvents() {
   elements.creativeExperimentFile.addEventListener("change", importCreativeExperimentArchive);
   elements.restoreComposerTask.addEventListener("click", restoreComposerTaskDefault);
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && caseOrderDragState) {
+      event.preventDefault();
+      cancelCaseOrderDrag();
+      return;
+    }
     if (!currentDetailId || elements.managerDialog.open || elements.imageLightbox.open) return;
     if (event.key === "Escape") closeDetail();
     const editingText = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target?.isContentEditable;
     if (!editingText && event.key === "ArrowLeft") moveDetail(-1);
     if (!editingText && event.key === "ArrowRight") moveDetail(1);
   });
+  window.addEventListener("blur", () => {
+    cancelCaseSelectionSweep();
+    cancelCaseOrderDrag();
+  });
 }
 
 async function refreshLibrary() {
+  const refreshGeneration = ++libraryRefreshGeneration;
   let response;
   try {
     const [state, _derived, diagnosticState] = await Promise.all([
@@ -917,6 +964,7 @@ async function refreshLibrary() {
     showFeedback(response?.message || "无法读取本地案例库", true);
     return;
   }
+  if (refreshGeneration !== libraryRefreshGeneration) return;
   entries = response.entries ?? [];
   compoundCases = normalizeCompoundCases(response.compoundCases, entries);
   taxonomy = response.taxonomy ?? { nodes: [] };
@@ -933,6 +981,7 @@ async function refreshLibrary() {
   aiServiceProfiles = response.aiServiceProfiles ?? aiServiceProfiles;
   aiProviderRegistry = response.aiProviderRegistry ?? aiProviderRegistry;
   aiTaskAssignments = response.aiTaskAssignments ?? aiTaskAssignments;
+  aiPreferences = response.aiPreferences ?? aiPreferences;
   if (!aiModelCatalogRefreshStarted) {
     aiModelCatalogRefreshStarted = true;
     void refreshAiModelCatalogsForSession();
@@ -979,7 +1028,7 @@ async function refreshLibrary() {
   if (elements.managerDialog.open) renderManager();
   if (elements.visionBatchDialog.open) renderVisionBatchDialog();
   if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
-  if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty) await renderDetail();
+  if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty && !elements.detailContent.querySelector('.article-document-reader[data-editing="true"]')) await renderDetail();
   scheduleMaintenanceStatusPoll();
   if (response.restoredArchivedFacetCount) {
     showFeedback(`已自动恢复 ${response.restoredArchivedFacetCount} 个误归档维度，原案例标签没有丢失`);
@@ -1030,9 +1079,17 @@ function rebuildLibraryDerivedState() {
 }
 
 function rebuildLocalSimilarityIndex() {
-  localSimilarityIndex = createSimilarityIndex(logicalCases.filter((entry) => !entry.compoundCase), facetCatalog, {
+  localSimilarityIndex = createSimilarityIndex(logicalCases, facetCatalog, {
     visualForEntry: discoveryVisualId,
-    colorsForEntry: discoveryColors
+    colorsForEntry: discoveryColors,
+    mediaForEntry: entryMediaAssets,
+    contentTypesForEntry: entryContentTypeIds,
+    projectIdsForEntry: (entry) => {
+      const memberIds = new Set(entry.memberEntryIds ?? [entry.id]);
+      return organizerState.collections
+        .filter((collection) => collection.entryIds.some((id) => memberIds.has(id)))
+        .map((collection) => collection.id);
+    }
   });
 }
 
@@ -1046,7 +1103,11 @@ function searchIndexForEntries(entryValues) {
 }
 
 function renderGallery() {
-  const modeEntries = selectedCollectionId || selectionMode === "project"
+  cancelCaseOrderDrag();
+  const assignedEntryIds = unassignedViewActive
+    ? new Set(organizerState.collections.flatMap((collection) => collection.entryIds))
+    : null;
+  const modeEntries = selectedCollectionId || selectionMode === "project" || unassignedViewActive
     ? logicalCases
     : logicalCases.filter((entry) => (entry.memberEntryIds ?? [entry.id])
       .some((entryId) => isEntryVisibleInLibrary(organizerState, entryId)));
@@ -1055,7 +1116,9 @@ function renderGallery() {
       ? collectionEntryIds(organizerState, selectedCollectionId, { subtree: true })
       : organizerState.collections.find((item) => item.id === selectedCollectionId)?.entryIds ?? [])
     : null;
-  let galleryEntries = projectEntryIds
+  let galleryEntries = unassignedViewActive
+    ? modeEntries.filter((entry) => (entry.memberEntryIds ?? [entry.id]).every((id) => !assignedEntryIds.has(id)))
+    : projectEntryIds
     ? modeEntries.filter((entry) => entry.memberEntryIds
       ? entry.memberEntryIds.some((id) => projectEntryIds.has(id))
       : projectEntryIds.has(entry.id))
@@ -1125,7 +1188,8 @@ function renderGalleryResults({ refreshNavigation }) {
   renderProjectFolderCards(childProjects);
   if (refreshNavigation) {
     renderProjectFilters();
-    elements.workspaceLibrary.setAttribute("aria-current", selectedCollectionId ? "false" : "page");
+    elements.workspaceLibrary.setAttribute("aria-current", selectedCollectionId || unassignedViewActive ? "false" : "page");
+    elements.workspaceUnassigned.setAttribute("aria-current", unassignedViewActive ? "page" : "false");
     renderContentFilters(galleryEntries);
     renderFacetFilters(galleryEntries);
   }
@@ -1146,7 +1210,9 @@ function renderGalleryResults({ refreshNavigation }) {
   elements.emptyLibrary.hidden = logicalCases.length > 0;
   elements.emptyFilter.hidden = logicalCases.length === 0;
   renderEmptyFilter();
-  elements.libraryTitle.textContent = project?.name || libraryTitleForLocale(settings.libraryTitle, currentLocale());
+  elements.libraryTitle.textContent = unassignedViewActive
+    ? t("未归项目")
+    : project?.name || libraryTitleForLocale(settings.libraryTitle, currentLocale());
   elements.resultCount.textContent = project
     ? `${visibleEntries.length} 个直接案例 · ${childProjects.length} 个子项目`
     : translateUiMessage(`${visibleEntries.length} 个案例`);
@@ -1170,6 +1236,7 @@ function renderProjectFolderCards(childProjects) {
     button.append(createUiIcon("folder"), copy, createUiIcon("chevron-right"));
     button.lastElementChild.classList.add("project-folder-arrow");
     button.addEventListener("click", () => {
+      unassignedViewActive = false;
       selectedCollectionId = collection.id;
       expandedProjectIds.add(collection.parentId);
       caseOrderManagementActive = false;
@@ -1203,6 +1270,7 @@ function syncGallerySortControl() {
 
 function toggleCaseOrderManagement() {
   if (!projectManualOrderAvailable()) return;
+  cancelCaseOrderDrag();
   caseOrderManagementActive = !caseOrderManagementActive;
   if (caseOrderManagementActive) caseSortMode = "project-manual";
   renderGalleryResults({ refreshNavigation: false });
@@ -1264,14 +1332,9 @@ function syncCaseCardInteraction(card, entry) {
   card.setAttribute("aria-pressed", selectable ? String(selectedCaseIds.has(entry.id)) : "false");
   card.setAttribute("aria-disabled", String(ineligible));
   const manualOrder = caseOrderManagementActive && projectManualOrderAvailable() && caseSortMode === "project-manual";
-  const reorderControls = card.querySelector(".case-reorder-controls");
   card.classList.toggle("manual-project-order", manualOrder);
-  if (reorderControls) {
-    const index = visibleEntries.findIndex((item) => item.id === entry.id);
-    const [moveUp, moveDown] = reorderControls.querySelectorAll("button");
-    moveUp.disabled = !manualOrder || index <= 0;
-    moveDown.disabled = !manualOrder || index < 0 || index >= visibleEntries.length - 1;
-  }
+  if (manualOrder) card.setAttribute("aria-label", `移动案例：${entry.title}，可拖动或使用方向键、Home、End`);
+  card.setAttribute("aria-grabbed", String(manualOrder && caseOrderDragState?.entry?.id === entry.id));
 }
 
 function renderNextBatch(generation = galleryGeneration) {
@@ -1332,7 +1395,15 @@ function createCaseCard(entry) {
   const card = el("article", "case-card");
   card.tabIndex = 0;
   card.dataset.entryId = entry.id;
+  let suppressSelectionClick = false;
+  bindCaseSelectionSweep(card, entry, (value) => { suppressSelectionClick = value; });
+  bindCaseOrderDrag(card, entry, (value) => { suppressSelectionClick = value; });
   const open = () => {
+    if (suppressSelectionClick) {
+      suppressSelectionClick = false;
+      return;
+    }
+    if (caseOrderManagementActive) return;
     if (selectionMode === "vision" && !isVisionSelectableEntry(entry)) {
       showFeedback("这个案例没有可分析的内容图", true);
       return;
@@ -1341,12 +1412,18 @@ function createCaseCard(entry) {
   };
   card.addEventListener("click", open);
   card.addEventListener("keydown", (event) => {
+    if (caseOrderManagementActive && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      void reorderProjectCaseWithKeyboard(entry, event.key, card);
+      return;
+    }
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
   });
 
   const mainVisual = primaryMediaAsset(entry);
   if (mainVisual?.kind === "image") {
     const wrap = el("div", "case-image-wrap");
+    wrap.classList.toggle("has-alpha-channel", alphaCapableImage(mainVisual));
     const dimensions = imageDimensions(mainVisual);
     if (dimensions) {
       wrap.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
@@ -1364,9 +1441,9 @@ function createCaseCard(entry) {
     card.append(wrap);
   } else if (mainVisual?.kind === "video") {
     const poster = posterAssetForVideo(entry, mainVisual);
-    if (poster) {
+    if (poster || mainVisual.storageMode === "managed") {
       const wrap = el("div", "case-image-wrap case-video-poster");
-      const dimensions = imageDimensions(poster);
+      const dimensions = imageDimensions(poster || mainVisual);
       if (dimensions) {
         wrap.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
         wrap.classList.add("case-image-wrap-fixed");
@@ -1374,10 +1451,11 @@ function createCaseCard(entry) {
       const image = document.createElement("img");
       image.className = "case-shot";
       image.alt = translateUiMessage(`${entry.title} 视频封面`);
-      image.dataset.visualId = poster.id;
+      image.dataset.visualId = poster?.id || mainVisual.id;
+      image.dataset.videoId = mainVisual.id;
       image.decoding = "async";
       image.loading = "lazy";
-      const cached = thumbnailUrls.get(poster.id);
+      const cached = thumbnailUrls.get(poster?.id || mainVisual.id);
       if (cached) image.src = cached;
       const cue = textEl("span", "case-video-cue", "▶");
       cue.setAttribute("aria-hidden", "true");
@@ -1399,38 +1477,131 @@ function createCaseCard(entry) {
   } else {
     card.append(entry.text?.trim() ? createTextCaseCover(entry) : textEl("div", "case-shot-missing", "无媒体"));
   }
-  const reorderControls = el("span", "case-reorder-controls");
-  const moveUp = el("button", "case-move-up");
-  const moveDown = el("button", "case-move-down");
-  moveUp.append(createUiIcon("chevron-left"));
-  moveDown.append(createUiIcon("chevron-right"));
-  moveUp.type = moveDown.type = "button";
-  moveUp.setAttribute("aria-label", `上移案例：${entry.title}`);
-  moveDown.setAttribute("aria-label", `下移案例：${entry.title}`);
-  moveUp.title = t("上移案例：{title}", { title: entry.title });
-  moveDown.title = t("下移案例：{title}", { title: entry.title });
-  moveUp.addEventListener("click", (event) => {
-    event.stopPropagation();
-    void reorderProjectCase(entry, "up", moveUp);
-  });
-  moveDown.addEventListener("click", (event) => {
-    event.stopPropagation();
-    void reorderProjectCase(entry, "down", moveDown);
-  });
-  reorderControls.addEventListener("keydown", (event) => event.stopPropagation());
-  reorderControls.append(moveUp, moveDown);
-  card.append(reorderControls, textEl("span", "share-check", "✓"));
+  card.append(textEl("span", "share-check", "✓"));
   return card;
 }
 
-async function reorderProjectCase(entry, direction, button) {
+function bindCaseOrderDrag(card, entry, setSuppressClick) {
+  card.addEventListener("dragstart", (event) => {
+    if (caseOrderManagementActive) event.preventDefault();
+  });
+  card.addEventListener("pointerdown", (event) => {
+    if (!caseOrderManagementActive || !projectManualOrderAvailable() || caseSortMode !== "project-manual" || event.button !== 0) return;
+    event.preventDefault();
+    cancelCaseOrderDrag();
+    caseOrderDragState = {
+      pointerId: event.pointerId,
+      card,
+      entry,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      dragging: false,
+      target: null,
+      direction: "",
+      preview: null,
+      frame: 0,
+      setSuppressClick
+    };
+    try { card.setPointerCapture(event.pointerId); } catch {}
+  });
+  card.addEventListener("pointermove", (event) => {
+    const drag = caseOrderDragState;
+    if (!drag || drag.pointerId !== event.pointerId || drag.card !== card) return;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    if (!drag.dragging && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+    if (!drag.dragging) startCaseOrderDrag(drag);
+    event.preventDefault();
+    updateCaseOrderDragTarget(drag);
+    updateCaseOrderDragAutoscroll(drag);
+  });
+  card.addEventListener("pointerup", (event) => {
+    if (caseOrderDragState?.pointerId === event.pointerId) void finishCaseOrderDrag();
+  });
+  card.addEventListener("pointercancel", cancelCaseOrderDrag);
+  card.addEventListener("lostpointercapture", () => {
+    if (caseOrderDragState?.card === card) cancelCaseOrderDrag();
+  });
+}
+
+function startCaseOrderDrag(drag) {
+  drag.dragging = true;
+  drag.setSuppressClick(true);
+  drag.card.classList.add("case-order-dragging");
+  elements.caseList.classList.add("is-case-order-dragging");
+  drag.preview = rawTextEl("div", "case-order-drag-preview", drag.entry.title || "未命名案例");
+  document.body.append(drag.preview);
+  positionCaseOrderDragPreview(drag);
+}
+
+function updateCaseOrderDragTarget(drag) {
+  positionCaseOrderDragPreview(drag);
+  const target = document.elementFromPoint(drag.x, drag.y)?.closest?.(".case-card");
+  const nextTarget = target && target !== drag.card && elements.caseList.contains(target) ? target : null;
+  if (drag.target !== nextTarget) clearCaseOrderDropTarget(drag);
+  drag.target = nextTarget;
+  if (!nextTarget) return;
+  const bounds = nextTarget.getBoundingClientRect();
+  drag.direction = drag.y < bounds.top + bounds.height / 2 ? "up" : "down";
+  nextTarget.classList.toggle("case-order-drop-before", drag.direction === "up");
+  nextTarget.classList.toggle("case-order-drop-after", drag.direction === "down");
+}
+
+function positionCaseOrderDragPreview(drag) {
+  if (drag.preview) drag.preview.style.transform = `translate3d(${drag.x + 14}px, ${drag.y + 14}px, 0)`;
+}
+
+function updateCaseOrderDragAutoscroll(drag) {
+  if (!drag.dragging || drag.frame) return;
+  const zone = Math.min(96, window.innerHeight * .14);
+  const direction = drag.y < zone ? -1 : drag.y > window.innerHeight - zone ? 1 : 0;
+  if (!direction) return;
+  drag.frame = requestAnimationFrame(() => {
+    if (caseOrderDragState !== drag) return;
+    drag.frame = 0;
+    const distance = direction < 0 ? zone - drag.y : drag.y - (window.innerHeight - zone);
+    window.scrollBy({ top: direction * Math.max(3, distance / zone * window.innerHeight * .018), behavior: "auto" });
+    updateCaseOrderDragTarget(drag);
+    updateCaseOrderDragAutoscroll(drag);
+  });
+}
+
+async function finishCaseOrderDrag() {
+  const drag = caseOrderDragState;
+  if (!drag) return;
+  const targetEntry = visibleEntries.find((item) => item.id === drag.target?.dataset.entryId);
+  const shouldCommit = drag.dragging && targetEntry && drag.direction;
+  cancelCaseOrderDrag({ preserveClickSuppression: drag.dragging });
+  if (shouldCommit) await reorderProjectCase(drag.entry, targetEntry, drag.direction, drag.card);
+}
+
+function clearCaseOrderDropTarget(drag) {
+  drag.target?.classList.remove("case-order-drop-before", "case-order-drop-after");
+}
+
+function cancelCaseOrderDrag({ preserveClickSuppression = false } = {}) {
+  const drag = caseOrderDragState;
+  if (!drag) return;
+  caseOrderDragState = null;
+  if (drag.frame) cancelAnimationFrame(drag.frame);
+  clearCaseOrderDropTarget(drag);
+  drag.card.classList.remove("case-order-dragging");
+  drag.preview?.remove();
+  elements.caseList.classList.remove("is-case-order-dragging");
+  if (!preserveClickSuppression) drag.setSuppressClick(false);
+  try {
+    if (drag.card.hasPointerCapture?.(drag.pointerId)) drag.card.releasePointerCapture(drag.pointerId);
+  } catch {}
+}
+
+async function reorderProjectCase(entry, adjacent, direction, control) {
   if (!caseOrderManagementActive || !projectManualOrderAvailable() || caseSortMode !== "project-manual") return;
   const collection = organizerState.collections.find((item) => item.id === selectedCollectionId);
-  const index = visibleEntries.findIndex((item) => item.id === entry.id);
-  const adjacent = visibleEntries[index + (direction === "up" ? -1 : 1)];
   if (!collection || !adjacent) return;
   const entryIds = moveProjectLogicalCase(collection.entryIds, entry, adjacent, direction);
-  const response = await perform(button, {
+  const response = await perform(control, {
     type: "REPLACE_COLLECTION_ENTRIES",
     collectionId: collection.id,
     entryIds
@@ -1438,6 +1609,20 @@ async function reorderProjectCase(entry, direction, button) {
   if (!response?.ok) return;
   organizerState = response.organizerState ?? organizerState;
   renderGallery();
+}
+
+async function reorderProjectCaseWithKeyboard(entry, key, card) {
+  const index = visibleEntries.findIndex((item) => item.id === entry.id);
+  if (index < 0) return;
+  const backward = ["ArrowLeft", "ArrowUp"].includes(key);
+  const adjacent = key === "Home"
+    ? visibleEntries[0]
+    : key === "End"
+      ? visibleEntries.at(-1)
+      : visibleEntries[index + (backward ? -1 : 1)];
+  if (!adjacent || adjacent.id === entry.id) return;
+  await reorderProjectCase(entry, adjacent, key === "Home" || backward ? "up" : "down", card);
+  requestAnimationFrame(() => elements.caseList.querySelector(`[data-entry-id="${CSS.escape(entry.id)}"]`)?.focus());
 }
 
 function createTextCaseCover(entry, asset = null) {
@@ -1504,8 +1689,7 @@ function assetCategoryLabel(asset) {
 }
 
 function assetFormatLabel(asset) {
-  const source = String(asset?.sourceFormat || asset?.sourceTitle?.split(".").at(-1) || "FILE").trim();
-  return source ? source.toLocaleUpperCase("en-US") : "FILE";
+  return mediaFormatLabel(asset);
 }
 
 function mediaMetadataText(asset) {
@@ -1705,6 +1889,7 @@ function renderProjectFilters() {
     filter.addEventListener("click", () => {
       if (projectOrderManagementActive) return;
       caseOrderManagementActive = false;
+      unassignedViewActive = false;
       selectedCollectionId = selectedCollectionId === collection.id ? "" : collection.id;
       renderGallery();
     });
@@ -2013,6 +2198,7 @@ async function enterProjectSelection(collectionId) {
   projectSelectionId = collection.id;
   caseOrderManagementActive = false;
   projectOrderManagementActive = false;
+  unassignedViewActive = false;
   selectedCollectionId = collection.id;
   selectedCaseIds.clear();
   const members = new Set(collection.entryIds);
@@ -2041,6 +2227,7 @@ async function enterVisionSelection(collection) {
   projectSelectionId = collection.id;
   caseOrderManagementActive = false;
   projectOrderManagementActive = false;
+  unassignedViewActive = false;
   selectedCollectionId = collection.id;
   replaceSelectedCaseIds(getVisionSelectableEntries("all").map((entry) => entry.id));
   selectedContentId = "";
@@ -2052,17 +2239,19 @@ async function enterVisionSelection(collection) {
 
 async function enterSelectMode() {
   if (!await closeDetail()) return;
+  cancelCaseSelectionSweep();
   selectionMode = "select";
   caseOrderManagementActive = false;
   projectOrderManagementActive = false;
   selectionProjectTargetTouched = false;
-  elements.selectionProjectTarget.value = selectedCollectionId || "";
+  elements.selectionProjectTarget.value = "";
   selectedCaseIds.clear();
   updateSelectionBar();
   renderGallery();
 }
 
 function exitSelectionMode() {
+  cancelCaseSelectionSweep();
   selectionMode = "";
   projectSelectionId = "";
   selectedCaseIds.clear();
@@ -2074,6 +2263,7 @@ function exitSelectionMode() {
 }
 
 function exitProjectSelection() {
+  cancelCaseSelectionSweep();
   selectionMode = "";
   projectSelectionId = "";
   selectedCaseIds.clear();
@@ -2086,6 +2276,108 @@ function toggleCaseSelection(entryId, card) {
   const selected = selectedCaseIds.has(entryId);
   card.classList.toggle("selected-for-share", selected);
   card.setAttribute("aria-pressed", String(selected));
+}
+
+function bindCaseSelectionSweep(card, entry, setSuppressClick) {
+  card.addEventListener("pointerdown", (event) => {
+    if (!selectionMode || caseOrderManagementActive || event.pointerType === "touch" || event.button !== 0) return;
+    if (selectionMode === "vision" && !isVisionSelectableEntry(entry)) return;
+    event.preventDefault();
+    cancelCaseSelectionSweep();
+    caseSelectionSweep = {
+      pointerId: event.pointerId,
+      capture: card,
+      selected: !selectedCaseIds.has(entry.id),
+      visited: new Set(),
+      x: event.clientX,
+      y: event.clientY,
+      frame: 0
+    };
+    setSuppressClick(true);
+    elements.caseList.classList.add("is-selection-sweeping");
+    applyCaseSelectionSweepCard(card);
+    try { card.setPointerCapture(event.pointerId); } catch {}
+    updateCaseSelectionSweepAutoscroll();
+  });
+  card.addEventListener("pointermove", (event) => {
+    if (caseSelectionSweep?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    caseSelectionSweep.x = event.clientX;
+    caseSelectionSweep.y = event.clientY;
+    applyCaseSelectionSweepAtPoint(event.clientX, event.clientY);
+    updateCaseSelectionSweepAutoscroll();
+  });
+  card.addEventListener("pointerup", finishCaseSelectionSweep);
+  card.addEventListener("pointercancel", () => {
+    setSuppressClick(false);
+    cancelCaseSelectionSweep();
+  });
+  card.addEventListener("lostpointercapture", () => {
+    if (caseSelectionSweep?.capture === card) {
+      setSuppressClick(false);
+      cancelCaseSelectionSweep();
+    }
+  });
+}
+
+function applyCaseSelectionSweepAtPoint(x, y) {
+  const card = document.elementFromPoint(x, y)?.closest?.(".case-card");
+  if (card) applyCaseSelectionSweepCard(card);
+}
+
+function applyCaseSelectionSweepCard(card) {
+  const sweep = caseSelectionSweep;
+  const entryId = card?.dataset?.entryId;
+  if (!sweep || !entryId || sweep.visited.has(entryId) || card.classList.contains("selection-ineligible")) return;
+  sweep.visited.add(entryId);
+  const next = setLibraryCaseSelection([...selectedCaseIds], entryId, sweep.selected);
+  selectedCaseIds.clear();
+  next.forEach((id) => selectedCaseIds.add(id));
+  card.classList.toggle("selected-for-share", sweep.selected);
+  card.setAttribute("aria-pressed", String(sweep.selected));
+  if (!caseSelectionSweepUiFrame) {
+    caseSelectionSweepUiFrame = requestAnimationFrame(() => {
+      caseSelectionSweepUiFrame = 0;
+      updateSelectionBar();
+    });
+  }
+}
+
+function updateCaseSelectionSweepAutoscroll() {
+  const sweep = caseSelectionSweep;
+  if (!sweep || sweep.frame) return;
+  const zone = Math.min(96, window.innerHeight * .14);
+  const direction = sweep.y < zone ? -1 : sweep.y > window.innerHeight - zone ? 1 : 0;
+  if (!direction) return;
+  sweep.frame = requestAnimationFrame(() => {
+    if (caseSelectionSweep !== sweep) return;
+    sweep.frame = 0;
+    const distance = direction < 0 ? zone - sweep.y : sweep.y - (window.innerHeight - zone);
+    window.scrollBy({ top: direction * Math.max(3, distance / zone * window.innerHeight * .018), behavior: "auto" });
+    applyCaseSelectionSweepAtPoint(sweep.x, sweep.y);
+    updateCaseSelectionSweepAutoscroll();
+  });
+}
+
+function finishCaseSelectionSweep(event) {
+  if (!caseSelectionSweep || caseSelectionSweep.pointerId !== event.pointerId) return;
+  cancelCaseSelectionSweep();
+}
+
+function cancelCaseSelectionSweep() {
+  const sweep = caseSelectionSweep;
+  if (!sweep) return;
+  caseSelectionSweep = null;
+  if (sweep.frame) cancelAnimationFrame(sweep.frame);
+  try {
+    if (sweep.capture.hasPointerCapture?.(sweep.pointerId)) sweep.capture.releasePointerCapture(sweep.pointerId);
+  } catch {}
+  elements.caseList.classList.remove("is-selection-sweeping");
+  if (caseSelectionSweepUiFrame) {
+    cancelAnimationFrame(caseSelectionSweepUiFrame);
+    caseSelectionSweepUiFrame = 0;
+  }
+  updateSelectionBar();
 }
 
 function selectAllFilteredCases() {
@@ -2145,9 +2437,7 @@ function updateSelectionBar() {
   elements.projectSelectionClear.hidden = !visionSelection;
   elements.projectSelectionClear.disabled = selectedCaseIds.size === 0;
   elements.shareCount.textContent = currentLocale() === "en" ? `Selected ${selectedCaseIds.size}` : `已选 ${selectedCaseIds.size}`;
-  const selectedProject = selectionProjectTargetTouched
-    ? elements.selectionProjectTarget.value
-    : elements.selectionProjectTarget.value || selectedCollectionId;
+  const selectedProject = elements.selectionProjectTarget.value;
   const options = [option("", t("选择项目…"))];
   const selectorLabelsByProject = collectionSelectorLabelsById(organizerState);
   for (const collection of organizerState.collections) {
@@ -2158,13 +2448,25 @@ function updateSelectionBar() {
   const targetCollection = organizerState.collections.find((item) => item.id === elements.selectionProjectTarget.value);
   const selectedEntryIds = expandLogicalCaseIds([...selectedCaseIds], compoundCases);
   const targetEntryIds = new Set(targetCollection?.entryIds ?? []);
-  const removableCount = selectedEntryIds.filter((id) => targetEntryIds.has(id)).length;
+  const sourceCollection = organizerState.collections.find((item) => item.id === selectedCollectionId);
+  const sourceEntryIds = new Set(sourceCollection?.entryIds ?? []);
+  const removableCount = selectedEntryIds.filter((id) => sourceEntryIds.has(id)).length;
   const projectActionUnavailable = !selectedCaseIds.size || !targetCollection;
+  const sourceKind = sourceCollection ? "project" : unassignedViewActive ? "unassigned" : "library";
+  const moveUnavailable = projectActionUnavailable || targetCollection?.id === sourceCollection?.id;
+  elements.selectionProjectImpact.textContent = sourceKind === "project"
+    ? t("来源：{project}", { project: sourceCollection.name })
+    : sourceKind === "unassigned" ? t("来源：未归项目") : t("案例库");
+  elements.selectionMoveProject.hidden = sourceKind === "library";
+  elements.selectionMoveProject.disabled = moveUnavailable;
+  elements.selectionMoveProject.title = moveUnavailable && targetCollection?.id === sourceCollection?.id ? t("请选择其他项目") : "";
+  elements.selectionAddProject.hidden = sourceKind === "unassigned";
   elements.selectionAddProject.disabled = projectActionUnavailable;
-  elements.selectionRemoveProject.disabled = projectActionUnavailable || removableCount === 0;
-  elements.selectionRemoveProject.title = projectActionUnavailable
-    ? "请先选择案例和目标项目"
-    : removableCount === 0 ? "所选案例都不在该项目中" : `可移出 ${removableCount} 个案例`;
+  elements.selectionRemoveProject.hidden = sourceKind !== "project";
+  elements.selectionRemoveProject.disabled = !selectedCaseIds.size || removableCount === 0;
+  elements.selectionRemoveProject.title = !selectedCaseIds.size
+    ? t("请先选择案例")
+    : removableCount === 0 ? t("所选案例都不在该项目中") : t("可移出 {count} 个案例", { count: removableCount });
   elements.selectionSelectFiltered.disabled = selectionMode !== "select" || visibleEntries.length === 0;
   elements.selectionSelectFiltered.hidden = selectedCaseIds.size > 0;
   elements.selectionSelectFiltered.textContent = currentLocale() === "en" ? `Select current (${visibleEntries.length})` : `全选当前（${visibleEntries.length}）`;
@@ -2177,6 +2479,7 @@ function updateSelectionBar() {
   elements.selectionCombine.disabled = selectedCaseIds.size < 2;
   elements.selectionCombine.title = selectedCaseIds.size < 2 ? t("至少选择 2 个案例") : "";
   elements.selectionNewProject.disabled = !selectedCaseIds.size;
+  elements.selectionNewProject.textContent = t(sourceKind === "library" ? "新建项目并加入" : "新建项目并移动");
   const selectionHasAnalyzableImage = [...selectedCaseIds]
     .some((id) => isVisionSelectableEntry(logicalCases.find((entry) => entry.id === id)));
   const selectionHasAnalyzableVideo = [...selectedCaseIds].some((id) => {
@@ -2237,23 +2540,30 @@ async function addSelectionToProject() {
   return updateSelectionProjectMembership("add", elements.selectionAddProject);
 }
 
-async function removeSelectionFromProject() {
-  return updateSelectionProjectMembership("remove", elements.selectionRemoveProject);
+async function moveSelectionToProject() {
+  return updateSelectionProjectMembership("move", elements.selectionMoveProject);
 }
 
-async function updateSelectionProjectMembership(mode, button) {
-  const collection = organizerState.collections.find((item) => item.id === elements.selectionProjectTarget.value);
+async function removeSelectionFromProject() {
+  if (!selectedCollectionId || !selectedCaseIds.size) return;
+  return updateSelectionProjectMembership("remove", elements.selectionRemoveProject, selectedCollectionId);
+}
+
+async function updateSelectionProjectMembership(mode, button, collectionId = elements.selectionProjectTarget.value) {
+  const collection = organizerState.collections.find((item) => item.id === collectionId);
   if (!collection || !selectedCaseIds.size) return;
   button.disabled = true;
   try {
     const message = buildLibraryBatchPayload([...selectedCaseIds], compoundCases, {
       type: LIBRARY_BATCH_ACTIONS.setProject,
       collectionId: collection.id,
-      mode
+      mode,
+      sourceCollectionId: mode === "move" ? selectedCollectionId : null
     });
     const response = await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || (mode === "remove" ? "移出项目失败" : "加入项目失败"));
     organizerState = response.organizerState ?? organizerState;
+    rebuildLocalSimilarityIndex();
     showFeedback(response.message || (mode === "remove" ? `已移出项目“${collection.name}”` : `已加入项目“${collection.name}”`));
     exitSelectionMode();
   } catch (error) {
@@ -2297,28 +2607,27 @@ async function moveSelectionToTrash() {
 
 async function createProjectFromSelection() {
   if (!selectedCaseIds.size) return;
+  const moving = Boolean(selectedCollectionId || unassignedViewActive);
   const name = await promptAppText({
     title: t("以所选案例新建项目"),
     label: t("项目名称"),
-    confirmLabel: t("新建并加入"),
+    confirmLabel: moving ? t("新建并移动") : t("新建并加入"),
     selectFirst: true
   });
   if (!name?.trim()) return;
-  const parentId = organizerState.collections.some((item) => item.id === elements.selectionProjectTarget.value)
-    ? elements.selectionProjectTarget.value
-    : null;
-  const createResponse = await perform(elements.selectionNewProject, { type: "CREATE_COLLECTION", name: name.trim(), parentId }, false);
-  if (!createResponse?.ok || !createResponse.created?.id) return;
-  organizerState = createResponse.organizerState ?? organizerState;
   const entryIds = expandLogicalCaseIds([...selectedCaseIds], compoundCases);
-  const addResponse = await perform(elements.selectionNewProject, {
-    type: "REPLACE_COLLECTION_ENTRIES",
-    collectionId: createResponse.created.id,
-    entryIds
+  const response = await perform(elements.selectionNewProject, {
+    type: "CREATE_COLLECTION_FROM_SELECTION",
+    name: name.trim(),
+    parentId: null,
+    entryIds,
+    mode: moving ? "move" : "add",
+    sourceCollectionId: selectedCollectionId || null
   }, false);
-  if (!addResponse?.ok) return;
-  organizerState = addResponse.organizerState ?? organizerState;
-  showFeedback(`已新建项目“${createResponse.created.name}”并加入所选案例`);
+  if (!response?.ok || !response.created?.id) return;
+  organizerState = response.organizerState ?? organizerState;
+  rebuildLocalSimilarityIndex();
+  showFeedback(`已新建项目“${response.created.name}”并${moving ? "移动" : "加入"}所选案例`);
   exitSelectionMode();
 }
 
@@ -2401,6 +2710,7 @@ async function saveProjectSelection() {
     organizerState = response.organizerState ?? organizerState;
     selectionMode = "";
     projectSelectionId = "";
+    unassignedViewActive = false;
     selectedCollectionId = collectionId;
     selectedCaseIds.clear();
     updateSelectionBar();
@@ -2626,6 +2936,7 @@ function restoreLibraryReturnSnapshot() {
   } catch {
   }
   if (!snapshot) return;
+  unassignedViewActive = false;
   selectedCollectionId = organizerState.collections.some((item) => item.id === snapshot.collectionId)
     ? snapshot.collectionId
     : "";
@@ -2653,8 +2964,8 @@ function restoreLibraryScrollPosition() {
 
 function openRequestedSettings() {
   const requested = new URLSearchParams(location.search).get("settings");
-  if (!requested || !["vision", "composer"].includes(requested)) return;
-  openSettingsDialog("ai", requested);
+  if (!requested || !["text", "vision", "video", "composer"].includes(requested)) return;
+  openSettingsDialog("rules", requested);
   const tab = document.querySelector(`[data-analysis-kind="${requested}"]`);
   tab?.click();
   history.replaceState(null, "", "library.html");
@@ -2673,6 +2984,7 @@ async function openRequestedLibraryTarget() {
   elements.pendingFilter.checked = false;
   elements.searchInput.value = "";
   libraryReturnScrollY = null;
+  unassignedViewActive = false;
   if (caseId && logicalCases.some((entry) => entry.id === caseId)) {
     selectedCollectionId = "";
     renderGallery();
@@ -2696,15 +3008,8 @@ async function openVisionBatchConfirmation() {
   elements.visionBatchTitle.textContent = t(videoMode ? "批量分析视频" : "批量分析图片");
   elements.visionBatchAllImages.nextElementSibling.textContent = t(videoMode ? "包含案例中的全部视频" : "分析所选案例中的全部未分析图片");
   elements.visionBatchReanalyze.nextElementSibling.textContent = t(videoMode ? "包含已有 AI 视觉逆推的视频" : "重新分析已有反推提示词");
-  elements.visionBatchTagsOption.hidden = !videoMode;
-  elements.visionBatchInstructionField.hidden = !videoMode;
-  if (videoMode) {
-    elements.visionBatchInstruction.value = videoAnalysisPrompt("visual-reconstruction", "", {
-      includeTags: true,
-      catalog: facetCatalog,
-      locale: currentLocale()
-    });
-  }
+  elements.visionBatchTagsOption.hidden = true;
+  elements.visionBatchInstructionField.hidden = true;
   await previewSelectedVisionBatch();
   if (!elements.visionBatchDialog.open) elements.visionBatchDialog.showModal();
 }
@@ -2716,8 +3021,8 @@ async function previewSelectedVisionBatch() {
       activeMediaBatchKind = visionBatchJob.kind === "video" ? "video" : "image";
       const videoMode = activeMediaBatchKind === "video";
       elements.visionBatchTitle.textContent = t(videoMode ? "批量分析视频" : "批量分析图片");
-      elements.visionBatchTagsOption.hidden = !videoMode;
-      elements.visionBatchInstructionField.hidden = !videoMode;
+      elements.visionBatchTagsOption.hidden = true;
+      elements.visionBatchInstructionField.hidden = true;
       showVisionBatchFeedback("已有未完成的批量任务，请继续或取消后再创建另一类任务");
       renderVisionBatchDialog();
       return;
@@ -2754,7 +3059,7 @@ async function previewSelectedVisionBatch() {
     includeAllImages: activeMediaBatchKind !== "video" && elements.visionBatchAllImages.checked,
     includeAllVideos: activeMediaBatchKind === "video" && elements.visionBatchAllImages.checked,
     reanalyze: elements.visionBatchReanalyze.checked,
-    includeTags: elements.visionBatchTags.checked
+    includeTags: activeMediaBatchKind === "video" ? true : elements.visionBatchTags.checked
   });
   if (!response?.ok) return showVisionBatchFeedback(response?.message || (activeMediaBatchKind === "video" ? "无法生成视频分析预览" : "无法生成图片分析预览"), true);
   renderVisionBatchDialog(response.preview);
@@ -2839,8 +3144,7 @@ async function startSelectedVisionBatch() {
       includeAllImages: activeMediaBatchKind !== "video" && elements.visionBatchAllImages.checked,
       includeAllVideos: activeMediaBatchKind === "video" && elements.visionBatchAllImages.checked,
       reanalyze: elements.visionBatchReanalyze.checked,
-      includeTags: elements.visionBatchTags.checked,
-      instruction: elements.visionBatchInstruction.value,
+      includeTags: activeMediaBatchKind === "video" ? true : elements.visionBatchTags.checked,
       outputLocale: currentLocale()
     };
     let response = await chrome.runtime.sendMessage(payload);
@@ -2921,7 +3225,7 @@ function showVisionBatchFeedback(message, isError = false) {
 
 function openSettingsDialog(tab = "general", analysisKind = activeAnalysisKind) {
   activeSettingsTab = tab;
-  if (tab === "ai" && analysisKind) activeAnalysisKind = analysisKind;
+  if (tab === "rules" && analysisKind) activeAnalysisKind = analysisKind;
   renderSettingsPanels({ resetActiveScroll: true });
   if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
 }
@@ -2930,7 +3234,8 @@ function renderSettingsPanels({ resetActiveScroll = false } = {}) {
   settingsTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.settingsTab === activeSettingsTab)));
   settingsPanels.forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== activeSettingsTab; });
   if (resetActiveScroll) resetActiveSettingsPanelScroll();
-  if (activeSettingsTab === "ai") renderAnalysisSettings();
+  if (activeSettingsTab === "ai") renderAiRoutingSummary();
+  if (activeSettingsTab === "rules") renderAnalysisSettings();
   if (activeSettingsTab === "tasks") renderBatchManager();
   if (activeSettingsTab === "general") {
     void renderDataSafetyStatus();
@@ -3651,95 +3956,340 @@ async function restoreLastLibraryReplacementPoint() {
 }
 
 async function importSharedLibraryPackage() {
-  const file = elements.libraryPackageFile.files?.[0];
-  if (!file) return;
+  const files = [...(elements.libraryPackageFile.files ?? [])];
+  elements.libraryPackageFile.value = "";
+  if (!files.length) return;
   if (dataSafetyOperationActive) {
-    elements.libraryPackageFile.value = "";
     return showDataSafetyFeedback("当前操作仍在进行，请等待完成", true);
   }
-  const savedIds = [];
-  let applyStarted = false;
-  let applySucceeded = false;
-  setDataSafetyBusy(true);
+  await openLibraryPackageBatch(files.map((file) => ({ file, relativePath: file.name })));
+}
+
+async function openLibraryPackageBatch(packageItems, ordinaryItems = []) {
+  if (dataSafetyOperationActive) return showFeedback("当前操作仍在进行，请等待完成", true);
+  const files = packageItems.filter((item) => item?.file instanceof File);
+  if (!files.length) return;
+  const batch = {
+    items: files.map((item) => ({
+      id: crypto.randomUUID(),
+      file: item.file,
+      relativePath: item.relativePath || item.file.name,
+      status: "checking",
+      error: "",
+      inspection: null
+    })),
+    ordinaryItems,
+    preview: null,
+    conflictResolutions: {},
+    capacityError: "",
+    submitError: "",
+    plannedBytes: 0,
+    revision: 0,
+    submitting: false
+  };
+  pendingLibraryPackageBatch = batch;
+  setDataSafetyBusy(true, "IMPORT_LIBRARY_PACKAGE_BATCH");
+  elements.libraryPackageImportDialog.showModal();
+  renderLibraryPackageBatch();
+  await Promise.all(batch.items.map((item) => inspectLibraryPackageBatchItem(batch, item)));
+  if (pendingLibraryPackageBatch === batch) await refreshLibraryPackageBatchPlan(batch);
+}
+
+async function inspectLibraryPackageBatchItem(batch, item) {
   try {
-    showDataSafetyFeedback(`正在检查 ${file.name}`);
-    const packageLimits = {
-      ...PORTABLE_LIBRARY_LIMITS,
-      maxArchiveBytes: file.size,
-      maxFileBytes: file.size,
-      maxImageBytes: file.size,
-      maxVideoBytes: file.size
-    };
-    const files = await readZipBlob(file, packageLimits);
+    const file = item.file;
+    const limits = { ...PORTABLE_LIBRARY_LIMITS };
+    const files = await readZipBlob(file, limits);
     const libraryFile = files.get("library.json");
-    if (!libraryFile) throw new Error("分享包缺少 library.json");
+    if (!libraryFile) throw new Error("缺少 library.json");
     if (libraryFile.size > PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes) {
-      throw new Error(`library.json 超过 ${formatBytes(PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes)} 上限`);
+      throw new Error(`library.json 超过 ${formatBytes(PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes)}`);
     }
     let library;
     try { library = JSON.parse(await libraryFile.text()); }
-    catch { throw new Error("分享包中的 library.json 已损坏"); }
+    catch { throw new Error("library.json 已损坏"); }
     const inspection = await inspectLibraryTransfer({
       sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
       library,
       files,
-      limits: packageLimits,
+      limits,
       validateImage: validateImportedImage
     });
-    const importLibrary = inspection.state;
-    const importResources = inspection.resources;
-    const preview = await chrome.runtime.sendMessage({
-      type: "PREVIEW_LIBRARY_IMPORT",
-      library: importLibrary,
-      importReport: inspection.report,
-      resourceIndex: inspection.resourceIndex,
-      preserveLibraryConfiguration: true
+    if (pendingLibraryPackageBatch !== batch || !batch.items.includes(item)) return;
+    item.status = "ready";
+    item.error = "";
+    item.inspection = inspection;
+  } catch (error) {
+    if (pendingLibraryPackageBatch !== batch || !batch.items.includes(item)) return;
+    item.status = "error";
+    item.error = error?.message || "无法读取";
+    item.inspection = null;
+  }
+  renderLibraryPackageBatch();
+}
+
+async function refreshLibraryPackageBatchPlan(batch = pendingLibraryPackageBatch) {
+  if (!batch || pendingLibraryPackageBatch !== batch || batch.submitting) return;
+  const revision = ++batch.revision;
+  const ready = batch.items.filter((item) => item.status === "ready" && item.inspection);
+  batch.preview = null;
+  batch.capacityError = "";
+  batch.submitError = "";
+  batch.plannedBytes = 0;
+  renderLibraryPackageBatch();
+  if (!ready.length) return;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "PREVIEW_LIBRARY_IMPORT_BATCH",
+      packages: ready.map(libraryPackageMessage),
+      preserveLibraryConfiguration: true,
+      conflictResolutions: batch.conflictResolutions
     });
-    if (!preview?.ok) throw new Error(preview?.message || "无法检查分享包");
-    const resourceWrites = Array.isArray(preview.resourceWrites) ? preview.resourceWrites : [];
-    const createdMediaBytes = resourceWrites.reduce((sum, item) =>
-      sum + (importResources.assets.get(item.sourceId)?.size ?? 0), 0);
-    const report = buildLibraryImportReport(preview, {
-      mediaCount: resourceWrites.length,
-      byteLabel: formatBytes(createdMediaBytes)
-    });
-    showDataSafetyFeedback(`${report.summary} · ${report.status === "partial" ? "发现可恢复问题，详情见确认框" : "检查通过"}`);
-    const approved = await confirmAppAction({
-      title: "导入分享包？",
-      description: `${localizedImportReportDescription(report)}${t("现有资料不会被覆盖。")}`,
-      confirmLabel: "开始导入"
-    });
-    if (!approved) return showDataSafetyFeedback("已取消导入，资料库没有变化");
-    const operationId = createLibraryImportOperationId();
-    for (const item of resourceWrites) {
-      const blob = importResources.assets.get(item.sourceId);
-      if (!(blob instanceof Blob)) throw new Error("预检后的分享包资源已经变化，请重新检查");
-      await savePortableAssetBlob(item.targetId, blob);
-      savedIds.push(item.targetId);
+    if (!response?.ok) throw new Error(response?.message || "无法检查案例包");
+    if (pendingLibraryPackageBatch !== batch || revision !== batch.revision) return;
+    batch.preview = response;
+    batch.plannedBytes = plannedLibraryPackageBatchBytes(response.resourceWrites, ready);
+    const estimate = typeof navigator.storage?.estimate === "function"
+      ? await navigator.storage.estimate()
+      : {};
+    assertStorageCapacity(estimate, batch.plannedBytes);
+  } catch (error) {
+    if (pendingLibraryPackageBatch !== batch || revision !== batch.revision) return;
+    batch.capacityError = error?.message || "无法检查案例包";
+  }
+  renderLibraryPackageBatch();
+}
+
+function libraryPackageMessage(item) {
+  return {
+    library: item.inspection.state,
+    sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+    importReport: item.inspection.report,
+    resourceIndex: item.inspection.resourceIndex
+  };
+}
+
+function plannedLibraryPackageBatchBytes(writesValue, readyItems) {
+  const writes = Array.isArray(writesValue) ? writesValue : [];
+  return readyItems.reduce((sum, item, sourceIndex) => sum + libraryTransferWriteBytes(
+    writes.filter((write) => write.sourceIndex === sourceIndex),
+    item.inspection.resources
+  ), 0);
+}
+
+function renderLibraryPackageBatch() {
+  const batch = pendingLibraryPackageBatch;
+  if (!batch) return;
+  const ready = batch.items.filter((item) => item.status === "ready" && item.inspection);
+  const entryCount = ready.reduce((sum, item) => sum + item.inspection.state.entries.length, 0);
+  const projectCount = ready.reduce((sum, item) => sum + item.inspection.state.organizerState.collections.length, 0);
+  const mediaCount = ready.reduce((sum, item) => sum + item.inspection.resourceIndex.mediaAssetIds.length + item.inspection.resourceIndex.skillAssetIds.length, 0);
+  elements.libraryPackageImportPackageCount.textContent = String(batch.items.length);
+  elements.libraryPackageImportCaseCount.textContent = String(entryCount);
+  elements.libraryPackageImportProjectCount.textContent = String(projectCount);
+  elements.libraryPackageImportMediaCount.textContent = String(mediaCount);
+  elements.libraryPackageImportByteSize.textContent = formatBytes(batch.plannedBytes);
+  elements.libraryPackageImportList.replaceChildren(...batch.items.map((item) => createLibraryPackageBatchRow(batch, item, ready.indexOf(item))));
+  elements.libraryPackageImportClose.disabled = batch.submitting;
+  elements.libraryPackageImportCancel.disabled = batch.submitting;
+  const checking = batch.items.some((item) => item.status === "checking");
+  const invalid = batch.items.filter((item) => item.status === "error").length;
+  const unresolved = batch.preview?.unresolvedConflicts?.length ?? 0;
+  const canContinueOrdinaryOnly = !batch.items.length && batch.ordinaryItems.length;
+  elements.libraryPackageImportConfirm.disabled = batch.submitting || checking || invalid > 0 || Boolean(batch.capacityError) || unresolved > 0 || (!batch.preview?.canApply && !canContinueOrdinaryOnly);
+  elements.libraryPackageImportConfirm.textContent = t(batch.submitting ? "正在导入…" : "导入");
+  let message = "";
+  let isError = false;
+  if (batch.submitting) message = t("正在写入…");
+  else if (checking) message = t("正在检查…");
+  else if (invalid) { message = t("{count} 个包需处理", { count: invalid }); isError = true; }
+  else if (batch.capacityError) { message = batch.capacityError; isError = true; }
+  else if (unresolved) message = t("{count} 项冲突待选择", { count: unresolved });
+  else if (batch.submitError) { message = batch.submitError; isError = true; }
+  else if (batch.preview?.canApply) message = batch.ordinaryItems.length
+    ? t("检查通过 · 另有 {count} 个普通文件", { count: batch.ordinaryItems.length })
+    : t("检查通过");
+  else if (canContinueOrdinaryOnly) message = t("{count} 个普通文件待导入", { count: batch.ordinaryItems.length });
+  elements.libraryPackageImportFeedback.textContent = message;
+  elements.libraryPackageImportFeedback.classList.toggle("error", isError);
+}
+
+function createLibraryPackageBatchRow(batch, item, sourceIndex) {
+  const row = el("div", "library-package-import-row");
+  const name = el("div", "library-package-import-name");
+  name.append(textEl("strong", "", item.file.name), textEl("small", "", formatBytes(item.file.size)));
+  const counts = el("div", "library-package-import-counts");
+  const mediaCount = item.inspection
+    ? item.inspection.resourceIndex.mediaAssetIds.length + item.inspection.resourceIndex.skillAssetIds.length
+    : 0;
+  counts.textContent = item.inspection
+    ? t("{cases} 案例 · {projects} 项目 · {media} 媒体", {
+        cases: item.inspection.state.entries.length,
+        projects: item.inspection.state.organizerState.collections.length,
+        media: mediaCount
+      })
+    : "—";
+  const packageResult = sourceIndex >= 0 ? batch.preview?.packageResults?.[sourceIndex] : null;
+  const importReport = packageResult ? buildLibraryImportReport(packageResult) : null;
+  const conflicts = sourceIndex >= 0
+    ? (batch.preview?.conflicts ?? []).filter((conflict) => conflict.sourceIndex === sourceIndex && conflict.requiresResolution)
+    : [];
+  const status = el("div", `library-package-import-status${item.status === "error" ? " error" : ""}`);
+  if (item.status === "checking") status.textContent = t("检查中");
+  else if (item.status === "error") status.textContent = translateUiMessage(item.error);
+  else if (conflicts.some((conflict) => conflict.unresolved)) status.textContent = t("待选择");
+  else if (importReport) {
+    const summary = translateUiMessage(importReport.summary);
+    const details = importReport.lines.map(translateUiMessage);
+    status.append(rawTextEl("strong", "", summary));
+    if (details.length) status.append(rawTextEl("small", "", details.join("；")));
+    status.title = [summary, ...details].join("。 ");
+  } else status.textContent = t("可导入");
+  const actions = el("div", "library-package-import-actions");
+  if (item.status === "error") {
+    const retry = iconActionButton("refresh-cw", "重试", () => retryLibraryPackageItem(batch, item));
+    retry.disabled = batch.submitting;
+    actions.append(retry);
+  }
+  const remove = iconActionButton("trash-2", "移除", () => removeLibraryPackageItem(batch, item));
+  remove.disabled = batch.submitting;
+  actions.append(remove);
+  row.append(name, counts, status, actions);
+  if (conflicts.length) {
+    const conflictList = el("div", "library-package-import-conflicts");
+    for (const conflict of conflicts) conflictList.append(createLibraryPackageConflictRow(batch, conflict));
+    row.append(conflictList);
+  }
+  return row;
+}
+
+function createLibraryPackageConflictRow(batch, conflict) {
+  const row = el("label", "library-package-import-conflict");
+  row.append(textEl("span", "", conflict.incomingTitle || "同编号案例"));
+  const select = document.createElement("select");
+  select.append(
+    libraryPackageConflictOption("", "请选择"),
+    libraryPackageConflictOption("keep-local", "保留前者"),
+    libraryPackageConflictOption("use-incoming", "使用此包"),
+    libraryPackageConflictOption("keep-both", "两份都留")
+  );
+  select.value = conflict.unresolved ? "" : conflict.resolution;
+  select.disabled = batch.submitting;
+  select.addEventListener("change", async () => {
+    if (select.value) batch.conflictResolutions[conflict.conflictKey] = select.value;
+    else delete batch.conflictResolutions[conflict.conflictKey];
+    await refreshLibraryPackageBatchPlan(batch);
+  });
+  row.append(select);
+  return row;
+}
+
+function libraryPackageConflictOption(value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = t(label);
+  return option;
+}
+
+function iconActionButton(icon, label, action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "icon-button";
+  button.setAttribute("aria-label", t(label));
+  button.title = t(label);
+  button.append(createUiIcon(icon));
+  button.addEventListener("click", action);
+  return button;
+}
+
+async function removeLibraryPackageItem(batch, item) {
+  if (pendingLibraryPackageBatch !== batch || batch.submitting) return;
+  batch.items = batch.items.filter((candidate) => candidate !== item);
+  batch.conflictResolutions = {};
+  await refreshLibraryPackageBatchPlan(batch);
+}
+
+async function retryLibraryPackageItem(batch, item) {
+  if (pendingLibraryPackageBatch !== batch || batch.submitting) return;
+  item.status = "checking";
+  item.error = "";
+  item.inspection = null;
+  batch.conflictResolutions = {};
+  renderLibraryPackageBatch();
+  await inspectLibraryPackageBatchItem(batch, item);
+  if (pendingLibraryPackageBatch === batch) await refreshLibraryPackageBatchPlan(batch);
+}
+
+async function applyLibraryPackageBatch() {
+  const batch = pendingLibraryPackageBatch;
+  if (!batch || batch.submitting) return;
+  const ready = batch.items.filter((item) => item.status === "ready" && item.inspection);
+  if (!ready.length) {
+    const ordinaryItems = batch.ordinaryItems;
+    finishLibraryPackageBatch();
+    if (ordinaryItems.length) await prepareLocalImport(ordinaryItems, { source: ordinaryItems.some((item) => item.relativePath.includes("/")) ? "folder" : "files" });
+    return;
+  }
+  if (!batch.preview?.canApply || batch.capacityError) return;
+  const savedIds = [];
+  let applyStarted = false;
+  let applySucceeded = false;
+  batch.submitting = true;
+  renderLibraryPackageBatch();
+  try {
+    for (const write of batch.preview.resourceWrites ?? []) {
+      const source = ready[write.sourceIndex]?.inspection?.resources;
+      const blob = write.resourceType === "skill"
+        ? source?.skillAssets.get(write.sourceId)
+        : source?.assets.get(write.sourceId);
+      if (!(blob instanceof Blob)) throw new Error("预检后的案例包资源已经变化，请重新检查");
+      await savePortableAssetBlob(write.targetId, blob, { checkCapacity: false });
+      savedIds.push(write.targetId);
     }
     applyStarted = true;
+    const operationId = createLibraryImportOperationId();
     const response = await applyLibraryImportWithReceipt({
-      type: "APPLY_LIBRARY_IMPORT",
-      library: importLibrary,
+      type: "APPLY_LIBRARY_IMPORT_BATCH",
+      packages: ready.map(libraryPackageMessage),
       operationId,
-      planToken: preview.planToken,
-      plan: preview.plan
+      planToken: batch.preview.planToken,
+      plan: batch.preview.plan
     });
-    if (!response?.ok) throw new Error(response?.message || "分享包导入失败");
+    if (!response?.ok) throw new Error(response?.message || "案例包导入失败");
     applySucceeded = true;
+    const ordinaryItems = batch.ordinaryItems;
     await refreshLibrary();
-    showDataSafetyFeedback(`${response.message} · 分享包媒体已校验`);
+    finishLibraryPackageBatch();
+    showFeedback(response.message || "案例包已导入");
     await renderDataSafetyStatus();
+    if (ordinaryItems.length) await prepareLocalImport(ordinaryItems, { source: ordinaryItems.some((item) => item.relativePath.includes("/")) ? "folder" : "files" });
   } catch (error) {
     const retained = applySucceeded
       ? new Set(savedIds)
       : applyStarted ? await committedMediaIds(savedIds) : new Set();
     await Promise.allSettled(savedIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
-    showDataSafetyFeedback(error.message || "分享包导入失败", true);
-  } finally {
-    elements.libraryPackageFile.value = "";
-    setDataSafetyBusy(false);
+    if (pendingLibraryPackageBatch === batch) {
+      batch.submitting = false;
+      const message = error?.message || "案例包导入失败";
+      await refreshLibraryPackageBatchPlan(batch);
+      if (pendingLibraryPackageBatch === batch) batch.submitError = message;
+      renderLibraryPackageBatch();
+    }
   }
+}
+
+function cancelLibraryPackageBatch() {
+  const batch = pendingLibraryPackageBatch;
+  if (!batch || batch.submitting) return;
+  finishLibraryPackageBatch();
+  if (elements.settingsDialog.open) showDataSafetyFeedback("已取消导入，资料库没有变化");
+}
+
+function finishLibraryPackageBatch() {
+  pendingLibraryPackageBatch = null;
+  if (elements.libraryPackageImportDialog.open) elements.libraryPackageImportDialog.close();
+  elements.libraryPackageFile.value = "";
+  setDataSafetyBusy(false);
 }
 
 function createLibraryImportOperationId() {
@@ -4025,7 +4575,7 @@ async function hydrateCardImage(image) {
       image.src = url;
     }
   } catch {
-    image.closest(".case-image-wrap")?.replaceWith(textEl("div", "case-shot-missing", "截图读取失败"));
+    image.closest(".case-image-wrap")?.replaceWith(textEl("div", "case-shot-missing", image.dataset.videoId ? "封面暂不可用，打开查看视频" : "截图读取失败"));
   } finally {
     loadingImages.delete(visualId);
   }
@@ -4054,6 +4604,14 @@ function runNextThumbnails() {
 
 async function createThumbnailUrl(visualId) {
   if (thumbnailUrls.has(visualId)) return thumbnailUrls.get(visualId);
+  const videoEntry = logicalCases.find((entry) => entry.mediaAssets?.some((asset) => asset.id === visualId && asset.kind === "video"));
+  if (videoEntry) {
+    const response = await chrome.runtime.sendMessage({ type: "ENSURE_VIDEO_POSTER", entryId: videoEntry.id, assetId: visualId });
+    if (!response?.ok || !response.poster?.id) throw new Error(response?.message || "视频封面暂不可用");
+    const url = await createThumbnailUrl(response.poster.id);
+    if (url) thumbnailUrls.set(visualId, url);
+    return url;
+  }
   const derived = await getDerivedMedia(visualId).catch(() => null);
   if (derived?.thumbnail) {
     await cacheImageDimensions(visualId, derived.thumbnail);
@@ -4282,8 +4840,7 @@ function syncStructuredFilterControls() {
 }
 
 function renderActiveFilters() {
-  activeFilterCount = Number(Boolean(selectedCollectionId)) +
-    Number(Boolean(selectedContentId)) +
+  activeFilterCount = Number(Boolean(selectedContentId)) +
     [...selectedFacets.values()].reduce((count, ids) => count + ids.size, 0) +
     Number(elements.pendingFilter.checked) +
     Number(Boolean(elements.searchInput.value.trim()));
@@ -4358,8 +4915,85 @@ function bindSidebarResize() {
   addEventListener("resize", () => applySidebarWidth(uiPreferences.sidebarWidth), { passive: true });
 }
 
+function detailSidebarRuntimeWidth(value = uiPreferences.detailSidebarWidth) {
+  const available = Math.max(DETAIL_SIDEBAR_WIDTH_LIMITS.min, innerWidth - 260);
+  return Math.min(normalizeDetailSidebarWidth(value), available);
+}
+
+function applyDetailViewPreferences() {
+  const sidebar = uiPreferences.detailMode === "sidebar" && !mobileLayout.matches;
+  const width = detailSidebarRuntimeWidth();
+  elements.detailDrawer.classList.toggle("detail-sidebar-mode", sidebar);
+  elements.detailDrawer.dataset.detailMode = sidebar ? "sidebar" : "fullscreen";
+  elements.detailDrawer.style.setProperty("--detail-sidebar-width", `${width}px`);
+  elements.detailResizer.setAttribute("aria-valuenow", String(width));
+  elements.detailModeToggle.replaceChildren(createUiIcon(sidebar ? "maximize-2" : "panel-left"));
+  const label = t(sidebar ? "切换全屏详情" : "切换侧栏详情");
+  elements.detailModeToggle.setAttribute("aria-label", label);
+  elements.detailModeToggle.title = label;
+}
+
+async function toggleDetailMode() {
+  const detailMode = uiPreferences.detailMode === "sidebar" ? "fullscreen" : "sidebar";
+  uiPreferences = await updateUiPreferences({ ...uiPreferences, detailMode });
+  applyDetailViewPreferences();
+}
+
+function bindDetailSidebarResize() {
+  let pointerId = null;
+  let startX = 0;
+  let startWidth = uiPreferences.detailSidebarWidth;
+  elements.detailResizer.addEventListener("pointerdown", (event) => {
+    if (!elements.detailDrawer.classList.contains("detail-sidebar-mode")) return;
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    startWidth = elements.detailDrawer.getBoundingClientRect().width;
+    elements.detailResizer.setPointerCapture(pointerId);
+    elements.detailResizer.classList.add("is-resizing");
+    event.preventDefault();
+  });
+  elements.detailResizer.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== pointerId) return;
+    const width = detailSidebarRuntimeWidth(startWidth + startX - event.clientX);
+    elements.detailDrawer.style.setProperty("--detail-sidebar-width", `${width}px`);
+    elements.detailResizer.setAttribute("aria-valuenow", String(width));
+  });
+  const finish = async (event) => {
+    if (event.pointerId !== pointerId) return;
+    pointerId = null;
+    elements.detailResizer.classList.remove("is-resizing");
+    const detailSidebarWidth = normalizeDetailSidebarWidth(elements.detailResizer.getAttribute("aria-valuenow"));
+    uiPreferences = await updateUiPreferences({ ...uiPreferences, detailSidebarWidth });
+    applyDetailViewPreferences();
+  };
+  elements.detailResizer.addEventListener("pointerup", finish);
+  elements.detailResizer.addEventListener("pointercancel", finish);
+  elements.detailResizer.addEventListener("keydown", async (event) => {
+    if (!elements.detailDrawer.classList.contains("detail-sidebar-mode") || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const current = Number(elements.detailResizer.getAttribute("aria-valuenow"));
+    const detailSidebarWidth = normalizeDetailSidebarWidth(current + (event.key === "ArrowLeft" ? 16 : -16));
+    uiPreferences = await updateUiPreferences({ ...uiPreferences, detailSidebarWidth });
+    applyDetailViewPreferences();
+  });
+  addEventListener("resize", applyDetailViewPreferences, { passive: true });
+}
+
 function clearFilters() {
   selectedCollectionId = "";
+  unassignedViewActive = false;
+  caseOrderManagementActive = false;
+  projectOrderManagementActive = false;
+  selectedContentId = "";
+  selectedFacets.clear();
+  elements.pendingFilter.checked = false;
+  elements.searchInput.value = "";
+  renderGallery();
+}
+
+function openUnassignedView() {
+  selectedCollectionId = "";
+  unassignedViewActive = true;
   caseOrderManagementActive = false;
   projectOrderManagementActive = false;
   selectedContentId = "";
@@ -4372,9 +5006,12 @@ function clearFilters() {
 async function openDetail(entryId, { preserveQueue = false, returnFocus = null } = {}) {
   if (currentDetailId && currentDetailId !== entryId && !await confirmPromptEditDiscard()) return false;
   const changedEntry = currentDetailId !== entryId;
+  if (changedEntry) clearVideoTaskQueries(currentDetailId);
   if (!preserveQueue) detailQueueMode = elements.pendingFilter.checked ? "pending" : "";
   currentDetailId = entryId;
   if (returnFocus) detailReturnFocus = returnFocus;
+  invalidateDetailContent(entryId);
+  applyDetailViewPreferences();
   document.documentElement.classList.add("detail-open");
   elements.detailDrawer.classList.add("open");
   elements.detailDrawer.setAttribute("aria-hidden", "false");
@@ -4388,16 +5025,21 @@ async function closeDetail() {
   if (!await confirmPromptEditDiscard()) return false;
   const returnFocus = detailReturnFocus;
   if (elements.imageLightbox.open) elements.imageLightbox.close();
+  clearVideoTaskQueries(currentDetailId);
   currentDetailId = null;
+  detailRenderGeneration += 1;
   detailReturnFocus = null;
   detailQueueMode = "";
   document.documentElement.classList.remove("detail-open");
   elements.detailDrawer.removeAttribute("data-entry-id");
+  delete elements.detailDrawer.dataset.loadingEntryId;
   elements.detailDrawer.classList.remove("open");
   elements.detailDrawer.setAttribute("aria-hidden", "true");
   elements.drawerBackdrop.hidden = true;
   releaseDetailControllers();
   releaseDetailMediaUrls();
+  elements.drawerToolbar.prepend(elements.detailNavigation);
+  elements.detailContent.replaceChildren();
   returnFocus?.focus();
   return true;
 }
@@ -4410,12 +5052,12 @@ function moveDetail(offset) {
 }
 
 async function confirmPromptEditDiscard() {
-  if (!promptEditState?.dirty) {
+  if (!promptEditState?.dirty && !elements.detailContent.querySelector('[data-dirty="true"]')) {
     promptEditState = null;
     return true;
   }
   if (!await confirmAppAction({
-    title: "放弃未保存的提示词修改？",
+    title: "放弃未保存的文字修改？",
     description: "离开后，本次尚未保存的文字修改会丢失。",
     confirmLabel: "放弃修改",
     danger: true
@@ -4427,18 +5069,52 @@ async function confirmPromptEditDiscard() {
 async function renderDetail({ resetScroll = false } = {}) {
   const renderGeneration = ++detailRenderGeneration;
   const renderEntryId = currentDetailId;
-  releaseDetailControllers();
-  releaseDetailMediaUrls();
   const entry = logicalCases.find((item) => item.id === currentDetailId);
   if (!entry) return closeDetail();
+  const mediaIdentity = JSON.stringify(entryMediaAssets(entry).filter(asset => asset.usage !== "poster").map(({ id, kind, usage, storageMode, contentHash, sourceUrl, reference, recordType }) =>
+    ({ id, kind, usage, storageMode, contentHash, sourceUrl, reference, recordType })));
+  const mountedBody = elements.detailContent.querySelector(".detail-primary > .detail-body");
+  const mountedArticle = mountedBody?.querySelector(":scope > .article-document-reader");
+  if (!resetScroll && usesArticleReader(entry) && elements.detailDrawer.dataset.entryId === entry.id
+    && mountedBody?.dataset.mediaIdentity === mediaIdentity
+    && (mountedArticle?.dataset.editing === "true" || mountedArticle?.dataset.articleIdentity === JSON.stringify(normalizeEntryMedia(entry).articleDocument))) {
+    const header = mountedBody.querySelector(":scope > .detail-header-section");
+    if (header) replaceDetailSection(header, createDetailHeader(entry));
+    refreshActiveDetailAssetSections(entry);
+    return;
+  }
+  if (!resetScroll && !entry.compoundCase && !isCapturedPost(entry) && !usesArticleReader(entry)
+      && elements.detailDrawer.dataset.entryId === entry.id && mountedBody?.dataset.mediaIdentity === mediaIdentity) {
+    elements.detailContent.querySelector(".detail-visual-gallery")?.updateEntry?.(entry);
+    refreshActiveDetailAssetSections(entry);
+    // Editors stay mounted while open; updates to unrelated sections remain local.
+    const replacement = createDetailBody(entry);
+    const nextSections = [...replacement.children];
+    const currentPrompt = mountedBody.querySelector(":scope > .prompt-section");
+    if (currentPrompt) nextSections.splice(isEntryPending(entry) ? 2 : 1, 0, currentPrompt);
+    for (const child of [...mountedBody.children]) {
+      if (child.matches(".prompt-section")) continue;
+      const next = nextSections.find(node => node.className === child.className);
+      if (next) replaceDetailSection(child, next);
+      else child.remove();
+    }
+    for (let index = nextSections.length - 1; index >= 0; index -= 1) {
+      const child = nextSections[index];
+      if (!child.isConnected) mountedBody.insertBefore(child, nextSections[index + 1] || null);
+    }
+    return;
+  }
+  releaseDetailControllers();
+  releaseDetailMediaUrls();
   const visibleIndex = visibleEntries.findIndex((item) => item.id === entry.id);
   elements.detailPrev.disabled = visibleIndex <= 0;
   elements.detailNext.disabled = visibleIndex < 0 || visibleIndex >= visibleEntries.length - 1;
   const content = document.createDocumentFragment();
   const body = el("div", "detail-body");
+  body.dataset.mediaIdentity = mediaIdentity;
   const hasPrimaryMedia = entryHasMedia(entry);
   const capturedPost = isCapturedPost(entry);
-  const hasArticleDocument = !capturedPost && Boolean(entry.articleDocument?.blocks?.length);
+  const hasArticleDocument = !capturedPost && usesArticleReader(entry);
   const usesStageNavigation = !capturedPost && !hasArticleDocument && (entryHasMedia(entry, "image") || entryHasMedia(entry, "video"));
   elements.detailContent.classList.toggle("has-primary-media", hasPrimaryMedia && !hasArticleDocument && !capturedPost);
   elements.detailContent.classList.toggle("is-compound-detail", Boolean(entry.compoundCase));
@@ -4449,14 +5125,17 @@ async function renderDetail({ resetScroll = false } = {}) {
     if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
     content.append(body);
     elements.detailDrawer.dataset.entryId = entry.id;
+    delete elements.detailDrawer.dataset.loadingEntryId;
     elements.detailContent.replaceChildren(content);
     if (resetScroll) elements.detailContent.scrollTop = 0;
     return;
   }
   const primary = el("div", "detail-primary");
-  if (usesStageNavigation) primary.append(elements.detailNavigation);
-  else elements.drawerToolbar.prepend(elements.detailNavigation);
-  if (hasPrimaryMedia && !hasArticleDocument && !capturedPost) primary.append(await createDetailMediaGallery(entry, { immersive: true }));
+  if (!usesStageNavigation) elements.drawerToolbar.prepend(elements.detailNavigation);
+  if (hasPrimaryMedia && !hasArticleDocument && !capturedPost) primary.append(await createDetailMediaGallery(entry, {
+    immersive: true,
+    navigation: usesStageNavigation ? elements.detailNavigation : null
+  }));
   else if (!entry.text?.trim() && !capturedPost) primary.append(textEl("div", "detail-placeholder", "这条案例还没有内容"));
   body.append(createDetailHeader(entry));
   if (capturedPost) {
@@ -4485,9 +5164,41 @@ async function renderDetail({ resetScroll = false } = {}) {
   if (discovery) content.append(discovery.section);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
   elements.detailDrawer.dataset.entryId = entry.id;
+  delete elements.detailDrawer.dataset.loadingEntryId;
   elements.detailContent.replaceChildren(content);
   if (resetScroll) elements.detailContent.scrollTop = 0;
   discovery?.mount();
+}
+
+function createDetailBody(entry) {
+  const body = el("div", "detail-body");
+  body.append(createDetailHeader(entry));
+  if (isEntryPending(entry)) body.append(createPendingReviewPanel(entry));
+  for (const section of [createVisualSetAnalyses(entry), createDetailAttributes(entry), createDetailQuickOrganization(entry),
+    createFullAnalysis(entry), createDetailMetadata(entry, { includeDelete: true }) || createDetailFooterActions(entry)]) {
+    if (section) body.append(section);
+  }
+  return body;
+}
+
+function invalidateDetailContent(entryId) {
+  const entry = logicalCases.find((item) => item.id === entryId);
+  elements.detailDrawer.removeAttribute("data-entry-id");
+  elements.detailDrawer.dataset.loadingEntryId = entryId;
+  elements.drawerToolbar.prepend(elements.detailNavigation);
+  elements.drawerToolbar.classList.add("has-document-navigation");
+  elements.detailContent.classList.remove("has-primary-media", "is-compound-detail");
+  const loading = el("div", "detail-loading");
+  loading.setAttribute("role", "status");
+  loading.setAttribute("aria-label", `正在打开${entry?.title ? `：${entry.title}` : "案例"}`);
+  loading.append(
+    el("div", "detail-loading-media"),
+    rawTextEl("strong", "detail-loading-title", entry?.title || "正在打开案例"),
+    el("div", "detail-loading-line"),
+    el("div", "detail-loading-line detail-loading-line-short")
+  );
+  elements.detailContent.replaceChildren(loading);
+  elements.detailContent.scrollTop = 0;
 }
 
 function createLocalDiscovery(entry) {
@@ -4511,21 +5222,31 @@ function createLocalDiscovery(entry) {
     const button = el("button", "case-card local-discovery-item");
     button.type = "button";
     const media = el("span", "local-discovery-media case-image-wrap");
-    const dimensions = imageDimensions({ id: item.visualId });
-    if (dimensions) {
-      media.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
-      media.classList.add("case-image-wrap-fixed");
+    if (item.visualId) {
+      const dimensions = imageDimensions({ id: item.visualId });
+      if (dimensions) {
+        media.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
+        media.classList.add("case-image-wrap-fixed");
+      }
+      const image = document.createElement("img");
+      image.className = "case-shot";
+      image.alt = `${item.entry.title || "相似案例"} 对应画面`;
+      image.dataset.visualId = item.visualId;
+      image.decoding = "async";
+      image.loading = "lazy";
+      const cached = thumbnailUrls.get(item.visualId);
+      if (cached) image.src = cached;
+      media.append(image);
+    } else {
+      const asset = primaryMediaAsset(item.entry);
+      media.classList.add("local-discovery-fallback");
+      media.append(
+        rawTextEl("span", "document-type-badge", asset?.sourceFormat?.toLocaleUpperCase("en-US") || asset?.kind || "案例"),
+        rawTextEl("strong", "case-text-title", item.entry.title || asset?.sourceTitle || "未命名案例")
+      );
     }
-    const image = document.createElement("img");
-    image.className = "case-shot";
-    image.alt = `${item.entry.title || "相似案例"} 对应画面`;
-    image.dataset.visualId = item.visualId;
-    image.decoding = "async";
-    image.loading = "lazy";
-    const cached = thumbnailUrls.get(item.visualId);
-    if (cached) image.src = cached;
-    media.append(image);
-    button.setAttribute("aria-label", `查看相似案例：${item.entry.title || "未命名案例"}`);
+    button.setAttribute("aria-label", `查看相似案例：${item.entry.title || "未命名案例"}；${item.reason}`);
+    button.title = item.reason;
     button.append(media);
     button.addEventListener("click", () => openDetail(item.entry.id, { preserveQueue: true }));
     return button;
@@ -4786,6 +5507,7 @@ async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
   if (asset.kind === "image" && asset.storageMode === "managed") {
     const image = document.createElement("img");
     image.src = await originalScreenshotUrl(asset.id);
+    image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
     image.alt = asset.sourceTitle || entry.title;
     image.loading = "lazy";
     image.addEventListener("click", () => openImageLightbox(image, entry));
@@ -4821,13 +5543,16 @@ async function createArticleDocumentReader(entryValue) {
   const assets = new Map(entry.mediaAssets.map((asset) => [asset.id, asset]));
   for (const block of entry.articleDocument?.blocks || []) {
     if (block.kind === "heading") {
-      reader.append(rawTextEl(`h${Math.min(6, Math.max(1, Number(block.level) || 2))}`, "", block.text));
+      const heading = rawTextEl(`h${Math.min(6, Math.max(1, Number(block.level) || 2))}`, "", block.text);
+      heading.dataset.articleBlockId = block.id;
+      reader.append(heading);
       continue;
     }
     if (["paragraph", "list", "quote", "code", "table"].includes(block.kind)) {
       const tagName = block.kind === "quote" ? "blockquote" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
-      const text = block.kind === "list" ? block.text.split("\n").map((item) => `• ${item}`).join("\n") : block.text;
-      reader.append(rawTextEl(tagName, block.kind === "table" ? "article-table-text" : "", text));
+      const node = rawTextEl(tagName, block.kind === "table" ? "article-table-text" : "", block.text);
+      node.dataset.articleBlockId = block.id;
+      reader.append(node);
       continue;
     }
     const asset = block.assetId ? assets.get(block.assetId) : null;
@@ -4836,6 +5561,7 @@ async function createArticleDocumentReader(entryValue) {
       if (asset?.kind === "image" && asset.storageMode === "managed") {
         const image = document.createElement("img");
         image.className = "article-document-image";
+        image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
         image.alt = block.label || entry.title;
         image.src = await originalScreenshotUrl(asset.id);
         image.loading = "lazy";
@@ -4855,18 +5581,34 @@ async function createArticleDocumentReader(entryValue) {
       reader.append(figure);
       continue;
     }
-    if (["document", "link"].includes(block.kind)) {
+    if (["document", "attachment", "link"].includes(block.kind)) {
       const card = el("div", "article-document-resource");
       card.append(
-        rawTextEl("span", "article-document-resource-type", block.kind === "document" ? "DOC" : "LINK"),
+        rawTextEl("span", "article-document-resource-type", block.kind === "attachment" ? "SKILL" : block.kind === "document" ? "DOC" : "LINK"),
         rawTextEl("strong", "", block.label || asset?.sourceTitle || t("文章资源"))
       );
       const sourceUrl = block.sourceUrl || asset?.sourceUrl || "";
       if (sourceUrl) card.append(articleSourceLink(sourceUrl, asset ? "打开来源" : "打开链接"));
-      if (asset?.kind === "document" && asset.storageMode === "managed") card.append(rawTextEl("small", "", t("本地副本已保存在案例媒体中")));
+      if (["document", "attachment"].includes(asset?.kind) && asset.storageMode === "managed") {
+        const blob = await getMediaBlob(asset.id);
+        if (blob) card.append(managedAssetDownloadLink(asset, rememberDetailBlobUrl(blob)));
+        card.append(rawTextEl("small", "", t("本地副本已保存在案例媒体中")));
+      }
       reader.append(card);
     }
   }
+  attachArticleEditor(reader, entry, {
+    t, onError: error => showFeedback(error.message, true),
+    onSave: async patches => {
+      const response = await chrome.runtime.sendMessage({ type: "UPDATE_ENTRY_ARTICLE_TEXT", entryId: entry.id,
+        textRevision: entryTextRevision(entry), patches });
+      if (!response?.ok) throw new Error(response?.message || t("正文保存失败"));
+      Object.assign(entry, response.entry);
+      await refreshLibrary();
+      showFeedback(response.message);
+      return response.entry;
+    }
+  });
   return reader;
 }
 
@@ -4880,37 +5622,61 @@ function articleSourceLink(urlValue, label) {
   return link;
 }
 
-async function createDetailMediaGallery(entryValue, { immersive = false } = {}) {
+async function createDetailMediaGallery(entryValue, { immersive = false, navigation = null } = {}) {
+  const ownerEntryId = currentDetailId;
+  const ownerGeneration = detailRenderGeneration;
   const normalizedEntry = normalizeEntryMedia(entryValue);
-  const entry = { ...normalizedEntry, mediaAssets: normalizedEntry.mediaAssets.filter((asset) => asset.usage !== "poster") };
+  const entry = normalizedEntry;
+  const contentAssets = entry.mediaAssets.filter(asset => asset.usage !== "poster");
   const gallery = el("section", "detail-visual-gallery");
   gallery.classList.toggle("is-immersive", immersive);
   const stage = el("div", "detail-visual-stage");
   const rail = el("div", "detail-visual-rail");
   const notes = el("section", "time-notes");
   rail.setAttribute("aria-label", "案例媒体");
-  const imageUrls = await Promise.all(entry.mediaAssets.map((asset) =>
+  const imageUrls = await Promise.all(contentAssets.map((asset) =>
     asset.kind === "image" && asset.storageMode === "managed" ? originalScreenshotUrl(asset.id) : ""
   ));
-  let activeIndex = Math.max(0, entry.mediaAssets.findIndex((asset) => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId)));
+  if (ownerEntryId !== currentDetailId || ownerGeneration !== detailRenderGeneration) return gallery;
+  let activeIndex = Math.max(0, contentAssets.findIndex((asset) => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId)));
   let renderToken = 0;
   let activeController = null;
+  let activeMediaBody = null;
   let lockedImageStageHeight = 0;
   let lockedImageStageWidth = 0;
   const resizeObserver = new ResizeObserver(() => {
-    const asset = entry.mediaAssets[activeIndex];
+    const asset = contentAssets[activeIndex];
     const image = stage.querySelector(".detail-image");
     if (asset?.kind === "image" && image) syncImageStageSize(asset, image);
   });
   resizeObserver.observe(gallery);
   resizeObserver.observe(elements.detailDrawer);
   const cleanup = () => {
+    renderToken += 1;
     activeController?.destroy?.();
+    activeMediaBody?.releaseMedia?.();
     activeController = null;
     resizeObserver.disconnect();
     detailControllerCleanups.delete(cleanup);
   };
   detailControllerCleanups.add(cleanup);
+  gallery.updateEntry = value => {
+    const wasPrimary = entry.primaryMediaId;
+    const previousNotes = JSON.stringify(entry.timeNotes);
+    const updated = normalizeEntryMedia(value);
+    Object.assign(entry, updated);
+    contentAssets.splice(0, contentAssets.length, ...updated.mediaAssets.filter(asset => asset.usage !== "poster"));
+    const asset = contentAssets[activeIndex];
+    if (wasPrimary !== entry.primaryMediaId && asset) {
+      const item = stage.querySelector(".detail-visual-item");
+      item?.classList.toggle("is-primary", asset.id === entry.primaryMediaId);
+      const label = stage.querySelector(".detail-visual-caption > span:first-child");
+      const position = asset.id === entry.primaryMediaId ? `${t("主要媒体")} · ${activeIndex + 1}/${contentAssets.length}` : `${activeIndex + 1}/${contentAssets.length}`;
+      if (label) label.textContent = [position, mediaMetadataText(asset)].filter(Boolean).join(" · ");
+      if (asset.id === entry.primaryMediaId) stage.querySelector('[data-set-primary]')?.remove();
+    }
+    if (previousNotes !== JSON.stringify(entry.timeNotes)) renderTimeNotes(notes, entry, asset, () => activeController);
+  };
 
   function syncImageStageSize(asset, image) {
     const dimensions = imageDimensions(asset) || (image.naturalWidth && image.naturalHeight
@@ -4919,7 +5685,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     if (!dimensions) return;
     const galleryWidth = gallery.clientWidth || elements.detailDrawer.clientWidth;
     if (!galleryWidth) return;
-    const railHeight = entry.mediaAssets.length > 1 ? rail.offsetHeight : 0;
+    const railHeight = contentAssets.length > 1 ? rail.offsetHeight : 0;
     const toolbarHeight = elements.detailDrawer.querySelector(".drawer-toolbar")?.offsetHeight || 0;
     const containerHeight = immersive ? gallery.clientHeight : elements.detailDrawer.clientHeight - toolbarHeight;
     if (containerHeight <= railHeight + 1) return;
@@ -4952,7 +5718,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
 
   async function renderActive() {
     const token = ++renderToken;
-    const asset = entry.mediaAssets[activeIndex];
+    const asset = contentAssets[activeIndex];
     activeDetailMediaIdByEntry.set(entry.id, asset.id);
     gallery.classList.toggle("is-image-detail", asset.kind === "image");
     gallery.classList.toggle("is-video-detail", asset.kind === "video");
@@ -4963,12 +5729,27 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     if (asset.kind !== "image") stage.style.removeProperty("height");
     activeController?.destroy?.();
     activeController = null;
+    activeMediaBody?.releaseMedia?.();
+    activeMediaBody = null;
+    const pendingItem = el("div", "detail-media-loading");
+    pendingItem.setAttribute("role", "status");
+    pendingItem.setAttribute("aria-label", `正在打开第 ${activeIndex + 1} 项媒体`);
+    pendingItem.append(el("span", "detail-media-loading-block"));
+    stage.replaceChildren(pendingItem);
     const item = el("figure", `detail-visual-item${asset.id === entry.primaryMediaId ? " is-primary" : ""}`);
+    item.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
     const body = await createMediaViewer(asset, imageUrls[activeIndex], entry);
-    if (token !== renderToken) {
+    if (token !== renderToken || currentDetailId !== ownerEntryId) {
       body.mediaController?.destroy?.();
+      body.releaseMedia?.();
+      for (const media of body.querySelectorAll?.("video, audio") || []) {
+        media.pause();
+        URL.revokeObjectURL(media.src);
+        detailMediaUrls.delete(media.src);
+      }
       return;
     }
+    activeMediaBody = body;
     const localVideo = body instanceof HTMLVideoElement ? body : body.querySelector?.("video") ?? null;
     if (asset.kind === "video") {
       const videoSurface = body.matches?.(".detail-video") ? body : body.querySelector?.(".detail-video");
@@ -4981,11 +5762,12 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     }
     activeController = body.mediaController || (localVideo ? localVideoController(localVideo) : null);
     const caption = el("figcaption", "detail-visual-caption");
-    const position = asset.id === entry.primaryMediaId ? `${t("主要媒体")} · ${activeIndex + 1}/${entry.mediaAssets.length}` : `${activeIndex + 1}/${entry.mediaAssets.length}`;
+    const position = asset.id === entry.primaryMediaId ? `${t("主要媒体")} · ${activeIndex + 1}/${contentAssets.length}` : `${activeIndex + 1}/${contentAssets.length}`;
     caption.append(rawTextEl("span", "", [position, mediaMetadataText(asset)].filter(Boolean).join(" · ")));
     const actions = el("span", "detail-visual-actions");
     if (!entry.compoundCase && asset.id !== entry.primaryMediaId) {
       const primary = textEl("button", "button-secondary", "设为主要媒体");
+      primary.dataset.setPrimary = "true";
       primary.addEventListener("click", () => perform(primary, { type: "SET_ENTRY_PRIMARY_MEDIA", entryId: entry.id, assetId: asset.id }));
       actions.append(primary);
     }
@@ -4999,10 +5781,8 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       actions.append(primary);
     }
     if (!entry.compoundCase) {
-      if (asset.kind === "video" && asset.storageMode === "reference") {
-        actions.append(createLocalMediaUploadControl(entry, { label: "附加本地视频", accept: "video/*" }));
-      }
-      const remove = textEl("button", "button-danger-secondary", "此媒体移入回收站");
+      const remove = promptIconButton(t("此媒体移入回收站"), "trash-2");
+      remove.classList.add("button-danger-secondary", "media-remove-action");
       remove.addEventListener("click", async () => {
         if (!await confirmAppAction({ title: "将这项媒体移入回收站？", description: "案例文字、笔记和其他媒体会保留；这项媒体可从回收站恢复。", confirmLabel: "媒体移入回收站", danger: true })) return;
         clearMediaAssetCache(asset.id);
@@ -5012,6 +5792,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     }
     caption.append(actions);
     item.append(body, caption);
+    if (navigation) item.append(navigation);
     stage.scrollTop = 0;
     stage.replaceChildren(item);
     if (asset.kind === "image" && body instanceof HTMLImageElement) {
@@ -5026,16 +5807,24 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     refreshActiveDetailAssetSections(entry);
   }
 
-  for (const [index, asset] of entry.mediaAssets.entries()) {
+  for (const [index, asset] of contentAssets.entries()) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "detail-visual-thumb";
+    button.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
     button.setAttribute("aria-label", `${asset.id === entry.primaryMediaId ? "主要媒体，" : ""}查看第 ${index + 1} 项媒体`);
-    if (asset.kind === "image") {
+    const poster = asset.kind === "video" ? posterAssetForVideo(entry, asset) : null;
+    const thumbnailUrl = asset.kind === "image" ? imageUrls[index] : poster ? await originalScreenshotUrl(poster.id) : "";
+    if (thumbnailUrl) {
       const image = document.createElement("img");
       image.alt = "";
-      image.src = imageUrls[index];
-      button.append(image);
+      image.src = thumbnailUrl;
+      image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
+      const fallback = textEl("span", "media-thumb-label", asset.kind === "video" ? "▶ 视频" : "图片不可用");
+      fallback.hidden = true;
+      image.addEventListener("error", () => { image.hidden = true; fallback.hidden = false; });
+      button.append(image, fallback);
+      if (asset.kind === "video") button.append(textEl("span", "media-thumb-play", "▶"));
     } else {
       const labels = {
         video: "▶ 视频",
@@ -5046,6 +5835,8 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       button.append(textEl("span", "media-thumb-label", labels[asset.kind] || "资料"));
     }
     button.addEventListener("click", async () => {
+      if (activeIndex === index) return;
+      if (!await confirmPromptEditDiscard()) return;
       const railScrollLeft = rail.scrollLeft;
       const preservedAnchor = captureDetailScrollAnchor(button);
       activeIndex = index;
@@ -5059,7 +5850,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     rail.append(button);
   }
   gallery.append(stage);
-  if (entry.mediaAssets.length > 1) gallery.append(rail);
+  if (contentAssets.length > 1) gallery.append(rail);
   gallery.append(notes);
   await renderActive();
   return gallery;
@@ -5067,14 +5858,31 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
 
 function refreshActiveDetailAssetSections(entry) {
   if (currentDetailId !== entry.id) return;
+  entry = logicalCases.find(item => item.id === entry.id) || entry;
   const body = elements.detailContent.querySelector(".detail-primary > .detail-body");
   if (!body) return;
+  const currentEditor = body.querySelector(".entry-editor-inline");
+  const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId || "";
+  if (currentEditor && currentEditor.dataset.assetId !== activeAssetId) {
+    replaceDetailSection(currentEditor, createEntryEditor(entry, { inline: true }));
+  }
   const prompt = createPromptSection(entry);
   const currentPrompt = body.querySelector(":scope > .prompt-section");
-  if (prompt && currentPrompt) currentPrompt.replaceWith(prompt);
-  else if (prompt) body.querySelector(":scope > .detail-header")?.after(prompt);
+  if (prompt && currentPrompt) replaceDetailSection(currentPrompt, prompt);
+  else if (prompt) body.querySelector(":scope > .detail-header-section")?.after(prompt);
   else currentPrompt?.remove();
 
+}
+
+elements.detailContent.addEventListener("prompt-edit-finished", () => {
+  const entry = logicalCases.find(item => item.id === currentDetailId);
+  if (entry) refreshActiveDetailAssetSections(entry);
+});
+
+function refreshVideoTaskFeedback(entryId) {
+  renderAnalysisDiagnostics();
+  const entry = logicalCases.find(item => item.id === entryId);
+  if (entry && currentDetailId === entryId) refreshActiveDetailAssetSections(entry);
 }
 
 function handleVideoAnalysisProgress(message) {
@@ -5082,154 +5890,79 @@ function handleVideoAnalysisProgress(message) {
     const key = videoAnalysisAssetKey(message.entryId, message.assetId);
     const current = videoAnalysisTaskStateByAsset.get(key);
     if (current) videoAnalysisTaskStateByAsset.set(key, { ...current, phase: message.phase });
-    if (currentDetailId === message.entryId) void renderDetail();
+    refreshVideoTaskFeedback(message.entryId);
     return;
   }
   if (message?.type !== "ANALYSIS_TASK_UPDATED" || message.task?.request?.kind !== "entry_video") return;
   const task = message.task;
-  videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(task.request.entryId, task.request.assetId), task);
+  const key = videoAnalysisAssetKey(task.request.entryId, task.request.assetId);
+  videoAnalysisTaskStateByAsset.set(key, task);
   if (task.status === "completed") void refreshLibrary();
-  else if (currentDetailId === task.request.entryId) void renderDetail();
+  else refreshVideoTaskFeedback(task.request.entryId);
 }
 
 function videoAnalysisAssetKey(entryId, assetId) {
   return `${entryId}:${assetId}`;
 }
 
-function videoAnalysisDraftKey(entry, asset, mode, includeTags = false) {
-  return `${videoAnalysisAssetKey(entry.id, asset.id)}:${mode}:${includeTags ? "tags" : "plain"}`;
-}
-
-function defaultVideoAnalysisInstruction(entry, asset, mode, includeTags) {
-  if (mode === "custom") return "";
-  return videoAnalysisPrompt(mode, "", {
-    includeTags,
-    catalog: facetCatalog,
-    locale: currentLocale(),
-    durationMs: asset.durationMs,
-    width: asset.width,
-    height: asset.height
-  });
+function clearVideoTaskQueries(entryId) {
+  for (const key of videoAnalysisTaskQueries.keys()) if (key.startsWith(`${entryId}:`)) videoAnalysisTaskQueries.delete(key);
 }
 
 function requestVideoAnalysisTaskState(entry, asset) {
   const key = videoAnalysisAssetKey(entry.id, asset.id);
   if (videoAnalysisTaskQueries.has(key)) return;
-  videoAnalysisTaskQueries.add(key);
+  const queryToken = Symbol();
+  videoAnalysisTaskQueries.set(key, queryToken);
+  const initialTask = videoAnalysisTaskStateByAsset.get(key);
   chrome.runtime.sendMessage({
     type: "GET_ENTRY_VIDEO_ANALYSIS_TASK",
     entryId: entry.id,
     assetId: asset.id
   }).then((response) => {
-    if (response?.ok && response.task) videoAnalysisTaskStateByAsset.set(key, response.task);
-    if (currentDetailId === entry.id) return renderDetail();
+    if (videoAnalysisTaskQueries.get(key) !== queryToken) return;
+    if (response?.ok && videoAnalysisTaskStateByAsset.get(key) === initialTask) {
+      if (response.task) videoAnalysisTaskStateByAsset.set(key, response.task);
+      else videoAnalysisTaskStateByAsset.delete(key);
+      if (response.task || initialTask) refreshVideoTaskFeedback(entry.id);
+    }
   }).catch(() => undefined);
 }
 
-function createVideoAnalysisWorkspace(entry, asset) {
+function createVideoAnalysisWorkspace(entry, asset, actionTarget) {
   requestVideoAnalysisTaskState(entry, asset);
   const workspace = el("div", "video-analysis-workspace");
-  const assignment = aiTaskAssignments.videoAnalysis ?? {};
-  const provider = aiProviderRegistry.providers?.[assignment.providerId];
   const taskKey = videoAnalysisAssetKey(entry.id, asset.id);
   const task = videoAnalysisTaskStateByAsset.get(taskKey);
   const running = ["queued", "running"].includes(task?.status);
-  const includeTags = videoAnalysisIncludeTagsByAsset.get(taskKey) !== false;
-  const header = el("div", "video-analysis-header");
-  header.append(
-    textEl("h3", "", "视频分析"),
-    rawTextEl("small", "", provider && assignment.model
-      ? `${providerDisplayLabel(provider)} · ${assignment.model} · ${t("每次点击发送 1 次请求，费用由服务商账户产生")}`
-      : t("尚未分配视频分析服务"))
-  );
-  workspace.append(header);
+  const current = currentVideoReconstruction(entry, asset.id);
+  const card = current ? createCurrentVideoReconstruction(entry, asset, current) : null;
+  const header = card?.querySelector(".prompt-toolbar") || actionTarget || el("div", "prompt-toolbar");
+  if (card) workspace.append(card);
+  else if (!actionTarget) workspace.append(header);
+  if (!current) header.append(createPromptRulesAction("video"));
 
-  const actions = el("div", "video-analysis-actions");
-  for (const mode of ["visual-reconstruction", "creative-breakdown", "ad-review", "custom"]) {
-    const row = el("div", "video-analysis-action");
-    const modeIncludeTags = mode === "visual-reconstruction" && includeTags;
-    const draftKey = videoAnalysisDraftKey(entry, asset, mode, modeIncludeTags);
-    const textarea = document.createElement("textarea");
-    textarea.rows = mode === "visual-reconstruction" ? 2 : 1;
-    textarea.className = "video-analysis-instruction";
-    textarea.value = videoAnalysisDrafts.has(draftKey)
-      ? videoAnalysisDrafts.get(draftKey)
-      : defaultVideoAnalysisInstruction(entry, asset, mode, modeIncludeTags);
-    textarea.placeholder = t(mode === "custom" ? "输入只针对这支视频的具体问题" : "本次分析指令");
-    textarea.setAttribute("aria-label", t("{mode}指令", { mode: videoAnalysisModeLabel(mode) }));
-    textarea.addEventListener("input", () => videoAnalysisDrafts.set(draftKey, textarea.value));
-    const run = textEl("button", mode === "visual-reconstruction" ? "" : "button-secondary",
-      mode === "visual-reconstruction" && currentVideoReconstruction(entry, asset.id) ? "重新逆推" : videoAnalysisModeLabel(mode));
-    run.disabled = running;
+  if (!running && !["failed", "stopped"].includes(task?.status)) {
+    const run = textEl("button", "video-analysis-run", "逆推视频提示词");
     run.addEventListener("click", async () => {
       try {
-        const selectedTags = mode === "visual-reconstruction" && videoAnalysisIncludeTagsByAsset.get(taskKey) !== false;
-        await startVideoAnalysis(entry, asset, mode, textarea.value, selectedTags, run);
+        await startVideoAnalysis(entry, asset, run);
       } catch (error) {
         run.disabled = false;
         showFeedback(translateUiMessage(error?.message) || t("视频分析任务创建失败"), true);
       }
     });
-    const controls = el("div", "video-analysis-action-controls");
-    controls.append(run);
-    if (mode === "visual-reconstruction") {
-      const tagToggle = document.createElement("label");
-      tagToggle.className = "video-analysis-tag-toggle";
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = includeTags;
-      checkbox.disabled = running;
-      checkbox.addEventListener("change", () => {
-        videoAnalysisDrafts.set(draftKey, textarea.value);
-        videoAnalysisIncludeTagsByAsset.set(taskKey, checkbox.checked);
-        const nextKey = videoAnalysisDraftKey(entry, asset, mode, checkbox.checked);
-        textarea.value = videoAnalysisDrafts.has(nextKey)
-          ? videoAnalysisDrafts.get(nextKey)
-          : defaultVideoAnalysisInstruction(entry, asset, mode, checkbox.checked);
-      });
-      tagToggle.append(checkbox, document.createTextNode(t("同时生成 AI 标签")));
-      controls.append(tagToggle);
-    }
-    row.append(controls, textarea);
-    actions.append(row);
+    header.prepend(run);
   }
-  workspace.append(actions);
 
-  if (task) workspace.append(createVideoAnalysisTaskStatus(task));
-  const current = currentVideoReconstruction(entry, asset.id);
-  if (current) workspace.append(createCurrentVideoReconstruction(entry, asset, current));
-  const history = createVideoAnalysisHistory(entry, asset, current?.id || "", task);
-  if (history) workspace.append(history);
+  if (task) {
+    const status = createVideoAnalysisTaskStatus(task);
+    const retry = status.querySelector?.(".video-analysis-run");
+    if (retry) header.prepend(retry);
+    if (card) card.querySelector(".prompt-section-heading").after(status);
+    else workspace.prepend(status);
+  }
   return workspace;
-}
-
-function renderTimestampedAnalysis(text, entry, asset, getController) {
-  const body = el("div", "video-analysis-text");
-  const content = String(text ?? "");
-  const matcher = /(?<!\d)(?:(\d{1,2}):)?([0-5]?\d):([0-5]\d)(?!\d)/g;
-  let cursor = 0;
-  for (const match of content.matchAll(matcher)) {
-    if (match.index > cursor) body.append(document.createTextNode(content.slice(cursor, match.index)));
-    const hours = Number(match[1] || 0);
-    const milliseconds = (hours * 3600 + Number(match[2]) * 60 + Number(match[3])) * 1000;
-    const jump = rawTextEl("button", "analysis-time-jump", match[0]);
-    jump.addEventListener("click", async () => {
-      if (asset.reference?.provider === "youtube") {
-        await chrome.tabs.create({ url: youtubeWatchUrl(asset.reference?.url || asset.sourceUrl, milliseconds), active: true });
-        return;
-      }
-      await getController()?.seekToMs(milliseconds).catch(() => showFeedback("播放器暂时无法跳转到这个时间点", true));
-    });
-    body.append(jump);
-    cursor = match.index + match[0].length;
-  }
-  if (cursor < content.length) body.append(document.createTextNode(content.slice(cursor)));
-  return body;
-}
-
-function activeDetailVideoController() {
-  const video = elements.detailContent.querySelector(".detail-visual-stage video");
-  return video ? { seekToMs: async (milliseconds) => { video.currentTime = milliseconds / 1000; } } : null;
 }
 
 function createVideoAnalysisTaskStatus(task) {
@@ -5243,9 +5976,17 @@ function createVideoAnalysisTaskStatus(task) {
       uploading: "正在上传…",
       processing: "服务正在处理…",
       analyzing: "正在分析画面…",
+      retrying: "服务繁忙，正在重试…",
+      correcting: "正在纠正输出格式…",
       completed: "分析完成，正在保存…"
     })[phase] || "正在分析画面…";
-    status.append(rawTextEl("span", "", t(label)));
+    const copy = el("div", "video-analysis-task-copy");
+    copy.append(rawTextEl("span", "", t(label)));
+    const meta = rawTextEl("small", "", "");
+    const startedAt = task.requestStartedAt || attempt?.startedAt || task.createdAt;
+    if (startedAt) attachVideoAnalysisElapsed(meta, startedAt);
+    copy.append(meta);
+    status.append(copy);
     const stop = textEl("button", "button-secondary", "停止");
     stop.addEventListener("click", async () => {
       stop.disabled = true;
@@ -5253,7 +5994,7 @@ function createVideoAnalysisTaskStatus(task) {
       if (!response?.ok) showFeedback(translateUiMessage(response?.message) || t("停止失败"), true);
       else {
         videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(task.request.entryId, task.request.assetId), response.task);
-        await renderDetail();
+        refreshVideoTaskFeedback(task.request.entryId);
       }
     });
     status.append(stop);
@@ -5265,7 +6006,7 @@ function createVideoAnalysisTaskStatus(task) {
       ? "上次执行状态未知，未自动重试；服务商可能已收到请求"
       : attempt?.error || (task.providerMayHaveAccepted ? "已停止等待，未保存结果；服务商可能已收到请求" : "已取消，未发送");
     status.append(rawTextEl("span", "", t(message)));
-    const retry = textEl("button", "button-secondary", "重新发送");
+    const retry = textEl("button", "video-analysis-run", "逆推视频提示词");
     retry.addEventListener("click", async () => {
       if (!await confirmAppAction({
         title: "重新发送这次视频分析？",
@@ -5286,7 +6027,7 @@ function createVideoAnalysisTaskStatus(task) {
       if (!response?.ok) showFeedback(translateUiMessage(response?.message) || t("重新发送失败"), true);
       else {
         videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(task.request.entryId, task.request.assetId), response.task);
-        await renderDetail();
+        refreshVideoTaskFeedback(task.request.entryId);
       }
     });
     status.append(retry);
@@ -5295,83 +6036,49 @@ function createVideoAnalysisTaskStatus(task) {
   return document.createDocumentFragment();
 }
 
+function attachVideoAnalysisElapsed(element, startedAtValue) {
+  const startedAt = Date.parse(startedAtValue);
+  if (!Number.isFinite(startedAt)) return;
+  const prefix = element.textContent ? `${element.textContent} · ` : "";
+  const update = () => {
+    const totalSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const duration = totalSeconds < 60
+      ? t("{count} 秒", { count: totalSeconds })
+      : t("{count} 分钟", { count: Math.floor(totalSeconds / 60) });
+    element.textContent = `${prefix}${t("已等待 {duration}", { duration })}`;
+  };
+  update();
+  const timer = setInterval(() => {
+    if (!element.isConnected) return clearInterval(timer);
+    update();
+  }, 1000);
+}
+
 function createCurrentVideoReconstruction(entry, asset, record) {
-  const card = el("article", "video-reconstruction-current");
-  const heading = el("div", "video-analysis-record-heading");
-  heading.append(
-    textEl("h4", "", "AI 视觉逆推提示词"),
-    rawTextEl("small", "", [record.provider, record.model, formatDate(record.createdAt), record.userEdited ? t("已人工修改") : "", t("仅分析画面，未分析声音")].filter(Boolean).join(" · "))
-  );
-  const textarea = document.createElement("textarea");
-  textarea.className = "video-reconstruction-editor";
-  textarea.rows = 7;
-  textarea.value = record.reconstructionPrompt;
-  textarea.setAttribute("aria-label", t("编辑 AI 视觉逆推提示词"));
-  const save = textEl("button", "button-secondary", "保存修改");
-  save.disabled = true;
-  textarea.addEventListener("input", () => { save.disabled = textarea.value.trim() === record.reconstructionPrompt; });
-  save.addEventListener("click", async () => {
-    save.disabled = true;
-    const response = await chrome.runtime.sendMessage({
-      type: "UPDATE_VIDEO_RECONSTRUCTION_PROMPT",
-      entryId: entry.id,
-      assetId: asset.id,
-      reconstructionPrompt: textarea.value
-    });
-    if (!response?.ok) {
-      showFeedback(translateUiMessage(response?.message) || t("AI 视觉逆推提示词保存失败"), true);
-      save.disabled = false;
-      return;
-    }
-    showFeedback(response.message);
-    await refreshLibrary();
+  const card = createPromptPanel({
+    key: `${entry.id}:${asset.id}:ai`, title: t("AI 逆推提示词"), text: record.reconstructionPrompt,
+    className: "video-reconstruction-current", editorClass: "video-reconstruction-editor", markdown: true, t,
+    editLabel: "编辑 AI 逆推提示词",
+    actions: [createPromptCopyAction(record.reconstructionPrompt), createPromptRulesAction("video")],
+    onSave: text => savePromptPanel({ type: "UPDATE_VIDEO_RECONSTRUCTION_PROMPT", entryId: entry.id, assetId: asset.id, reconstructionPrompt: text }),
+    onError: error => showFeedback(error.message, true)
   });
-  card.append(heading, textarea, save);
-  if (record.tags?.length) {
+  card.querySelector(".prompt-read-body").classList.add("video-reconstruction-text");
+  const assignedTagNames = new Set([...groupEntryAssignments(entry, facetCatalog, "confirmed").values()].flat().map(item => item.name));
+  const unassignedTags = (record.tags || []).filter(tag => !assignedTagNames.has(tag.t || tag.g));
+  if (unassignedTags.length) {
     const tags = el("div", "detail-tags video-analysis-tags");
-    for (const tag of record.tags) {
+    for (const tag of unassignedTags) {
       const pill = rawTextEl("span", "attribute-pill", tag.t || tag.g);
       pill.style.setProperty("--facet-color", "var(--accent)");
       tags.append(pill);
     }
     card.append(tags);
   }
-  if (record.uncertainties?.length) {
-    const uncertainties = el("details", "video-analysis-uncertainties");
-    uncertainties.append(rawTextEl("summary", "", t("不确定项（{count}）", { count: record.uncertainties.length })));
-    const list = document.createElement("ul");
-    for (const item of record.uncertainties) list.append(rawTextEl("li", "", item));
-    uncertainties.append(list);
-    card.append(uncertainties);
-  }
   return card;
 }
 
-function createVideoAnalysisHistory(entry, asset, currentId, task) {
-  const records = (entry.videoAnalyses ?? [])
-    .filter((item) => (!item.assetId || item.assetId === asset.id) && item.id !== currentId)
-    .toReversed();
-  if (!records.length) return null;
-  const details = el("details", "video-analysis-history");
-  details.open = task?.status === "completed" && task.request?.mode !== "visual-reconstruction";
-  details.append(rawTextEl("summary", "", t("历史分析（{count}）", { count: records.length })));
-  const list = el("div", "video-analysis-list");
-  for (const record of records) {
-    const item = el("article", "video-analysis-record");
-    const heading = el("header", "");
-    heading.append(
-      rawTextEl("strong", "", t("{mode} · 版本 {version}", { mode: videoAnalysisModeLabel(record.mode), version: record.version || 1 })),
-      rawTextEl("span", "", `${record.provider || t("未知服务")} · ${record.model || t("未知模型")} · ${formatDate(record.createdAt)}${record.assetId ? "" : ` · ${t("未关联旧记录")}`}`)
-    );
-    item.append(heading, renderTimestampedAnalysis(record.reconstructionPrompt || record.text, entry, asset, activeDetailVideoController));
-    if (record.usage?.totalTokens) item.append(rawTextEl("small", "", t("本次用量：{tokens} tokens", { tokens: record.usage.totalTokens })));
-    list.append(item);
-  }
-  details.append(list);
-  return details;
-}
-
-async function startVideoAnalysis(entry, asset, mode, instructionValue, includeTags, button) {
+async function startVideoAnalysis(entry, asset, button) {
   const assignment = aiTaskAssignments.videoAnalysis ?? {};
   const provider = aiProviderRegistry.providers?.[assignment.providerId];
   const model = assignment.model || "";
@@ -5380,8 +6087,6 @@ async function startVideoAnalysis(entry, asset, mode, instructionValue, includeT
     void openAiTaskAssignmentDialog("videoAnalysis");
     return;
   }
-  const instruction = String(instructionValue ?? "").trim();
-  if (!instruction) return showFeedback(t(mode === "custom" ? "请先填写自定义问题" : "本次分析指令不能为空"), true);
   const sourceUrl = asset.reference?.url || asset.sourceUrl;
   const modelMediaInput = getAiModelCapability(provider.id, model)?.mediaInput ?? {};
   const mediaInput = { ...(provider.mediaInput ?? {}), ...modelMediaInput };
@@ -5407,15 +6112,16 @@ async function startVideoAnalysis(entry, asset, mode, instructionValue, includeT
   const permission = permissionPatternForProvider(provider.endpoint);
   if (!await chrome.permissions.request({ origins: [permission] })) return showFeedback(t("没有获得所选 AI 服务的访问权限，未发送视频"), true);
   button.disabled = true;
-  const fullInstruction = mode === "custom" ? videoAnalysisPrompt("custom", instruction) : instruction;
   const response = await chrome.runtime.sendMessage({
     type: "START_OR_JOIN_ANALYSIS_TASK",
     kind: "entry_video",
     entryId: entry.id,
     assetId: asset.id,
-    mode,
-    instruction: fullInstruction,
-    includeTags: mode === "visual-reconstruction" && includeTags,
+    mode: "visual-reconstruction",
+    instruction: "",
+    includeTags: true,
+    routeProviderId: assignment.providerId,
+    routeModel: model,
     outputLocale: currentLocale(),
     priority: "interactive",
     consumerId: `library-detail:${entry.id}:${asset.id}`,
@@ -5427,17 +6133,14 @@ async function startVideoAnalysis(entry, asset, mode, instructionValue, includeT
     return;
   }
   videoAnalysisTaskStateByAsset.set(videoAnalysisAssetKey(entry.id, asset.id), response.task);
-  await renderDetail();
-}
-
-function videoAnalysisModeLabel(value) {
-  return t(({ "visual-reconstruction": "逆推提示词", "creative-breakdown": "创意拆解", "content-summary": "内容总结", "ad-review": "广告审片", custom: "自定义问题" })[value] || "视频分析");
+  refreshVideoTaskFeedback(entry.id);
 }
 
 async function createMediaViewer(asset, imageUrl, entry) {
   if (asset.kind === "image") {
     const image = document.createElement("img");
     image.className = "detail-image";
+    image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
     image.alt = `${entry.title} 图片`;
     image.src = imageUrl;
     image.tabIndex = 0;
@@ -5464,12 +6167,21 @@ async function createMediaViewer(asset, imageUrl, entry) {
     video.preload = "metadata";
     video.autoplay = false;
     video.playsInline = true;
+    const poster = posterAssetForVideo(entry, asset);
+    if (poster) video.poster = await originalScreenshotUrl(poster.id);
     video.src = url;
+    wrap.releaseMedia = () => {
+      video.pause();
+      URL.revokeObjectURL(url);
+      detailMediaUrls.delete(url);
+    };
     const fallback = textEl("a", "button-secondary media-open-link", "无法解码时用系统播放器打开");
     fallback.href = url;
     fallback.download = asset.sourceTitle || `video-${asset.id}`;
-    video.addEventListener("error", () => wrap.classList.add("has-playback-error"));
-    wrap.append(video, fallback);
+    const error = textEl("p", "media-playback-error", "视频无法播放，请下载本机副本后使用系统播放器打开");
+    error.hidden = true;
+    video.addEventListener("error", () => { wrap.classList.add("has-playback-error"); error.hidden = false; });
+    wrap.append(video, error, fallback);
     return wrap;
   }
   if (asset.kind === "audio") {
@@ -5744,6 +6456,8 @@ async function createPlaybackFallback(entry, asset, { providerLabel, reason, act
     image.alt = `${entry.title || providerLabel} 封面`;
     card.append(image);
   }
+  card.classList.toggle("has-poster", Boolean(posterBlob));
+  if (!posterBlob) card.append(createUiIcon("video"));
   const label = el("span", "platform-link-label");
   label.append(
     textEl("small", "", providerLabel.toLocaleUpperCase("en-US")),
@@ -6034,12 +6748,14 @@ function openImageLightbox(trigger, entry) {
   lightboxTrigger = trigger;
   elements.imageLightboxImage.src = trigger.src;
   elements.imageLightboxImage.alt = translateUiMessage(`${entry.title} 原图`);
+  elements.imageLightbox.classList.toggle("has-alpha-channel", trigger.classList.contains("has-alpha-channel") || Boolean(trigger.closest?.(".has-alpha-channel")));
   elements.imageLightbox.showModal();
   elements.imageLightboxClose.focus();
 }
 
 function closeImageLightbox() {
   if (elements.imageLightbox.open) elements.imageLightbox.close();
+  elements.imageLightbox.classList.remove("has-alpha-channel");
 }
 
 function createDetailHeader(entry) {
@@ -6051,16 +6767,6 @@ function createDetailHeader(entry) {
   meta.append(textEl("span", "", contentName(entry)), rawTextEl("span", "", formatDate(entry.savedAt)));
   section.append(meta);
   section.append(createPalette(paletteForEntry(entry)?.colors));
-  const mainVisual = primaryVisual(entry);
-  if (mainVisual?.kind === "image" && !entry.compoundCase) {
-    const statusValue = visionStatusByEntry.get(entry.id);
-    const status = el("p", `vision-analysis-status${statusValue?.kind ? ` ${statusValue.kind}` : ""}`);
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    status.textContent = statusValue?.message ? translateUiMessage(statusValue.message) : "";
-    status.hidden = !status.textContent;
-    section.append(status);
-  }
   return section;
 }
 
@@ -6231,7 +6937,7 @@ function createComposerAction(entry) {
   create.type = "button";
   create.disabled = !isComposerEligibleEntry(entry, targetType);
   create.title = create.disabled ? composerIneligibleReason(entry) : "作为单一参考进入创作台";
-  create.addEventListener("click", () => openSingleCaseComposer(entry, targetType, activeAsset?.kind === "image" ? activeAsset.id : ""));
+  create.addEventListener("click", () => openSingleCaseComposer(entry, targetType, ["image", "video"].includes(activeAsset?.kind) ? activeAsset.id : ""));
   return create;
 }
 
@@ -6261,21 +6967,20 @@ async function openSingleCaseComposer(entry, targetType, assetId = "") {
   }
 }
 
-async function analyzeEntryVision(entry, button) {
+async function analyzeEntryVision(entry, button, visual) {
   const provider = visionSettings.activeProvider === "compatible" ? visionSettings.compatible : visionSettings.openai;
   if (!provider?.configured || !visionSettings.consent) {
     openVisionSettings();
     showFeedback("请先完成图片视觉设置并确认截图发送范围");
     return;
   }
-  const visual = primaryVisual(entry);
-  const vision = primaryVisionAnalysis(entry);
   if (!visual) return;
+  const vision = visual.visionAnalysis;
   if (vision) {
     const message = currentLocale() === "en"
       ? `Reanalyzing will replace the ${vision.userEdited ? "manually revised reconstruction prompt" : "previous model reconstruction prompt"} and vision-model tags. Manual tags and DeepSeek text tags remain unchanged. Continue?`
       : `重新分析会替换${vision.userEdited ? "手动修订过的反推提示词" : "旧模型反推提示词"}和视觉模型标签；人工标签与 DeepSeek 文字标签不会改变。继续吗？`;
-    if (!await confirmAppAction({ title: "重新分析主图？", description: message, confirmLabel: "重新分析主图" })) return;
+    if (!await confirmAppAction({ title: "重新分析图片？", description: message, confirmLabel: "分析图片" })) return;
   }
   const originalLabel = button.textContent;
   button.disabled = true;
@@ -6346,7 +7051,7 @@ function setVisionAnalysisStatus(entryId, kind, message) {
 }
 
 function openVisionSettings() {
-  openSettingsDialog("ai", "vision");
+  openSettingsDialog("ai");
 }
 
 function createPendingReviewPanel(entry) {
@@ -7045,6 +7750,7 @@ function viewImportedProject() {
   const collectionId = activeImportJob?.collectionId;
   if (!collectionId) return;
   caseOrderManagementActive = false;
+  unassignedViewActive = false;
   selectedCollectionId = collectionId;
   renderGallery();
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -7110,7 +7816,10 @@ async function handleLibraryDrop(event) {
   importDragDepth = 0;
   elements.libraryDropTarget.hidden = true;
   const items = await droppedLocalFiles(event.dataTransfer);
-  await prepareLocalImport(items, { source: items.some((item) => item.relativePath.includes("/")) ? "folder" : "files" });
+  const packageItems = items.filter((item) => importContainerKindForFile(item.file) === "share-package");
+  const ordinaryItems = items.filter((item) => importContainerKindForFile(item.file) !== "share-package");
+  if (packageItems.length) await openLibraryPackageBatch(packageItems, ordinaryItems);
+  else await prepareLocalImport(ordinaryItems, { source: ordinaryItems.some((item) => item.relativePath.includes("/")) ? "folder" : "files" });
 }
 
 async function droppedLocalFiles(dataTransfer) {
@@ -7365,53 +8074,6 @@ function documentTypeLabel(mimeType, sourceFormat = "") {
   })[mimeType] || "文档";
 }
 
-function readVideoMedia(blob, mimeType, videoAssetId = "") {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(blob);
-    const video = document.createElement("video");
-    let settled = false;
-    const finish = (metadata, poster = null) => {
-      if (settled) return;
-      settled = true;
-      URL.revokeObjectURL(url);
-      video.removeAttribute("src");
-      resolve({ metadata, poster });
-    };
-    const metadata = () => ({
-      ...(Number.isFinite(video.videoWidth) && video.videoWidth > 0 ? { width: video.videoWidth } : {}),
-      ...(Number.isFinite(video.videoHeight) && video.videoHeight > 0 ? { height: video.videoHeight } : {}),
-      ...(Number.isFinite(video.duration) && video.duration > 0 ? { durationMs: Math.round(video.duration * 1000) } : {}),
-      playbackCapability: "native"
-    });
-    video.preload = "auto";
-    video.muted = true;
-    video.playsInline = true;
-    video.onloadeddata = async () => {
-      if (!videoAssetId || !video.videoWidth || !video.videoHeight) return finish(metadata());
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-        const posterBlob = await canvasBlob(canvas, "image/webp", 0.84);
-        const posterId = globalThis.crypto.randomUUID();
-        finish(metadata(), {
-          blob: posterBlob,
-          asset: {
-            id: posterId, kind: "image", usage: "poster", derivedFromAssetId: videoAssetId,
-            storageMode: "managed", mimeType: posterBlob.type, byteSize: posterBlob.size,
-            width: canvas.width, height: canvas.height, sourceTitle: "视频封面",
-            capturedAt: new Date().toISOString(), reviewStatus: "verified"
-          }
-        });
-      } catch { finish(metadata()); }
-    };
-    video.onloadedmetadata = () => setTimeout(() => finish(metadata()), 2500);
-    video.onerror = () => finish({ playbackCapability: "external" });
-    video.src = url;
-    if (!video.canPlayType(mimeType)) setTimeout(() => finish({ playbackCapability: "external" }), 800);
-  });
-}
 
 function createDetailAttributes(entry) {
   const grouped = groupEntryAssignments(entry, facetCatalog, "confirmed");
@@ -7549,133 +8211,152 @@ function createAnalysisCandidate(entry, item, queueAware = false) {
   return row;
 }
 
+function createPromptCopyAction(text) {
+  const copy = promptIconButton(t("复制提示词"), "copy");
+  copy.addEventListener("click", () => copyTextWithFeedback(copy, text, "完整提示词已复制", "浏览器未允许复制，请选中文本后复制"));
+  return copy;
+}
+
+function createPromptRulesAction(kind) {
+  const action = promptIconButton(t("编辑分析规则"), "settings");
+  action.addEventListener("click", () => openSettingsDialog("rules", kind));
+  return action;
+}
+
+async function savePromptPanel(message) {
+  const response = await chrome.runtime.sendMessage(message);
+  if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("提示词保存失败"));
+  showFeedback(response.message);
+  await refreshLibrary();
+}
+
+function createMediaPromptSection(entry, asset, options) {
+  const source = detailPromptSources(entry, asset);
+  const section = el("section", "detail-section prompt-section media-prompt-section");
+  const images = entryMediaAssets(entry).filter(item => item.kind === "image" && item.usage !== "poster");
+  const separateImage = asset.kind === "image" && (images.length > 1 || options.compoundMember);
+  let originalPanel;
+  if (source.original) {
+    originalPanel = createPromptPanel({ key: `${entry.id}:${asset.id}:original`, title: t(separateImage
+      ? source.originalAssetId ? "当前图片提示词" : "案例共享提示词" : "原始提示词"), text: source.original, t,
+      className: "original-prompt-panel", editLabel: "编辑原始提示词", actions: [createPromptCopyAction(source.original)],
+      onError: error => showFeedback(error.message, true),
+      onSave: text => savePromptPanel(source.originalAssetId
+        ? { type: "UPDATE_ENTRY_MEDIA_PROMPT", entryId: entry.id, assetId: source.originalAssetId, text }
+        : { type: "UPDATE_ENTRY_TEXT", entryId: entry.id, text, textRevision: entryTextRevision(entry) })
+    });
+    section.append(originalPanel);
+  }
+  const emptyActions = el("div", "prompt-toolbar");
+  if (!source.original && !source.ai) {
+    const empty = el("div", "prompt-empty-state");
+    empty.append(textEl("span", "", entry.sourceFacts?.originalPromptAvailable === false ? "当前页面未显示原始提示词" : "暂无提示词"), emptyActions);
+    section.append(empty);
+  }
+  const target = originalPanel?.querySelector(".prompt-toolbar") || emptyActions;
+  if (asset.kind === "video") {
+    const workspace = createVideoAnalysisWorkspace(entry, asset, source.ai ? null : target);
+    section.append(workspace);
+  } else {
+    let aiPanel;
+    if (source.ai) {
+      aiPanel = createPromptPanel({ key: `${entry.id}:${asset.id}:ai`, title: t("AI 逆推提示词"), text: source.ai, t,
+        className: "image-reconstruction-current", markdown: true, editLabel: "编辑 AI 逆推提示词",
+        actions: [createPromptCopyAction(source.ai)],
+        onError: error => showFeedback(error.message, true),
+        onSave: text => savePromptPanel(source.aiSource === "media-prompt"
+          ? { type: "UPDATE_ENTRY_MEDIA_PROMPT", entryId: entry.id, assetId: asset.id, text, preserveAiSource: true }
+          : { type: "UPDATE_VISION_RECONSTRUCTION_PROMPT", entryId: entry.id, visualId: asset.id, reconstructionPrompt: text })
+      });
+      section.append(aiPanel);
+    }
+    const toolbar = aiPanel?.querySelector(".prompt-toolbar") || target;
+    if (!entry.compoundCase) {
+      const analyze = textEl("button", "button-secondary", "分析图片");
+      analyze.addEventListener("click", () => analyzeEntryVision(entry, analyze, asset));
+      toolbar.prepend(analyze);
+    }
+    toolbar.append(createPromptRulesAction("vision"));
+    const statusValue = visionStatusByEntry.get(entry.id);
+    const status = el("p", `vision-analysis-status${statusValue?.kind ? ` ${statusValue.kind}` : ""}`);
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.textContent = statusValue?.message ? translateUiMessage(statusValue.message) : "";
+    status.hidden = !status.textContent;
+    const statusPanel = aiPanel || originalPanel;
+    if (statusPanel) statusPanel.querySelector(".prompt-section-heading").after(status);
+    else section.append(status);
+    const analysisInput = canonicalTextAnalysisInput(entry, asset.id);
+    if (analysisInput.text) {
+      const analyzeText = textEl("button", "button-secondary", "分析文字标签");
+      analyzeText.addEventListener("click", () => analyzeSingleEntry(entry, analyzeText, analysisInput));
+      toolbar.append(analyzeText);
+    }
+    if (images.filter(item => item.storageMode === "managed").length > 1 && !entry.compoundCase) {
+      const batch = textEl("button", "button-secondary", "批量图片分析");
+      batch.addEventListener("click", () => analyzeEntryVisualSet(entry, batch));
+      toolbar.append(batch);
+    }
+    const replacement = visualAnalysisPromptReplacement(entry, asset.id);
+    if (replacement) {
+      const replace = textEl("button", "button-secondary", "更新为 V2 提示词");
+      replace.addEventListener("click", async () => {
+        try { await reviewVisualAnalysisPromptReplacements(entry.id, [{ ...replacement, index: 1 }]); await refreshLibrary(); }
+        catch (error) { showFeedback(error.message, true); }
+      });
+      toolbar.append(replace);
+    }
+  }
+  const coreActions = el("div", "detail-core-actions");
+  if (!options.articleMedia) {
+    coreActions.append(createComposerAction(entry));
+    section.append(coreActions);
+  }
+  return section;
+}
+
 function createPromptSection(entry, options = {}) {
-  if (!entry.text && !entryHasMedia(entry)) return null;
-  const section = el("section", "detail-section prompt-section");
-  const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId;
-  const activeImage = entryMediaAssets(entry).find((asset) => asset.id === activeAssetId && asset.kind === "image" && asset.usage !== "poster");
-  const activeVideo = entryMediaAssets(entry).find((asset) => asset.id === activeAssetId && asset.kind === "video" && asset.usage !== "poster");
-  const imageAssets = entryMediaAssets(entry).filter((asset) => asset.kind === "image" && asset.usage !== "poster");
-  const managedImageAssets = imageAssets.filter((asset) => asset.storageMode === "managed");
-  const separatesCurrentAndShared = Boolean(activeImage && (imageAssets.length > 1 || options.compoundMember));
-  const mediaPrompt = activeImage ? (entry.mediaPrompts || []).find((item) => item.assetId === activeImage.id) : null;
-  const displayedPrompt = activeImage ? promptForEntryImage(entry, activeImage.id) : String(entry.text ?? "").trim();
-  const analysisInput = canonicalTextAnalysisInput(entry, activeImage?.id || "");
-  if (promptEditState?.entryId === entry.id) {
-    const textarea = document.createElement("textarea");
-    textarea.className = "prompt-text prompt-editor";
-    textarea.value = promptEditState.draftText;
-    textarea.setAttribute("aria-label", t("编辑提示词"));
-    textarea.addEventListener("input", () => {
-      promptEditState.draftText = textarea.value;
-      promptEditState.dirty = textarea.value !== promptEditState.originalText;
-    });
-    const actions = el("div", "prompt-edit-actions");
-    const save = textEl("button", "", "保存");
-    const cancel = textEl("button", "button-secondary", "取消");
-    save.addEventListener("click", async () => {
-      save.disabled = true;
-      try {
-        const response = await chrome.runtime.sendMessage(promptEditState.assetId ? {
-          type: "UPDATE_ENTRY_MEDIA_PROMPT",
-          entryId: entry.id,
-          assetId: promptEditState.assetId,
-          text: textarea.value
-        } : {
-          type: "UPDATE_ENTRY_TEXT",
-          entryId: entry.id,
-          text: textarea.value,
-          textRevision: entryTextRevision(entry)
-        });
-        if (!response?.ok) throw new Error(response?.message || "提示词保存失败");
-        promptEditState = null;
-        showFeedback(response.message);
-        await refreshLibrary();
-      } catch (error) {
-        showFeedback(error.message || "提示词保存失败", true);
-      } finally {
-        save.disabled = false;
-      }
-    });
-    cancel.addEventListener("click", () => {
-      promptEditState = null;
-      renderDetail();
-    });
-    actions.append(save, cancel);
-    section.append(textEl("h3", "", promptEditState.assetId ? "编辑当前图片提示词" : "编辑案例共享提示词"), textarea, actions);
-    queueMicrotask(() => textarea.focus());
+  if (usesArticleReader(entry)) {
+    const section = el("section", "detail-section prompt-section article-actions-section");
+    for (const asset of entryMediaAssets(entry).filter(item => ["image", "video"].includes(item.kind) && item.usage !== "poster")) {
+      const source = detailPromptSources(entry, asset);
+      if (source.original || source.ai) section.append(createMediaPromptSection(entry, asset, { ...options, articleMedia: true }));
+    }
+    const actions = el("div", "detail-core-actions");
+    const toolbar = el("div", "prompt-toolbar article-analysis-actions");
+    const input = canonicalTextAnalysisInput(entry);
+    if (input.text) {
+      const analyze = textEl("button", "button-secondary", "分析文字标签");
+      analyze.addEventListener("click", () => analyzeSingleEntry(entry, analyze, input));
+      toolbar.append(analyze);
+    }
+    actions.append(createComposerAction(entry));
+    section.prepend(toolbar);
+    section.append(actions);
     return section;
   }
-  const heading = el("div", "prompt-section-heading");
-  heading.append(textEl("h3", "", activeVideo
-    ? "原始提示词"
-    : activeImage
-    ? separatesCurrentAndShared ? (mediaPrompt ? "当前图片提示词" : entry.text ? "当前图片 · 使用共享提示词" : "当前图片提示词") : "提示词"
-    : "提示词"));
-  const copy = textEl("button", "button-secondary", "复制提示词");
-  const vision = primaryVisionAnalysis(entry);
-  const primary = primaryVisual(entry);
-  const analyzeVisual = primary?.kind === "image" && !entry.compoundCase
-    ? textEl("button", "button-secondary", vision ? "重新分析主图" : "分析主图")
-    : null;
-  const analyze = textEl("button", "button-secondary", "分析检索标签");
-  const edit = textEl("button", "button-secondary", activeVideo ? "编辑原始提示词" : separatesCurrentAndShared ? "编辑当前图片" : "编辑");
-  const editShared = separatesCurrentAndShared && entry.text ? textEl("button", "button-secondary", "编辑共享提示词") : null;
-  const promptReplacement = activeImage ? visualAnalysisPromptReplacement(entry, activeImage.id) : null;
-  const replaceAnalyzedPrompt = promptReplacement ? textEl("button", "button-secondary", "更新为 V2 提示词") : null;
-  copy.disabled = !displayedPrompt;
-  analyze.disabled = !analysisInput.text;
-  copy.addEventListener("click", () => copyTextWithFeedback(
-    copy,
-    displayedPrompt,
-    "完整提示词已复制",
-    "浏览器未允许复制，请选中文本后复制"
-  ));
-  analyzeVisual?.addEventListener("click", () => analyzeEntryVision(entry, analyzeVisual));
-  analyze.addEventListener("click", () => analyzeSingleEntry(entry, analyze, analysisInput));
-  edit.addEventListener("click", () => {
-    promptEditState = { entryId: entry.id, assetId: separatesCurrentAndShared ? activeImage?.id || "" : "", originalText: displayedPrompt, draftText: displayedPrompt, dirty: false };
-    renderDetail();
-  });
-  editShared?.addEventListener("click", () => {
-    promptEditState = { entryId: entry.id, assetId: "", originalText: entry.text || "", draftText: entry.text || "", dirty: false };
-    renderDetail();
-  });
-  replaceAnalyzedPrompt?.addEventListener("click", async () => {
-    replaceAnalyzedPrompt.disabled = true;
-    try {
-      const reviewed = await reviewVisualAnalysisPromptReplacements(entry.id, [{ ...promptReplacement, index: 1 }]);
-      if (reviewed?.message) showFeedback(reviewed.message);
-      await refreshLibrary();
-    } catch (error) {
-      showFeedback(error.message || "图片提示词更新失败", true);
-    } finally {
-      replaceAnalyzedPrompt.disabled = false;
-    }
-  });
-  heading.append(editShared || document.createDocumentFragment(), edit);
-  const coreActions = el("div", "detail-core-actions");
-  coreActions.append(copy, createComposerAction(entry));
-  const analysisMenu = el("details", "detail-analysis-menu");
-  analysisMenu.append(textEl("summary", "button-secondary", "完善分析"));
-  const analysisActions = el("div", "detail-analysis-actions");
-  if (replaceAnalyzedPrompt) analysisActions.append(replaceAnalyzedPrompt);
-  if (analyzeVisual) analysisActions.append(analyzeVisual);
-  if (managedImageAssets.length > 1 && !entry.compoundCase) {
-    const analyzeSet = textEl("button", "button-secondary", "批量图片分析");
-    analyzeSet.addEventListener("click", () => analyzeEntryVisualSet(entry, analyzeSet));
-    analysisActions.append(analyzeSet);
+  if (!entry.text && !entryHasMedia(entry)) return null;
+  const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId;
+  const activeAsset = entryMediaAssets(entry).find(asset => asset.id === activeAssetId
+    && ["image", "video"].includes(asset.kind) && asset.usage !== "poster");
+  if (activeAsset) return createMediaPromptSection(entry, activeAsset, options);
+  const section = el("section", "detail-section prompt-section");
+  const text = String(entry.text ?? "").trim();
+  const analysisInput = canonicalTextAnalysisInput(entry);
+  const actions = [createPromptCopyAction(text), createPromptRulesAction("text")];
+  if (analysisInput.text) {
+    const analyze = textEl("button", "button-secondary", "分析文字标签");
+    analyze.addEventListener("click", () => analyzeSingleEntry(entry, analyze, analysisInput));
+    actions.unshift(analyze);
   }
-  analysisActions.append(analyze);
-  analysisMenu.append(analysisActions);
-  section.append(
-    heading,
-    rawTextEl("pre", `prompt-text${displayedPrompt ? "" : " is-empty"}`, displayedPrompt || t("暂无提示词")),
-    coreActions
-  );
-  if (activeVideo && !entry.compoundCase) section.append(createVideoAnalysisWorkspace(entry, activeVideo));
-  section.append(analysisMenu);
-  if (textAnalysisReason(entry) === "text_changed") section.append(textEl("small", "prompt-analysis-stale", "提示词已修改，需要重新分析标签"));
+  section.append(createPromptPanel({
+    key: `${entry.id}:original`, title: t("提示词"), text, t, actions, editLabel: "编辑提示词",
+    onSave: value => savePromptPanel({ type: "UPDATE_ENTRY_TEXT", entryId: entry.id, text: value, textRevision: entryTextRevision(entry) }),
+    onError: error => showFeedback(error.message, true)
+  }));
+  const coreActions = el("div", "detail-core-actions");
+  coreActions.append(createComposerAction(entry));
+  section.append(coreActions);
   return section;
 }
 
@@ -7872,7 +8553,9 @@ async function analyzeEntryVisualSet(entry, button) {
 
 function createEntryEditor(entry, options = {}) {
   const section = el("details", `${options.inline ? "entry-editor-inline" : "detail-section"} entry-editor`);
-  section.append(textEl("summary", "", "编辑案例"));
+  const summary = textEl("summary", "", "编辑案例");
+  summary.append(createUiIcon("chevron-down"));
+  section.append(summary);
   const body = el("div", "entry-editor-body");
   const titleField = el("label", "entry-edit-field");
   const titleInput = document.createElement("input");
@@ -7886,6 +8569,47 @@ function createEntryEditor(entry, options = {}) {
   const titleRow = el("div", "entry-edit-row");
   titleRow.append(titleField, saveTitle);
   body.append(textEl("h4", "", "案例标题"), titleRow);
+  const currentAsset = entryMediaAssets(entry).find(asset => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId));
+  section.dataset.assetId = currentAsset?.id || "";
+  if (!usesArticleReader(entry)) {
+    const promptEditor = el("div", "entry-original-editor");
+    const scope = document.createElement("select");
+    scope.setAttribute("aria-label", t("提示词范围"));
+    scope.append(option("", t("案例共享提示词")));
+    if (currentAsset && ["image", "video"].includes(currentAsset.kind)) {
+      scope.append(option(currentAsset.id, t(currentAsset.kind === "image" ? "当前图片提示词" : "当前视频提示词")));
+    }
+    const panelHost = el("div", "entry-original-panel");
+    let selectedScope = "";
+    const renderOriginal = () => {
+      const assetId = scope.value;
+      const value = assetId ? entry.mediaPrompts?.find(item => item.assetId === assetId && item.source !== "ai-suggestion")?.text || "" : entry.text || "";
+      panelHost.replaceChildren(createPromptPanel({
+        key: `${entry.id}:editor:${assetId || "shared"}`, title: t("原始提示词"), text: value, t,
+        className: "entry-original-summary", editLabel: "编辑原始提示词",
+        onError: error => showFeedback(error.message, true),
+        onSave: async text => {
+          const response = await chrome.runtime.sendMessage(assetId
+            ? { type: "UPDATE_ENTRY_MEDIA_PROMPT", entryId: entry.id, assetId, text }
+            : { type: "UPDATE_ENTRY_TEXT", entryId: entry.id, text, textRevision: entryTextRevision(entry) });
+          if (!response?.ok) throw new Error(response?.message || t("提示词保存失败"));
+          Object.assign(entry, response.entry);
+          await refreshLibrary();
+          showFeedback(response.message);
+        }
+      }));
+    };
+    scope.addEventListener("change", async () => {
+      if (!await confirmPromptEditDiscard()) { scope.value = selectedScope; return; }
+      selectedScope = scope.value;
+      renderOriginal();
+    });
+    if (scope.options.length > 1) promptEditor.append(scope);
+    promptEditor.append(panelHost);
+    panelHost.addEventListener("prompt-edit-finished", renderOriginal);
+    renderOriginal();
+    body.append(promptEditor);
+  }
   if (entry.classification?.status !== "needs_review") {
     const classification = createClassificationControl(entry, {
       buttonLabel: "保存",
@@ -8288,6 +9012,13 @@ function renderAnalysisSettings() {
   elements.visionInstructionsZh.value = visionSettings.instructionsByLocale?.["zh-CN"] || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE["zh-CN"];
   elements.visionInstructionsEn.value = visionSettings.instructionsByLocale?.en || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE.en;
   elements.visionSettingsStatus.textContent = t("规则保存在本机，只在对应任务运行时使用。");
+  elements.videoInstructionsZh.value = aiPreferences.videoInstructionsByLocale?.["zh-CN"] || DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE["zh-CN"];
+  elements.videoInstructionsEn.value = aiPreferences.videoInstructionsByLocale?.en || DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE.en;
+  elements.videoSettingsStatus.textContent = t("规则保存在本机，只在对应任务运行时使用。");
+  elements.videoProtocol.textContent = t("一次有效结果返回提示词、AI 标签和不确定项；必要时自动补救，每轮最多 {requests} 次请求，其中格式纠正最多 {corrections} 次。超时、停止或状态未知不自动重发。", {
+    requests: ANALYSIS_RETRY_POLICY.maxProviderCallsPerItem,
+    corrections: ANALYSIS_RETRY_POLICY.outputCorrectionRequests
+  });
   renderComposerMethodSettings();
   renderAnalysisLocale();
   renderAiRoutingSummary();
@@ -8932,6 +9663,7 @@ function commaSeparatedValues(value) {
 function applyAiConfigurationResponse(response) {
   aiProviderRegistry = response.aiProviderRegistry ?? aiProviderRegistry;
   aiTaskAssignments = response.aiTaskAssignments ?? aiTaskAssignments;
+  aiPreferences = response.aiPreferences ?? aiPreferences;
   aiSettings = response.aiSettings ?? aiSettings;
   visionSettings = response.visionSettings ?? visionSettings;
   aiServiceProfiles = response.aiServiceProfiles ?? aiServiceProfiles;
@@ -9137,6 +9869,10 @@ async function saveAiRulePreferences(event) {
           "zh-CN": elements.visionInstructionsZh.value,
           en: elements.visionInstructionsEn.value
         },
+        videoInstructionsByLocale: {
+          "zh-CN": elements.videoInstructionsZh.value,
+          en: elements.videoInstructionsEn.value
+        },
         autoAnalyzeImports: visionSettings.autoAnalyzeImports === true
       }
     });
@@ -9145,6 +9881,7 @@ async function saveAiRulePreferences(event) {
     const message = t("分析规则已保存");
     elements.aiSettingsStatus.textContent = message;
     elements.visionSettingsStatus.textContent = message;
+    elements.videoSettingsStatus.textContent = message;
     showFeedback(message);
   } catch (error) {
     showFeedback(translateUiMessage(error.message), true);
@@ -9273,9 +10010,11 @@ async function analyzeEntryWithRetry(entry, catalog, settingsValue, outputLocale
       key: `${settingsValue.providerId}:${settingsValue.analysisModel || settingsValue.compatible?.model}:textTags`,
       concurrency: settingsValue.concurrency,
       wait: (milliseconds) => wait(milliseconds, signal),
-      task: async () => {
+      signal,
+      task: async (requestBudget) => {
         serviceRequests += 1;
         return analyzeTextDetailedWithDeepSeek(entry, catalog, { ...settingsValue, outputLocale }, fetch, {
+          requestBudget,
           signal,
           onDiagnostic: reportDiagnostic,
           analysisInput
@@ -10182,6 +10921,13 @@ function discoveryColors(entry) {
   return asset?.palette?.colors ?? imageDerivedMetadata.get(visualId)?.palette?.colors ?? [];
 }
 
+function alphaCapableImage(asset) {
+  if (asset?.kind !== "image") return false;
+  const mimeType = String(asset.mimeType ?? "").toLocaleLowerCase("en-US");
+  const format = String(asset.sourceFormat ?? "").toLocaleLowerCase("en-US").replace(/^\./u, "");
+  return ["image/png", "image/webp", "image/gif"].includes(mimeType) || ["png", "webp", "gif"].includes(format);
+}
+
 function sanitizeSelections() {
   const validNodes = new Set([
     ...facetCatalog.facets.filter((item) => item.status === "active").map((item) => item.id),
@@ -10306,7 +11052,8 @@ function renderAnalysisDiagnostics() {
   }
   elements.analysisRuntimeVersion.textContent = `PromptDirector ${chrome.runtime.getManifest().version} / Analysis v${ANALYSIS_PROMPT_VERSION}`;
   elements.analysisDiagnosticEvents.replaceChildren();
-  if (!analysisDiagnostics.length) {
+  const videoDiagnostics = currentVideoDiagnosticSummaries();
+  if (!analysisDiagnostics.length && !videoDiagnostics.length) {
     elements.analysisDiagnosticEvents.append(rawTextEl("li", "analysis-diagnostics-empty", t("尚无本次分析事件")));
     return;
   }
@@ -10326,6 +11073,12 @@ function renderAnalysisDiagnostics() {
     );
     elements.analysisDiagnosticEvents.append(item);
   }
+  for (const summary of videoDiagnostics) elements.analysisDiagnosticEvents.append(rawTextEl("li", "", summary));
+}
+
+function currentVideoDiagnosticSummaries() {
+  return [...videoAnalysisTaskStateByAsset.values()].flatMap(task => task.attempts?.flatMap(attempt =>
+    attempt.diagnostic ? [analysisDiagnosticSummary(attempt.diagnostic, attempt.requestBudget)] : []) || []);
 }
 
 async function updateAnalysisDiagnosticsPreference() {
@@ -10379,7 +11132,7 @@ function analysisDiagnosticText() {
   return [header, ...analysisDiagnostics.map((event) => {
     const time = new Date(event.at).toISOString();
     return `${time} +${(Math.max(0, event.elapsedMs || 0) / 1000).toFixed(1)}s ${analysisDiagnosticLabel(event)}`;
-  })].join("\n");
+  }), ...currentVideoDiagnosticSummaries()].join("\n");
 }
 
 function showFeedback(message, isError = false) {
@@ -10404,16 +11157,17 @@ function showFeedback(message, isError = false) {
 }
 
 async function copyTextWithFeedback(button, value, successMessage, failureMessage) {
-  const original = button.textContent;
+  const original = [...button.childNodes].map(node => node.cloneNode(true));
   try {
     await navigator.clipboard.writeText(String(value ?? ""));
-    button.textContent = t("已复制");
+    if (button.classList.contains("prompt-icon-action")) button.replaceChildren(createUiIcon("check"));
+    else button.textContent = t("已复制");
     showFeedback(successMessage);
   } catch {
     showFeedback(failureMessage, true);
   } finally {
     window.setTimeout(() => {
-      if (button.isConnected) button.textContent = original;
+      if (button.isConnected) button.replaceChildren(...original);
     }, 1200);
   }
 }

@@ -87,9 +87,11 @@
   --prompt-bg: var(--ui-raised);
   --empty-bg: var(--ui-raised);
   --empty-ink: var(--ui-muted);
-  --viewer-bg: #0f1113;
-  --viewer-ink: #ffffff;
-  --viewer-control: rgba(15, 17, 19, .78);
+  --viewer-bg: var(--ui-browser);
+  --viewer-ink: var(--ui-text);
+  --viewer-control: color-mix(in srgb, var(--ui-surface) 86%, transparent);
+  --viewer-checker-a: #eef1ef;
+  --viewer-checker-b: #d6dcd8;
 }
 
 :root[data-theme="dark"] {
@@ -127,6 +129,8 @@
   --prompt-ink: #eceeed;
   --viewer-bg: var(--ui-browser);
   --viewer-control: rgba(15, 17, 19, .82);
+  --viewer-checker-a: #17191c;
+  --viewer-checker-b: #25282c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -165,6 +169,8 @@
     --prompt-ink: #eceeed;
     --viewer-bg: var(--ui-browser);
     --viewer-control: rgba(15, 17, 19, .82);
+    --viewer-checker-a: #17191c;
+    --viewer-checker-b: #25282c;
   }
 }
 

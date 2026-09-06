@@ -200,7 +200,7 @@ test("prompt text supports explicit editing and revision-safe saving", () => {
   assert.match(prompt, /编辑提示词/);
   assert.match(prompt, /UPDATE_ENTRY_TEXT/);
   assert.match(prompt, /textRevision/);
-  assert.match(prompt, /textarea/);
+  assert.match(prompt, /createPromptPanel/);
   assert.match(editor, /案例标题/);
   assert.match(editor, /UPDATE_ENTRY_TITLE/);
   assert.match(editor, /title\.trim\(\)/);
@@ -213,19 +213,21 @@ test("image details size the stage from the active media ratio", () => {
   assert.match(css, /\.detail-visual-gallery\.is-image-detail/);
 });
 
-test("primary image and search-tag analysis share one secondary analysis menu", () => {
+test("primary image and search-tag analysis are direct actions without a secondary menu", () => {
   const header = source.slice(source.indexOf("function createDetailHeader"), source.indexOf("function composerTargetType"));
   const gallery = source.slice(source.indexOf("async function createDetailMediaGallery"), source.indexOf("async function createMediaViewer"));
-  const prompt = source.slice(source.indexOf("function createPromptSection"), source.indexOf("function createEntryEditor"));
+  const prompt = source.slice(source.indexOf("function createMediaPromptSection"), source.indexOf("function createEntryEditor"));
   assert.doesNotMatch(header, /vision-analyze-button|分析主图|重新分析主图/);
   assert.doesNotMatch(gallery, /vision-analyze-button|分析主图|重新分析主图/);
-  assert.match(prompt, /复制提示词/);
-  assert.match(prompt, /分析主图/);
-  assert.match(prompt, /分析检索标签/);
-  assert.match(prompt, /analyzeEntryVision\(entry,\s*analyzeVisual\)/);
-  assert.match(prompt, /const copy = textEl\("button",\s*"button-secondary"/);
-  assert.match(prompt, /detail-analysis-menu/);
-  assert.match(prompt, /完善分析/);
+  assert.match(prompt, /createPromptCopyAction/);
+  assert.match(prompt, /分析图片/);
+  assert.match(prompt, /分析文字标签/);
+  assert.match(prompt, /analyzeEntryVision\(entry,\s*analyze,\s*asset\)/);
+  assert.match(prompt, /actions = \[createPromptCopyAction\(text\), createPromptRulesAction\("text"\)\]/);
+  assert.doesNotMatch(prompt, /detail-analysis-menu/);
+  assert.doesNotMatch(prompt, /完善分析/);
+  assert.doesNotMatch(prompt, /detail-analysis-actions/);
+  assert.match(prompt, /toolbar\.append\(analyzeText\)/);
   assert.match(prompt, /detail-core-actions/);
   assert.match(prompt, /createComposerAction\(entry\)/);
 });

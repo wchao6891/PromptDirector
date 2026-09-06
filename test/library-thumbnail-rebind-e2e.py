@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import base64
 import tempfile
-from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from e2e_support import launch_context
+from e2e_support import EXTENSION_DIR, launch_context
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1]
 TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlZ0AAAAASUVORK5CYII="
 )
@@ -97,14 +95,14 @@ def main() -> None:
 
                 page.evaluate("""() => Object.defineProperty(navigator, 'clipboard', {
                   configurable: true,
-                  value: {writeText: async () => undefined}
+                  value: {writeText: async text => { window.__copiedPrompt = text; }}
                 })""")
                 page.locator(".case-card").first.click()
                 page.locator("#detail-drawer.open").wait_for(timeout=5_000)
-                copy_button = page.locator("#detail-drawer .prompt-section .detail-core-actions button").first
+                copy_button = page.locator("#detail-drawer .prompt-section").get_by_role("button", name="复制提示词", exact=True)
                 copy_button.click()
-                page.wait_for_function("""() => document.querySelector('#detail-drawer .prompt-section .detail-core-actions button')?.textContent === '已复制'""")
-                assert copy_button.text_content() == "已复制", "复制按钮没有给出点击成功反馈"
+                page.wait_for_function("""() => document.querySelector('#detail-drawer .prompt-toolbar use[href$="#icon-check"]')""")
+                assert page.evaluate("window.__copiedPrompt") == page.locator(".original-prompt-panel .prompt-read-body").text_content()
                 feedback = page.locator("#feedback")
                 assert feedback.text_content() == "完整提示词已复制", "复制后没有显示可见反馈"
                 assert feedback.evaluate("element => getComputedStyle(element).position") == "fixed", "复制反馈没有悬浮在详情层上方"

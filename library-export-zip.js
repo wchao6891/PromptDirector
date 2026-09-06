@@ -18,13 +18,7 @@ export async function verifyLibraryZipRoundtrip(archive, expectedLibraryJson) {
 }
 
 async function verifyRoundtrip(archive, expectedLibraryJson) {
-  const limits = {
-    ...PORTABLE_LIBRARY_LIMITS,
-    maxArchiveBytes: archive.size,
-    maxFileBytes: archive.size,
-    maxImageBytes: archive.size,
-    maxVideoBytes: archive.size
-  };
+  const limits = PORTABLE_LIBRARY_LIMITS;
   const extracted = await readZipBlob(archive, limits);
   const libraryFile = extracted.get("library.json");
   if (!(libraryFile instanceof Blob)) throw new Error("导出的 ZIP 缺少 library.json");

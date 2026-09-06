@@ -15,7 +15,8 @@ export const REQUIRED_MODEL_CHAIN_SCRIPTS = [
   "creative_job_recovery_e2e.py",
   "ai_provider_registry_e2e.py",
   "ai_multimodel_routing_regression_e2e.py",
-  "zhipu_glm_analysis_e2e.py"
+  "zhipu_glm_analysis_e2e.py",
+  "composer_video_dialogue_e2e.py"
 ];
 
 export function parseE2eOutput(value = "") {

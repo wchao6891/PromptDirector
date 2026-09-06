@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeSidebarWidth, normalizeUiPreferences, resolveLocale } from "../preferences.js";
+import {
+  normalizeDetailSidebarWidth,
+  normalizeSidebarWidth,
+  normalizeUiPreferences,
+  resolveLocale
+} from "../preferences.js";
 
 test("UI preferences accept only supported locale theme and motion values", () => {
   assert.deepEqual(normalizeUiPreferences({ locale: "fr", theme: "neon", motion: "spin" }), {
@@ -9,17 +14,30 @@ test("UI preferences accept only supported locale theme and motion values", () =
     theme: "dark",
     motion: "system",
     analysisDiagnostics: false,
-    sidebarWidth: 244
+    sidebarWidth: 244,
+    detailMode: "fullscreen",
+    detailSidebarWidth: 760
   });
   assert.deepEqual(normalizeUiPreferences({ locale: "en", theme: "dark", motion: "none", analysisDiagnostics: true }), {
     locale: "en",
     theme: "dark",
     motion: "reduced",
     analysisDiagnostics: true,
-    sidebarWidth: 244
+    sidebarWidth: 244,
+    detailMode: "fullscreen",
+    detailSidebarWidth: 760
   });
   assert.equal(normalizeUiPreferences({ theme: "light", motion: "reduced" }).theme, "light");
   assert.equal(normalizeUiPreferences({ theme: "system", motion: "reduced" }).theme, "system");
+});
+
+test("case detail mode remains local UI state and clamps its remembered sidebar width", () => {
+  assert.equal(normalizeUiPreferences({ detailMode: "sidebar" }).detailMode, "sidebar");
+  assert.equal(normalizeUiPreferences({ detailMode: "window" }).detailMode, "fullscreen");
+  assert.equal(normalizeDetailSidebarWidth(undefined), 760);
+  assert.equal(normalizeDetailSidebarWidth(480), 520);
+  assert.equal(normalizeDetailSidebarWidth(824.6), 825);
+  assert.equal(normalizeDetailSidebarWidth(1600), 1200);
 });
 
 test("sidebar width keeps old preferences compatible and clamps unsafe values", () => {

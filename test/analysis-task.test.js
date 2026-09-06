@@ -6,12 +6,30 @@ import {
   cancelQueuedAnalysisTask,
   completeAnalysisAttempt,
   createAnalysisTask,
+  normalizeAnalysisTask,
   failAnalysisAttempt,
   restartRunningAnalysisTask,
   retryAnalysisAttempt,
   stopAnalysisTask,
-  startAnalysisAttempt
+  startAnalysisAttempt,
+  updateAnalysisTaskProgress
 } from "../analysis-tasks.js";
+
+test("a restored failed attempt retains protocol facts and request counts without raw payload or secrets", () => {
+  let task = startAnalysisAttempt(createAnalysisTask({ id: "task:receipt" }), { attemptId: "attempt:receipt" });
+  task = updateAnalysisTaskProgress(task, { attemptId: task.activeAttemptId, phase: "correcting", providerMayHaveAccepted: true,
+    requestBudget: { providerCalls: 2, outputCorrectionRequests: 1 }, requestId: "request:2" });
+  task = failAnalysisAttempt(task, { attemptId: task.activeAttemptId, error: "输出被截断", diagnostic: {
+    httpStatus: 200, finishReason: "length", contentLength: 0, model: "fixture-model", responseId: "sk-fixture-secret", raw: "private content"
+  } });
+  const restored = normalizeAnalysisTask(JSON.parse(JSON.stringify(task)));
+  assert.equal(restored.attempts.at(-1).diagnostic.httpStatus, 200);
+  assert.equal(restored.attempts.at(-1).diagnostic.finishReason, "length");
+  assert.equal(restored.attempts.at(-1).diagnostic.inputTokens, null);
+  assert.equal(restored.attempts.at(-1).requestBudget.providerCalls, 2);
+  assert.equal(restored.attempts.at(-1).requestId, "request:2");
+  assert.doesNotMatch(JSON.stringify(restored), /private content|sk-fixture-secret/);
+});
 
 test("queued analysis tasks can be canceled before any execution attempt exists", () => {
   const task = createAnalysisTask({ id: "task-queued", priority: "interactive", now: "2026-08-26T00:00:00.000Z" });
@@ -28,7 +46,18 @@ test("queued analysis tasks can be canceled before any execution attempt exists"
 
 test("running analysis restart leaves execution state unknown until an explicit new Attempt is started", () => {
   let task = createAnalysisTask({ id: "task-running" });
-  task = startAnalysisAttempt(task, { attemptId: "attempt:one", now: "2026-08-26T00:00:00.000Z" });
+  task = startAnalysisAttempt(task, {
+    attemptId: "attempt:one",
+    now: "2026-08-26T00:00:00.000Z",
+    deadlineAt: "2026-08-26T00:05:00.000Z"
+  });
+  assert.equal(task.deadlineAt, "2026-08-26T00:05:00.000Z");
+  task = updateAnalysisTaskProgress(task, {
+    attemptId: "attempt:one",
+    phase: "analyzing",
+    providerMayHaveAccepted: true,
+    now: "2026-08-26T00:00:01.000Z"
+  });
   task = restartRunningAnalysisTask(task, { now: "2026-08-26T00:00:05.000Z" });
 
   assert.equal(task.status, "stopped");
@@ -43,6 +72,21 @@ test("running analysis restart leaves execution state unknown until an explicit 
   assert.equal(task.attempts.length, 2);
   assert.equal(task.attempts[1].id, "attempt:two");
   assert.equal(task.attempts[1].status, "running");
+});
+
+test("service-worker recovery before the provider request stays a safe stopped task", () => {
+  let task = createAnalysisTask({ id: "task-encoding" });
+  task = startAnalysisAttempt(task, { attemptId: "attempt:encoding" });
+  task = updateAnalysisTaskProgress(task, {
+    attemptId: "attempt:encoding",
+    phase: "encoding"
+  });
+  task = restartRunningAnalysisTask(task);
+
+  assert.equal(task.status, "stopped");
+  assert.equal(task.executionState, "canceled");
+  assert.equal(task.providerMayHaveAccepted, false);
+  assert.equal(task.attempts[0].status, "canceled");
 });
 
 test("stale writes from an abandoned attempt are rejected after a restart", () => {
@@ -80,7 +124,7 @@ test("an explicit retry creates a new Attempt after failure while the old Attemp
   assert.throws(() => completeAnalysisAttempt(task, { attemptId: "attempt:one", result: { stale: true } }), /失效|stale/);
 });
 
-test("stop distinguishes a free queued cancel from a running request whose provider may have accepted it", () => {
+test("stop distinguishes local preparation from a request already sent to the provider", () => {
   const queued = stopAnalysisTask(createAnalysisTask({ id: "task-queued-stop" }));
   assert.equal(queued.status, "stopped");
   assert.equal(queued.executionState, "canceled");
@@ -88,13 +132,29 @@ test("stop distinguishes a free queued cancel from a running request whose provi
 
   let running = createAnalysisTask({ id: "task-running-stop" });
   running = startAnalysisAttempt(running, { attemptId: "attempt:running" });
+  running = updateAnalysisTaskProgress(running, {
+    attemptId: "attempt:running",
+    phase: "encoding"
+  });
   running = stopAnalysisTask(running);
   assert.equal(running.status, "stopped");
   assert.equal(running.executionState, "canceled");
-  assert.equal(running.providerMayHaveAccepted, true);
+  assert.equal(running.providerMayHaveAccepted, false);
   assert.equal(running.activeAttemptId, "");
   assert.equal(running.attempts[0].status, "canceled");
   assert.throws(() => applyAnalysisAttemptWrite(running, { attemptId: "attempt:running", result: {} }), /失效|stale/);
+
+  let sent = createAnalysisTask({ id: "task-sent-stop" });
+  sent = startAnalysisAttempt(sent, { attemptId: "attempt:sent" });
+  sent = updateAnalysisTaskProgress(sent, {
+    attemptId: "attempt:sent",
+    phase: "analyzing",
+    providerMayHaveAccepted: true,
+    now: "2026-09-03T10:00:00.000Z"
+  });
+  sent = stopAnalysisTask(sent);
+  assert.equal(sent.providerMayHaveAccepted, true);
+  assert.equal(sent.requestStartedAt, "2026-09-03T10:00:00.000Z");
 });
 
 test("only the active running Attempt can complete or fail a task", () => {

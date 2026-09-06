@@ -4,7 +4,8 @@ import {
   validateDetailOrganizationResponse
 } from "./tag-taxonomy.js";
 import { parseStructuredObject } from "./structured-output.js";
-import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
+import { inspectAnalysisResponse, fetchAnalysisJson } from "./analysis-response.js";
+import { ANALYSIS_RETRY_POLICY, createAnalysisRequestBudget, consumeAnalysisRequest, analysisRequestCounts } from "./analysis-retry-policy.js";
 import {
   normalizeComposerAiProfile,
   normalizePlannerResult,
@@ -50,6 +51,7 @@ export function deepSeekErrorDetails(error) {
   if (error?.name === "AbortError") {
     return { kind: "stopped", message: "已停止，本次不完整输出没有保存", retryable: false };
   }
+  if (error?.diagnostic) return { kind: error.code, message: error.message, retryable: error.recovery === "retry" };
   if (error instanceof DeepSeekApiError) {
     return { kind: error.kind, message: error.message, retryable: error.retryable };
   }
@@ -154,6 +156,7 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
   ];
   const userMessage = { role: "user", content: analysisEntryInput(entry, input.text) };
   let usage = normalizeUsage();
+  const requestBudget = requestOptions.requestBudget ?? createAnalysisRequestBudget();
   for (let outputAttempt = 0; outputAttempt < 2; outputAttempt += 1) {
     const attempt = outputAttempt ? "correction" : "initial";
     const messages = outputAttempt
@@ -163,6 +166,9 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
     const requestStartedAt = Date.now();
     emitAnalysisDiagnostic(requestOptions, "request_started", { attempt });
     try {
+      requestOptions.signal?.throwIfAborted();
+      consumeAnalysisRequest(requestBudget, outputAttempt ? "correction" : "primary");
+      await requestOptions.onRequestStart?.({ ...requestBudget });
       result = await requestDeepSeek(structuredRequestBody({
         model: settings.analysisModel,
         thinking: { type: "disabled" },
@@ -180,6 +186,7 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
         timeoutMessage: "AI 分析超时，本次没有写入任何标签"
       });
     } catch (error) {
+      if (!outputAttempt && error?.recovery === "correct" && requestBudget.outputCorrectionRequests < ANALYSIS_RETRY_POLICY.outputCorrectionRequests) continue;
       emitAnalysisDiagnostic(requestOptions, "request_failed", {
         attempt,
         elapsedMs: Date.now() - requestStartedAt,
@@ -207,9 +214,10 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
       return {
         tags,
         normalizationDiagnostics,
-        attempts: { outputCorrectionRequests: outputAttempt },
+        attempts: analysisRequestCounts(requestBudget),
         usage,
         model: result.model || settings.analysisModel,
+        diagnostic: result.diagnostic,
         finishReason: result.finishReason
       };
     } catch (error) {
@@ -217,7 +225,7 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
         attempt,
         category: analysisValidationCategory(error)
       });
-      if (outputAttempt === 0) continue;
+      if (outputAttempt === 0 && requestBudget.outputCorrectionRequests < ANALYSIS_RETRY_POLICY.outputCorrectionRequests) continue;
       error.usage = usage;
       throw error;
     }
@@ -593,58 +601,24 @@ async function requestDeepSeek(body, settings, options = {}) {
   const provider = aiProvider(settings);
   const requestModel = settings.activeProvider === "compatible" ? provider.model : body.model || provider.model;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const requestController = new AbortController();
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
     ? options.timeoutMs
     : DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS;
-  let timedOut = false;
-  const onExternalAbort = () => requestController.abort();
-  if (options.signal?.aborted) requestController.abort();
-  options.signal?.addEventListener("abort", onExternalAbort, { once: true });
-  const timeoutId = setTimeout(() => {
-    timedOut = true;
-    requestController.abort();
-  }, timeoutMs);
-  let response;
-  let payload = {};
-  try {
-    const requestBody = settings.activeProvider === "compatible"
+  const requestBody = settings.activeProvider === "compatible"
       ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== "thinking"))
       : body;
-    response = await fetchImpl(provider.endpoint, {
+  const { payload } = await fetchAnalysisJson(fetchImpl, provider.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}) },
-      body: JSON.stringify({ ...requestBody, model: requestModel }),
-      signal: requestController.signal
-    });
-    try {
-      payload = await response.json();
-    } catch (error) {
-      if (error?.name === "AbortError") throw error;
-      payload = {};
-    }
-  } catch (error) {
-    if (timedOut) throw new DeepSeekApiError(options.timeoutMessage || `${provider.label} 请求超时，本次没有保存`, 408);
-    if (error?.name === "AbortError") throw error;
-    throw new DeepSeekApiError(`无法连接 ${provider.label}，请检查网络后重试`, 0, { cause: error });
-  } finally {
-    clearTimeout(timeoutId);
-    options.signal?.removeEventListener("abort", onExternalAbort);
-  }
-  if (!response.ok) {
-    throw new DeepSeekApiError(apiError(payload, response.status, provider), response.status, {
-      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after"))
-    });
-  }
+      body: JSON.stringify({ ...requestBody, model: requestModel })
+    }, { signal: options.signal, timeoutMs, provider: provider.label });
   const choice = payload?.choices?.[0];
   const finishReason = String(choice?.finish_reason ?? "");
-  const content = choice?.message?.content;
-  if (!content) throw new DeepSeekApiError(`${provider.label} 没有返回可用结果`, 503);
-  if (!options.allowPartialContent && finishReason === "length") throw new DeepSeekApiError(`${provider.label} 输出被截断，本次结果未应用`, 422);
-  if (!options.allowPartialContent && finishReason === "content_filter") throw new DeepSeekApiError(`${provider.label} 未能返回此内容，本次结果未应用`, 422);
+  const { text: content, diagnostic } = inspectAnalysisResponse(payload, { provider: provider.label });
   return {
     content,
     finishReason,
+    diagnostic,
     model: String(payload?.model ?? requestModel),
     usage: normalizeUsage(payload?.usage)
   };
@@ -778,7 +752,7 @@ function deepSeekErrorKind(status) {
 
 function parseJsonObject(content, message) {
   try {
-    return parseStructuredObject(content, message);
+    return parseStructuredObject(content, message, { allowTruncatedRecovery: false });
   } catch {
     throw new Error(message);
   }
@@ -815,13 +789,6 @@ function finite(value) {
 function positiveInteger(value) {
   const number = Number(value);
   return Number.isInteger(number) && number > 0 ? number : 0;
-}
-
-function retryAfterMilliseconds(value) {
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-  const date = Date.parse(String(value ?? ""));
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
 function apiError(payload, status, provider = {}) {

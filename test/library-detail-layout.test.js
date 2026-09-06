@@ -91,7 +91,8 @@ test("single case details use one scroll surface with a full-width discovery wal
   assert.match(body, /overflow:\s*visible/);
   assert.doesNotMatch(body, /padding-top:/);
   assert.match(discovery, /--masonry-gap:\s*var\(--visual-wall-gap\)/);
-  assert.match(script, /primary\.append\(elements\.detailNavigation\)/);
+  assert.match(script, /navigation:\s*usesStageNavigation \? elements\.detailNavigation : null/);
+  assert.match(script, /if \(navigation\) item\.append\(navigation\)/);
   assert.match(mobileDrawer, /height:\s*100dvh/);
   assert.match(mobilePrimary, /display:\s*block/);
   assert.match(mobileGallery, /height:\s*58dvh/);
@@ -99,16 +100,19 @@ test("single case details use one scroll surface with a full-width discovery wal
 
 test("single case navigation is positioned inside the primary case area", async () => {
   const source = await readFile(cssUrl, "utf8");
+  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
   const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
-  const primary = rule(source, ".detail-primary");
-  const navigation = rule(source, ".detail-primary > .detail-navigation");
+  const stage = rule(source, ".detail-visual-stage");
+  const navigation = rule(source, ".detail-navigation");
 
   assert.match(html, /id="drawer-toolbar"/);
   assert.match(html, /id="detail-navigation"/);
-  assert.match(primary, /position:\s*relative/);
+  assert.match(stage, /position:\s*relative/);
   assert.match(navigation, /position:\s*absolute/);
-  assert.match(navigation, /top:\s*50dvh/);
+  assert.match(navigation, /top:\s*50%/);
+  assert.match(navigation, /width:\s*100%/);
   assert.match(navigation, /z-index:\s*[2-9]/);
+  assert.match(script, /if \(navigation\) item\.append\(navigation\)/);
 });
 
 test("document navigation moves into the top toolbar and long documents use a real scroll surface", async () => {
@@ -118,13 +122,13 @@ test("document navigation moves into the top toolbar and long documents use a re
   const documentStage = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-stage");
   const documentItem = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-item");
 
-  assert.match(script, /const hasArticleDocument = !capturedPost && Boolean\(entry\.articleDocument\?\.blocks\?\.length\)/);
+  assert.match(script, /const hasArticleDocument = !capturedPost && usesArticleReader\(entry\)/);
   assert.match(script, /const usesStageNavigation = !capturedPost && !hasArticleDocument && \(entryHasMedia\(entry, "image"\) \|\| entryHasMedia\(entry, "video"\)\)/);
-  assert.match(script, /else elements\.drawerToolbar\.prepend\(elements\.detailNavigation\)/);
+  assert.match(script, /if \(!usesStageNavigation\) elements\.drawerToolbar\.prepend\(elements\.detailNavigation\)/);
   assert.match(script, /gallery\.classList\.toggle\("is-document-detail", asset\.kind === "document"\)/);
   assert.match(script, /stage\.scrollTop = 0/);
   assert.match(toolbarNavigation, /top:\s*14px/);
-  assert.match(toolbarNavigation, /right:\s*58px/);
+  assert.match(toolbarNavigation, /right:\s*102px/);
   assert.match(toolbarNavigation, /width:\s*auto/);
   assert.match(documentStage, /overflow:\s*auto/);
   assert.match(documentItem, /height:\s*auto/);
@@ -164,18 +168,64 @@ test("compound details retain their existing split layout", async () => {
   assert.match(compoundBody, /overflow:\s*auto/);
 });
 
-test("case detail shell follows UI themes while the media stage stays neutral", async () => {
+test("case detail shell and transparent media stage follow the active UI theme", async () => {
   const source = await readFile(cssUrl, "utf8");
   const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
   const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
   const drawer = rule(source, ".detail-drawer");
   const body = rule(source, ".detail-body");
-  assert.match(foundation, /--viewer-bg:\s*#0f1113/);
+  assert.match(foundation, /--viewer-bg:\s*var\(--ui-browser\)/);
+  assert.match(foundation, /--viewer-checker-a:\s*#eef1ef/);
+  assert.match(foundation, /--viewer-checker-b:\s*#d6dcd8/);
   assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-bg:\s*var\(--ui-browser\)/);
+  assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-checker-a:\s*#17191c/);
   assert.match(foundation, /:root\[data-theme="system"\][\s\S]*--viewer-bg:\s*var\(--ui-browser\)/);
   assert.match(drawer, /background:\s*var\(--viewer-bg\)/);
   assert.match(body, /background:\s*var\(--card\)/);
+  assert.doesNotMatch(source, /\.detail-visual-gallery\.is-(?:image|video)-detail \.detail-visual-caption\s*\{[^}]*background:\s*#[0-9a-f]+/i);
+  assert.match(source, /\.detail-visual-gallery\.is-video-detail \.detail-visual-caption\s*\{[^}]*background:\s*var\(--card\)/);
+  assert.match(source, /\.case-image-wrap\.has-alpha-channel,[\s\S]*\.image-lightbox\.has-alpha-channel\s*\{/);
+  assert.match(source, /background-size:\s*24px 24px/);
   assert.match(html, /id="detail-drawer"[^>]*role="dialog"[^>]*aria-modal="true"/);
+});
+
+test("case detail supports one remembered right sidebar and forces narrow screens back to fullscreen", async () => {
+  const source = await readFile(cssUrl, "utf8");
+  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const sidebar = rule(source, ".detail-drawer.detail-sidebar-mode");
+  const resizer = rule(source, ".detail-sidebar-mode > .detail-resizer");
+  const narrow = source.slice(source.indexOf("@media (max-width: 640px)"));
+
+  assert.match(html, /id="detail-mode-toggle"/);
+  assert.match(html, /id="detail-resizer"[^>]*role="separator"/);
+  assert.match(sidebar, /width:\s*var\(--detail-sidebar-width, 760px\)/);
+  assert.match(sidebar, /min-width:\s*520px/);
+  assert.match(source, /\.detail-sidebar-mode \.detail-primary,[\s\S]*?\.detail-sidebar-mode \.detail-content\.is-compound-detail\s*\{[^}]*display:\s*block/);
+  assert.doesNotMatch(source, /@container\s*\(max-width:\s*840px\)/);
+  assert.match(resizer, /cursor:\s*col-resize/);
+  assert.match(script, /uiPreferences\.detailMode === "sidebar" && !mobileLayout\.matches/);
+  assert.match(script, /updateUiPreferences\(\{ \.\.\.uiPreferences, detailMode \}\)/);
+  assert.match(narrow, /\.detail-drawer\.detail-sidebar-mode\s*\{[^}]*width:\s*100vw/);
+  assert.match(narrow, /#detail-mode-toggle, \.detail-resizer\s*\{[^}]*display:\s*none/);
+});
+
+test("case and media switches invalidate old detail DOM before asynchronous rendering", async () => {
+  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const openDetail = script.slice(script.indexOf("async function openDetail"), script.indexOf("async function closeDetail"));
+  const closeDetail = script.slice(script.indexOf("async function closeDetail"), script.indexOf("function moveDetail"));
+  const invalidation = script.slice(script.indexOf("function invalidateDetailContent"), script.indexOf("function createLocalDiscovery"));
+  const gallery = script.slice(script.indexOf("async function createDetailMediaGallery"), script.indexOf("function refreshActiveDetailAssetSections"));
+
+  assert.ok(openDetail.indexOf("invalidateDetailContent(entryId)") < openDetail.indexOf('classList.add("open")'));
+  assert.match(invalidation, /removeAttribute\("data-entry-id"\)/);
+  assert.match(invalidation, /detailContent\.replaceChildren\(loading\)/);
+  assert.match(closeDetail, /detailRenderGeneration \+= 1/);
+  assert.match(closeDetail, /detailContent\.replaceChildren\(\)/);
+  assert.ok(gallery.indexOf("stage.replaceChildren(pendingItem)") < gallery.indexOf("await createMediaViewer"));
+  assert.match(gallery, /const token = \+\+renderToken/);
+  assert.match(gallery, /if \(token !== renderToken \|\| currentDetailId !== ownerEntryId\)/);
+  assert.match(gallery, /ownerGeneration !== detailRenderGeneration/);
 });
 
 test("case details open the source beside metadata without starting a capture workflow", async () => {
@@ -195,16 +245,27 @@ test("detail editing and core prompt actions stay beside the content they change
   const styles = await readFile(cssUrl, "utf8");
   const header = source.slice(source.indexOf("function createDetailHeader"), source.indexOf("function createComposerAction"));
   const prompt = source.slice(source.indexOf("function createPromptSection"), source.indexOf("function createEntryEditor"));
-  const promptDisplay = prompt.slice(prompt.indexOf('const heading = el("div", "prompt-section-heading")'));
   assert.match(header, /createEntryEditor\(entry, \{ inline: true \}\)/);
   assert.match(prompt, /detail-core-actions/);
-  assert.match(prompt, /复制提示词/);
+  assert.match(prompt, /createPromptCopyAction\(text\)/);
   assert.match(prompt, /createComposerAction\(entry\)/);
-  assert.match(prompt, /detail-analysis-menu/);
-  assert.match(prompt, /完善分析/);
-  assert.match(promptDisplay, /section\.append\(\s*heading,\s*rawTextEl\("pre",[\s\S]*?coreActions\s*\)/);
-  assert.match(promptDisplay, /if \(activeVideo && !entry\.compoundCase\) section\.append\(createVideoAnalysisWorkspace\(entry, activeVideo\)\)/);
-  assert.match(promptDisplay, /section\.append\(analysisMenu\)/);
-  assert.ok(promptDisplay.indexOf("createVideoAnalysisWorkspace") < promptDisplay.indexOf("section.append(analysisMenu)"));
-  assert.match(rule(styles, ".detail-core-actions"), /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.doesNotMatch(prompt, /detail-analysis-menu/);
+  assert.doesNotMatch(prompt, /完善分析/);
+  assert.doesNotMatch(prompt, /detail-analysis-actions/);
+  assert.match(prompt, /section\.append\(createPromptPanel\(/);
+  assert.match(prompt, /return createMediaPromptSection\(entry, activeAsset, options\)/);
+  assert.match(prompt, /actions\.unshift\(analyze\)/);
+  assert.match(prompt, /coreActions\.append\(createComposerAction\(entry\)\)/);
+  assert.match(rule(styles, ".detail-core-actions"), /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+});
+
+test("video detail exposes one reverse-prompt action and no history or per-run prompt controls", async () => {
+  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const workspace = source.slice(
+    source.indexOf("function createVideoAnalysisWorkspace"),
+    source.indexOf("function createVideoAnalysisTaskStatus")
+  );
+  assert.match(workspace, /逆推视频提示词/);
+  assert.equal((workspace.match(/startVideoAnalysis\(/g) ?? []).length, 1);
+  assert.doesNotMatch(workspace, /creative-breakdown|ad-review|custom|createVideoAnalysisHistory|video-analysis-instruction|同时生成 AI 标签/);
 });

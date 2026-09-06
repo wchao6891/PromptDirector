@@ -1,4 +1,5 @@
 import { detectLocalMediaFile, extractLocalDocumentText } from "./local-media.js";
+import { assetFileAccept } from "./asset-formats.js";
 import {
   hasCompleteReferenceAnalysis,
   referenceHasPromptText,
@@ -11,7 +12,7 @@ export const TEMP_REFERENCE_SOURCE_TYPES = Object.freeze({
 });
 
 export const TEMP_REFERENCE_FILE_ACCEPT = Object.freeze([
-  ".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf", ".txt", ".md", ".html"
+  ".png", ".jpg", ".jpeg", ".webp", ".gif", assetFileAccept({ kinds: ["video"] }), ".pdf", ".txt", ".md", ".html"
 ].join(","));
 
 export function composerPasteFiles(transfer) {
@@ -43,10 +44,10 @@ export function namePastedTempReferenceFile(file, fallbackName = "pasted-file") 
 
 export function validateTempReferenceFile(file) {
   try {
-    return detectLocalMediaFile(file, { allowVideo: false });
+    return detectLocalMediaFile(file, { allowVideo: true, allowAudio: false, allowAttachment: false });
   } catch (error) {
     if (error?.message === "暂不支持这种文件格式") {
-      throw new Error("仅支持 PNG、JPEG、WebP、GIF、PDF、TXT、MD 和 HTML");
+      throw new Error("仅支持已注册的图片、视频、PDF、TXT、MD 和 HTML 格式");
     }
     throw error;
   }
@@ -70,7 +71,7 @@ export function createTempReference({ file, assetId, referenceId, alias, extract
     alias: normalizedAlias,
     title: file.name,
     sourceType: TEMP_REFERENCE_SOURCE_TYPES.temporary,
-    referenceKind: format.kind === "image" ? "reference" : "prompt",
+    referenceKind: format.kind === "video" ? "video_sources" : format.kind === "image" ? "reference" : "prompt",
     referenceText: String(extractedText ?? "").trim(),
     originalText: String(extractedText ?? "").trim(),
     assetRefs: [assetRef],

@@ -27,22 +27,19 @@ test("temporary-reference analysis checks the active Attempt again before writin
   assert.match(action, /priority/);
 });
 
-test("video analysis uses the persisted Attempt, shared scheduler, and one no-retry execution path", () => {
+test("video analysis is dispatched to Offscreen and the service worker never owns the provider request", () => {
   const runner = background.slice(
     background.indexOf("async function runAnalysisTask"),
     background.indexOf("async function recoverAnalysisTasks")
   );
-  const video = background.slice(
-    background.indexOf("async function analyzeEntryVideoTaskAction"),
-    background.indexOf("async function updateVideoReconstructionPrompt")
-  );
   assert.match(runner, /claimed\.request\.kind === "entry_video"/);
-  assert.match(video, /const requestId = String\(message\.attemptId/);
-  assert.match(video, /scheduleAnalysis\(/);
-  assert.match(video, /analysisTaskAttemptIsActive/);
-  assert.match(video, /requestId,/);
-  assert.match(video, /maxOutputTokens:\s*sendRoute\.maxOutputTokens/);
-  assert.doesNotMatch(video, /runScheduledAnalysisWithRetries/);
+  assert.match(runner, /dispatchVideoAnalysisTask/);
+  assert.match(background, /type: "RUN_VIDEO_ANALYSIS"/);
+  assert.match(background, /case "UPDATE_VIDEO_ANALYSIS_PROGRESS"/);
+  assert.match(background, /case "COMPLETE_VIDEO_ANALYSIS"/);
+  assert.match(background, /case "FAIL_VIDEO_ANALYSIS"/);
+  assert.doesNotMatch(background, /async function analyzeEntryVideoTaskAction/);
+  assert.doesNotMatch(background, /VIDEO_ANALYSIS_ADAPTERS/);
   assert.doesNotMatch(background, /case "ANALYZE_ENTRY_VIDEO"/);
 });
 
@@ -55,9 +52,9 @@ test("analysis runner ownership is always released when settlement persistence f
 });
 
 test("video batch settlement is serialized and service-worker recovery never resends unknown paid attempts", () => {
-  const runner = background.slice(
-    background.indexOf("async function runAnalysisTask"),
-    background.indexOf("async function analysisTaskAttemptIsActive")
+  const completion = background.slice(
+    background.indexOf("async function completeVideoAnalysisAction"),
+    background.indexOf("async function updateVideoReconstructionPrompt")
   );
   const startup = background.slice(
     background.indexOf("scheduleLibraryMaintenanceRunner()"),
@@ -67,7 +64,7 @@ test("video batch settlement is serialized and service-worker recovery never res
     background.indexOf("async function recoverVideoBatchExecutionState"),
     background.indexOf("async function analysisTaskAttemptIsActive")
   );
-  assert.match(runner, /enqueue\(\(\) => settleVideoBatchTask/);
+  assert.match(completion, /enqueue\(\(\) => settleVideoBatchTask/);
   assert.match(startup, /await recoverAnalysisTasks\(\);\s*await recoverVideoBatchExecutionState\(\);\s*scheduleAnalysisBatchRunner\(\)/);
   assert.match(recovery, /上次执行状态未知，未自动重试/);
   assert.match(recovery, /candidate\.id === item\.taskId/);
@@ -103,14 +100,11 @@ test("video batches exclude busy assets and never join an unrelated single-item 
   assert.match(runner, /routeProviderId: prepared\.job\.providerId/);
   assert.match(runner, /routeModel: prepared\.job\.model/);
   assert.match(runner, /sourceKind: claim\.sourcePlan/);
-  const video = background.slice(
-    background.indexOf("async function analyzeEntryVideoTaskAction"),
+  const dispatch = background.slice(
+    background.indexOf("async function dispatchVideoAnalysisTask"),
     background.indexOf("async function updateVideoReconstructionPrompt")
   );
-  assert.match(video, /videoAnalysisRouteMatches\(requestRouteSnapshot, route\)/);
-  assert.match(video, /message\.sourceKind === "local-video" \? ""/);
-  assert.match(video, /message\.sourceKind === "local-video" \? false/);
-  assert.match(video, /const sendConfiguration = await loadAiConfiguration\(\)/);
-  assert.match(video, /videoAnalysisRouteMatches\(route, sendRoute\)/);
-  assert.ok(video.indexOf("const sendConfiguration = await loadAiConfiguration()") < video.indexOf("return analyzeVideo({"));
+  assert.match(dispatch, /videoAnalysisRouteMatches\(requestRouteSnapshot, route\)/);
+  assert.match(dispatch, /type: "RUN_VIDEO_ANALYSIS"/);
+  assert.match(dispatch, /deadlineAt/);
 });

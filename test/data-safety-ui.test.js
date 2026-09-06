@@ -78,7 +78,7 @@ test("share-package import is separate from the two backup actions while sync st
   assert.match(panel, /id="restore-library-replacement-point"[^>]*hidden/);
 });
 
-test("share-package import preserves local configuration and accepts historical package versions", async () => {
+test("share-package batch import preserves local configuration and accepts historical package versions", async () => {
   const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
   const parser = await readFile(new URL("../library-package.js", import.meta.url), "utf8");
   const migrations = await readFile(new URL("../library-package-migrations.js", import.meta.url), "utf8");
@@ -87,13 +87,46 @@ test("share-package import preserves local configuration and accepts historical 
     library.indexOf("async function importSharedLibraryPackage"),
     library.indexOf("function backupMediaPaths")
   );
-  assert.match(action, /PREVIEW_LIBRARY_IMPORT/);
-  assert.match(action, /APPLY_LIBRARY_IMPORT/);
+  assert.match(action, /PREVIEW_LIBRARY_IMPORT_BATCH/);
+  assert.match(action, /APPLY_LIBRARY_IMPORT_BATCH/);
   assert.equal((action.match(/preserveLibraryConfiguration:\s*true/g) ?? []).length, 1);
-  assert.match(action, /plan:\s*preview\.plan/);
+  assert.match(action, /plan:\s*batch\.preview\.plan/);
+  assert.match(action, /multiple|files\s*=\s*\[\.\.\.\(elements\.libraryPackageFile\.files/);
   assert.match(parser, /prepareLibraryPackageDraft\(value\)/);
   assert.match(migrations, /isSupportedLibraryPackageVersion\(value\.version\)/);
   assert.match(format, /SUPPORTED_LIBRARY_PACKAGE_VERSIONS\s*=\s*Object\.freeze\(\[1, 2, 3, 4, 5\]\)/);
+});
+
+test("multi-ZIP import uses one wide preflight with blocking failures and one batch apply", async () => {
+  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const dialog = html.slice(
+    html.indexOf('id="library-package-import-dialog"'),
+    html.indexOf('id="drawer-backdrop"')
+  );
+  const flow = library.slice(
+    library.indexOf("async function openLibraryPackageBatch"),
+    library.indexOf("function createLibraryImportOperationId")
+  );
+
+  assert.match(html, /id="library-package-file"[^>]*multiple/);
+  assert.match(dialog, /library-package-import-package-count/);
+  assert.match(dialog, /library-package-import-case-count/);
+  assert.match(dialog, /library-package-import-project-count/);
+  assert.match(dialog, /library-package-import-media-count/);
+  assert.match(dialog, /library-package-import-byte-size/);
+  assert.doesNotMatch(dialog, /library-package-import-select-all/);
+  assert.doesNotMatch(dialog, /library-package-import-remove/);
+  assert.match(dialog, /class="data-safety-actions import-actions"/);
+  assert.doesNotMatch(dialog, /type="checkbox"/);
+  assert.match(flow, /Promise\.all\(batch\.items\.map/);
+  assert.match(flow, /PREVIEW_LIBRARY_IMPORT_BATCH/);
+  assert.match(flow, /APPLY_LIBRARY_IMPORT_BATCH/);
+  assert.match(flow, /assertStorageCapacity\(estimate, batch\.plannedBytes\)/);
+  assert.match(flow, /retryLibraryPackageItem/);
+  assert.match(flow, /removeLibraryPackageItem/);
+  assert.match(flow, /batch\.preview\?\.unresolvedConflicts/);
+  assert.match(flow, /savePortableAssetBlob\(write\.targetId, blob, \{ checkCapacity: false \}\)/);
 });
 
 test("data safety cannot be dismissed accidentally while a storage operation is running", async () => {

@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [html, source, icons] = await Promise.all([
+const [html, source, background, css, icons] = await Promise.all([
   readFile(new URL("../library.html", import.meta.url), "utf8"),
   readFile(new URL("../library.js", import.meta.url), "utf8"),
+  readFile(new URL("../background.js", import.meta.url), "utf8"),
+  readFile(new URL("../library.css", import.meta.url), "utf8"),
   readFile(new URL("../assets/ui-icons.svg", import.meta.url), "utf8")
 ]);
 
@@ -17,6 +19,7 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
     "selection-add-labels",
     "selection-project-target",
     "selection-add-project",
+    "selection-move-project",
     "selection-remove-project",
     "share-export",
     "selection-trash"
@@ -37,6 +40,26 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
   assert.match(source, /LIBRARY_BATCH_ACTIONS\.moveToTrash/);
   assert.match(source, /elements\.selectionSelectFiltered\.hidden = selectedCaseIds\.size > 0/);
   assert.match(source, /elements\.selectionSelectedActions\.hidden = selectedCaseIds\.size === 0/);
+});
+
+test("batch project management uses a wide source-aware move surface and one atomic create action", () => {
+  const panel = html.slice(html.indexOf('id="selection-project-menu"'), html.indexOf('id="share-export"'));
+  assert.match(panel, /id="selection-project-impact"/);
+  assert.match(panel, /id="selection-move-project"[\s\S]*>移动</);
+  assert.match(panel, /id="selection-add-project"[\s\S]*>同时加入</);
+  assert.match(panel, /id="selection-remove-project"[\s\S]*>移出当前项目</);
+  assert.doesNotMatch(panel, /所选项目作为父项目/);
+  assert.match(css, /\.project-menu-panel\.selection-project-panel\s*\{[^}]*width:\s*min\(430px/);
+  assert.match(css, /\.selection-project-actions\s*\{[^}]*repeat\(auto-fit,\s*minmax\(120px,\s*1fr\)\)/);
+  assert.match(css, /\.selection-project-actions button\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(source, /sourceCollectionId: mode === "move" \? selectedCollectionId : null/);
+  const create = source.slice(source.indexOf("async function createProjectFromSelection"), source.indexOf("async function analyzeSelectedCases"));
+  assert.match(create, /type: "CREATE_COLLECTION_FROM_SELECTION"/);
+  assert.doesNotMatch(create, /type: "CREATE_COLLECTION"|type: "REPLACE_COLLECTION_ENTRIES"/);
+  const batch = background.slice(background.indexOf("async function batchSetProject"), background.indexOf("async function updateOrganizer"));
+  assert.match(batch, /moveEntriesBetweenCollections/);
+  assert.doesNotMatch(batch, /mode === "move"\) organizerState = removeEntriesFromOrganizer/);
+  assert.match(background, /case "CREATE_COLLECTION_FROM_SELECTION"/);
 });
 
 test("recycle bin is a first-class workspace action with restore and explicit permanent cleanup", () => {

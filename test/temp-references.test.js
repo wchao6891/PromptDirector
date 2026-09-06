@@ -7,6 +7,7 @@ import {
   extractTempReferenceText,
   imageTempReferenceBlock,
   namePastedTempReferenceFile,
+  tempReferenceAssetIds,
   unreadReferenceImageAssets,
   validateTempReferenceFile
 } from "../temp-references.js";
@@ -32,6 +33,21 @@ test("ordinary text paste remains the browser's default behavior", () => {
   assert.deepEqual(composerPasteFiles(clipboard), []);
 });
 
+test("a local MP4 can be attached as a temporary Composer video reference", () => {
+  const file = new File([new Uint8Array([0, 1, 2, 3])], "reference.mp4", { type: "video/mp4" });
+  const reference = createTempReference({
+    file,
+    assetId: "video-asset",
+    referenceId: "temp-reference:video",
+    alias: "@参考1"
+  });
+
+  assert.equal(validateTempReferenceFile(file).kind, "video");
+  assert.equal(reference.referenceKind, "video_sources");
+  assert.deepEqual(reference.assetRefs, [{ assetId: "video-asset", kind: "video", mimeType: "video/mp4", name: "reference.mp4", byteSize: 4 }]);
+  assert.deepEqual(tempReferenceAssetIds(reference), ["video-asset"]);
+});
+
 test("an unnamed clipboard image receives a format-derived name before validation", () => {
   const pasted = namePastedTempReferenceFile(new File(["image"], "", { type: "image/png" }), "paste-one");
   assert.equal(pasted.name, "paste-one.png");
@@ -49,11 +65,7 @@ test("the composer accepts its documented image and document formats", () => {
   }
 });
 
-test("video and files disguised with a mismatched extension are rejected", () => {
-  assert.throws(
-    () => validateTempReferenceFile(new File(["video"], "clip.mp4", { type: "video/mp4" })),
-    /暂不支持视频/
-  );
+test("files disguised with a mismatched extension are rejected", () => {
   assert.throws(
     () => validateTempReferenceFile(new File(["image"], "frame.png", { type: "text/html" })),
     /扩展名和文件格式不一致/

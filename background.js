@@ -1,4 +1,7 @@
+import { collectLibTvPublicPayload, normalizeLibTvPublicPayload } from "./libtv-capture.js";
+import { updateArticleText } from "./article-edit.js";
 import { showPageToast } from "./capture-region.js";
+import { analysisRequestCounts } from "./analysis-retry-policy.js";
 import { articleDocumentText, finalizeArticleDocumentAssets } from "./article-document.js";
 import {
   classifyContent,
@@ -92,7 +95,8 @@ import {
   failAnalysisAttempt,
   retryAnalysisAttempt,
   startAnalysisAttempt,
-  stopAnalysisTask
+  stopAnalysisTask,
+  updateAnalysisTaskProgress
 } from "./analysis-tasks.js";
 import {
   analysisTaskById,
@@ -125,6 +129,7 @@ import {
   saveScreenshotBlob
 } from "./image-store.js";
 import {
+  savePortableAssetBlob,
   deleteMediaBlob,
   deleteMediaBlobs,
   getAllDerivedMetadata,
@@ -171,9 +176,11 @@ import {
 import {
   addEntryMedia,
   addTimeNote,
+  currentVideoReconstruction,
   editCurrentVideoReconstruction,
   entryMediaAssets,
   normalizeEntryMedia,
+  replaceCurrentVideoReconstruction,
   removeTimeNote,
   setEntryMediaPrompt,
   setPrimaryMedia,
@@ -203,7 +210,8 @@ import {
 import {
   LIBRARY_TRANSFER_MODES,
   LIBRARY_TRANSFER_SOURCES,
-  planLibraryTransfer
+  planLibraryTransfer,
+  planLibraryTransferBatch
 } from "./library-transfer.js";
 import {
   claimLibraryImportTransaction,
@@ -224,6 +232,7 @@ import {
   collectionPathLabel,
   collectionSelectorLabelsById,
   moveCollection,
+  moveEntriesBetweenCollections,
   normalizeOrganizerState,
   removeEntriesFromOrganizer,
   reorderCollections,
@@ -301,6 +310,9 @@ import {
   normalizePageCaptureSitePayload
 } from "./page-capture-site-adapters.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
+import { downloadPageCaptureVideo } from "./page-capture-video.js";
+import { planPageCaptureRepair, mergePageCaptureRepair } from "./page-capture-repair.js";
+import { collectPageCaptureDownloads } from "./page-capture-downloads.js";
 import {
   discardPageSessionMedia,
   PAGE_SESSION_MEDIA_CHUNK_BYTES,
@@ -329,10 +341,8 @@ import {
   videoAnalysisRouteMatches
 } from "./ai-runtime.js";
 import {
-  analyzeVideoWithChatCompletions,
-  analyzeVideoWithGemini,
-  analyzeVideoWithOpenRouter,
   chatCompletionsVideoSourcePlan,
+  VIDEO_ANALYSIS_REQUEST_TIMEOUT_MS,
   VIDEO_RECONSTRUCTION_CONTRACT_VERSION
 } from "./video-analysis.js";
 import { detectMediaReferenceProvider } from "./media-reference-resolver.js";
@@ -468,11 +478,6 @@ const extensionUpdateLifecycle = createExtensionUpdateLifecycle({
     status
   }).catch(() => undefined)
 });
-const VIDEO_ANALYSIS_ADAPTERS = Object.freeze({
-  gemini: analyzeVideoWithGemini,
-  chat_completions: analyzeVideoWithChatCompletions,
-  openrouter: analyzeVideoWithOpenRouter
-});
 let activePageCapture = null;
 let syncApplyInProgress = false;
 const manualSyncController = createManualSyncController({
@@ -502,6 +507,7 @@ const AUTOMATIC_VISION_ALARM = "prompt-director-automatic-vision";
 const ANALYSIS_BATCH_ALARM = "prompt-director-analysis-batch";
 const ANALYSIS_TASK_ALARM = "prompt-director-analysis-task";
 const IMPORT_JOB_ALARM = "prompt-director-local-import";
+const ANALYSIS_TASK_STORAGE_LOCK = "promptdirector-analysis-task-storage";
 const MAINTENANCE_SLICE_TARGET_MS = 250;
 const captureRuntime = createCaptureWorkspace({
   chromeApi: chrome,
@@ -675,7 +681,7 @@ async function handleMessage(message, interaction = {}) {
     case "CANCEL_REGION_CAPTURE":
       return captureRuntime.dispatch("cancel-region-capture", { sessionId: message.sessionId });
     case "START_PAGE_CAPTURE":
-      return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount));
+      return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount, message.requestId));
     case "CANCEL_PAGE_CAPTURE":
       return cancelPageCapture(message.sessionId);
     case "PREVIEW_PAGE_CAPTURE_REGION":
@@ -736,6 +742,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => deleteEntryMedia(message.entryId, message.assetId));
     case "ADD_UPLOADED_MEDIA":
       return enqueue(async () => addUploadedMedia(message.entryId, message.asset, message.posterAsset));
+    case "ENSURE_VIDEO_POSTER":
+      return enqueue(async () => ensureEntryVideoPoster(message.entryId, message.assetId));
     case "CREATE_MEDIA_CASE":
       return enqueue(async () => createMediaCase(message.asset, message.posterAsset, message.title, message.text));
     case "CREATE_MEDIA_REFERENCE":
@@ -772,6 +780,10 @@ async function handleMessage(message, interaction = {}) {
       }));
     case "APPLY_LIBRARY_IMPORT":
       return enqueue(async () => applyLibraryImport(await readState(), message));
+    case "PREVIEW_LIBRARY_IMPORT_BATCH":
+      return enqueue(async () => previewLibraryImportBatch(await readState(), message));
+    case "APPLY_LIBRARY_IMPORT_BATCH":
+      return enqueue(async () => applyLibraryImportBatch(await readState(), message));
     case "PREVIEW_CURATED_IMPORT":
       return enqueue(async () => previewCuratedImport(await readState(), message));
     case "APPLY_CURATED_IMPORT":
@@ -852,6 +864,12 @@ async function handleMessage(message, interaction = {}) {
       return stopAnalysisTaskAction(message);
     case "RETRY_ANALYSIS_TASK":
       return retryAnalysisTaskAction(message);
+    case "UPDATE_VIDEO_ANALYSIS_PROGRESS":
+      return persistAnalysisTaskProgress(message.taskId, message.attemptId, message.phase, message);
+    case "COMPLETE_VIDEO_ANALYSIS":
+      return completeVideoAnalysisAction(message);
+    case "FAIL_VIDEO_ANALYSIS":
+      return failVideoAnalysisAction(message);
     case "CREATE_CREATIVE_SKILL":
       return enqueue(async () => createCreativeSkillAction(message));
     case "SAVE_CREATIVE_SKILL_VERSION":
@@ -917,6 +935,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => updateVideoReconstructionPrompt(message));
     case "UPDATE_VISION_RECONSTRUCTION_PROMPT":
       return enqueue(async () => updateVisionReconstructionPrompt(message.entryId, message.visualId, message.reconstructionPrompt));
+    case "UPDATE_ENTRY_ARTICLE_TEXT":
+      return enqueue(async () => updateCaseArticle(message));
     case "UPDATE_ENTRY_TEXT":
       return enqueue(async () => updateCaseText(message));
     case "UPDATE_ENTRY_MEDIA_PROMPT":
@@ -933,6 +953,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => batchAddCustomLabels(message));
     case "BATCH_SET_PROJECT":
       return enqueue(async () => batchSetProject(message));
+    case "CREATE_COLLECTION_FROM_SELECTION":
+      return enqueue(async () => createCollectionFromSelection(message));
     case "UNDO_VISION_ANALYSIS":
       return enqueue(async () => undoEntryVisionAnalysis(message.entryId));
     case "UNDO_LAST":
@@ -1126,7 +1148,7 @@ async function captureWorkspace() {
   };
 }
 
-async function startPageCapture(mode = "loaded", targetCountValue = 0) {
+async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId = "") {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) {
     return { ok: false, message: RESTRICTED_PAGE_MESSAGE };
@@ -1138,7 +1160,7 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0) {
     ? Math.min(PAGE_CAPTURE_LIMITS.maxCandidates, Math.max(1, Math.trunc(Number(targetCountValue) || 1)))
     : 0;
   activePageCapture = { sessionId, tabId: tab.id, cancelled: false };
-  await chrome.runtime.sendMessage({ type: "PAGE_CAPTURE_CHANGED", sessionId, phase: mode === "whole" || listMode ? "scanning" : "starting" }).catch(() => undefined);
+  await chrome.runtime.sendMessage({ type: "PAGE_CAPTURE_CHANGED", sessionId, requestId, phase: mode === "whole" || listMode ? "scanning" : "starting" }).catch(() => undefined);
   const originalUrl = tab.url;
   let result = null;
   let stopReason = "";
@@ -1208,7 +1230,7 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0) {
       } catch {
       }
     }
-    activePageCapture = null;
+    if (activePageCapture?.sessionId === sessionId) activePageCapture = null;
   }
   const batch = normalizePageCaptureBatch({
     ...result?.result,
@@ -1240,6 +1262,21 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0) {
 
 async function collectPageCaptureTab(tab, options) {
   let siteData = await readPageCaptureSiteData(tab);
+  if (activePageCapture?.sessionId === options.sessionId && activePageCapture.cancelled) return { candidates: [] };
+  const adapter = PAGE_CAPTURE_ADAPTERS.find((item) => item.id === siteData?.adapter);
+  let downloads = { items: [], failures: 0 };
+  if (adapter?.fields?.downloadButtons) {
+    const [downloadResult] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: "MAIN", func: collectPageCaptureDownloads,
+      args: [{ contentSelector: adapter.fields.content[0], containerSelector: adapter.fields.mediaContainers[0],
+        buttonSelector: adapter.fields.downloadButtons, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
+        maxBytes: PORTABLE_LIBRARY_LIMITS.maxFileBytes, maxPayloadBytes: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes,
+        timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
+        extensions: ["md", "markdown", "txt", "pdf", "html", "htm", "rtf", "skill"] }]
+    });
+    downloads = downloadResult?.result || { items: [], failures: 1 };
+  }
+  if (activePageCapture?.sessionId === options.sessionId && activePageCapture.cancelled) return { candidates: [] };
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     files: ["vendor/document-ingestion/Readability.js"]
@@ -1257,8 +1294,10 @@ async function collectPageCaptureTab(tab, options) {
       maxContentTargets: PAGE_CAPTURE_QUALITY_LIMITS.maxContentTargetsPerCandidate,
       maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
       maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
+      mediaTimeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
       maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
       editedRegion: options.editedRegion || null,
+      downloads,
       siteData
     }]
   });
@@ -1324,14 +1363,14 @@ async function readPageCaptureSiteData(tab, { installObserver = true } = {}) {
     const [sitePayloadResult] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: "MAIN",
-      func: collectPageCaptureSitePayload,
+      func: /(^|\.)liblib\.tv$/u.test(new URL(tab.url).hostname) ? collectLibTvPublicPayload : collectPageCaptureSitePayload,
       args: [{
         maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates,
         maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
         maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes
       }]
     });
-    return normalizePageCaptureSitePayload(sitePayloadResult?.result, tab.url);
+    return sitePayloadResult?.result?.adapter === "libtv" ? normalizeLibTvPublicPayload(sitePayloadResult.result) : normalizePageCaptureSitePayload(sitePayloadResult?.result, tab.url);
   } catch {
     return null;
   }
@@ -1760,46 +1799,59 @@ async function commitPageCapture(batchValue) {
   let metadataCommitted = false;
   try {
     for (const candidate of selected) {
-      const duplicate = entries.find((entry) => entry.url === candidate.canonicalUrl
-        || (candidate.sourceFacts.itemId && entry.sourceFacts?.provider === candidate.sourceFacts.provider && entry.sourceFacts?.itemId === candidate.sourceFacts.itemId));
-      if (duplicate) {
+      const duplicate = entries.find(entry => candidate.sourceFacts.itemId && entry.sourceFacts?.itemId && entry.sourceFacts?.provider === candidate.sourceFacts.provider
+        ? entry.sourceFacts.itemId === candidate.sourceFacts.itemId : entry.url === candidate.canonicalUrl);
+      const repair = duplicate ? await planPageCaptureRepair(duplicate, candidate, async id => Boolean(await getMediaBlob(id))) : null;
+      const refreshedClassification = duplicate ? classifyContent({ ...duplicate, sourceFacts: candidate.sourceFacts }, state.classificationRules, state.taxonomy) : null;
+      const classificationChanged = duplicate && JSON.stringify(duplicate.classification?.pathIds) !== JSON.stringify(refreshedClassification.pathIds);
+      if (duplicate && !repair.pending.length && !repair.obsoleteReferences.size && duplicate.sourceFacts?.pageType === candidate.pageType && !classificationChanged) {
         results.push({ candidateId: candidate.id, status: "duplicate", entryId: duplicate.id, title: duplicate.title });
         continue;
       }
       const mediaAssets = [];
-      const articleAssetIds = new Map();
+      const articleAssetIds = new Map(repair?.assetIds);
       const warnings = [];
-      for (const media of candidate.media) {
-        if (media.kind === "document") {
-          if (!isSupportedDocumentMimeType(media.mimeType)) {
+      if (candidate.extraction?.pendingMediaCount) {
+        warnings.push(`正文仍有 ${candidate.extraction.pendingMediaCount} 项媒体未加载，已保存当前可用内容，请回到来源页面核对`);
+      }
+      for (const media of repair?.pending || candidate.media) {
+        if (["document", "attachment"].includes(media.kind)) {
+          if (!(media.kind === "attachment" ? /\.skill$/iu.test(media.filename) && media.mimeType === "application/zip" : isSupportedDocumentMimeType(media.mimeType))) {
             warnings.push(`${media.filename || media.alt || media.url}：已保留来源链接，未知或高风险文件不会自动下载`);
             continue;
           }
-          const assetId = crypto.randomUUID();
+          const assetId = repair?.matched.get(media.id)?.id || crypto.randomUUID();
           try {
-            const blob = await fetchBoundedMedia(media.url, {
-              kind: "document",
+            const documentOptions = {
+              kind: media.kind,
               expectedMimeType: media.mimeType,
               maxBytes: PORTABLE_LIBRARY_LIMITS.maxFileBytes,
               timeoutMs: 60_000,
-              accept: "application/pdf,text/markdown,text/plain,text/html,application/rtf,text/rtf,application/x-rtf"
-            });
+              accept: "application/zip,application/pdf,text/markdown,text/plain,text/html,application/rtf,text/rtf,application/x-rtf"
+            };
+            const blob = media.downloadDataUrl
+              ? await boundedMediaBlobFromResponse(await fetch(media.downloadDataUrl), documentOptions)
+              : await fetchBoundedMedia(media.url, documentOptions);
             const contentHash = await sha256Blob(blob);
             const existing = entries.flatMap(entryMediaAssets).find((asset) => asset.contentHash === contentHash);
-            if (existing) {
-              if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push(existing);
+            if (existing && await getMediaBlob(existing.id)) {
+              if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push({ ...existing,
+                sourceUrl: media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
+                sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
+                originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl
+              });
               articleAssetIds.set(media.id, existing.id);
-              warnings.push(`已复用重复文档：${media.filename || media.alt || media.url}`);
               continue;
             }
-            await saveMediaBlob(assetId, blob);
+            await (media.kind === "attachment" ? savePortableAssetBlob : saveMediaBlob)(assetId, blob);
             savedAssetIds.push(assetId);
             const documentAsset = {
               id: assetId,
-              kind: "document",
+              kind: media.kind,
               storageMode: "managed",
               sourceUrl: media.url,
               sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
+              ...(media.kind === "attachment" ? { sourceFormat: "skill" } : {}),
               sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
               originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl,
               mimeType: blob.type,
@@ -1821,7 +1873,7 @@ async function commitPageCapture(batchValue) {
           const provider = detectMediaReferenceProvider(referenceUrl);
           const playbackMode = ["youtube", "vimeo", "bilibili", "douyin", "x"].includes(provider) ? "embed" : "source";
           const videoAsset = {
-            id: crypto.randomUUID(),
+            id: repair?.matched.get(media.id)?.id || crypto.randomUUID(),
             kind: "video",
             storageMode: "reference",
             sourceUrl: referenceUrl,
@@ -1835,11 +1887,72 @@ async function commitPageCapture(batchValue) {
             reference: { url: referenceUrl, provider, playbackMode },
             reviewStatus: "verified"
           };
+          try {
+            const blob = await downloadPageCaptureVideo(media.url, {
+              declaredVideo: ["site-original", "video-element"].includes(media.sourceKind)
+            });
+            if (blob) {
+              const contentHash = await sha256Blob(blob);
+              const existing = [...entries.flatMap(entryMediaAssets), ...mediaAssets]
+                .find((asset) => asset.kind === "video" && asset.storageMode === "managed" && asset.contentHash === contentHash);
+              if (existing && await getMediaBlob(existing.id)) {
+                if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push({ ...existing,
+                sourceUrl: media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
+                sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
+                originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl
+              });
+                const poster = entries.flatMap(entryMediaAssets).find(asset => asset.id === existing.posterAssetId);
+                if (poster && !mediaAssets.some(asset => asset.id === poster.id)) mediaAssets.push(poster);
+                articleAssetIds.set(media.id, existing.id);
+                continue;
+              }
+              await saveMediaBlob(videoAsset.id, blob);
+              savedAssetIds.push(videoAsset.id);
+              Object.assign(videoAsset, {
+                storageMode: "managed", mimeType: blob.type, byteSize: blob.size,
+                contentHash, playbackCapability: "unknown"
+              });
+              delete videoAsset.reference;
+              try {
+                const prepared = await prepareStoredVideoPoster(videoAsset);
+                Object.assign(videoAsset, prepared.metadata);
+                if (prepared.poster) {
+                  savedAssetIds.push(prepared.poster.id);
+                  mediaAssets.push(prepared.poster);
+                  videoAsset.posterAssetId = prepared.poster.id;
+                } else warnings.push(`${media.alt || candidate.title}：视频已保存，封面暂未生成`);
+              } catch (error) {
+                warnings.push(`${media.alt || candidate.title}：视频已保存，封面生成失败（${userMessage(error)}）`);
+              }
+            } else if (playbackMode === "source") {
+              warnings.push(`${media.alt || candidate.title}：来源未提供直接视频文件，已保留在线来源`);
+            }
+          } catch (error) {
+            warnings.push(`${media.alt || candidate.title}：视频本地副本未保存，已保留来源链接（${userMessage(error)}）`);
+          }
+          if (!videoAsset.posterAssetId && media.posterUrl) {
+            try {
+              const posterBlob = await fetchBoundedMedia(media.posterUrl, {
+                kind: "image", maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+                maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels, timeoutMs: 60_000
+              });
+              const posterId = crypto.randomUUID();
+              await saveMediaBlob(posterId, posterBlob);
+              savedAssetIds.push(posterId);
+              mediaAssets.push({ id: posterId, kind: "image", usage: "poster", storageMode: "managed",
+                derivedFromAssetId: videoAsset.id, sourceUrl: media.posterUrl,
+                sourceTitle: candidate.title, mimeType: posterBlob.type, byteSize: posterBlob.size,
+                capturedAt: videoAsset.capturedAt, reviewStatus: "verified" });
+              videoAsset.posterAssetId = posterId;
+            } catch (error) {
+              warnings.push(`${media.alt || candidate.title}：来源封面未保存（${userMessage(error)}）`);
+            }
+          }
           mediaAssets.push(videoAsset);
           articleAssetIds.set(media.id, videoAsset.id);
           continue;
         }
-        const assetId = crypto.randomUUID();
+        const assetId = repair?.matched.get(media.id)?.id || crypto.randomUUID();
         try {
           const resolved = await resolvePageCaptureImage(media, {
             sessionMediaAllowed: batch.sessionMediaAllowed,
@@ -1861,10 +1974,13 @@ async function commitPageCapture(batchValue) {
           const blob = resolved.blob;
           const contentHash = await sha256Blob(blob);
           const existing = entries.flatMap(entryMediaAssets).find((asset) => asset.contentHash === contentHash);
-          if (existing) {
-            if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push(existing);
+          if (existing && await getMediaBlob(existing.id)) {
+            if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push({ ...existing,
+                sourceUrl: media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
+                sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
+                originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl
+              });
             articleAssetIds.set(media.id, existing.id);
-            warnings.push(`已复用重复媒体：${media.alt || media.url}`);
             continue;
           }
           await saveMediaBlob(assetId, blob);
@@ -1893,9 +2009,18 @@ async function commitPageCapture(batchValue) {
           warnings.push(`${media.alt || media.url}：${userMessage(error)}`);
         }
       }
+      if (duplicate) {
+        const repaired = mergePageCaptureRepair(duplicate, candidate, repair, mediaAssets, articleAssetIds);
+        const entry = normalizeEntryMedia({ ...repaired,
+          classification: classifyContent(repaired, state.classificationRules, state.taxonomy)
+        });
+        entries = entries.map(item => item.id === entry.id ? entry : item);
+        results.push({ candidateId: candidate.id, status: warnings.length ? "partial" : "saved", repaired: true, entryId: entry.id, title: entry.title, warnings });
+        continue;
+      }
       const articleText = articleDocumentText(candidate.articleDocument);
       const base = buildEntry({
-        text: articleText || candidate.contentText || candidate.excerpt,
+        text: articleText || candidate.contentText || (candidate.sourceFacts.originalPromptAvailable === false ? "" : candidate.excerpt),
         title: candidate.title,
         url: candidate.canonicalUrl,
         allowEmptyText: mediaAssets.length > 0
@@ -1912,8 +2037,11 @@ async function commitPageCapture(batchValue) {
         sourceFacts: candidate.sourceFacts,
         sourcePages: [{ url: candidate.canonicalUrl, title: candidate.title }],
         mediaAssets,
-        primaryMediaId: mediaAssets.find((asset) => asset.kind === "image")?.id || mediaAssets[0]?.id || "",
-        classification: classifyContent({ ...base, mediaAssets: classificationMediaAssets }, state.classificationRules, state.taxonomy),
+        primaryMediaId: (candidate.pageType === "video"
+          ? mediaAssets.find((asset) => asset.kind === "video")
+          : mediaAssets.find((asset) => asset.kind === "image" && asset.usage !== "poster"))?.id
+          || mediaAssets.find((asset) => asset.usage !== "poster")?.id || "",
+        classification: classifyContent({ ...base, sourceFacts: candidate.sourceFacts, mediaAssets: classificationMediaAssets }, state.classificationRules, state.taxonomy),
         customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
         rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
       });
@@ -2183,6 +2311,38 @@ async function updateLocalAssetReferenceAction(message = {}) {
     entry,
     asset: entry.mediaAssets.find((item) => item.id === updated.asset.id)
   };
+}
+
+async function prepareStoredVideoPoster(asset) {
+  await ensureOffscreenDocument();
+  const response = await chrome.runtime.sendMessage({
+    target: "offscreen", type: "PREPARE_STORED_VIDEO_POSTER", assetId: asset.id,
+    timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs
+  });
+  if (!response?.ok) throw new Error(response?.message || "视频封面生成失败");
+  return response;
+}
+
+async function ensureEntryVideoPoster(entryId, assetId) {
+  const state = await readState();
+  const entry = findEntry(state, entryId);
+  const asset = entry.mediaAssets?.find((item) => item.id === assetId && item.kind === "video" && item.storageMode === "managed");
+  if (!asset) throw new Error("没有找到本地视频");
+  const existing = entry.mediaAssets.find((item) => item.usage === "poster" && (item.id === asset.posterAssetId || item.derivedFromAssetId === assetId));
+  if (existing && await getMediaBlob(existing.id)) return { ok: true, poster: existing };
+  const prepared = await prepareStoredVideoPoster(asset);
+  if (!prepared.poster) throw new Error("视频封面暂不可用，请打开详情查看视频");
+  try {
+    const updated = normalizeEntryMedia({ ...entry, mediaAssets: [
+      ...entry.mediaAssets.filter((item) => item.id !== existing?.id).map((item) => item.id === assetId ? { ...item, ...prepared.metadata, posterAssetId: prepared.poster.id } : item),
+      prepared.poster
+    ] });
+    await commitLocalChanges({ [STORAGE_KEYS.entries]: state.entries.map((item) => item.id === entry.id ? updated : item) });
+    return { ok: true, poster: prepared.poster };
+  } catch (error) {
+    await deleteMediaBlob(prepared.poster.id).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function addUploadedMedia(entryId, assetValue, posterValue = null) {
@@ -2852,6 +3012,13 @@ function enqueue(task) {
   return operation;
 }
 
+function withAnalysisTaskStorageLock(task) {
+  if (globalThis.navigator?.locks?.request) {
+    return navigator.locks.request(ANALYSIS_TASK_STORAGE_LOCK, task);
+  }
+  return task();
+}
+
 function enqueueCapture(task) {
   const operation = captureWriteQueue.then(task, task);
   captureWriteQueue = operation.catch(() => undefined);
@@ -2988,6 +3155,7 @@ async function readState() {
     aiServiceProfiles: publicAiServiceProfiles(aiRuntime.aiServiceProfiles),
     aiProviderRegistry: publicAiProviderRegistry(aiConfiguration.registry),
     aiTaskAssignments: aiConfiguration.assignments,
+    aiPreferences: aiConfiguration.preferences,
     composerSettings: normalizeComposerSettings(stored[STORAGE_KEYS.composerSettings]),
     composerSessions,
     composerSessionSummaries: composerSessions.map(sessionSummary),
@@ -3063,8 +3231,10 @@ async function getComposerSession(sessionId) {
 }
 
 async function startCreativeJobAction(request, jobId) {
-  if (!["create_image", "create_video"].includes(request?.session?.outputMode)) {
-    return { ok: false, message: "后台持久任务当前只用于创建图片或视频" };
+  const hasVideo = (request?.session?.referenceSnapshots ?? []).some((reference) =>
+    (reference.assetRefs ?? []).some((asset) => asset.kind === "video"));
+  if (!["create_image", "create_video"].includes(request?.session?.outputMode) && !hasVideo) {
+    return { ok: false, message: "后台持久任务用于媒体创作与视频对话" };
   }
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.creativeJobs,
@@ -3798,7 +3968,7 @@ async function saveTempReferenceAsCaseAction(message) {
 }
 
 async function startOrJoinAnalysisTaskAction(message) {
-  const created = await enqueue(async () => {
+  const created = await enqueue(() => withAnalysisTaskStorageLock(async () => {
     const stored = await chrome.storage.local.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
     if (message.kind === "entry_video" && String(message.batchJobId ?? "").trim()) {
       const busy = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]).items.find((task) =>
@@ -3824,7 +3994,7 @@ async function startOrJoinAnalysisTaskAction(message) {
     }
     await commitLocalChanges(changes, { markSyncDirty: false });
     return result;
-  });
+  }));
   if (created.created) scheduleAnalysisTaskRun(created.task.id);
   return analysisTaskResponse(created.task);
 }
@@ -3847,36 +4017,50 @@ async function getEntryVideoAnalysisTaskAction(entryIdValue, assetIdValue) {
 }
 
 async function detachAnalysisConsumerAction(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
-  const detached = detachAnalysisTaskConsumer(
-    stored[STORAGE_KEYS.analysisTasks],
-    message.taskId,
-    message.consumerId,
-    message.clientRequestId
-  );
-  await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: detached.state }, { markSyncDirty: false });
+  const detached = await withAnalysisTaskStorageLock(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const result = detachAnalysisTaskConsumer(
+      stored[STORAGE_KEYS.analysisTasks],
+      message.taskId,
+      message.consumerId,
+      message.clientRequestId
+    );
+    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: result.state }, { markSyncDirty: false });
+    return result;
+  });
   return analysisTaskResponse(detached.task);
 }
 
 async function stopAnalysisTaskAction(message) {
-  const stopped = await enqueue(async () => {
+  let activeAttemptId = "";
+  const stopped = await enqueue(() => withAnalysisTaskStorageLock(async () => {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, message.taskId);
     if (!current) throw new Error("没有找到分析任务");
+    activeAttemptId = current.activeAttemptId;
     const task = stopAnalysisTask(current);
     const next = replaceAnalysisTask(state, task);
     await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
     return task;
-  });
+  }));
   analysisTaskRunners.get(stopped.id)?.controller.abort();
+  if (stopped.request?.kind === "entry_video" && activeAttemptId) {
+    await ensureOffscreenDocument();
+    await chrome.runtime.sendMessage({
+      target: "offscreen",
+      type: "CANCEL_VIDEO_ANALYSIS",
+      taskId: stopped.id,
+      attemptId: activeAttemptId
+    }).catch(() => undefined);
+  }
   await notifyAnalysisTaskUpdated(stopped);
   return analysisTaskResponse(stopped);
 }
 
 async function retryAnalysisTaskAction(message) {
   if (message.confirmDuplicateCharge !== true) throw new Error("重新分析前必须确认可能再次计费");
-  const retried = await enqueue(async () => {
+  const retried = await enqueue(() => withAnalysisTaskStorageLock(async () => {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, message.taskId);
@@ -3887,6 +4071,9 @@ async function retryAnalysisTaskAction(message) {
     }
     const task = retryAnalysisAttempt(current, {
       attemptId: `analysis-attempt:${crypto.randomUUID()}`,
+      deadlineAt: current.request.kind === "entry_video"
+        ? new Date(Date.now() + VIDEO_ANALYSIS_REQUEST_TIMEOUT_MS).toISOString()
+        : "",
       confirmed: true
     });
     task.consumerIds = [...new Set([...task.consumerIds, String(message.consumerId ?? "").trim()].filter(Boolean))];
@@ -3894,7 +4081,7 @@ async function retryAnalysisTaskAction(message) {
     const next = replaceAnalysisTask(state, task);
     await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
     return task;
-  });
+  }));
   scheduleAnalysisTaskRun(retried.id, retried.activeAttemptId);
   return analysisTaskResponse(retried);
 }
@@ -3913,14 +4100,19 @@ async function runQueuedAnalysisTasks() {
 
 async function runAnalysisTask(taskId, preparedAttemptId = "") {
   if (analysisTaskRunners.has(taskId)) return;
-  const claimed = await enqueue(async () => {
+  const claimed = await enqueue(() => withAnalysisTaskStorageLock(async () => {
     const stored = await chrome.storage.local.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, taskId);
     if (!current) return null;
     let task = current;
     if (task.status === "queued") {
-      task = startAnalysisAttempt(task, { attemptId: `analysis-attempt:${crypto.randomUUID()}` });
+      task = startAnalysisAttempt(task, {
+        attemptId: `analysis-attempt:${crypto.randomUUID()}`,
+        deadlineAt: task.request.kind === "entry_video"
+          ? new Date(Date.now() + VIDEO_ANALYSIS_REQUEST_TIMEOUT_MS).toISOString()
+          : ""
+      });
     } else if (!preparedAttemptId || task.status !== "running" || task.activeAttemptId !== preparedAttemptId) {
       return null;
     }
@@ -3940,16 +4132,25 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
     }
     await commitLocalChanges(changes, { markSyncDirty: false });
     return task;
-  });
+  }));
   if (!claimed) return;
+  if (claimed.request.kind === "entry_video") {
+    try {
+      await dispatchVideoAnalysisTask(claimed);
+    } catch (error) {
+      await failVideoAnalysisAction({
+        taskId: claimed.id,
+        attemptId: claimed.activeAttemptId,
+        error: { message: userMessage(error), status: Number(error?.status) || 0 }
+      });
+    }
+    return;
+  }
   const controller = new AbortController();
   analysisTaskRunners.set(taskId, { attemptId: claimed.activeAttemptId, controller });
   let actionResult;
   try {
-    const execute = claimed.request.kind === "entry_video"
-      ? analyzeEntryVideoTaskAction
-      : analyzeTempReferencesAction;
-    actionResult = await execute({
+    actionResult = await analyzeTempReferencesAction({
       ...claimed.request,
       taskId: claimed.id,
       attemptId: claimed.activeAttemptId,
@@ -3977,21 +4178,54 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
     analysisTaskRunners.delete(taskId);
   }
   if (settled) await notifyAnalysisTaskUpdated(settled);
-  if (claimed.request.kind === "entry_video" && claimed.request.batchJobId) {
-    await enqueue(() => settleVideoBatchTask(claimed, actionResult)).catch((error) =>
-      console.error("PromptDirector video batch settlement failed", error));
-  }
+}
+
+async function persistAnalysisTaskProgress(taskId, attemptId, phase, options = {}) {
+  const task = await enqueue(() => withAnalysisTaskStorageLock(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    const current = analysisTaskById(state, taskId);
+    if (!current || current.activeAttemptId !== attemptId || current.status !== "running") return null;
+    const updated = updateAnalysisTaskProgress(current, {
+      attemptId,
+      phase,
+      requestBudget: options.requestBudget,
+      requestId: options.requestId,
+      diagnostic: options.diagnostic,
+      providerMayHaveAccepted: options.providerMayHaveAccepted === true
+    });
+    await commitLocalChanges({
+      [STORAGE_KEYS.analysisTasks]: replaceAnalysisTask(state, updated)
+    }, { markSyncDirty: false });
+    return updated;
+  }));
+  if (task) await notifyAnalysisTaskUpdated(task);
+  return task
+    ? { ok: true, task }
+    : { ok: false, message: "本次视频分析已经停止，迟到进度未保存" };
 }
 
 async function recoverAnalysisTasks() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
-  const current = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
-  const recovered = recoverInterruptedAnalysisTasks(current);
-  if (JSON.stringify(current) !== JSON.stringify(recovered)) {
-    await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: recovered }, { markSyncDirty: false });
-    for (const task of recovered.items.filter((item) => item.executionState === "execution_state_unknown")) {
-      await notifyAnalysisTaskUpdated(task);
+  let activeAttemptIds = [];
+  try {
+    await ensureOffscreenDocument();
+    const runner = await chrome.runtime.sendMessage({ target: "offscreen", type: "GET_VIDEO_ANALYSIS_RUNNER" });
+    if (runner?.ok) activeAttemptIds = (Array.isArray(runner.runners) ? runner.runners : [])
+      .map((item) => String(item?.attemptId ?? "").trim()).filter(Boolean);
+  } catch {
+    activeAttemptIds = [];
+  }
+  const recovered = await withAnalysisTaskStorageLock(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const current = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    const next = recoverInterruptedAnalysisTasks(current, { activeAttemptIds });
+    if (JSON.stringify(current) !== JSON.stringify(next)) {
+      await commitLocalChanges({ [STORAGE_KEYS.analysisTasks]: next }, { markSyncDirty: false });
     }
+    return next;
+  });
+  for (const task of recovered.items.filter((item) => item.executionState === "execution_state_unknown")) {
+    await notifyAnalysisTaskUpdated(task);
   }
   for (const task of recovered.items.filter((item) => item.status === "queued")) scheduleAnalysisTaskRun(task.id);
 }
@@ -4103,6 +4337,7 @@ async function analyzeTempReferencesAction(message) {
           locale,
           configuration,
           entries: stored[STORAGE_KEYS.entries],
+          signal: message.signal,
           priority: message.priority
         });
         return {
@@ -5026,6 +5261,7 @@ function aiConfigurationResponse(configuration, message) {
     message,
     aiProviderRegistry: publicAiProviderRegistry(configuration.registry),
     aiTaskAssignments: configuration.assignments,
+    aiPreferences: configuration.preferences,
     aiSettings: publicAiSettings(runtime.aiSettings),
     visionSettings: publicVisionSettings(runtime.visionSettings),
     aiServiceProfiles: publicAiServiceProfiles(runtime.aiServiceProfiles)
@@ -5229,7 +5465,8 @@ function configurationForAssignment(configuration, taskId, assignmentOverride) {
   };
 }
 
-async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredCanvas, configuration, previousAnalysis, entries = [], bypassCache = false, priority = "user_batch" }) {
+async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredCanvas, configuration, previousAnalysis, entries = [], bypassCache = false, priority = "user_batch", signal }) {
+  signal?.throwIfAborted();
   const fingerprint = await imageFingerprint(blob);
   const assignment = configuration.assignments.imageAnalysis;
   const settings = resolveVisionTaskSettings("imageAnalysis", configuration);
@@ -5256,7 +5493,9 @@ async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredC
   let coalesced = false;
   let result;
   try {
-    result = await coalesceAnalysisRequest(requestKey, () => runScheduledAnalysisWithRetries({
+    result = await coalesceAnalysisRequest(requestKey, (requestSignal) => runScheduledAnalysisWithRetries({
+      signal: requestSignal,
+      requestBudget,
       key: schedulerKey,
       concurrency: assignment.concurrency,
       priority,
@@ -5268,10 +5507,11 @@ async function analyzeVisionBlobWithScheduler({ blob, catalog, locale, measuredC
           measuredCanvas,
           previousAnalysis: null,
           settings,
+          signal: requestSignal,
           requestBudget
         });
       }
-    }), { onCoalesced: () => { coalesced = true; } });
+    }), { signal, onCoalesced: () => { coalesced = true; } });
   } catch (error) {
     error.attempts = {
       serviceRequests: coalesced ? 0 : visionPrimaryRequestCount(requestBudget),
@@ -5339,139 +5579,116 @@ async function analyzeEntryVisualSet(message) {
   return { ok: true, message: "整组图片关系分析已保存", entry: updated, analysis };
 }
 
-async function analyzeEntryVideoTaskAction(message) {
+async function dispatchVideoAnalysisTask(task) {
   const state = await readState();
-  const entry = normalizeEntryMedia(findEntry(state, message.entryId));
-  const assetId = String(message.assetId ?? "").trim() || entry.primaryMediaId;
+  const entry = normalizeEntryMedia(findEntry(state, task.request.entryId));
+  const assetId = String(task.request.assetId ?? "").trim() || entry.primaryMediaId;
   const asset = entry.mediaAssets.find((item) => item.id === assetId && item.kind === "video" && item.usage !== "poster");
-  if (!asset) return { ok: false, message: "没有找到要分析的视频" };
+  if (!asset) throw new Error("没有找到要分析的视频");
   const configuration = await loadAiConfiguration();
   const route = resolveVideoAnalysisTask(configuration);
-  if (message.protocol && message.protocol !== route.protocol) {
-    return { ok: false, message: "视频分析请求协议已经变化，未发送" };
-  }
   const requestRouteSnapshot = {
-    providerId: message.routeProviderId,
-    model: message.routeModel,
-    protocol: message.protocol,
-    endpoint: message.routeEndpoint,
-    localVideo: message.localVideo,
-    preferPublicVideoUrl: message.preferPublicVideoUrl,
-    publicVideoUrl: message.publicVideoUrl
+    providerId: task.request.routeProviderId,
+    model: task.request.routeModel,
+    protocol: task.request.protocol,
+    endpoint: task.request.routeEndpoint,
+    localVideo: task.request.localVideo,
+    preferPublicVideoUrl: task.request.preferPublicVideoUrl,
+    publicVideoUrl: task.request.publicVideoUrl
   };
-  if (message.hasRouteSnapshot === true && !videoAnalysisRouteMatches(requestRouteSnapshot, route)) {
-    return { ok: false, message: "视频分析服务的发送路径已经变化，未发送" };
+  if (task.request.hasRouteSnapshot === true && !videoAnalysisRouteMatches(requestRouteSnapshot, route)) {
+    throw new Error("视频分析服务的发送路径已经变化，未发送");
   }
-  const concurrency = configuration.assignments?.videoAnalysis?.concurrency;
-  const analyzeVideo = VIDEO_ANALYSIS_ADAPTERS[route.protocol];
-  if (!analyzeVideo) throw new Error(`${route.provider} 的视频理解请求协议当前版本尚未适配`);
-  const sourceUrl = message.sourceKind === "local-video" ? "" : asset.reference?.url || asset.sourceUrl;
-  const preferPublicVideoUrl = message.sourceKind === "local-video" ? false : route.preferPublicVideoUrl;
-  const requestId = String(message.attemptId ?? "").trim();
-  if (!requestId || !await analysisTaskAttemptIsActive(message.taskId, requestId)) {
-    return { ok: false, message: "本次视频分析已经停止，未发送" };
-  }
-  const analysis = await scheduleAnalysis(
-    `${route.providerId}:${route.model}:videoAnalysis`,
-    concurrency,
-    async () => {
-      if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
-        throw new DOMException("The operation was aborted", "AbortError");
-      }
-      const sendConfiguration = await loadAiConfiguration();
-      const sendRoute = resolveVideoAnalysisTask(sendConfiguration);
-      if (!videoAnalysisRouteMatches(route, sendRoute)
-          || (message.hasRouteSnapshot === true && !videoAnalysisRouteMatches(requestRouteSnapshot, sendRoute))) {
-        throw new Error("视频分析服务在排队期间已经变化，未发送");
-      }
-      if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
-        throw new DOMException("The operation was aborted", "AbortError");
-      }
-      const videoBlob = asset.storageMode === "managed" ? await getMediaBlob(asset.id) : null;
-      if (asset.storageMode === "managed" && !videoBlob) throw new Error("本地视频文件缺失，无法分析");
-      const sourcePlan = sendRoute.protocol === "chat_completions"
-        ? chatCompletionsVideoSourcePlan({
-            providerLabel: sendRoute.providerLabel,
-            videoBlob,
-            videoUrl: sourceUrl,
-            videoMimeType: videoBlob?.type || asset.mimeType,
-            referenceProvider: asset.reference?.provider,
-            referencePlaybackMode: asset.reference?.playbackMode,
-            localVideo: sendRoute.localVideo,
-            preferPublicVideoUrl,
-            publicVideoUrl: sendRoute.publicVideoUrl
-          }).sourceKind
-        : videoBlob ? "local-video" : "public-video-url";
-      if (message.sourceKind && message.sourceKind !== sourcePlan) {
-        throw new Error("视频来源发送方式已经变化，未发送");
-      }
-      if (message.sourceFingerprint && (!videoBlob || await videoAssetFingerprint(videoBlob) !== message.sourceFingerprint)) {
-        throw new Error("视频文件在发送前已经变化，未发送");
-      }
-      if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
-        throw new DOMException("The operation was aborted", "AbortError");
-      }
-      return analyzeVideo({
-        apiKey: sendRoute.apiKey,
-        endpoint: sendRoute.endpoint,
-        providerLabel: sendRoute.providerLabel,
-        model: sendRoute.model,
-        mode: message.mode,
-        customQuestion: message.mode === "custom" ? message.instruction : "",
-        instruction: message.instruction,
-        includeTags: message.includeTags,
-        requestId,
-        maxOutputTokens: sendRoute.maxOutputTokens,
-        catalog: state.facetCatalog,
-        locale: message.outputLocale,
-        durationMs: asset.durationMs,
-        width: asset.width,
-        height: asset.height,
-        videoBlob,
+  const sourceUrl = asset.reference?.url || asset.sourceUrl;
+  const sourceKind = route.protocol === "chat_completions" || route.protocol === "openrouter"
+    ? chatCompletionsVideoSourcePlan({
+        providerLabel: route.providerLabel,
+        hasLocalVideo: asset.storageMode === "managed",
         videoUrl: sourceUrl,
         videoMimeType: asset.mimeType,
         referenceProvider: asset.reference?.provider,
         referencePlaybackMode: asset.reference?.playbackMode,
-        localVideo: sendRoute.localVideo,
-        preferPublicVideoUrl,
-        publicVideoUrl: sendRoute.publicVideoUrl,
-        signal: message.signal,
-        onStage: (phase) => chrome.runtime.sendMessage({
-          type: "VIDEO_ANALYSIS_CHANGED",
-          taskId: message.taskId,
-          attemptId: requestId,
-          entryId: entry.id,
-          assetId: asset.id,
-          phase,
-          provider: sendRoute.provider,
-          model: sendRoute.model
-        }).catch(() => undefined)
-      });
-    },
-    { priority: message.priority }
-  );
-  return await enqueue(async () => {
-    if (!await analysisTaskAttemptIsActive(message.taskId, requestId)) {
-      return { ok: false, message: "本次视频分析已经停止，迟到结果未保存" };
-    }
-    let currentState = await readState();
-    const current = normalizeEntryMedia(findEntry(currentState, entry.id));
-    const currentAsset = current.mediaAssets.find((item) => item.id === asset.id && item.kind === "video");
-    if (!currentAsset) {
-      return { ok: false, message: "分析期间视频已被移除，本次结果没有写入" };
-    }
-    if (message.sourceFingerprint) {
-      const currentBlob = currentAsset.storageMode === "managed" ? await getMediaBlob(currentAsset.id) : null;
-      if (!currentBlob || await videoAssetFingerprint(currentBlob) !== message.sourceFingerprint) {
-        return { ok: false, message: "分析期间视频文件已经变化，本次结果没有写入" };
+        localVideo: route.localVideo,
+        preferPublicVideoUrl: route.preferPublicVideoUrl,
+        publicVideoUrl: route.publicVideoUrl
+      }).sourceKind
+    : asset.storageMode === "managed" ? "local-video" : "public-video-url";
+  if (task.request.sourceKind && task.request.sourceKind !== sourceKind) {
+    throw new Error("视频来源发送方式已经变化，未发送");
+  }
+  await ensureOffscreenDocument();
+  const response = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "RUN_VIDEO_ANALYSIS",
+    job: {
+      taskId: task.id,
+      attemptId: task.activeAttemptId,
+      deadlineAt: task.deadlineAt,
+      instruction: configuration.preferences.videoInstructionsByLocale?.[task.request.outputLocale]
+        || configuration.preferences.videoInstructionsByLocale?.["zh-CN"],
+      sourceKind,
+      sourceFingerprint: task.request.sourceFingerprint,
+      outputLocale: task.request.outputLocale,
+      catalog: state.facetCatalog,
+      asset: {
+        id: asset.id,
+        storageMode: asset.storageMode,
+        mimeType: asset.mimeType,
+        durationMs: asset.durationMs,
+        width: asset.width,
+        height: asset.height,
+        sourceUrl: asset.sourceUrl,
+        referenceUrl: asset.reference?.url,
+        referenceProvider: asset.reference?.provider,
+        referencePlaybackMode: asset.reference?.playbackMode
+      },
+      route: {
+        providerId: route.providerId,
+        concurrency: configuration.assignments.videoAnalysis.concurrency,
+        providerLabel: route.providerLabel,
+        protocol: route.protocol,
+        endpoint: route.endpoint,
+        apiKey: route.apiKey,
+        model: route.model,
+        maxOutputTokens: route.maxOutputTokens,
+        localVideo: route.localVideo,
+        preferPublicVideoUrl: route.preferPublicVideoUrl,
+        publicVideoUrl: route.publicVideoUrl
       }
     }
-    const mode = String(message.mode || "creative-breakdown");
+  });
+  if (!response?.ok) throw new Error(response?.message || "视频分析后台启动失败");
+  return response;
+}
+
+async function completeVideoAnalysisAction(message) {
+  const outcome = await enqueue(() => withAnalysisTaskStorageLock(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const registry = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    const runningTask = analysisTaskById(registry, message.taskId);
+    if (!runningTask || runningTask.status !== "running" || runningTask.activeAttemptId !== String(message.attemptId ?? "").trim()) {
+      return { stale: true };
+    }
+    const analysis = message.analysis && typeof message.analysis === "object" ? message.analysis : {};
+    if (!runningTask.deadlineAt || Date.now() >= Date.parse(runningTask.deadlineAt)) {
+      throw new Error("视频分析已超过本次等待上限，迟到结果未保存");
+    }
+    let currentState = await readState();
+    const current = normalizeEntryMedia(findEntry(currentState, runningTask.request.entryId));
+    const asset = current.mediaAssets.find((item) => item.id === runningTask.request.assetId && item.kind === "video" && item.usage !== "poster");
+    if (!asset) throw new Error("分析期间视频已被移除，本次结果没有写入");
+    const expectedFingerprint = String(analysis.sourceFingerprint || runningTask.request.sourceFingerprint || "").trim();
+    if (expectedFingerprint) {
+      const currentBlob = asset.storageMode === "managed" ? await getMediaBlob(asset.id) : null;
+      if (!currentBlob || await videoAssetFingerprint(currentBlob) !== expectedFingerprint) {
+        throw new Error("分析期间视频文件已经变化，本次结果没有写入");
+      }
+    }
     const createdAt = new Date().toISOString();
     const record = {
       id: `video-analysis:${crypto.randomUUID()}`,
       assetId: asset.id,
-      mode,
+      mode: "visual-reconstruction",
       prompt: analysis.prompt,
       sourceKind: analysis.sourceKind,
       provider: analysis.provider,
@@ -5479,55 +5696,97 @@ async function analyzeEntryVideoTaskAction(message) {
       usage: analysis.usage,
       cost: analysis.cost ?? null,
       routing: analysis.routing ?? null,
-      requestId,
-      ...(message.batchJobId ? { batchJobId: message.batchJobId } : {}),
-      version: current.videoAnalyses.filter((item) => item.assetId === asset.id && item.mode === mode).length + 1,
+      requestId: runningTask.activeAttemptId,
+      ...(runningTask.request.batchJobId ? { batchJobId: runningTask.request.batchJobId } : {}),
       createdAt,
-      ...(mode === "visual-reconstruction" ? {
-        contractVersion: analysis.contractVersion,
-        reconstructionPrompt: analysis.reconstructionPrompt,
-        tags: analysis.tags,
-        uncertainties: analysis.uncertainties,
-        includeTags: analysis.includeTags,
-        analysisScope: analysis.analysisScope,
-        finishReason: analysis.finishReason,
-        userEdited: false
-      } : { text: analysis.text })
+      contractVersion: analysis.contractVersion,
+      reconstructionPrompt: analysis.reconstructionPrompt,
+      tags: analysis.tags,
+      uncertainties: analysis.uncertainties,
+      includeTags: true,
+      analysisScope: analysis.analysisScope,
+      finishReason: analysis.finishReason,
+      userEdited: false
     };
-    let updated = normalizeEntryMedia({ ...current, videoAnalyses: [...current.videoAnalyses, record] });
-    if (mode === "visual-reconstruction" && analysis.includeTags) {
-      const entryIndex = currentState.entries.findIndex((item) => item.id === current.id);
-      const preservedAssignments = (updated.facetAssignments ?? []).filter((item) =>
-        item.source !== "vision_model" || item.visualId !== asset.id
-      );
-      currentState.entries[entryIndex] = { ...updated, facetAssignments: preservedAssignments };
-      const assignmentStart = preservedAssignments.length;
-      const applied = applyFixedAnalysisTags(currentState, current.id, analysis.tags, {
-        source: "vision_model",
-        maxTags: 8,
-        replaceExisting: false
-      });
-      currentState = applied.state;
-      updated = normalizeEntryMedia(currentState.entries[entryIndex]);
-      updated.facetAssignments = updated.facetAssignments.map((item, index) =>
-        index >= assignmentStart && item.source === "vision_model" ? { ...item, visualId: asset.id } : item
-      );
-      currentState.entries[entryIndex] = updated;
-    } else {
-      currentState.entries = currentState.entries.map((item) => item.id === current.id ? updated : item);
-    }
+    let updated = replaceCurrentVideoReconstruction(current, asset.id, record);
+    const entryIndex = currentState.entries.findIndex((item) => item.id === current.id);
+    const preservedAssignments = (updated.facetAssignments ?? []).filter((item) =>
+      item.source !== "vision_model" || item.visualId !== asset.id
+    );
+    currentState.entries[entryIndex] = { ...updated, facetAssignments: preservedAssignments };
+    const assignmentStart = preservedAssignments.length;
+    const applied = applyFixedAnalysisTags(currentState, current.id, analysis.tags, {
+      source: "vision_model",
+      maxTags: 8,
+      replaceExisting: false
+    });
+    currentState = applied.state;
+    updated = normalizeEntryMedia(currentState.entries[entryIndex]);
+    updated.facetAssignments = updated.facetAssignments.map((item, index) =>
+      index >= assignmentStart && item.source === "vision_model" ? { ...item, visualId: asset.id } : item
+    );
+    currentState.entries[entryIndex] = updated;
+    const savedRecord = currentVideoReconstruction(updated, asset.id);
+    const actionResult = {
+      ok: true,
+      message: "AI 视频提示词已保存",
+      entry: updated,
+      analysis: savedRecord,
+      requestBudget: analysis.requestBudget,
+      result: { entryId: current.id, assetId: asset.id, analysisId: savedRecord.id }
+    };
+    const completedTask = completeAnalysisAttempt(runningTask, {
+      attemptId: runningTask.activeAttemptId,
+      result: actionResult
+    });
     await commitLocalChanges({
       [STORAGE_KEYS.entries]: currentState.entries,
-      [STORAGE_KEYS.facetCatalog]: currentState.facetCatalog
+      [STORAGE_KEYS.facetCatalog]: currentState.facetCatalog,
+      [STORAGE_KEYS.analysisTasks]: replaceAnalysisTask(registry, completedTask)
     });
-    return {
-      ok: true,
-      message: mode === "visual-reconstruction" ? "AI 视觉逆推已保存" : "视频分析已保存为新版本",
-      entry: updated,
-      analysis: record,
-      result: { entryId: current.id, assetId: asset.id, analysisId: record.id }
+    return { actionResult, completedTask, runningTask };
+  }));
+  if (outcome.stale) return { ok: false, message: "本次视频分析已经停止，迟到结果未保存" };
+  await notifyAnalysisTaskUpdated(outcome.completedTask);
+  if (outcome.runningTask.request.batchJobId) {
+    await enqueue(() => settleVideoBatchTask(outcome.runningTask, outcome.actionResult));
+  }
+  return outcome.actionResult;
+}
+
+async function failVideoAnalysisAction(message) {
+  const outcome = await enqueue(() => withAnalysisTaskStorageLock(async () => {
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const registry = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
+    const runningTask = analysisTaskById(registry, message.taskId);
+    if (!runningTask || runningTask.status !== "running" || runningTask.activeAttemptId !== String(message.attemptId ?? "").trim()) {
+      return { stale: true };
+    }
+    const actionResult = {
+      ok: false,
+      message: String(message.error?.message || "视频分析失败"),
+      diagnostic: message.error?.diagnostic,
+      requestBudget: message.error?.requestBudget,
+      usage: message.error?.usage,
+      status: Number(message.error?.status) || 0
     };
-  });
+    const failedTask = failAnalysisAttempt(runningTask, {
+      attemptId: runningTask.activeAttemptId,
+      error: actionResult.message,
+      diagnostic: message.error?.diagnostic,
+      requestBudget: message.error?.requestBudget
+    });
+    await commitLocalChanges({
+      [STORAGE_KEYS.analysisTasks]: replaceAnalysisTask(registry, failedTask)
+    }, { markSyncDirty: false });
+    return { actionResult, failedTask, runningTask };
+  }));
+  if (outcome.stale) return { ok: false, message: "本次视频分析已经结束，迟到状态已忽略" };
+  await notifyAnalysisTaskUpdated(outcome.failedTask);
+  if (outcome.runningTask.request.batchJobId) {
+    await enqueue(() => settleVideoBatchTask(outcome.runningTask, outcome.actionResult));
+  }
+  return { ok: true, task: outcome.failedTask };
 }
 
 async function updateVideoReconstructionPrompt(message) {
@@ -5555,13 +5814,15 @@ async function updateVisionReconstructionPrompt(entryId, visualIdValue, reconstr
 async function updateEntryMediaPromptAction(message) {
   const state = await readState();
   const current = findEntry(state, message.entryId);
-  const next = setEntryMediaPrompt(current, message.assetId, message.text, "manual");
+  const preserveAiSource = message.preserveAiSource === true
+    && current.mediaPrompts?.some(item => item.assetId === message.assetId && item.source === "ai-suggestion");
+  const next = setEntryMediaPrompt(current, message.assetId, message.text, preserveAiSource ? "ai-suggestion" : "manual", { preserveOtherSource: true });
   const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return {
     ok: true,
-    message: String(message.text ?? "").trim() ? "这张图片的独立提示词已保存" : "已恢复使用案例共享提示词",
+    message: String(message.text ?? "").trim() ? "独立提示词已保存" : "已恢复使用案例共享提示词",
     entry: updated
   };
 }
@@ -5635,6 +5896,15 @@ async function updateEntryFacet(message) {
   return { ok: true, message: message.selected === false ? "标签已移除" : "创作标签已添加", entry: updated };
 }
 
+async function updateCaseArticle(message) {
+  const state = await readState();
+  const current = findEntry(state, message.entryId);
+  const next = updateArticleText(current, message.patches, message.textRevision);
+  const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: state.entries.map(entry => entry.id === current.id ? updated : entry) });
+  return { ok: true, message: "正文已保存", entry: updated };
+}
+
 async function updateCaseText(message) {
   const state = await readState();
   const current = findEntry(state, message.entryId);
@@ -5702,8 +5972,16 @@ async function batchSetProject(message) {
     return { ok: false, message: "项目不存在" };
   }
   const beforeOrganizer = organizerState;
-  if (mode === "move") organizerState = removeEntriesFromOrganizer(organizerState, entryIds);
-  organizerState = setEntriesCollection(organizerState, message.collectionId, entryIds, mode !== "remove");
+  if (mode === "move") {
+    organizerState = moveEntriesBetweenCollections(
+      organizerState,
+      message.sourceCollectionId,
+      message.collectionId,
+      entryIds
+    );
+  } else {
+    organizerState = setEntriesCollection(organizerState, message.collectionId, entryIds, mode !== "remove");
+  }
   const changedEntryIds = changedProjectEntryIds(beforeOrganizer, organizerState);
   const updatedCount = changedEntryIds.length;
   const skippedCount = Math.max(0, requestedEntryIds.length - updatedCount);
@@ -5736,6 +6014,40 @@ async function batchSetProject(message) {
     skippedCount,
     unchangedCount,
     missingCount,
+    entries,
+    organizerState
+  };
+}
+
+async function createCollectionFromSelection(message) {
+  const state = await readState();
+  const validIds = new Set(state.entries.map((entry) => entry.id));
+  const requestedEntryIds = uniqueNames(message.entryIds);
+  const entryIds = requestedEntryIds.filter((entryId) => validIds.has(entryId));
+  if (!entryIds.length) return { ok: false, message: "案例不存在，未创建项目" };
+  const beforeOrganizer = normalizeOrganizerState(state.organizerState, [...validIds]);
+  const createdResult = createCollection(beforeOrganizer, message.name, message.parentId ?? null);
+  let organizerState = createdResult.state;
+  if (message.mode === "move") {
+    organizerState = moveEntriesBetweenCollections(
+      organizerState,
+      message.sourceCollectionId,
+      createdResult.item.id,
+      entryIds
+    );
+  } else {
+    organizerState = setEntriesCollection(organizerState, createdResult.item.id, entryIds, true);
+  }
+  const changedEntryIds = changedProjectEntryIds(beforeOrganizer, organizerState);
+  const entries = touchEntries(state.entries, changedEntryIds);
+  await commitLocalChanges({
+    ...(changedEntryIds.length ? { [STORAGE_KEYS.entries]: entries } : {}),
+    [STORAGE_KEYS.organizerState]: organizerState
+  });
+  return {
+    ok: true,
+    message: message.mode === "move" ? "项目已创建，案例已移动" : "项目已创建，案例已加入",
+    created: createdResult.item,
     entries,
     organizerState
   };
@@ -6337,7 +6649,7 @@ async function videoAssetFingerprint(blob) {
 }
 
 async function createVideoBatchTask(message) {
-  const state = await readState();
+  const [state, configuration] = await Promise.all([readState(), loadAiConfiguration()]);
   const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
   const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   if (previous && ["running", "paused"].includes(previous.status)
@@ -6349,12 +6661,14 @@ async function createVideoBatchTask(message) {
   if (preview.excludedCount && message.confirmExclusions !== true) {
     return { ok: false, requiresExclusionConfirmation: true, preview, message: "部分视频不会发送，请确认排除项后继续" };
   }
-  if (!String(message.instruction ?? "").trim()) return { ok: false, message: "批量视频逆推指令不能为空" };
+  const outputLocale = message.outputLocale === "en" ? "en" : "zh-CN";
+  const instruction = configuration.preferences.videoInstructionsByLocale?.[outputLocale]
+    || configuration.preferences.videoInstructionsByLocale?.["zh-CN"];
   const job = createVideoBatchJob(state.entries, {
     entryIds: message.entryIds,
     includeAllVideos: message.includeAllVideos,
     reanalyze: message.reanalyze,
-    includeTags: message.includeTags,
+    includeTags: true,
     providerId: preview.providerId,
     model: preview.model,
     protocol: preview.protocol,
@@ -6373,9 +6687,9 @@ async function createVideoBatchTask(message) {
       fingerprint: item.fingerprint,
       sourcePlan: item.sourcePlan
     })),
-    instruction: message.instruction,
+    instruction,
     contractVersion: VIDEO_RECONSTRUCTION_CONTRACT_VERSION,
-    outputLocale: message.outputLocale
+    outputLocale
   });
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
   await chrome.storage.local.remove(STORAGE_KEYS.analysisBatchUndo);
@@ -6632,12 +6946,12 @@ async function analyzePersistedTextClaim(job, claim, entry, catalog, settings) {
     const result = await runScheduledAnalysisWithRetries({
       key: `${job.providerId}:${job.model || job.analysisModel}:textTags`,
       concurrency: job.concurrency,
-      task: async () => {
+      task: async (requestBudget) => {
         serviceRequests += 1;
         return analyzeTextDetailedWithDeepSeek(entry, catalog, {
           ...settings,
           outputLocale: job.outputLocale
-        }, fetch, { analysisInput });
+        }, fetch, { analysisInput, requestBudget });
       }
     });
     return {
@@ -6685,7 +6999,7 @@ async function runPersistedVisionBatchSlice(jobId) {
     const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
     let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "vision");
     if (job.status !== "running") return { job, claims: [] };
-    job = reconcileVisionBatchResults(recoverInterruptedAnalysisBatch(job), state.entries).job;
+    job = recoverInterruptedAnalysisBatch(reconcileVisionBatchResults(job, state.entries).job);
     const snapshotConfiguration = configurationForAssignment(configuration, "imageAnalysis", job);
     const settings = resolveVisionTaskSettings("imageAnalysis", snapshotConfiguration, { requireConfigured: false });
     const currentSettings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
@@ -6832,6 +7146,8 @@ async function settleVideoBatchTask(task, actionResult) {
     && candidate.requestId === task.activeAttemptId
     && candidate.status === "running");
   if (!item) return;
+  const budget = actionResult.requestBudget || task.attempts?.at(-1)?.requestBudget;
+  const attempts = analysisRequestCounts(budget);
   let next;
   if (actionResult?.ok) {
     const usage = actionResult.analysis?.usage ?? actionResult.usage ?? {};
@@ -6839,13 +7155,14 @@ async function settleVideoBatchTask(task, actionResult) {
       promptTokens: usage.inputTokens,
       completionTokens: usage.outputTokens,
       totalTokens: usage.totalTokens
-    }, undefined, { serviceRequests: 1, cost: actionResult.analysis?.cost ?? null });
+    }, undefined, { attempts, cost: actionResult.analysis?.cost ?? null });
   } else {
     next = failAnalysisItem(job, item.entryId, item.claimId, {
       message: actionResult?.message || "视频分析失败",
       status: actionResult?.status,
       usage: actionResult?.usage,
-      attempts: { serviceRequests: 1 }
+      attempts,
+      diagnostic: actionResult?.diagnostic
     });
     if ([429, 500, 502, 503, 504].includes(Number(actionResult?.status))) next = pauseAnalysisBatch(next);
   }
@@ -6932,8 +7249,7 @@ async function runAutomaticVisionItem() {
       return;
     }
     const state = await readState();
-    job = recoverInterruptedAnalysisBatch(job);
-    job = reconcileVisionBatchResults(job, state.entries).job;
+    job = recoverInterruptedAnalysisBatch(reconcileVisionBatchResults(job, state.entries).job);
     const claimed = claimAnalysisItems(job);
     job = claimed.job;
     await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
@@ -7736,6 +8052,38 @@ function previewLibraryImport(state, library, options = {}) {
   };
 }
 
+function previewLibraryImportBatch(state, message = {}) {
+  const inspections = transferInspectionMessages(message.packages);
+  const result = planLibraryTransferBatch({
+    currentState: state,
+    inspections,
+    options: {
+      preserveLibraryConfiguration: message.preserveLibraryConfiguration === true,
+      conflictResolutions: message.conflictResolutions
+    }
+  });
+  return {
+    ok: true,
+    planToken: result.planToken,
+    plan: result.context,
+    canApply: result.canApply,
+    conflicts: result.conflicts,
+    unresolvedConflicts: result.unresolvedConflicts,
+    packageResults: result.packageResults,
+    resourceWrites: result.resourceWrites,
+    createdEntryIds: result.createdEntryIds,
+    importDiagnostics: result.importDiagnostics,
+    importStats: result.importStats,
+    importedCount: result.importedCount,
+    remappedCount: result.remappedCount,
+    skippedCount: result.skippedCount,
+    importedRunCount: result.importedRunCount,
+    importedOutputCount: result.importedOutputCount,
+    importedSkillCount: result.importedSkillCount,
+    skippedSkillCount: result.skippedSkillCount
+  };
+}
+
 async function applyLibraryImport(state, message) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
   const claim = claimLibraryImportTransaction(stored[STORAGE_KEYS.libraryImportTransactions], {
@@ -7831,6 +8179,76 @@ async function applyLibraryImport(state, message) {
   return response;
 }
 
+async function applyLibraryImportBatch(state, message) {
+  const packages = Array.isArray(message.packages) ? message.packages : [];
+  const sourceValue = packages.map((item) => item?.library);
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+  const claim = claimLibraryImportTransaction(stored[STORAGE_KEYS.libraryImportTransactions], {
+    operationId: message.operationId,
+    planToken: message.planToken,
+    stateValue: state,
+    sourceValue,
+    planValue: message.plan
+  });
+  if (claim.replayed) return claim.result;
+  if (!claim.acquired) {
+    throw Object.assign(new Error("这次导入仍在提交中，请稍后重试"), {
+      code: "IMPORT_TRANSACTION_PENDING"
+    });
+  }
+  await commitLocalChanges({
+    [STORAGE_KEYS.libraryImportTransactions]: claim.state
+  }, { markSyncDirty: false });
+
+  let result;
+  let response;
+  try {
+    result = planLibraryTransferBatch({
+      currentState: state,
+      inspections: transferInspectionMessages(packages),
+      options: { preferredPlan: message.plan }
+    });
+    if (!result.canApply) {
+      throw Object.assign(new Error("批次仍有未处理的案例冲突"), { code: "IMPORT_CONFLICT_UNRESOLVED" });
+    }
+    if (result.planToken !== message.planToken) {
+      throw Object.assign(new Error("导入计划已经变化，请重新检查"), { code: "IMPORT_PLAN_STALE" });
+    }
+    response = libraryImportResponse(result);
+    const completed = succeedLibraryImportTransaction(claim.state, claim.receipt, response);
+    await commitLocalChanges({
+      ...storagePayload(result.targetState),
+      [STORAGE_KEYS.settings]: normalizeSettings(result.targetState.settings ?? state.settings),
+      [STORAGE_KEYS.composerSettings]: normalizeComposerSettings(result.targetState.composerSettings ?? state.composerSettings),
+      [STORAGE_KEYS.composerSessions]: normalizeComposerSessions(result.targetState.composerSessions ?? state.composerSessions),
+      [STORAGE_KEYS.creativeExperimentSettings]: normalizeCreativeExperimentSettings(
+        result.targetState.creativeExperimentSettings ?? state.creativeExperimentSettings
+      ),
+      [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.targetState.creativeRuns ?? state.creativeRuns),
+      [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.targetState.creativeSkills ?? state.creativeSkills),
+      [STORAGE_KEYS.libraryImportTransactions]: completed.state
+    });
+  } catch (error) {
+    const failed = failLibraryImportTransaction(claim.state, claim.receipt);
+    await commitLocalChanges({
+      [STORAGE_KEYS.libraryImportTransactions]: failed
+    }, { markSyncDirty: false }).catch(() => undefined);
+    throw error;
+  }
+
+  if (result.createdEntryIds.length) {
+    const importedEntryIdSet = new Set(result.createdEntryIds);
+    await enqueueAutomaticLibraryMaintenance(
+      result.targetState.entries.filter((entry) => importedEntryIdSet.has(entry.id))
+    ).catch((error) => console.error("Imported library maintenance could not be queued", error));
+  }
+  if (result.createdEntryIds.length && message.autoAnalyze === true) {
+    await queueAutomaticVisionAnalysis(result.createdEntryIds)
+      .catch((error) => console.error("Imported library analysis could not be queued", error));
+  }
+  return response;
+}
+
 async function restoreLibraryReplacementPoint(state) {
   const point = normalizeLibraryReplacementRecoveryPoint(state.libraryReplacementRecoveryPoint);
   if (!point) return { ok: false, message: "当前没有可回退的资料库状态" };
@@ -7870,6 +8288,12 @@ function transferInspectionMessage(library, options = {}) {
     },
     resourceIndex: options.resourceIndex ?? { mediaAssetIds: [], skillAssetIds: [] }
   };
+}
+
+function transferInspectionMessages(packagesValue) {
+  const packages = Array.isArray(packagesValue) ? packagesValue : [];
+  if (!packages.length) throw new Error("请选择至少一个案例包");
+  return packages.map((item) => transferInspectionMessage(item?.library, item));
 }
 
 function libraryImportResponse(result) {
@@ -8317,7 +8741,7 @@ async function ensureOffscreenDocument() {
       .createDocument({
         url: OFFSCREEN_DOCUMENT_PATH,
         reasons: ["BLOBS"],
-        justification: "处理持久媒体创作、截图裁剪和本地文件打包"
+        justification: "处理持久视频分析、媒体创作、截图裁剪和本地文件打包"
       })
       .finally(() => {
         creatingOffscreenDocument = null;

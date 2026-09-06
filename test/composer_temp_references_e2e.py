@@ -234,16 +234,20 @@ def main() -> None:
             "mimeType": "video/mp4",
             "buffer": b"not-a-video",
         })
-        expect(composer.locator("#composer-feedback")).to_contain_text("暂不支持视频")
-        expect(composer.locator(".composer-temp-reference-card")).to_have_count(3)
+        expect(composer.locator(".composer-temp-reference-card")).to_have_count(4)
+        expect(composer.locator(".composer-temp-reference-card").last).to_contain_text("clip.mp4")
+        composer.locator("#composer-instruction").fill("Read the attached video")
+        composer.locator("#composer-action").click()
+        expect(composer.locator("#composer-feedback")).to_contain_text("请切换视频模型")
+        assert len(composer_requests) == 1, composer_requests
 
         composer.locator(".composer-temp-reference-card").first.get_by_role("button", name="移除临时附件").click()
-        expect(composer.locator(".composer-temp-reference-card")).to_have_count(2)
+        expect(composer.locator(".composer-temp-reference-card")).to_have_count(3)
         composer.locator("#composer-temp-reference-save-all").click()
         expect(composer.locator("#composer-feedback")).to_contain_text("已保存")
         expect(composer.locator(".composer-temp-reference-card")).to_have_count(0)
         entries = composer.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries || [])")
-        assert len(entries) == 2, entries
+        assert len(entries) == 3, entries
 
         dispatch_file(composer, "paste", "failed-analysis.png")
         expect(composer.locator(".composer-temp-reference-card")).to_have_count(1)

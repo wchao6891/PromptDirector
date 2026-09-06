@@ -167,7 +167,8 @@ test("a failed correction request keeps prior usage and cannot restart the whole
       }
     ),
     (error) => {
-      assert.ok(error instanceof DeepSeekApiError);
+      assert.equal(error.code, "provider_http_error");
+      assert.equal(error.diagnostic.httpStatus, 503);
       assert.equal(error.usage.totalTokens, 6);
       assert.equal(isRetryableDeepSeekError(error), false);
       return true;
@@ -203,7 +204,7 @@ test("a stalled correction request times out without restarting the whole case",
       { timeoutMs: 10, onDiagnostic: (event) => diagnostics.push(event) }
     ),
     (error) => {
-      assert.ok(error instanceof DeepSeekApiError);
+      assert.equal(error.code, "request_timeout");
       assert.equal(error.status, 408);
       assert.equal(error.usage.totalTokens, 6);
       assert.equal(isRetryableDeepSeekError(error), false);
