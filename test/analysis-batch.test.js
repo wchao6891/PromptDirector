@@ -451,7 +451,7 @@ test("pausing and immediately resuming preserves active claims to prevent duplic
   assert.equal(job.items[0].status, "succeeded");
 });
 
-test("recovering an old stalled rebuild preserves completed work and queues only unfinished cases", async () => {
+test("recovery preserves completed work and never resends an unknown paid request", async () => {
   const entries = Array.from({ length: 591 }, (_, index) => ({ id: `case-${index}`, text: `prompt ${index}` }));
   const job = await createAnalysisBatchJob(entries, { id: "stalled-rebuild", mode: "rebuild" });
   for (let index = 0; index < 586; index += 1) job.items[index].status = "succeeded";
@@ -462,7 +462,9 @@ test("recovering an old stalled rebuild preserves completed work and queues only
 
   const recovered = recoverInterruptedAnalysisBatch(job);
   const summary = analysisBatchSummary(recovered);
-  assert.deepEqual(summary.counts, { pending: 5, running: 0, succeeded: 586, partial: 0, failed: 0 });
+  assert.deepEqual(summary.counts, { pending: 2, running: 0, succeeded: 586, partial: 0, failed: 3 });
+  assert.match(recovered.items[586].error, /状态未知.*未自动重试/);
+  assert.equal(recovered.items[586].claimId, "");
   assert.equal(summary.status, "running");
 });
 

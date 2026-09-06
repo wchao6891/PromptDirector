@@ -30,6 +30,16 @@ export function toggleLibraryCaseSelection(selectedLogicalCaseIds = [], logicalC
     : [...selected, id];
 }
 
+export function setLibraryCaseSelection(selectedLogicalCaseIds = [], logicalCaseId, selectedValue) {
+  const selected = normalizeSelectedLogicalCaseIds(selectedLogicalCaseIds);
+  const id = clean(logicalCaseId);
+  if (!id) return selected;
+  const next = new Set(selected);
+  if (selectedValue) next.add(id);
+  else next.delete(id);
+  return [...next];
+}
+
 export function expandLibrarySelection(selectedLogicalCaseIds = [], compoundCases = []) {
   return expandLogicalCaseIds(normalizeSelectedLogicalCaseIds(selectedLogicalCaseIds), compoundCases);
 }
@@ -55,7 +65,8 @@ export function buildLibraryBatchPayload(selectedLogicalCaseIds = [], compoundCa
       type: LIBRARY_BATCH_ACTIONS.setProject,
       entryIds,
       collectionId,
-      mode
+      mode,
+      ...(mode === "move" ? { sourceCollectionId: clean(operation.sourceCollectionId) || null } : {})
     };
   }
 

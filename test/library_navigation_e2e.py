@@ -62,7 +62,7 @@ def main() -> None:
         library = session.open_page("library.html", wait_until="networkidle")
         expect(library.locator("#case-list > .case-card")).to_have_count(2)
         expect(library.locator('.top-actions > #open-curated, .top-actions > #open-skills')).to_have_count(0)
-        expect(library.locator(".workspace-navigation > button")).to_have_count(3)
+        expect(library.locator(".workspace-navigation > button")).to_have_count(4)
         expect(library.locator("#workspace-library")).to_have_attribute("aria-current", "page")
         expect(library.locator('input[type="search"]')).to_have_count(1)
         expect(library.locator("#collection-filters .project-filter")).to_have_count(1)
@@ -73,6 +73,9 @@ def main() -> None:
         project_filter = library.locator("#collection-filters .project-filter")
         project_filter.click()
         expect(project_filter).to_have_attribute("aria-pressed", "true")
+        library.locator("#toggle-filters").click()
+        expect(library.locator("#toggle-filters")).not_to_have_attribute("data-filter-count", "1")
+        library.locator("#toggle-filters").click()
         filtered_content_heading_top = library.locator(".filter-section").first.evaluate("node => node.getBoundingClientRect().top")
         assert filtered_content_heading_top == content_heading_top, {"before": content_heading_top, "after": filtered_content_heading_top}
         project_filter.click()
@@ -163,6 +166,17 @@ def main() -> None:
         library.set_viewport_size({"width": 1658, "height": 900})
         library.screenshot(path=str(screenshots / "promptdirector-selection-toolbar-empty.png"))
         library.set_viewport_size({"width": 1440, "height": 900})
+        sweep_cards = library.locator("#case-list > .case-card")
+        sweep_first = sweep_cards.nth(0).bounding_box()
+        sweep_second = sweep_cards.nth(1).bounding_box()
+        assert sweep_first and sweep_second
+        for expected_count in [2, 0]:
+            library.mouse.move(sweep_first["x"] + sweep_first["width"] / 2, sweep_first["y"] + sweep_first["height"] / 2)
+            library.mouse.down()
+            library.mouse.move(sweep_second["x"] + sweep_second["width"] / 2, sweep_second["y"] + sweep_second["height"] / 2, steps=6)
+            library.mouse.up()
+            expect(library.locator(".case-card.selected-for-share")).to_have_count(expected_count)
+            expect(library.locator("#share-count")).to_have_text(f"已选 {expected_count}")
         library.locator("#selection-select-filtered").click()
         expect(library.locator("#selection-clear")).to_be_enabled()
         expect(library.locator("#share-count")).to_have_text("已选 2")
@@ -224,13 +238,16 @@ def main() -> None:
         expect(library.locator(".case-card.selected-for-share")).to_have_count(0)
         library.locator("#share-cancel").click()
         expect(library.locator("#manage-project-order")).to_be_enabled()
+        project_filter.click()
+        expect(project_filter).to_have_attribute("aria-pressed", "true")
+        expect(library.locator("#case-list > .case-card")).to_have_count(1)
         library.locator("#select-cases").click()
         library.locator("#selection-select-filtered").click()
         library.locator("#selection-project-menu > summary").click()
-        library.locator("#selection-project-target").select_option("collection:navigation")
         expect(library.locator("#selection-remove-project")).to_be_enabled()
         library.locator("#selection-remove-project").click()
-        expect(library.locator("#feedback")).to_contain_text("已将 1 个案例移出项目，1 个原本不在该项目")
+        expect(library.locator("#feedback")).to_contain_text("已将 1 个案例移出项目")
+        library.locator("#workspace-library").click()
         expect(library.locator("#case-list > .case-card")).to_have_count(2)
         project_members = library.evaluate("async () => (await chrome.storage.local.get('organizerState')).organizerState.collections[0].entryIds")
         assert project_members == [], project_members
@@ -292,7 +309,7 @@ def main() -> None:
         library.locator("#share-cancel").click()
 
         print({
-            "workspace_items": 3,
+            "workspace_items": 4,
             "project_rows": 1,
             "content_rows": 6,
             "mobile_drawer": drawer,

@@ -3,15 +3,24 @@ export const DEFAULT_UI_PREFERENCES = Object.freeze({
   theme: "dark",
   motion: "system",
   analysisDiagnostics: false,
-  sidebarWidth: 244
+  sidebarWidth: 244,
+  detailMode: "fullscreen",
+  detailSidebarWidth: 760
 });
 
 export const SIDEBAR_WIDTH_LIMITS = Object.freeze({ min: 216, max: 420, default: 244 });
+export const DETAIL_SIDEBAR_WIDTH_LIMITS = Object.freeze({ min: 520, max: 1200, default: 760 });
 
 export function normalizeSidebarWidth(value) {
   const width = Number(value);
   if (!Number.isFinite(width)) return SIDEBAR_WIDTH_LIMITS.default;
   return Math.min(SIDEBAR_WIDTH_LIMITS.max, Math.max(SIDEBAR_WIDTH_LIMITS.min, Math.round(width)));
+}
+
+export function normalizeDetailSidebarWidth(value) {
+  const width = Number(value);
+  if (!Number.isFinite(width)) return DETAIL_SIDEBAR_WIDTH_LIMITS.default;
+  return Math.min(DETAIL_SIDEBAR_WIDTH_LIMITS.max, Math.max(DETAIL_SIDEBAR_WIDTH_LIMITS.min, Math.round(width)));
 }
 
 export function normalizeUiPreferences(value = {}) {
@@ -20,7 +29,9 @@ export function normalizeUiPreferences(value = {}) {
     theme: ["system", "light", "dark"].includes(value.theme) ? value.theme : "dark",
     motion: value.motion === "none" ? "reduced" : (["system", "reduced"].includes(value.motion) ? value.motion : "system"),
     analysisDiagnostics: value.analysisDiagnostics === true,
-    sidebarWidth: normalizeSidebarWidth(value.sidebarWidth)
+    sidebarWidth: normalizeSidebarWidth(value.sidebarWidth),
+    detailMode: value.detailMode === "sidebar" ? "sidebar" : "fullscreen",
+    detailSidebarWidth: normalizeDetailSidebarWidth(value.detailSidebarWidth)
   };
 }
 

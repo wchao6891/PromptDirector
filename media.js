@@ -314,13 +314,13 @@ export function removeTimeNote(entryValue, noteId) {
   return entry;
 }
 
-export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source = "manual") {
+export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source = "manual", { preserveOtherSource = false } = {}) {
   const entry = normalizeEntryMedia(entryValue);
   const assetId = clean(assetIdValue);
-  const asset = entry.mediaAssets.find((item) => item.id === assetId && item.kind === "image" && item.usage !== "poster");
-  if (!asset) throw new Error("没有找到这张内容图片");
+  const asset = entry.mediaAssets.find((item) => item.id === assetId && ["image", "video"].includes(item.kind) && item.usage !== "poster");
+  if (!asset) throw new Error("没有找到对应的内容媒体");
   const text = cleanMultiline(textValue);
-  entry.mediaPrompts = entry.mediaPrompts.filter((item) => item.assetId !== assetId);
+  entry.mediaPrompts = entry.mediaPrompts.filter((item) => item.assetId !== assetId || (preserveOtherSource && item.source !== source));
   if (text) entry.mediaPrompts.push({
     assetId,
     text,
@@ -328,6 +328,7 @@ export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source 
     source: source === "ai-suggestion" ? "ai-suggestion" : "manual",
     updatedAt: new Date().toISOString()
   });
+  entry.mediaPrompts.sort((a, b) => Number(a.source === "ai-suggestion") - Number(b.source === "ai-suggestion"));
   return entry;
 }
 
@@ -362,6 +363,27 @@ export function editCurrentVideoReconstruction(entryValue, assetIdValue, reconst
   return entry;
 }
 
+export function replaceCurrentVideoReconstruction(entryValue, assetIdValue, recordValue = {}) {
+  const entry = normalizeEntryMedia(entryValue);
+  const assetId = clean(assetIdValue);
+  if (!assetId || !entry.mediaAssets.some((asset) => asset.id === assetId && asset.kind === "video" && asset.usage !== "poster")) {
+    throw new Error("没有找到要保存逆推结果的视频");
+  }
+  const current = currentVideoReconstruction(entry, assetId);
+  const record = {
+    ...structuredClone(recordValue),
+    id: current?.id || clean(recordValue.id),
+    assetId,
+    mode: "visual-reconstruction",
+    version: Math.max(1, Number(current?.version) + 1 || 1)
+  };
+  if (!record.id || !completeVideoReconstruction(record)) throw new Error("视频逆推结果不完整，未保存");
+  entry.videoAnalyses = current
+    ? entry.videoAnalyses.map((analysis) => analysis.id === current.id ? record : analysis)
+    : [...entry.videoAnalyses, record];
+  return entry;
+}
+
 export function mediaDescriptions(entryValue = {}) {
   return entryMediaAssets(entryValue)
     .map((asset) => asset.visionAnalysis?.invalidated || asset.visionAnalysis?.quality === "partial"
@@ -389,16 +411,18 @@ function normalizeMediaPrompts(values, assetIds) {
   return (Array.isArray(values) ? values : []).flatMap((value) => {
     const assetId = clean(value?.assetId);
     const text = cleanMultiline(value?.text);
-    if (!assetIds.has(assetId) || !text || seen.has(assetId)) return [];
-    seen.add(assetId);
+    const source = value?.source === "ai-suggestion" ? "ai-suggestion" : "manual";
+    const identity = JSON.stringify([assetId, source]);
+    if (!assetIds.has(assetId) || !text || seen.has(identity)) return [];
+    seen.add(identity);
     return [{
       assetId,
       text,
       textRevision: Math.max(1, Math.trunc(Number(value.textRevision) || 1)),
-      source: value.source === "ai-suggestion" ? "ai-suggestion" : "manual",
+      source,
       updatedAt: validIso(value.updatedAt) || new Date().toISOString()
     }];
-  });
+  }).sort((a, b) => Number(a.source === "ai-suggestion") - Number(b.source === "ai-suggestion"));
 }
 
 function normalizeVersionedAnalyses(values, kind) {
@@ -454,7 +478,7 @@ function normalizeVideoAnalyses(values) {
       model: clean(value.model),
       provider: clean(value.provider),
       usage: structuredClone(value.usage || {}),
-      cost: Number.isFinite(Number(value.cost)) && Number(value.cost) >= 0 ? Number(value.cost) : null,
+      cost: value.cost != null && Number.isFinite(Number(value.cost)) && Number(value.cost) >= 0 ? Number(value.cost) : null,
       routing: value.routing && typeof value.routing === "object" && !Array.isArray(value.routing)
         ? structuredClone(value.routing)
         : null,
@@ -476,7 +500,7 @@ function normalizeVideoAnalyses(values) {
 
 function completeVideoReconstruction(value) {
   if (value?.mode !== "visual-reconstruction" || !clean(value.assetId) || !cleanMultiline(value.reconstructionPrompt)) return false;
-  if (!clean(value.requestId) || !clean(value.contractVersion) || value.analysisScope !== "visual") return false;
+  if (!clean(value.requestId) || !clean(value.contractVersion) || !["visual", "video"].includes(value.analysisScope)) return false;
   if (typeof value.includeTags !== "boolean" || !Array.isArray(value.tags) || !Array.isArray(value.uncertainties)) return false;
   const finishReason = clean(value.finishReason).toLocaleLowerCase("en-US");
   if (!finishReason || ["length", "content_filter", "error", "cancelled", "canceled"].includes(finishReason)) return false;

@@ -769,17 +769,18 @@ test("visual planning stays text-only while execution sends every selected image
   assert.match(result.finalPrompt, /三人.*中间女性清晰聚焦/);
 });
 
-test("saved video sources stay text-only during Composer execution and never trigger a video upload", async () => {
+test("OpenRouter Composer sends the selected local video together with its structured case context", async () => {
   let request;
   const session = createComposerSession({
     targetType: "video",
-    aiProfile: { serviceId: "compatible", model: "gpt-5.4-mini" },
+    aiProfile: { serviceId: "openrouter", model: "google/gemini-3.8-flash" },
     messages: [{ role: "user", type: "request", content: "基于所选视频方法继续创作" }],
     referenceSnapshots: [{
       entryId: "private-case",
       assetId: "private-video",
       alias: "@参考1",
       referenceKind: "video_sources",
+      assetRefs: [{ assetId: "private-video", kind: "video", mimeType: "video/mp4", name: "private.mp4", byteSize: 12 }],
       referenceText: "[原始提示词]\n人物推门进入\n\n[AI 视觉逆推]\n镜头缓慢前推",
       originalText: "人物推门进入",
       referenceSources: [
@@ -794,24 +795,86 @@ test("saved video sources stay text-only during Composer execution and never tri
     composerSettings: settings,
     route: "compose",
     instruction: "整理为新的视频提示词"
-  }, visualSettings(), [], {
+  }, visualSettings({
+    providerProfiles: {
+      openrouter: {
+        id: "openrouter",
+        label: "OpenRouter",
+        endpoint: "https://openrouter.ai/api/v1",
+        protocol: "openrouter",
+        apiKey: "openrouter-secret",
+        consent: true,
+        discoveredModels: [{
+          id: "google/gemini-3.8-flash",
+          tasks: ["creativePlanning", "videoAnalysis"],
+          inputModalities: ["text", "video"],
+          outputModalities: ["text"]
+        }]
+      }
+    }
+  }), [], {
     stream: false,
+    preparedVideos: [{ assetId: "private-video", dataUrl: "data:video/mp4;base64,AAAA", mimeType: "video/mp4" }],
     fetchImpl: async (_url, options) => {
       request = JSON.parse(options.body);
-      return response({ output_text: "人物推门进入，镜头缓慢前推。" });
+      return response({ choices: [{ message: { content: "人物推门进入，镜头缓慢前推。" }, finish_reason: "stop" }] });
     }
   });
   const serialized = JSON.stringify(request);
   assert.match(serialized, /原始提示词/);
   assert.match(serialized, /AI 视觉逆推/);
   assert.equal(serialized.match(/人物推门进入/g)?.length, 1);
-  assert.equal(serialized.includes("input_video"), false);
-  assert.equal(serialized.includes("video_url"), false);
-  assert.equal(serialized.includes("data:video"), false);
+  assert.equal(request.model, "google/gemini-3.8-flash");
+  const video = request.messages[1].content.find((item) => item.type === "video_url");
+  assert.equal(video.video_url.url, "data:video/mp4;base64,AAAA");
   assert.equal(serialized.includes("private-case"), false);
   assert.equal(serialized.includes("private-video"), false);
   assert.equal(serialized.includes("private-analysis"), false);
   assert.equal(result.finalPrompt, "人物推门进入，镜头缓慢前推。");
+});
+
+test("GLM Composer sends local video as raw Base64 in the same single multimodal request", async () => {
+  let request;
+  const session = createComposerSession({
+    targetType: "video",
+    aiProfile: { serviceId: "zhipu", model: "glm-5.3-flash" },
+    messages: [{ role: "user", type: "request", content: "分析这个镜头并给出改写建议" }],
+    referenceSnapshots: [{
+      entryId: "case:video",
+      assetId: "video:one",
+      alias: "@参考1",
+      referenceKind: "video_sources",
+      assetRefs: [{ assetId: "video:one", kind: "video", mimeType: "video/mp4" }],
+      referenceText: "[原始提示词]\n人物穿过走廊",
+      originalText: "人物穿过走廊",
+      referenceSources: [{ id: "original:video:one", kind: "original_prompt", label: "原始提示词", text: "人物穿过走廊" }]
+    }]
+  });
+  await executeComposerTurnWithService({
+    session,
+    userMessage: "",
+    composerSettings: settings,
+    route: "analyze_materials",
+    instruction: "直接分析视频"
+  }, visualSettings({
+    providerProfiles: {
+      zhipu: {
+        id: "zhipu", label: "智谱 GLM", endpoint: "https://open.bigmodel.cn/api/paas/v4",
+        protocol: "chat_completions", apiKey: "zhipu-secret", consent: true,
+        discoveredModels: [{ id: "glm-5.3-flash", tasks: ["creativePlanning", "videoAnalysis"], inputModalities: ["text", "video"], outputModalities: ["text"] }]
+      }
+    }
+  }), [], {
+    stream: false,
+    preparedVideos: [{ assetId: "video:one", dataUrl: "data:video/mp4;base64,AAAA", mimeType: "video/mp4" }],
+    fetchImpl: async (_url, options) => {
+      request = JSON.parse(options.body);
+      return response({ choices: [{ message: { content: "建议用更稳定的跟拍镜头。" }, finish_reason: "stop" }] });
+    }
+  });
+  const video = request.messages[1].content.find((item) => item.type === "video_url");
+  assert.equal(video.video_url.url, "AAAA");
+  assert.equal(request.model, "glm-5.3-flash");
 });
 
 test("DeepSeek refuses a pure-image reference instead of silently composing without seeing it", async () => {
@@ -1745,4 +1808,38 @@ test("an expired remote video returns an explicit retryable regeneration error",
       ? { ok: false, status: 404, json: async () => ({ error: { message: "expired" } }) }
       : response({ id: "video-expired", status: "completed" })
   }), (error) => error.kind === "expired" && error.retryable === true && /重新生成/.test(error.message));
+});
+
+for (const terminal of ["response.failed", "response.incomplete", "error", "response.completed"]) {
+  test(`Responses stream ${terminal} reports actual completion without retrying paid work`, async () => {
+    let calls = 0;
+    let partial = "";
+    const events = [
+      { type: "response.output_text.delta", delta: "已收到的正文" },
+      { type: terminal, response: { status: terminal === "response.completed" ? "completed" : "incomplete" } }
+    ];
+    const execution = executeComposerTurnWithService({ session: referenceSession("compatible"), route: "analyze_materials", instruction: "分析参考" }, visualSettings(), preparedImages, {
+      stream: true, onDelta: (_delta, text) => { partial = text; },
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
+      }
+    });
+    if (terminal === "response.completed") assert.equal((await execution).text, "已收到的正文");
+    else await assert.rejects(execution, /失败|中断/);
+    assert.equal(partial, "已收到的正文");
+    assert.equal(calls, 1);
+  });
+}
+
+test("a JSON response to a streaming request cannot disguise explicit incomplete status as success", async () => {
+  let calls = 0;
+  await assert.rejects(executeComposerTurnWithService({ session: referenceSession("compatible"), route: "analyze_materials", instruction: "分析参考" }, visualSettings(), preparedImages, {
+    fetchImpl: async () => { calls += 1; return response({ output_text: "Partial output", status: "incomplete" }); }
+  }), (error) => {
+    assert.match(error.message, /中断/);
+    assert.doesNotMatch(error.message, /已保留/);
+    return true;
+  });
+  assert.equal(calls, 1);
 });

@@ -1,6 +1,6 @@
 {
   "name": "prompt-case-collector",
-  "version": "1.19.8",
+  "version": "1.20.0",
   "private": false,
   "license": "Apache-2.0",
   "repository": "https://github.com/wchao6891/PromptDirector",
@@ -12,6 +12,9 @@
     "build:pdfjs": "node tools/pdfjs-runtime.mjs",
     "build:store": "node tools/build-store-assets.mjs",
     "test": "node --test",
+    "test:case-management:source": "node --test test/asset-formats.test.js test/case-management-ui.test.js test/data-safety-ui.test.js test/library-detail-layout.test.js test/library-import-background.test.js test/library-import-transaction.test.js test/library-navigation.test.js test/library-selection.test.js test/library-sorting-ui.test.js test/library-transfer.test.js test/local-similarity.test.js test/media-archive-ui.test.js test/organizer.test.js test/preferences.test.js test/trash-background.test.js",
+    "test:case-management:e2e": "python3 test/run_e2e.py --group case-management",
+    "test:case-management": "npm run test:case-management:source && npm run test:case-management:e2e",
     "check": "node tools/check-source.mjs",
     "check:public": "node tools/validate-public-source.mjs",
     "check:brand": "node tools/build-brand-icons.mjs --check",

@@ -8,8 +8,9 @@ import {
   visualModelResponseSchema
 } from "./visual-analysis.js";
 import { parseStructuredObject } from "./structured-output.js";
+import { inspectAnalysisResponse, fetchAnalysisJson } from "./analysis-response.js";
 import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
-import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
+import { ANALYSIS_RETRY_POLICY, consumeAnalysisRequest } from "./analysis-retry-policy.js";
 
 export const VISION_ANALYSIS_VERSION = VISUAL_ANALYSIS_VERSION;
 export const DEFAULT_VISION_MODEL = "gpt-5-mini";
@@ -350,6 +351,8 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
     : baseInstruction;
   const requestOptions = {
     maxOutputTokens: settings.maxOutputTokens,
+    signal: input.signal,
+    timeoutMs: input.timeoutMs,
     schema: visualModelResponseSchema(input.catalog)
   };
   const requestBudget = input.requestBudget && typeof input.requestBudget === "object"
@@ -357,7 +360,9 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
     : createVisionRequestBudget();
   const correctionCountAtStart = Math.max(0, Number(requestBudget.outputCorrectionRequests) || 0);
   const request = async (requestInstruction, requestKind) => {
+    input.signal?.throwIfAborted();
     consumeVisionRequestBudget(requestBudget, requestKind);
+    await input.onRequestStart?.({ ...requestBudget });
     return settings.nativeProvider?.id === "gemini"
       ? requestGeminiVision(settings.nativeProvider, imageDataUrl, requestInstruction, fetchImpl, requestOptions)
       : settings.activeProvider === "compatible"
@@ -369,7 +374,9 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
     try {
       return { response, normalized: normalizeVisionResult(parseJson(response.content), input.catalog) };
     } catch (error) {
-      throw new VisionOutputError(error.message, { cause: error, usage: response.usage });
+      const failure = new VisionOutputError(error.message, { cause: error, usage: response.usage });
+      failure.diagnostic = response.diagnostic;
+      throw failure;
     }
   };
   let firstUsage;
@@ -377,7 +384,7 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
   try {
     completed = await perform(instruction);
   } catch (error) {
-    if (!(error instanceof VisionOutputError)) throw error;
+    if (!(error instanceof VisionOutputError) && error?.recovery !== "correct") throw error;
     firstUsage = error.usage;
     try {
       completed = await perform(`${instruction}\nThe previous response was empty or structurally unusable. Return one corrected JSON object now; do not add commentary or markdown.`, "correction");
@@ -393,6 +400,7 @@ export async function analyzeImageWithVision(input = {}, fetchImpl = fetch) {
     profileFingerprint: await visionAnalysisProfileFingerprint(settings, locale),
     providerType: settings.nativeProvider?.id || settings.activeProvider,
     model: response.model,
+    diagnostic: response.diagnostic,
     attempts: { outputCorrectionRequests: visionCorrectionCount(requestBudget, correctionCountAtStart) },
     usage: addVisionUsage(firstUsage, response.usage)
   };
@@ -407,10 +415,7 @@ function consumeVisionRequestBudget(budget, requestKind) {
     throw error;
   }
   budget.maxProviderCalls = maxProviderCalls;
-  budget.providerCalls = providerCalls + 1;
-  if (requestKind === "correction") {
-    budget.outputCorrectionRequests = Math.max(0, Number(budget.outputCorrectionRequests) || 0) + 1;
-  }
+  consumeAnalysisRequest(budget, requestKind);
 }
 
 function visionCorrectionCount(budget, start) {
@@ -510,12 +515,9 @@ async function requestResponses(provider, imageDataUrl, instruction, fetchImpl, 
     }]
   };
   body.reasoning = { effort: "none" };
-  const payload = await requestJson(provider.endpoint, provider.apiKey, body, fetchImpl);
-  const refusal = extractOpenAIRefusal(payload);
-  if (refusal) throw new Error(`${provider.serviceName} 拒绝分析这张图片：${refusal}`);
-  const content = String(payload.output_text ?? extractOpenAIText(payload) ?? "").trim();
-  if (!content) throw new VisionOutputError(options.emptyResultMessage || `${provider.serviceName} 没有返回可用的画面描述`);
-  return { content, model: String(payload.model ?? provider.model), usage: normalizeOpenAIUsage(payload.usage) };
+  const payload = await requestJson(provider.endpoint, provider.apiKey, body, fetchImpl, options);
+  const { text: content, diagnostic } = inspectAnalysisResponse(payload, { protocol: "responses", provider: provider.serviceName });
+  return { content, diagnostic, model: String(payload.model ?? provider.model), usage: normalizeOpenAIUsage(payload.usage) };
 }
 
 async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl, options = {}) {
@@ -552,13 +554,9 @@ async function requestCompatible(settings, imageDataUrl, instruction, fetchImpl,
     }]
   };
   if (deepseekCompatible) body.thinking = { type: "disabled" };
-  const payload = await requestJson(url, settings.compatible.apiKey, body, fetchImpl);
-  const choice = payload?.choices?.[0];
-  const content = choice?.message?.content;
-  if (typeof content !== "string" || !content.trim()) {
-    throw new VisionOutputError(compatibleEmptyResultMessage(choice?.finish_reason, options.emptyResultMessage));
-  }
-  return { content, model: String(payload.model ?? settings.compatible.model), usage: normalizeCompatibleUsage(payload.usage) };
+  const payload = await requestJson(url, settings.compatible.apiKey, body, fetchImpl, options);
+  const { text: content, diagnostic } = inspectAnalysisResponse(payload, { provider: "兼容服务" });
+  return { content, diagnostic, model: String(payload.model ?? settings.compatible.model), usage: normalizeCompatibleUsage(payload.usage) };
 }
 
 function compatibleImagePart(imageDataUrl, encoding) {
@@ -567,27 +565,6 @@ function compatibleImagePart(imageDataUrl, encoding) {
     return { type: "image_url", image_url: { url: raw } };
   }
   return { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } };
-}
-
-function compatibleEmptyResultMessage(finishReason, fallback = "") {
-  const reason = String(finishReason ?? "").trim();
-  const prefix = String(fallback ?? "").trim();
-  if (reason === "length") return prefix ? `${prefix}：输出达到长度上限` : "兼容服务输出达到长度上限，JSON 可能被截断，本次没有写入";
-  if (reason === "content_filter") return prefix ? `${prefix}：内容过滤` : "兼容服务因内容过滤未返回分析结果，本次没有写入";
-  if (reason === "insufficient_system_resource") return prefix ? `${prefix}：资源暂时不足` : "兼容服务资源暂时不足，未返回分析结果，请手动重试";
-  if (reason === "stop") return prefix ? `${prefix}：返回了空的 JSON 内容` : "兼容服务返回了空的 JSON 内容，本次没有写入，请手动重试";
-  return prefix || "兼容服务响应缺少可用内容，本次没有写入";
-}
-
-function visionHttpErrorMessage(status) {
-  const code = Number(status) || 0;
-  if (code === 401 || code === 403) return "图片分析认证失败，请检查 API Key、模型权限和接口配置";
-  if (code === 408) return "图片分析超时，请稍后重试或降低并发";
-  if (code === 409) return "图片分析请求发生冲突，请稍后重试";
-  if (code === 413) return "图片分析请求过大，请换更小的图片或降低输入体积";
-  if (code === 429) return "图片分析请求过于频繁，请稍后重试";
-  if (code >= 500 && code <= 599) return "图片分析服务暂时不可用，请稍后重试";
-  return "图片分析失败，请检查模型、协议和输出格式";
 }
 
 function isDeepSeekEndpoint(url) {
@@ -603,11 +580,7 @@ async function requestGeminiVision(provider, imageDataUrl, instruction, fetchImp
   const match = imageDataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/i);
   if (!match) throw new Error("Gemini 图片输入格式无效");
   const endpoint = `${provider.endpoint.replace(/\/$/, "")}/v1beta/models/${encodeURIComponent(provider.model)}:generateContent`;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), VISION_REQUEST_TIMEOUT_MS);
-  let response;
-  try {
-    response = await fetchImpl(endpoint, {
+  const { payload } = await fetchAnalysisJson(fetchImpl, endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": provider.apiKey },
       body: JSON.stringify({
@@ -622,28 +595,12 @@ async function requestGeminiVision(provider, imageDataUrl, instruction, fetchImp
           temperature: 0.1
         }
       }),
-      redirect: "error",
-      signal: controller.signal
-    });
-  } catch (error) {
-    if (controller.signal.aborted) throw new VisionApiError("Gemini 图片分析超过 2 分钟未完成", 408, { cause: error });
-    throw new VisionApiError("无法连接 Gemini 图片分析服务", 0, { cause: error });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new VisionApiError(
-    visionHttpErrorMessage(response.status),
-    response.status,
-    {
-      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after")),
-      detail: String(payload?.error?.message ?? payload?.message ?? "").trim()
-    }
-  );
-  const content = (payload?.candidates?.[0]?.content?.parts ?? []).map((part) => part?.text || "").join("").trim();
-  if (!content) throw new VisionOutputError(options.emptyResultMessage || "Gemini 没有返回可用的画面描述");
+      redirect: "error"
+    }, { signal: options.signal, timeoutMs: options.timeoutMs ?? VISION_REQUEST_TIMEOUT_MS, provider: "Gemini 图片分析" });
+  const { text: content, diagnostic } = inspectAnalysisResponse(payload, { protocol: "gemini", provider: "Gemini" });
   return {
     content,
+    diagnostic,
     model: provider.model,
     usage: normalizeCompatibleUsage({
       prompt_tokens: payload?.usageMetadata?.promptTokenCount,
@@ -653,32 +610,13 @@ async function requestGeminiVision(provider, imageDataUrl, instruction, fetchImp
   };
 }
 
-async function requestJson(url, apiKey, body, fetchImpl) {
-  let response;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), VISION_REQUEST_TIMEOUT_MS);
-  try {
-    response = await fetchImpl(url, {
+async function requestJson(url, apiKey, body, fetchImpl, options = {}) {
+  const { payload } = await fetchAnalysisJson(fetchImpl, url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
       body: JSON.stringify(body),
-      redirect: "error",
-      signal: controller.signal
-    });
-  } catch (error) {
-    if (controller.signal.aborted) throw new VisionApiError("图片分析超过 2 分钟未完成，本次已停止，请手动重试", 408, { cause: error });
-    throw new VisionApiError("无法连接图片分析服务，请检查网络、地址和权限", 0, { cause: error });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = String(payload?.error?.message ?? payload?.message ?? "").trim();
-    throw new VisionApiError(visionHttpErrorMessage(response.status), response.status, {
-      retryAfterMs: retryAfterMilliseconds(response.headers?.get?.("retry-after")),
-      detail
-    });
-  }
+      redirect: "error"
+    }, { signal: options.signal, timeoutMs: options.timeoutMs ?? VISION_REQUEST_TIMEOUT_MS, provider: "图片分析服务" });
   return payload;
 }
 
@@ -793,28 +731,10 @@ function normalizeCreativeEvaluationResult(value) {
 
 function parseJson(content) {
   try {
-    return parseStructuredObject(content, "视觉模型返回的 JSON 无效，本次没有写入");
+    return parseStructuredObject(content, "视觉模型返回的 JSON 无效，本次没有写入", { allowTruncatedRecovery: false });
   } catch {
     throw new Error("视觉模型返回的 JSON 无效，本次没有写入");
   }
-}
-
-function extractOpenAIText(payload) {
-  for (const item of Array.isArray(payload?.output) ? payload.output : []) {
-    for (const content of Array.isArray(item?.content) ? item.content : []) {
-      if (content?.type === "output_text" && content.text) return content.text;
-    }
-  }
-  return "";
-}
-
-function extractOpenAIRefusal(payload) {
-  for (const item of Array.isArray(payload?.output) ? payload.output : []) {
-    for (const content of Array.isArray(item?.content) ? item.content : []) {
-      if (content?.type === "refusal" && content.refusal) return String(content.refusal);
-    }
-  }
-  return "";
 }
 
 function normalizeOpenAIUsage(value = {}) {
@@ -838,13 +758,6 @@ function addVisionUsage(left = {}, right = {}) {
     key,
     finite(left?.[key]) + finite(right?.[key])
   ]));
-}
-
-function retryAfterMilliseconds(value) {
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-  const date = Date.parse(String(value ?? ""));
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
 function finite(value) {

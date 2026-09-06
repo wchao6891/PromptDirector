@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   AI_RUNTIME_PROTOCOL_VERSION,
   aiConfigurationFromStorage,
+  normalizeAiPreferences,
   projectAiRuntime,
   requireAiRuntimeProtocolVersion,
   resolveTextTaskSettings,
@@ -12,6 +13,22 @@ import {
   videoAnalysisRouteMatches,
   videoAnalysisRouteSnapshot
 } from "../ai-runtime.js";
+
+test("video reconstruction instructions migrate into the single AI preference record", () => {
+  const migrated = normalizeAiPreferences({
+    version: 1,
+    textInstructionsByLocale: { "zh-CN": "文字规则" }
+  });
+  assert.equal(migrated.version, 3);
+  assert.ok(migrated.videoInstructionsByLocale["zh-CN"].length > 20);
+  assert.ok(migrated.videoInstructionsByLocale.en.length > 20);
+
+  const customized = normalizeAiPreferences({
+    videoInstructionsByLocale: { "zh-CN": "自定义视频逆推方法", en: "Custom video method" }
+  });
+  assert.equal(customized.videoInstructionsByLocale["zh-CN"], "自定义视频逆推方法");
+  assert.equal(customized.videoInstructionsByLocale.en, "Custom video method");
+});
 
 test("Composer and background share one AI runtime protocol version", () => {
   assert.equal(AI_RUNTIME_PROTOCOL_VERSION, 2);
@@ -209,14 +226,15 @@ test("GLM-5.3-Flash overrides older provider defaults with its model-specific mu
 
   const text = resolveTextTaskSettings("textTags", configuration);
   assert.equal(text.compatible.structuredOutput, "json_object");
-  assert.equal(text.compatible.structuredOutputTokenBudget, 8192);
+  assert.equal(text.compatible.structuredOutputTokenBudget, 131072);
   const vision = resolveVisionTaskSettings("imageAnalysis", configuration);
   assert.equal(vision.compatible.structuredOutput, "json_object");
   assert.equal(vision.compatible.imageBase64, "data_url");
+  assert.equal(vision.maxOutputTokens, 131072);
   const video = resolveVideoAnalysisTask(configuration);
   assert.equal(video.preferPublicVideoUrl, true);
   assert.equal(video.localVideo, "base64");
-  assert.equal(video.maxOutputTokens, 8192);
+  assert.equal(video.maxOutputTokens, 131072);
 });
 
 test("changing the image-analysis assignment does not erase generation services", () => {

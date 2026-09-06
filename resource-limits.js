@@ -55,7 +55,7 @@ export const PORTABLE_LIBRARY_LIMITS = Object.freeze({
   maxLibraryJsonBytes: 16 * MEBIBYTE,
   maxEntries: 5000,
   maxCollections: 5000,
-  maxImageBytes: 16 * MEBIBYTE,
+  maxImageBytes: 32 * MEBIBYTE,
   maxImagePixels: 40_000_000,
   maxVideoBytes: 128 * MEBIBYTE
 });
@@ -88,6 +88,13 @@ export function portableLibraryLimits(value = {}) {
     result[key] = Number.isSafeInteger(candidate) && candidate > 0 ? candidate : fallback;
   }
   return result;
+}
+
+export function portableAssetByteLimit(kind, limitsValue = {}) {
+  const limits = portableLibraryLimits(limitsValue);
+  const key = kind === "image" ? "maxImageBytes" : kind === "video" ? "maxVideoBytes" : "maxFileBytes";
+  return Object.hasOwn(limitsValue, "maxFileBytes") && !Object.hasOwn(limitsValue, key)
+    ? limits.maxFileBytes : limits[key];
 }
 
 export function assertImageDimensions(width, height, limitsValue = {}) {

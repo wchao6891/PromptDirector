@@ -92,8 +92,8 @@ test("image-analysis UI keeps one prompt surface instead of duplicating the reco
   assert.doesNotMatch(html, /id="vision-batch-reanalyze"[\s\S]*重新分析已有画面描述/);
   assert.match(html, /id="vision-batch-progress"[\s\S]*id="vision-batch-progress-bar"/);
   assert.doesNotMatch(library, /function createVisionDescription|vision-description|撤回本次分析/);
-  assert.match(createPromptSection, /promptForEntryImage/);
-  assert.match(createPromptSection, /复制提示词/);
+  assert.match(createPromptSection, /createMediaPromptSection/);
+  assert.match(createPromptSection, /createPromptCopyAction/);
   assert.doesNotMatch(createEntryEditor, /UPDATE_VISION_RECONSTRUCTION_PROMPT|vision-edit-field/);
   assert.doesNotMatch(createEntryEditor, /反推提示词/);
   assert.doesNotMatch(createEntryEditor, /画面描述/);
@@ -119,8 +119,8 @@ test("detail text analysis follows the currently displayed image prompt", () => 
     library.indexOf("async function analyzeSingleEntry"),
     library.indexOf("async function privateAiSettings")
   );
-  assert.match(createPromptSection, /canonicalTextAnalysisInput\(entry, activeImage\?\.id \|\| ""\)/);
-  assert.match(createPromptSection, /analyze\.disabled = !analysisInput\.text/);
+  assert.match(library.slice(library.indexOf("function createMediaPromptSection"), library.indexOf("function createPromptSection")), /canonicalTextAnalysisInput\(entry, asset\.id\)/);
+  assert.match(createPromptSection, /if \(analysisInput\.text\)/);
   assert.match(createPromptSection, /analyzeSingleEntry\(entry, analyze, analysisInput\)/);
   assert.match(analyzeSingleEntry, /fingerprint = await textFingerprint\(analysisInput\.text\)/);
   assert.match(analyzeSingleEntry, /assetId: analysisInput\.assetId/);

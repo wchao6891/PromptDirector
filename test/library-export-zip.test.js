@@ -5,7 +5,61 @@ import { createVerifiedLibraryZip } from "../library-export-zip.js";
 import { renderLibraryJson } from "../lib.js";
 import { parseLibraryPackage } from "../library-package.js";
 import { createArchiveUrl } from "../offscreen.js";
-import { readZipBlob } from "../zip.js";
+import { readZipBlob, createZipBlob } from "../zip.js";
+import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
+
+test("downloaded Skill archives survive case export and import unchanged as inert attachments", async () => {
+  const skill = await createZipBlob([{ name: "fixture/SKILL.md", data: "# Fixture\nOriginal skill bytes." }]);
+  const assetPath = "attachments/tutorial/fixture.skill";
+  const libraryJson = renderLibraryJson([{
+    id: "tutorial", title: "Skill attachment fixture", text: "Tutorial",
+    mediaAssets: [{ id: "skill", kind: "attachment", storageMode: "managed", mimeType: "application/zip", sourceFormat: "skill", sourceTitle: "fixture.skill", byteSize: skill.size, assetPath, capturedAt: "2026-09-05T00:00:00.000Z" }],
+    primaryMediaId: "skill"
+  }]);
+  const archive = await createVerifiedLibraryZip([{ name: "library.json", data: libraryJson }, { name: assetPath, data: skill }], libraryJson);
+  const files = await readZipBlob(archive);
+  const restored = parseLibraryPackage(JSON.parse(await files.get("library.json").text()), files);
+  assert.equal(restored.entries[0].mediaAssets[0].sourceFormat, "skill");
+  assert.deepEqual(await restored.assets.get("skill").arrayBuffer(), await skill.arrayBuffer());
+});
+
+test("an original image above 16 MiB survives export and default package import with its cover relationship", async () => {
+  // Transport-only bytes: this test checks packaging, not image decoding.
+  const image = new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1).fill(137)], { type: "image/png" });
+  const assetPath = "images/large-case/original.png";
+  const libraryJson = renderLibraryJson([{
+    id: "large-case", title: "Large original fixture", text: "Original image transport test",
+    mediaAssets: [{ id: "original", kind: "image", storageMode: "managed", mimeType: "image/png", sourceFormat: "png", byteSize: image.size, assetPath, capturedAt: "2026-09-05T00:00:00.000Z" }],
+    primaryMediaId: "original"
+  }]);
+  const archive = await createVerifiedLibraryZip([
+    { name: "library.json", data: libraryJson }, { name: assetPath, data: image }
+  ], libraryJson);
+  const files = await readZipBlob(archive);
+  const parsed = parseLibraryPackage(JSON.parse(await files.get("library.json").text()), files);
+  assert.equal(parsed.entries[0].primaryMediaId, "original");
+  assert.equal(parsed.assets.get("original").size, image.size);
+  assert.deepEqual(await parsed.assets.get("original").arrayBuffer(), await image.arrayBuffer());
+});
+
+test("a video above 16 MiB survives export and default package import with its cover relationship", async () => {
+  // Transport-only bytes: this test checks packaging, not image decoding.
+  const image = new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1).fill(137)], { type: "video/mp4" });
+  const assetPath = "videos/large-case/original.mp4";
+  const libraryJson = renderLibraryJson([{
+    id: "large-case", title: "Large original fixture", text: "Original image transport test",
+    mediaAssets: [{ id: "original", kind: "video", storageMode: "managed", mimeType: "video/mp4", sourceFormat: "mp4", byteSize: image.size, assetPath, capturedAt: "2026-09-05T00:00:00.000Z" }],
+    primaryMediaId: "original"
+  }]);
+  const archive = await createVerifiedLibraryZip([
+    { name: "library.json", data: libraryJson }, { name: assetPath, data: image }
+  ], libraryJson);
+  const files = await readZipBlob(archive);
+  const parsed = parseLibraryPackage(JSON.parse(await files.get("library.json").text()), files);
+  assert.equal(parsed.entries[0].primaryMediaId, "original");
+  assert.equal(parsed.assets.get("original").size, image.size);
+  assert.deepEqual(await parsed.assets.get("original").arrayBuffer(), await image.arrayBuffer());
+});
 
 test("current exports are returned only after the production ZIP reader and package parser accept them", async () => {
   const libraryJson = renderLibraryJson([]);
@@ -105,4 +159,12 @@ test("self-read keeps a JPEG case while the production parser drops only its bro
   assert.equal(parsed.assets.get("jpeg-asset").size, image.size);
   assert.deepEqual(parsed.entries[0].facetAssignments, []);
   assert.equal(parsed.importStats.droppedAiAssignments, 1);
+});
+
+test("export self-read uses recipient limits instead of approving an unimportable attachment", async () => {
+  const libraryJson = renderLibraryJson([]);
+  await assert.rejects(createVerifiedLibraryZip([
+    { name: "library.json", data: libraryJson },
+    { name: "attachments/oversize.pdf", data: new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1)]) }
+  ], libraryJson), /导出自检失败.*单个文件超过/);
 });

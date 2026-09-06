@@ -34,7 +34,7 @@ def assert_action_is_reachable(page, name: str) -> None:
     page.wait_for_function(
         """name => {
           const button = [...document.querySelectorAll('button')]
-            .find(node => node.textContent.trim().includes(name));
+            .find(node => (node.getAttribute('aria-label') || node.textContent.trim()).includes(name));
           if (!button) return false;
           const rect = button.getBoundingClientRect();
           const stage = button.closest('.detail-visual-stage')?.getBoundingClientRect();
@@ -86,8 +86,13 @@ def main() -> None:
         expect(library.locator(".case-card")).to_have_count(1)
         library.locator(".case-card").click()
         expect(library.locator(".detail-visual-thumb")).to_have_count(15)
-        expect(library.get_by_role("button", name="编辑当前图片", exact=True)).to_be_visible()
-        expect(library.get_by_role("button", name="编辑共享提示词", exact=True)).to_be_visible()
+        expect(library.get_by_role("button", name="编辑当前图片", exact=True)).to_have_count(0)
+        library.locator(".entry-editor-inline > summary").click()
+        expect(library.locator(".entry-editor-inline textarea:visible")).to_have_count(0)
+        expect(library.get_by_role("combobox", name="提示词范围", exact=True)).to_be_visible()
+        library.locator(".entry-editor-inline > summary").click()
+        expect(library.locator(".original-prompt-panel").get_by_role("button", name="编辑原始提示词", exact=True)).to_be_visible()
+        expect(library.locator(".original-prompt-panel h3")).to_have_text("案例共享提示词")
         stable_before = library.evaluate(
             """() => {
               const gallery = document.querySelector('.detail-visual-gallery');
@@ -131,6 +136,18 @@ def main() -> None:
         assert abs(stable_after["detailScrollTop"] - stable_before["detailScrollTop"]) <= 1, (stable_before, stable_after)
 
         library.locator(".detail-visual-thumb").nth(14).click()
+
+        library.locator(".entry-editor-inline > summary").click()
+        active_asset_id = library.locator(".entry-editor-inline").get_attribute("data-asset-id")
+        library.get_by_role("combobox", name="提示词范围", exact=True).select_option(active_asset_id)
+        original_editor = library.locator(".entry-original-panel")
+        original_editor.get_by_role("button", name="编辑原始提示词", exact=True).click()
+        original_editor.get_by_role("textbox", name="编辑原始提示词", exact=True).fill("第十五张的独立原始")
+        original_editor.get_by_role("button", name="保存", exact=True).click()
+        expect(library.locator(".original-prompt-panel .prompt-read-body")).to_have_text("第十五张的独立原始")
+        stored = library.evaluate("async()=>{const {entries}=await chrome.storage.local.get('entries');return entries[0]}")
+        assert next(p for p in stored["mediaPrompts"] if p["text"] == "第十五张的独立原始")["assetId"] == "multi-image-15"
+        library.locator(".entry-editor-inline > summary").click()
 
         assert_action_is_reachable(library, "设为主要媒体")
         assert_action_is_reachable(library, "此媒体移入回收站")

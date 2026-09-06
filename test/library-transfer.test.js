@@ -8,7 +8,8 @@ import {
   LIBRARY_TRANSFER_SOURCES,
   inspectLibraryTransfer,
   libraryTransferWriteBytes,
-  planLibraryTransfer
+  planLibraryTransfer,
+  planLibraryTransferBatch
 } from "../library-transfer.js";
 
 test("ZIP and complete-folder adapters produce one canonical inspected transfer", async () => {
@@ -617,6 +618,124 @@ test("transfer capacity uses every planned media and Skill write and rejects a s
     ...writes,
     { sourceId: "media:missing", targetId: "restore:missing", resourceType: "media" }
   ], resources), /资源已经变化/);
+});
+
+test("a share-package batch produces one replayable plan and keeps each resource source", async () => {
+  const inspections = await Promise.all([
+    inspectLibraryTransfer({
+      sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+      library: portablePackage([portableEntry("case:one", "image:one")]),
+      files: new Map([["images/case-one/image-one.webp", new Blob(["one!"], { type: "image/webp" })]])
+    }),
+    inspectLibraryTransfer({
+      sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+      library: portablePackage([portableEntry("case:two", "image:two")]),
+      files: new Map([["images/case-two/image-two.webp", new Blob(["two!"], { type: "image/webp" })]])
+    })
+  ]);
+  const current = portablePackage([]);
+  const first = planLibraryTransferBatch({
+    currentState: current,
+    inspections,
+    options: {
+      now: "2026-09-02T08:00:00.000Z",
+      importBatchId: "library-import:batch-test"
+    }
+  });
+  const replay = planLibraryTransferBatch({
+    currentState: current,
+    inspections,
+    options: { preferredPlan: first.context }
+  });
+
+  assert.equal(first.canApply, true);
+  assert.deepEqual(first.targetState.entries.map((entry) => entry.id), ["case:one", "case:two"]);
+  assert.deepEqual(first.targetState.entries.map((entry) => entry.libraryAddedAt), [
+    "2026-09-02T08:00:00.000Z",
+    "2026-09-02T08:00:00.000Z"
+  ]);
+  assert.deepEqual(first.targetState.entries.map((entry) => entry.importBatchId), [
+    "library-import:batch-test",
+    "library-import:batch-test"
+  ]);
+  assert.deepEqual(first.resourceWrites.map(({ sourceId, sourceIndex }) => [sourceId, sourceIndex]), [
+    ["image:one", 0],
+    ["image:two", 1]
+  ]);
+  assert.deepEqual(replay.targetState, first.targetState);
+  assert.deepEqual(replay.resourceWrites, first.resourceWrites);
+  assert.equal(replay.planToken, first.planToken);
+});
+
+test("a share-package batch deduplicates identical cases and combines project membership", async () => {
+  const firstSource = portablePackage([portableTextEntry("case:first", "同一内容")]);
+  firstSource.organizerState.collections = [{
+    id: "collection:first",
+    name: "项目一",
+    parentId: null,
+    order: 0,
+    entryIds: ["case:first"]
+  }];
+  const secondSource = portablePackage([portableTextEntry("case:second", "同一内容")]);
+  secondSource.organizerState.collections = [{
+    id: "collection:second",
+    name: "项目二",
+    parentId: null,
+    order: 0,
+    entryIds: ["case:second"]
+  }];
+  const inspections = await Promise.all([firstSource, secondSource].map((library) => inspectLibraryTransfer({
+    sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+    library
+  })));
+
+  const plan = planLibraryTransferBatch({ currentState: portablePackage([]), inspections });
+
+  assert.equal(plan.canApply, true);
+  assert.equal(plan.targetState.entries.length, 1);
+  assert.deepEqual(plan.targetState.organizerState.collections.map((collection) => collection.entryIds), [
+    ["case:first"],
+    ["case:first"]
+  ]);
+  assert.equal(plan.skippedCount, 1);
+});
+
+test("a package-to-package same-id conflict blocks the batch until explicitly resolved", async () => {
+  const inspections = await Promise.all([
+    portablePackage([portableTextEntry("case:shared", "版本一")]),
+    portablePackage([portableTextEntry("case:shared", "版本二")])
+  ].map((library) => inspectLibraryTransfer({
+    sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+    library
+  })));
+  const current = portablePackage([]);
+  const unresolved = planLibraryTransferBatch({ currentState: current, inspections });
+  const resolved = planLibraryTransferBatch({
+    currentState: current,
+    inspections,
+    options: { conflictResolutions: { "1:case:shared": "keep-both" } }
+  });
+
+  assert.equal(unresolved.canApply, false);
+  assert.deepEqual(unresolved.unresolvedConflicts.map((conflict) => conflict.conflictKey), ["1:case:shared"]);
+  assert.equal(resolved.canApply, true);
+  assert.equal(resolved.targetState.entries.length, 2);
+  assert.deepEqual(resolved.targetState.entries.map((entry) => entry.text), ["版本一", "版本二"]);
+});
+
+test("a local same-id conflict keeps the local case without blocking batch confirmation", async () => {
+  const inspection = await inspectLibraryTransfer({
+    sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+    library: portablePackage([portableTextEntry("case:shared", "导入版本")])
+  });
+  const current = portablePackage([portableTextEntry("case:shared", "本机版本")]);
+
+  const plan = planLibraryTransferBatch({ currentState: current, inspections: [inspection] });
+
+  assert.equal(plan.canApply, true);
+  assert.equal(plan.unresolvedConflicts.length, 0);
+  assert.equal(plan.targetState.entries[0].text, "本机版本");
+  assert.equal(plan.conflicts[0].requiresResolution, false);
 });
 
 function portablePackage(entries) {

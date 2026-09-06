@@ -42,6 +42,8 @@ def entry(entry_id: str, title: str, text: str, asset_id: str, path: str, byte_s
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="prompt-director-broken-zip-") as temporary:
         archive_path = Path(temporary) / "historical-broken-share.zip"
+        second_archive_path = Path(temporary) / "second-valid-share.zip"
+        invalid_archive_path = Path(temporary) / "invalid-share.zip"
         with extension_session("prompt-director-broken-zip-") as session:
             setup = session.open_page("collector.html")
             schema = setup.evaluate("async () => (await import(chrome.runtime.getURL('taxonomy.js'))).SCHEMA_VERSION")
@@ -60,15 +62,119 @@ def main() -> None:
                 archive.writestr("library.json", json.dumps(package, ensure_ascii=False))
                 archive.writestr("images/damaged.png", BAD_PNG)
                 archive.writestr("images/good.png", GOOD_PNG)
+            second_package = {
+                "format": "prompt-case-library",
+                "version": 5,
+                "schemaVersion": schema,
+                "organizerState": {"version": 7, "collections": []},
+                "entries": [
+                    entry("case:second", "第二个案例包", "第二个包必须与第一个包一次写入。", "image:second", "images/second.png", len(GOOD_PNG), schema),
+                ],
+            }
+            with zipfile.ZipFile(second_archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("library.json", json.dumps(second_package, ensure_ascii=False))
+                archive.writestr("images/second.png", GOOD_PNG)
+            with zipfile.ZipFile(invalid_archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("readme.txt", "missing library.json\n" * 4096)
 
             library = session.open_page("library.html", wait_until="networkidle")
-            library.locator("#library-package-file").set_input_files(str(archive_path))
-            dialog = library.locator("#promptdirector-app-dialog")
+            dropped_packages = [
+                {
+                    "name": path.name,
+                    "base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+                }
+                for path in (archive_path, second_archive_path, invalid_archive_path)
+            ]
+            library.evaluate(
+                """packages => {
+                  const transfer = new DataTransfer();
+                  for (const item of packages) {
+                    const bytes = Uint8Array.from(atob(item.base64), value => value.charCodeAt(0));
+                    transfer.items.add(new File([bytes], item.name, {type: 'application/zip'}));
+                  }
+                  for (const type of ['dragenter', 'dragover', 'drop']) {
+                    document.dispatchEvent(new DragEvent(type, {
+                      bubbles: true,
+                      cancelable: true,
+                      dataTransfer: transfer,
+                    }));
+                  }
+                }""",
+                dropped_packages,
+            )
+            dialog = library.locator("#library-package-import-dialog")
             expect(dialog).to_be_visible(timeout=10_000)
+            expect(library.locator("#library-package-import-package-count")).to_have_text("3")
+            expect(dialog.locator(".library-package-import-row")).to_have_count(3)
             expect(dialog).to_contain_text("可导入 3 个新案例")
+            expect(dialog).to_contain_text("可导入 1 个新案例")
             expect(dialog).to_contain_text("丢弃损坏或缺失的媒体 2 项")
-            dialog.locator("button[type='submit']").click()
-            expect(library.locator("#data-safety-feedback")).to_contain_text("分享包媒体已校验", timeout=10_000)
+            invalid_row = dialog.locator(".library-package-import-row", has_text="invalid-share.zip")
+            expect(invalid_row).to_contain_text("缺少 library.json")
+            expect(library.locator("#library-package-import-confirm")).to_be_disabled()
+            before_remove = library.evaluate("async () => (await chrome.storage.local.get('entries')).entries || []")
+            assert before_remove == [], before_remove
+
+            library.locator("#library-package-import-cancel").click()
+            expect(dialog).to_be_hidden()
+            cancelled = library.evaluate(
+                """async () => {
+                  const media = await import(chrome.runtime.getURL('media-store.js'));
+                  return {
+                    entries: (await chrome.storage.local.get('entries')).entries || [],
+                    blobs: await Promise.all(['image:good', 'image:damaged', 'image:second'].map(id => media.getMediaBlob(id)))
+                  };
+                }"""
+            )
+            assert cancelled["entries"] == [] and cancelled["blobs"] == [None, None, None], cancelled
+
+            library.evaluate(
+                """packages => {
+                  const transfer = new DataTransfer();
+                  for (const item of packages) {
+                    const bytes = Uint8Array.from(atob(item.base64), value => value.charCodeAt(0));
+                    transfer.items.add(new File([bytes], item.name, {type: 'application/zip'}));
+                  }
+                  document.dispatchEvent(new DragEvent('drop', {
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: transfer,
+                  }));
+                }""",
+                dropped_packages,
+            )
+            expect(dialog).to_be_visible(timeout=10_000)
+            invalid_row = dialog.locator(".library-package-import-row", has_text="invalid-share.zip")
+            expect(invalid_row).to_contain_text("缺少 library.json")
+            invalid_row.get_by_role("button", name="移除", exact=True).click()
+            expect(library.locator("#library-package-import-package-count")).to_have_text("2")
+            expect(library.locator("#library-package-import-confirm")).to_be_enabled()
+
+            library.evaluate(
+                """() => {
+                  window.__zipImportSendMessage = chrome.runtime.sendMessage;
+                  chrome.runtime.sendMessage = (message, ...rest) => message?.type === 'APPLY_LIBRARY_IMPORT_BATCH'
+                    ? Promise.resolve({ok: false, message: '模拟批量导入提交失败'})
+                    : window.__zipImportSendMessage.call(chrome.runtime, message, ...rest);
+                }"""
+            )
+            library.locator("#library-package-import-confirm").click()
+            expect(dialog).to_be_visible()
+            expect(library.locator("#library-package-import-feedback")).to_contain_text("模拟批量导入提交失败", timeout=10_000)
+            failed_apply = library.evaluate(
+                """async () => {
+                  const media = await import(chrome.runtime.getURL('media-store.js'));
+                  return {
+                    entries: (await chrome.storage.local.get('entries')).entries || [],
+                    blobs: await Promise.all(['image:good', 'image:damaged', 'image:second'].map(id => media.getMediaBlob(id)))
+                  };
+                }"""
+            )
+            assert failed_apply["entries"] == [] and failed_apply["blobs"] == [None, None, None], failed_apply
+            library.evaluate("() => { chrome.runtime.sendMessage = window.__zipImportSendMessage; }")
+            expect(library.locator("#library-package-import-confirm")).to_be_enabled()
+            library.locator("#library-package-import-confirm").click()
+            expect(library.locator("#feedback")).to_contain_text("已导入 4 个案例", timeout=10_000)
 
             restored = library.evaluate(
                 """async () => {
@@ -81,15 +187,16 @@ def main() -> None:
                       mediaIds: (entry.mediaAssets || []).map((asset) => asset.id)
                     })).sort((left, right) => left.id.localeCompare(right.id)),
                     goodBytes: (await media.getMediaBlob('image:good'))?.size || 0,
-                    damagedBytes: (await media.getMediaBlob('image:damaged'))?.size || 0
+                    damagedBytes: (await media.getMediaBlob('image:damaged'))?.size || 0,
+                    secondBytes: (await media.getMediaBlob('image:second'))?.size || 0
                   };
                 }"""
             )
-            assert [item["id"] for item in restored["entries"]] == ["case:damaged", "case:good", "case:missing"], restored
+            assert [item["id"] for item in restored["entries"]] == ["case:damaged", "case:good", "case:missing", "case:second"], restored
             assert restored["entries"][0]["mediaIds"] == [] and restored["entries"][0]["text"], restored
             assert restored["entries"][1]["mediaIds"] == ["image:good"], restored
             assert restored["entries"][2]["mediaIds"] == [] and restored["entries"][2]["text"], restored
-            assert restored["goodBytes"] == len(GOOD_PNG) and restored["damagedBytes"] == 0, restored
+            assert restored["goodBytes"] == len(GOOD_PNG) and restored["secondBytes"] == len(GOOD_PNG) and restored["damagedBytes"] == 0, restored
 
 
 if __name__ == "__main__":

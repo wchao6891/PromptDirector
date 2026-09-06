@@ -4,10 +4,55 @@ import assert from "node:assert/strict";
 import {
   createOrJoinAnalysisTask,
   detachAnalysisTaskConsumer,
+  normalizeAnalysisTaskRegistry,
   recoverInterruptedAnalysisTasks,
   replaceAnalysisTask
 } from "../analysis-task-registry.js";
-import { startAnalysisAttempt } from "../analysis-tasks.js";
+import {
+  createAnalysisTask,
+  startAnalysisAttempt,
+  updateAnalysisTaskProgress
+} from "../analysis-tasks.js";
+
+test("video task progress records the paid request boundary and survives normalization", () => {
+  const task = createAnalysisTask({ id: "task:video", now: "2026-09-03T10:00:00.000Z" });
+  const running = startAnalysisAttempt(task, {
+    attemptId: "attempt:video",
+    now: "2026-09-03T10:00:01.000Z"
+  });
+  const encoding = updateAnalysisTaskProgress(running, {
+    attemptId: "attempt:video",
+    phase: "encoding",
+    now: "2026-09-03T10:00:02.000Z"
+  });
+  assert.equal(encoding.phase, "encoding");
+  assert.equal(encoding.providerMayHaveAccepted, false);
+  assert.equal(encoding.requestStartedAt, "");
+
+  const analyzing = updateAnalysisTaskProgress(encoding, {
+    attemptId: "attempt:video",
+    phase: "analyzing",
+    providerMayHaveAccepted: true,
+    now: "2026-09-03T10:00:03.000Z"
+  });
+  assert.equal(analyzing.phase, "analyzing");
+  assert.equal(analyzing.providerMayHaveAccepted, true);
+  assert.equal(analyzing.requestStartedAt, "2026-09-03T10:00:03.000Z");
+
+  const normalized = normalizeAnalysisTaskRegistry({ version: 1, items: [{
+    ...analyzing,
+    request: {
+      kind: "entry_video",
+      entryId: "entry:1",
+      assetId: "video:1",
+      mode: "creative-breakdown",
+      clientRequestId: "client:1"
+    }
+  }] }).items[0];
+  assert.equal(normalized.phase, "analyzing");
+  assert.equal(normalized.requestStartedAt, "2026-09-03T10:00:03.000Z");
+  assert.equal(normalized.providerMayHaveAccepted, true);
+});
 
 const request = {
   sessionId: "session:one",
@@ -173,7 +218,14 @@ test("detaching can resolve a task by clientRequestId before the start response 
 
 test("service-worker recovery marks running execution unknown and never queues it again", () => {
   const created = createOrJoinAnalysisTask({}, request, { taskId: "task:recover" });
-  const running = startAnalysisAttempt(created.task, { attemptId: "attempt:recover" });
+  const running = updateAnalysisTaskProgress(
+    startAnalysisAttempt(created.task, { attemptId: "attempt:recover" }),
+    {
+      attemptId: "attempt:recover",
+      phase: "analyzing",
+      providerMayHaveAccepted: true
+    }
+  );
   const recovered = recoverInterruptedAnalysisTasks(replaceAnalysisTask(created.state, running), {
     now: "2026-08-26T00:01:00.000Z"
   });
@@ -181,4 +233,28 @@ test("service-worker recovery marks running execution unknown and never queues i
   assert.equal(recovered.items[0].status, "stopped");
   assert.equal(recovered.items[0].executionState, "execution_state_unknown");
   assert.equal(recovered.items[0].attempts[0].status, "execution_state_unknown");
+});
+
+test("service-worker recovery preserves the attempt still owned by the Offscreen runner", () => {
+  const created = createOrJoinAnalysisTask({}, {
+    ...request,
+    kind: "entry_video",
+    entryId: "entry:video",
+    assetId: "asset:video",
+    mode: "visual-reconstruction"
+  }, { taskId: "task:offscreen" });
+  const running = updateAnalysisTaskProgress(
+    startAnalysisAttempt(created.task, {
+      attemptId: "attempt:offscreen",
+      deadlineAt: "2026-08-26T00:05:00.000Z"
+    }),
+    { attemptId: "attempt:offscreen", phase: "analyzing", providerMayHaveAccepted: true }
+  );
+  const recovered = recoverInterruptedAnalysisTasks(replaceAnalysisTask(created.state, running), {
+    activeAttemptIds: ["attempt:offscreen"]
+  });
+
+  assert.equal(recovered.items[0].status, "running");
+  assert.equal(recovered.items[0].activeAttemptId, "attempt:offscreen");
+  assert.equal(recovered.items[0].deadlineAt, "2026-08-26T00:05:00.000Z");
 });

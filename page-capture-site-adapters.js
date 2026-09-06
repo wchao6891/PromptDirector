@@ -269,12 +269,15 @@ export function collectPageCaptureSitePayload(options = {}) {
     return { adapter: "krea", pageKind: "feed", canonicalUrl: clean(globalThis.location?.href), items, status: items.length ? "complete" : "partial" };
   }
   if (host === "higgsfield.ai" || host.endsWith(".higgsfield.ai")) {
-    const compactPerson = (value) => value && typeof value === "object" ? {
-      "@type": clean(value["@type"]),
-      name: clean(value.name),
-      alternateName: clean(value.alternateName),
-      identifier: clean(value.identifier)
-    } : null;
+    const compactPerson = (person) => {
+      const value = person?.mainEntity || person;
+      return value && typeof value === "object" ? {
+        "@type": clean(value["@type"]),
+        name: clean(value.name),
+        alternateName: clean(value.alternateName),
+        identifier: clean(value.identifier)
+      } : null;
+    };
     const compactImage = (value) => {
       if (typeof value === "string") return clean(value);
       if (!value || typeof value !== "object") return "";
@@ -291,15 +294,19 @@ export function collectPageCaptureSitePayload(options = {}) {
       userInteractionCount: Number(item?.userInteractionCount) || 0
     }));
     const compactCreativeWork = (value) => ({
-      "@type": clean(value?.["@type"]),
+      "@type": Array.isArray(value?.["@type"]) ? value["@type"].slice(0, maxNodes).map(clean) : clean(value?.["@type"]),
       name: clean(value?.name),
-      description: String(value?.description || "").slice(0, maxTextCharacters).trim(),
+      description: String(value?.articleBody || value?.description || "").slice(0, maxTextCharacters).trim(),
       url: clean(value?.url),
       identifier: clean(value?.identifier),
       author: compactPerson(value?.author || value?.creator),
       datePublished: clean(value?.datePublished || value?.dateCreated || value?.uploadDate),
       image: (Array.isArray(value?.image) ? value.image : value?.image ? [value.image] : []).slice(0, maxMedia).map(compactImage).filter(Boolean),
       thumbnailUrl: clean(value?.thumbnailUrl),
+      contentUrl: clean(value?.contentUrl),
+      width: Number(value?.width?.value || value?.width) || 0,
+      height: Number(value?.height?.value || value?.height) || 0,
+      video: (Array.isArray(value?.video) ? value.video : value?.video ? [value.video] : []).slice(0, maxMedia).map(compactImage),
       interactionStatistic: compactStatistics(value?.interactionStatistic)
     });
     const jsonLd = [];
@@ -309,7 +316,7 @@ export function collectPageCaptureSitePayload(options = {}) {
         const values = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.["@graph"]) ? parsed["@graph"] : [parsed];
         for (const value of values) {
           const types = Array.isArray(value?.["@type"]) ? value["@type"] : [value?.["@type"]];
-          if (types.includes("CreativeWork") && jsonLd.length < maxNodes) jsonLd.push(compactCreativeWork(value));
+          if (types.some((type) => ["CreativeWork", "VideoObject", "ImageObject", "Article", "BlogPosting"].includes(type)) && jsonLd.length < maxNodes) jsonLd.push(compactCreativeWork(value));
           if (types.includes("ItemList") && jsonLd.length < maxNodes) {
             jsonLd.push({
               "@type": "ItemList",
@@ -324,14 +331,16 @@ export function collectPageCaptureSitePayload(options = {}) {
       } catch {
       }
     }
-    const detail = /^\/@[^/]+\/projects\/[^/]+/u.test(clean(globalThis.location?.pathname));
+    const canonicalUrl = clean(globalThis.document?.querySelector?.('link[rel="canonical"]')?.href || globalThis.location?.href);
+    const detail = /^\/(?:@[^/]+\/projects|publications|community)\/[^/]+\/?$/u.test(clean(globalThis.location?.pathname))
+      || jsonLd.some((node) => node["@type"] !== "ItemList" && node.url === canonicalUrl);
     const brief = detail
       ? String(globalThis.document?.querySelector?.('[aria-label^="Project brief:"]')?.innerText || "").slice(0, maxTextCharacters).trim()
       : "";
     return {
       adapter: "higgsfield",
       pageKind: detail ? "detail" : "feed",
-      canonicalUrl: clean(globalThis.location?.href),
+      canonicalUrl,
       brief,
       jsonLd,
       status: jsonLd.length ? "complete" : "partial"
@@ -667,6 +676,7 @@ export function isTrustedPageCaptureMediaUrl(adapterId, value) {
     const url = new URL(String(value || ""));
     if (url.protocol !== "https:") return false;
     if (adapterId === "jimeng") return JIMENG_IMAGE_HOST_PATTERN.test(url.hostname);
+    if (adapterId === "libtv") return url.hostname === "libtv-res.liblib.art";
     if (adapterId === "liblibai") return url.hostname === "liblib.cloud" || url.hostname.endsWith(".liblib.cloud");
     if (adapterId === "krea") return url.hostname === "krea.ai" || url.hostname.endsWith(".krea.ai");
     if (adapterId === "higgsfield") return url.hostname === "higgsfield.ai"
@@ -785,6 +795,7 @@ function normalizeHiggsfieldPayload(value, canonicalUrlValue) {
       seen.add(itemId);
       return [candidate];
     });
+    if (!candidates.length) return null;
     return {
       adapter: "higgsfield",
       pageKind,
@@ -793,15 +804,24 @@ function normalizeHiggsfieldPayload(value, canonicalUrlValue) {
       candidates
     };
   }
+  const matchesPage = (node) => !safeHttpUrl(node?.url) || safeHttpUrl(node.url) === canonicalUrl;
   const work = nodes.find((node) => {
     const types = Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]];
-    return types.includes("CreativeWork") && (!safeHttpUrl(node?.url) || safeHttpUrl(node?.url) === canonicalUrl);
+    return types.includes("CreativeWork") && matchesPage(node);
   }) || nodes.find((node) => {
     const types = Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]];
-    return types.includes("CreativeWork");
+    return types.some((type) => ["VideoObject", "ImageObject", "Article", "BlogPosting"].includes(type)) && matchesPage(node);
   });
   if (!work) return null;
-  const candidate = normalizeHiggsfieldWork({ ...work, url: safeHttpUrl(work?.url) || canonicalUrl }, value?.brief);
+  const videos = nodes.filter((node) => {
+    const types = Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]];
+    return types.includes("VideoObject") && matchesPage(node);
+  });
+  const candidate = normalizeHiggsfieldWork({
+    ...work,
+    url: canonicalUrl,
+    video: [...(Array.isArray(work.video) ? work.video : work.video ? [work.video] : []), ...videos]
+  }, value?.brief);
   return candidate ? { ...candidate, pageKind, candidates: [candidate] } : null;
 }
 
@@ -814,21 +834,45 @@ function normalizeHiggsfieldWork(value, briefValue) {
   const handlePart = pathParts.find((part) => part.startsWith("@")) || "";
   const projectIndex = pathParts.indexOf("projects");
   const projectSlug = projectIndex >= 0 ? clean(pathParts[projectIndex + 1]) : "";
-  const author = clean(value?.author?.name || value?.creator?.name);
-  const handle = clean(value?.author?.alternateName || value?.creator?.alternateName || handlePart).replace(/^@/u, "");
-  const itemId = [handle, projectSlug].filter(Boolean).join("/") || clean(value?.identifier) || stableTextHash(canonicalUrl);
-  const imageValues = Array.isArray(value?.image) ? value.image : value?.image ? [value.image] : [];
-  const imageValue = imageValues.find((item) => typeof item === "string" ? item : item?.contentUrl || item?.url || item?.thumbnailUrl);
-  const imageUrlValue = typeof imageValue === "string" ? imageValue : imageValue?.contentUrl || imageValue?.url || imageValue?.thumbnailUrl;
-  const url = safeTrustedMediaUrl("higgsfield", imageUrlValue || value?.thumbnailUrl);
-  const width = positiveInteger(typeof imageValue === "object" ? imageValue?.width : 0);
-  const height = positiveInteger(typeof imageValue === "object" ? imageValue?.height : 0);
+  const person = (value?.author || value?.creator)?.mainEntity || value?.author || value?.creator;
+  const author = clean(person?.name);
+  const handle = clean(person?.alternateName || handlePart || person?.identifier).replace(/^@/u, "");
+  const publicationId = ["publications", "community"].includes(pathParts[0]) ? clean(pathParts[1]) : "";
+  const itemId = publicationId || (projectSlug ? [handle, projectSlug].filter(Boolean).join("/") : "") || clean(value?.identifier) || stableTextHash(canonicalUrl);
+  const imageValues = Array.isArray(value?.image) ? [...value.image] : value?.image ? [value.image] : [];
+  const types = Array.isArray(value?.["@type"]) ? value["@type"] : [value?.["@type"]];
+  const videoValues = [...(Array.isArray(value?.video) ? value.video : value?.video ? [value.video] : []), ...(types.includes("VideoObject") ? [value] : [])];
+  if (types.includes("ImageObject")) imageValues.push(value);
   const contentText = cleanMultiline(briefValue) || cleanMultiline(value?.description);
-  const media = url ? [{
-    id: `higgsfield:${stableTextHash(itemId)}:1`, kind: "image", url, width, height,
-    sourceKind: "site-original", captureMethod: "source",
-    variants: [{ url, sourceKind: "site-original", width, height }]
-  }] : [];
+  const isArticle = Boolean(cleanMultiline(briefValue) || types.some((type) => ["Article", "BlogPosting"].includes(type)));
+  const media = [];
+  const seen = new Set();
+  const addMedia = (item, kind) => {
+    const url = safeTrustedMediaUrl("higgsfield", typeof item === "string" ? item : item?.contentUrl || item?.url);
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    const width = positiveInteger(item?.width?.value || item?.width);
+    const height = positiveInteger(item?.height?.value || item?.height);
+    media.push({
+      id: `higgsfield:${stableTextHash(itemId)}:${stableTextHash(url)}`, kind, url, width, height,
+      ...(kind === "video" ? { posterUrl: safeTrustedMediaUrl("higgsfield", item?.thumbnailUrl) } : {}),
+      sourceKind: "site-original", captureMethod: "source",
+      variants: [{ url, sourceKind: "site-original", width, height }]
+    });
+  };
+  videoValues.forEach((item) => addMedia(item, "video"));
+  const posters = new Set(media.map((item) => item.posterUrl).filter(Boolean));
+  for (const item of imageValues) {
+    if (isArticle || !posters.has(typeof item === "string" ? item : item?.contentUrl || item?.url)) addMedia(item, "image");
+  }
+  if (!media.length && value?.thumbnailUrl) addMedia(value.thumbnailUrl, "image");
+  if (isArticle) {
+    const cover = media.find((item) => item.kind === "image");
+    if (cover) cover.isCover = true;
+  }
+  const { width = 0, height = 0 } = media[0] || {};
+  const pageType = cleanMultiline(briefValue) || types.some((type) => ["Article", "BlogPosting"].includes(type))
+    ? "article" : media.some((item) => item.kind === "video") ? "video" : "artwork";
   const engagement = Object.fromEntries([
     ["likes", interactionCount(value?.interactionStatistic, "LikeAction")],
     ["comments", interactionCount(value?.interactionStatistic, "CommentAction")],
@@ -839,7 +883,7 @@ function normalizeHiggsfieldWork(value, briefValue) {
   return {
     id: `higgsfield:${stableTextHash(itemId)}`,
     adapter: "higgsfield",
-    pageType: "artwork",
+    pageType,
     canonicalUrl,
     title: title || author || `Higgsfield ${projectSlug || itemId}`,
     contentText,
@@ -847,7 +891,7 @@ function normalizeHiggsfieldWork(value, briefValue) {
     completeness: complete ? "complete" : "partial",
     extraction: { scope: "document", method: "structured", textBlockCount: contentText ? 1 : 0 },
     sourceFacts: {
-      provider: "higgsfield", pageType: "artwork", itemId, author, handle,
+      provider: "higgsfield", pageType, itemId, author, handle,
       publishedAt: validIso(value?.datePublished || value?.dateCreated || value?.uploadDate),
       dimensions: width && height ? `${width}×${height}` : "",
       engagement, extractionMethod: "structured",

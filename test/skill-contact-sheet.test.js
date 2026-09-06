@@ -94,9 +94,10 @@ test("selected video Skill sources stay asset-specific anonymous and exclude his
     sourceIds: ["reconstruction:private:current", "notes:private:video-one"],
     analysisIds: ["private:review"]
   }]);
-  assert.deepEqual(customized.parts.map((part) => part.kind), ["video_reconstruction", "time_notes", "other_analysis"]);
+  assert.deepEqual(customized.parts.map((part) => part.kind), ["video_reconstruction", "time_notes"]);
   assert.doesNotMatch(customized.prompt, /所选视频原始提示词/);
-  assert.match(customized.analysis, /当前视觉逆推[\s\S]*所选视频人工笔记[\s\S]*默认不进入的审片/);
+  assert.match(customized.analysis, /当前视觉逆推[\s\S]*所选视频人工笔记/);
+  assert.doesNotMatch(customized.analysis, /默认不进入的审片/);
 });
 
 test("Skill source exact dedupe keeps both labels without repeating the body", () => {

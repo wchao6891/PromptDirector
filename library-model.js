@@ -106,6 +106,7 @@ export function entrySourceMetadataRows(entry = {}, sourceLabel = "来源") {
   for (const name of ["provider", "itemId", "author", "handle", "publishedAt", "model", "dimensions"]) {
     addField(labels[name], sourceFacts[name]);
   }
+  if (sourceFacts.description) addField(english ? "Description" : "作品说明", sourceFacts.description);
   for (const [name, amount] of Object.entries(sourceFacts.engagement || {})) {
     if (Number.isFinite(Number(amount)) && Number(amount) >= 0) addField(labels[name] || name, String(amount));
   }

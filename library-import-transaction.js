@@ -174,6 +174,12 @@ export function failLibraryImportTransaction(stateValue, receiptValue, options =
 }
 
 function projectLibraryImportSource(value = {}) {
+  if (Array.isArray(value)) {
+    return { batch: value.map((item) => projectLibraryImportSource(item)) };
+  }
+  if (Array.isArray(value?.batch)) {
+    return { batch: value.batch.map((item) => projectLibraryImportSource(item)) };
+  }
   const projected = projectLibraryImportState(value);
   const schemaVersion = toFiniteNumber(value?.schemaVersion);
   const sourcePackageVersion = toFiniteNumber(value?.sourcePackageVersion);

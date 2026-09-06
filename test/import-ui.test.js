@@ -37,7 +37,7 @@ test("add menu has one local import entry and the import dialog chooses files or
 test("local import dialog includes drag target, confirmation summary, project assignment, auto-analyze, and job controls", () => {
   const confirmation = html.slice(html.indexOf('id="import-confirmation"'), html.indexOf('id="import-job-panel"'));
   assert.match(html, /id="library-drop-target"/);
-  assert.match(html, /松开以检查本机资料/);
+  assert.match(html, /松开以检查导入内容/);
   assert.match(html, /id="import-dialog"/);
   assert.match(html, /id="import-source"/);
   assert.match(html, /id="import-preparing"/);
@@ -100,7 +100,9 @@ test("file picker folder picker and document drop share one import confirmation 
   assert.match(js, /document\.addEventListener\("drop",\s*handleLibraryDrop\)/);
   assert.match(js, /prepareLocalImport\(files,\s*\{\s*source:\s*"files"\s*\}\)/);
   assert.match(js, /prepareLocalImport\(files,\s*\{\s*source:\s*"folder"\s*\}\)/);
-  assert.match(js, /prepareLocalImport\(items,\s*\{\s*source:\s*items\.some/);
+  assert.match(js, /packageItems\s*=\s*items\.filter[\s\S]*importContainerKindForFile/);
+  assert.match(js, /openLibraryPackageBatch\(packageItems,\s*ordinaryItems\)/);
+  assert.match(js, /prepareLocalImport\(ordinaryItems,\s*\{\s*source:\s*ordinaryItems\.some/);
 });
 
 test("duplicate choice and import start preserve the complete background job contract", () => {

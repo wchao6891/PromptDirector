@@ -8,6 +8,7 @@ import {
   assetFormatForExtension,
   assetKindFromFileMetadata,
   extensionsForAssetKind,
+  importContainerKindForFile,
   isReportedMimeCompatible,
   resolvePortableAssetFormat
 } from "../asset-formats.js";
@@ -50,6 +51,18 @@ test("generic browser MIME values are allowed only when a registered extension e
   assert.equal(isReportedMimeCompatible(photoshop, "application/octet-stream"), true);
   assert.equal(assetKindFromFileMetadata({ name: "source.psd", type: "application/octet-stream" }), "attachment");
   assert.equal(assetKindFromFileMetadata({ name: "unknown.bin", type: "application/octet-stream" }), "");
+});
+
+test("ZIP containers are routed separately from ordinary case assets", () => {
+  assert.equal(assetKindFromFileMetadata({ name: "guide.skill", type: "application/zip" }), "attachment");
+  assert.equal(assetKindFromFileMetadata({ name: "unknown.bin", type: "application/zip" }), "");
+  assert.equal(assetKindFromFileMetadata({ name: "cases.zip", type: "application/zip" }), "");
+  assert.equal(importContainerKindForFile({ name: "guide.skill", type: "application/zip" }), "");
+  assert.equal(importContainerKindForFile({ name: "cases.zip", type: "application/zip" }), "share-package");
+  assert.equal(importContainerKindForFile({ name: "cases.ZIP", type: "application/octet-stream" }), "share-package");
+  assert.equal(importContainerKindForFile({ name: "image.png", type: "image/png" }), "");
+  assert.equal(importContainerKindForFile({ name: "fake.zip", type: "image/png" }), "");
+  assert.equal(assetFormatForExtension("zip"), null);
 });
 
 test("portable asset format resolves registered audio extensions for full backup and ZIP export", () => {

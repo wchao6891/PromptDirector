@@ -8,6 +8,7 @@ import {
   expandLibrarySelection,
   normalizeSelectedLogicalCaseIds,
   selectAllFilteredLogicalCases,
+  setLibraryCaseSelection,
   toggleLibraryCaseSelection
 } from "../library-selection.js";
 
@@ -33,6 +34,54 @@ test("selection can be normalized, toggled, and explicitly cleared without mutat
   assert.deepEqual(removed, ["case:two"]);
   assert.deepEqual(added, ["case:two", "case:three"]);
   assert.deepEqual(clearLibrarySelection(), []);
+});
+
+test("sweep selection applies one frozen intent instead of toggling visited cases", () => {
+  let selected = ["case:one", "case:three"];
+  for (const id of ["case:two", "case:three", "case:two"]) {
+    selected = setLibraryCaseSelection(selected, id, true);
+  }
+  assert.deepEqual(selected, ["case:one", "case:three", "case:two"]);
+
+  for (const id of ["case:one", "case:two", "case:one"]) {
+    selected = setLibraryCaseSelection(selected, id, false);
+  }
+  assert.deepEqual(selected, ["case:three"]);
+});
+
+test("sweep selection keeps its first-card intent across rows and repeated visits", () => {
+  const rows = [
+    ["case:one", "case:two", "case:three"],
+    ["case:four", "case:five", "case:six"]
+  ];
+  const visitedPath = [
+    rows[0][0], rows[0][1], rows[1][1], rows[0][1], rows[1][2], rows[0][0]
+  ];
+
+  let selected = ["case:one", "case:untouched"];
+  const shouldSelect = !selected.includes(visitedPath[0]);
+  for (const id of visitedPath) selected = setLibraryCaseSelection(selected, id, shouldSelect);
+
+  assert.deepEqual(selected, ["case:untouched"]);
+});
+
+test("explicit selection is idempotent and ignores an empty card reached outside the gallery", () => {
+  const original = ["case:one"];
+  const selectedTwice = setLibraryCaseSelection(
+    setLibraryCaseSelection(original, "case:two", true),
+    "case:two",
+    true
+  );
+  const deselectedTwice = setLibraryCaseSelection(
+    setLibraryCaseSelection(selectedTwice, "case:one", false),
+    "case:one",
+    false
+  );
+
+  assert.deepEqual(original, ["case:one"]);
+  assert.deepEqual(selectedTwice, ["case:one", "case:two"]);
+  assert.deepEqual(deselectedTwice, ["case:two"]);
+  assert.deepEqual(setLibraryCaseSelection(deselectedTwice, " ", true), ["case:two"]);
 });
 
 test("logical compound selections expand to stable unique member entry ids", () => {
@@ -74,7 +123,8 @@ test("project batch payload requires explicit add, remove, or move semantics", (
   const moved = buildLibraryBatchPayload(["entry:a"], [], {
     type: LIBRARY_BATCH_ACTIONS.setProject,
     collectionId: "collection:archive",
-    mode: "move"
+    mode: "move",
+    sourceCollectionId: "collection:campaign"
   });
   const removed = buildLibraryBatchPayload(["entry:a"], [], {
     type: LIBRARY_BATCH_ACTIONS.setProject,
@@ -88,7 +138,13 @@ test("project batch payload requires explicit add, remove, or move semantics", (
     collectionId: "collection:campaign",
     mode: "add"
   });
-  assert.equal(moved.mode, "move");
+  assert.deepEqual(moved, {
+    type: "BATCH_SET_PROJECT",
+    entryIds: ["entry:a"],
+    collectionId: "collection:archive",
+    mode: "move",
+    sourceCollectionId: "collection:campaign"
+  });
   assert.equal(removed.mode, "remove");
   assert.throws(
     () => buildLibraryBatchPayload(["entry:a"], [], {

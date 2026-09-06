@@ -15,8 +15,13 @@ export const PAGE_CAPTURE_ADAPTERS = Object.freeze([
   adapter("jimeng", "即梦", ["jimeng.jianying.com"], "verified-deep", ["[data-testid*=work]", "[class*=masonry] > *"], {
     title: ["[class*=title]"], author: ["[class*=author]"], model: ["[class*=model]"]
   }, ["byteimg.com"]),
+  adapter("libtv", "LibTV", ["liblib.tv"], "verified-declarative", [".react-flow__node[data-id]"], {}, ["libtv-res.liblib.art"]),
   adapter("liblibai", "LiblibAI", ["liblib.art", "liblib.ai"], "verified-deep", ["[class*=work-card]", "[class*=waterfall] > *"], {}, ["liblib.cloud"]),
-  adapter("higgsfield", "Higgsfield", ["higgsfield.ai"], "verified-declarative", ["[data-testid*=creation]", "[class*=feed] > article"], {}, ["higgsfield.ai", "higgs.ai", "d2ol7oe51mr4n9.cloudfront.net", "du4zrvwy3vtek.cloudfront.net", "d8j0ntlcm91z4.cloudfront.net"]),
+  adapter("higgsfield", "Higgsfield", ["higgsfield.ai"], "verified-declarative", ["[data-testid*=creation]", "[class*=feed] > article"], {
+    content: ['[aria-label^="Project brief:"]'],
+    mediaContainers: [".rde-asset-embed"],
+    downloadButtons: '.rde-asset-embed button[aria-label="Download file"]'
+  }, ["higgsfield.ai", "higgs.ai", "d2ol7oe51mr4n9.cloudfront.net", "du4zrvwy3vtek.cloudfront.net", "d8j0ntlcm91z4.cloudfront.net"]),
   adapter("krea", "Krea", ["krea.ai"], "verified-declarative", ["a[href^='/feed/']", "[data-testid*=generation]", "[class*=gallery] > *"], {}, ["krea.ai"]),
   adapter("tapnow", "TapNow", ["tapnow.ai"], "generic", ["[data-testid*=work]", "[class*=gallery] > *"]),
 

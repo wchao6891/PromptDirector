@@ -214,7 +214,9 @@ test("durable stop flow persists the request fact and never treats local abort a
   assert.match(offscreen, /providerMayHaveAccepted: runner\.providerMayHaveAccepted/);
   assert.doesNotMatch(offscreen, /finally[\s\S]{0,300}deleteScreenshotBlob\(maskAssetId\)/);
   assert.match(runner, /onRequestStart: markProviderRequestStarted/);
-  assert.match(runner, /providerMayHaveAccepted = true;[\s\S]{0,360}providerMayHaveAccepted: true,[\s\S]{0,80}actualStages: \[\.\.\.actualStages\]/);
+  const requestStarted = runner.slice(runner.indexOf("const markProviderRequestStarted"), runner.indexOf("const result = await executeComposerTurnWithService"));
+  assert.match(requestStarted, /providerMayHaveAccepted = true/);
+  assert.match(requestStarted, /await context\.progress\([\s\S]*providerMayHaveAccepted: true,[\s\S]*actualStages: \[\.\.\.actualStages\]/);
   assert.match(offscreen, /progress: \(\{ phase, session, remoteVideo, providerMayHaveAccepted, actualStages \}\)/);
   assert.match(cancellation, /actualStages: active\.actualStages/);
   assert.doesNotMatch(runner, /startPhase === "planning"|planComposerSession/);

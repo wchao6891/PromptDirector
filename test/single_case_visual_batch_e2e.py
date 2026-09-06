@@ -215,8 +215,7 @@ def main() -> None:
 
         library = run.open_page("library.html", wait_until="networkidle")
         library.locator(".case-card").click()
-        analysis_menu = library.locator(".detail-analysis-menu")
-        analysis_menu.locator(":scope > summary").click()
+        analysis_menu = library.locator(".prompt-toolbar")
         analysis_menu.get_by_role("button", name="批量图片分析").click()
 
         dialog = library.locator("#promptdirector-app-dialog")

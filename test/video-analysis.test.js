@@ -11,6 +11,143 @@ import {
   videoAnalysisPrompt
 } from "../video-analysis.js";
 
+test("a direct video request times out once without retrying or accepting a late response", async () => {
+  let calls = 0;
+  let resolveFetch;
+  const pendingResponse = new Promise((resolve) => { resolveFetch = resolve; });
+  const promise = analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-5.3-flash",
+    mode: "content-summary",
+    localVideo: "base64",
+    videoBlob: new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" })
+  }, {
+    requestTimeoutMs: 10,
+    fetchImpl: async () => {
+      calls += 1;
+      return pendingResponse;
+    }
+  });
+
+  await assert.rejects(promise, (error) => {
+    assert.equal(error.code, "VIDEO_ANALYSIS_TIMEOUT");
+    assert.equal(error.status, 408);
+    assert.match(error.message, /等待已达 5 分钟/);
+    assert.doesNotMatch(error.message, /zhipu-key/);
+    return true;
+  });
+  assert.equal(calls, 1);
+
+  resolveFetch(new Response(JSON.stringify({
+    choices: [{ message: { content: "迟到结果" } }]
+  }), { status: 200, headers: { "content-type": "application/json" } }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls, 1);
+});
+
+test("stopping a direct video request does not wait for a fetch mock that ignores AbortSignal", async () => {
+  const controller = new AbortController();
+  const pendingResponse = new Promise(() => {});
+  let resolveStarted;
+  const started = new Promise((resolve) => { resolveStarted = resolve; });
+  const promise = analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-5.3-flash",
+    mode: "content-summary",
+    signal: controller.signal,
+    localVideo: "base64",
+    videoBlob: new Blob([new Uint8Array([1])], { type: "video/mp4" })
+  }, {
+    requestTimeoutMs: 1_000,
+    fetchImpl: async () => {
+      resolveStarted();
+      return pendingResponse;
+    }
+  });
+
+  await started;
+  const stoppedAt = Date.now();
+  controller.abort(new DOMException("Stopped by user", "AbortError"));
+  await assert.rejects(promise, /Stopped by user|aborted/);
+  assert.ok(Date.now() - stoppedAt < 100, "stop should settle without waiting for the request deadline");
+});
+
+for (const boundary of ["deadline", "stop"]) {
+  test(`video ${boundary} still aborts the network after response headers arrive`, async () => {
+    const controller = new AbortController();
+    let requests = 0;
+    let networkSignal;
+    let reading;
+    const bodyStarted = new Promise((resolve) => { reading = resolve; });
+    const pending = analyzeVideoWithChatCompletions({
+      apiKey: "test-only", endpoint: "https://example.com/chat/completions", model: "video-model",
+      videoBlob: new Blob(["video"], { type: "video/mp4" }), signal: controller.signal
+    }, {
+      requestTimeoutMs: boundary === "deadline" ? 15 : 1_000,
+      fetchImpl: async (_url, options) => {
+        requests += 1;
+        networkSignal = options.signal;
+        return { ok: true, status: 200, json: async () => { reading(); return new Promise(() => {}); } };
+      }
+    });
+    await bodyStarted;
+    if (boundary === "stop") controller.abort();
+    await assert.rejects(pending, boundary === "deadline" ? { code: "VIDEO_ANALYSIS_TIMEOUT" } : { name: "AbortError" });
+    assert.equal(networkSignal.aborted, true);
+    assert.equal(requests, 1);
+  });
+}
+
+test("Chat Completions preserves Markdown line structure in a saved video analysis", async () => {
+  const markdown = "### 镜头结构\n\n**00:01 开场**\n\n- 00:03 推进";
+  const result = await analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-5.3-flash",
+    mode: "creative-breakdown",
+    localVideo: "base64",
+    videoBlob: new Blob([new Uint8Array([1])], { type: "video/mp4" })
+  }, {
+    fetchImpl: async () => new Response(JSON.stringify({
+      choices: [{ message: { content: markdown }, finish_reason: "stop" }]
+    }), { status: 200, headers: { "content-type": "application/json" } })
+  });
+
+  assert.equal(result.text, markdown);
+});
+
+test("the provider acceptance stage is persisted only after the direct request starts", async () => {
+  let calls = 0;
+  const stages = [];
+  await analyzeVideoWithChatCompletions({
+    apiKey: "zhipu-key",
+    endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    providerLabel: "智谱 GLM",
+    model: "glm-5.3-flash",
+    mode: "content-summary",
+    localVideo: "base64",
+    videoBlob: new Blob([new Uint8Array([1])], { type: "video/mp4" }),
+    onStage: async (phase) => stages.push({ phase, calls })
+  }, {
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "00:01 开场" }, finish_reason: "stop" }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+
+  assert.deepEqual(stages, [
+    { phase: "encoding", calls: 0 },
+    { phase: "analyzing", calls: 1 }
+  ]);
+});
+
 test("video analysis execution requires the current paid-media confirmation", () => {
   assert.throws(() => requireVideoAnalysisConfirmation(), /确认框/);
   assert.throws(() => requireVideoAnalysisConfirmation("true"), /确认框/);
@@ -28,7 +165,7 @@ test("custom video analysis requires an explicit question", () => {
   assert.match(videoAnalysisPrompt("custom", "比较前后节奏"), /比较前后节奏/);
 });
 
-test("the production reconstruction prompt exposes the visual-only v3.1 evidence contract", () => {
+test("the production reconstruction prompt grounds audiovisual reconstruction in actual evidence", () => {
   const prompt = videoAnalysisPrompt("visual-reconstruction", "", {
     includeTags: true,
     durationMs: 12_345,
@@ -38,9 +175,20 @@ test("the production reconstruction prompt exposes the visual-only v3.1 evidence
   assert.match(prompt, /12\.345 秒/);
   assert.match(prompt, /1920×1080/);
   assert.match(prompt, /开始状态、变化过程和结束状态/);
-  assert.match(prompt, /完全没有音轨证据/);
+  assert.match(prompt, /音轨无法读取或辨认/);
   assert.match(prompt, /fixedPaths=/);
   assert.doesNotMatch(prompt, /\["sound"/);
+});
+
+test("a customized video method remains wrapped by the fixed structured-output contract", () => {
+  const prompt = videoAnalysisPrompt("visual-reconstruction", "", {
+    instruction: "优先拆解角色动作与镜头衔接",
+    includeTags: true,
+    locale: "zh-CN"
+  });
+  assert.match(prompt, /优先拆解角色动作与镜头衔接/);
+  assert.match(prompt, /reconstructionPrompt、tags、uncertainties/);
+  assert.match(prompt, /返回一个 JSON 对象/);
 });
 
 test("Gemini YouTube analysis reports the real source, model and usage", async () => {
@@ -91,7 +239,8 @@ test("Gemini visual reconstruction uses the same editable structured contract as
   });
 
   assert.equal(body.generationConfig.responseMimeType, "application/json");
-  assert.equal(body.contents[0].parts[1].text, "RETURN_EDITABLE_RECONSTRUCTION");
+  assert.match(body.contents[0].parts[1].text, /RETURN_EDITABLE_RECONSTRUCTION/);
+  assert.match(body.contents[0].parts[1].text, /reconstructionPrompt、tags、uncertainties/);
   assert.equal(result.contractVersion, VIDEO_RECONSTRUCTION_CONTRACT_VERSION);
   assert.equal(result.reconstructionPrompt, "一支可编辑的视频生成提示词。");
   assert.deepEqual(result.tags, []);
@@ -100,6 +249,32 @@ test("Gemini visual reconstruction uses the same editable structured contract as
 test("non-YouTube social links are not disguised as full video analysis", async () => {
   await assert.rejects(analyzeVideoWithGemini({ apiKey: "key", model: "model", mode: "creative-breakdown", youtubeUrl: "https://x.com/user/status/1" }), /附加本地视频/);
 });
+
+for (const stopAt of ["upload-start", "upload-body", "processing"]) {
+  test(`native Gemini cancellation during ${stopAt} never continues to video inference`, async () => {
+    const controller = new AbortController();
+    let requests = 0;
+    await assert.rejects(analyzeVideoWithGemini({
+      apiKey: "test-only", model: "video-model", videoBlob: new Blob(["video"], { type: "video/mp4" }),
+      signal: controller.signal,
+      onStage: (phase) => { if (stopAt === "processing" && phase === "processing") controller.abort(); }
+    }, {
+      sleep: async () => undefined,
+      fetchImpl: async (url, options) => {
+        assert.equal(options.signal, controller.signal);
+        assert.doesNotMatch(url, /generateContent/);
+        requests += 1;
+        if (requests === 1) {
+          if (stopAt === "upload-start") controller.abort();
+          return new Response("{}", { headers: { "x-goog-upload-url": "https://generativelanguage.googleapis.com/upload/test" } });
+        }
+        if (stopAt === "upload-body") controller.abort();
+        return new Response(JSON.stringify({ file: { name: "files/test", uri: "https://generativelanguage.googleapis.com/files/test", state: "PROCESSING" } }));
+      }
+    }), { name: "AbortError" });
+    assert.equal(requests, stopAt === "upload-start" ? 1 : 2);
+  });
+}
 
 test("OpenRouter sends local video as video_url without changing the selected model", async () => {
   const calls = [];
@@ -126,6 +301,29 @@ test("OpenRouter sends local video as video_url without changing the selected mo
   assert.equal(result.usage.totalTokens, 15);
   assert.equal(result.cost, 0.012);
   assert.deepEqual(result.routing, { provider: "declared-provider" });
+});
+
+test("local video-compatible services may use an HTTP loopback endpoint", async () => {
+  const calls = [];
+  await analyzeVideoWithChatCompletions({
+    apiKey: "local-test-key",
+    endpoint: "http://127.0.0.1:4177/v1/chat/completions",
+    providerLabel: "本机服务",
+    model: "local-video-model",
+    videoBlob: new Blob([Uint8Array.from([1, 2, 3])], { type: "video/mp4" }),
+    videoMimeType: "video/mp4",
+    mode: "content-summary",
+    instruction: "概括可见内容",
+    catalog: { facets: [] }
+  }, {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: "可见主体向前移动。" }, finish_reason: "stop" }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+  assert.equal(calls[0].url, "http://127.0.0.1:4177/v1/chat/completions");
 });
 
 test("Kimi uses its configured Chat Completions endpoint and exposes provider-specific results", async () => {
@@ -240,7 +438,7 @@ test("GLM-5.3-Flash sends an eligible local video as raw Base64", async () => {
   assert.equal(result.sourceKind, "local-video");
 });
 
-test("GLM visual reconstruction performs one structured visual-only call with the active Attempt request id", async () => {
+test("GLM video reconstruction performs one evidence-grounded call with the active Attempt request id", async () => {
   const calls = [];
   const result = await analyzeVideoWithChatCompletions({
     apiKey: "zhipu-key",
@@ -286,7 +484,7 @@ test("GLM visual reconstruction performs one structured visual-only call with th
   assert.equal(calls[0].body.messages[0].content[1].video_url.url, "AQID");
   assert.doesNotMatch(calls[0].options.body, /ORIGINAL_PROMPT_MUST_NOT_BE_SENT/);
   assert.equal(result.contractVersion, VIDEO_RECONSTRUCTION_CONTRACT_VERSION);
-  assert.equal(result.analysisScope, "visual");
+  assert.equal(result.analysisScope, "video");
   assert.equal(result.requestId, "attempt:visual-one");
   assert.equal(result.finishReason, "stop");
   assert.equal(result.reconstructionPrompt, "一支只描述可见画面的逐镜头生成提示词。");
@@ -399,7 +597,8 @@ test("generic Chat Completions video errors name the selected provider without e
       headers: { "content-type": "application/json" }
     })
   }), (error) => {
-    assert.match(error.message, /兼容视频服务.*quota unavailable/);
+    assert.match(error.message, /兼容视频服务.*HTTP 429/);
+    assert.doesNotMatch(JSON.stringify(error), /quota unavailable/);
     assert.doesNotMatch(error.message, /never-print-this-key/);
     assert.equal(error.status, 429);
     return true;

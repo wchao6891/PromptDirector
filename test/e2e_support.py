@@ -75,6 +75,18 @@ def seed_extension_storage(page: Page, payload: dict) -> None:
     assert not result["missingSessionIds"], result
 
 
+def wait_for_async_condition(page: Page, expression: str, *, arg=None, timeout: int = 30_000):
+    """Poll the resolved value: wait_for_function treats a Promise itself as truthy."""
+    deadline = time.monotonic() + timeout / 1000
+    value = None
+    while time.monotonic() < deadline:
+        value = page.evaluate(expression, arg)
+        if value:
+            return value
+        page.wait_for_timeout(50)
+    raise AssertionError(f"异步状态条件未满足：{expression}; 最后结果：{value}")
+
+
 @contextmanager
 def extension_session(
     profile_prefix: str,

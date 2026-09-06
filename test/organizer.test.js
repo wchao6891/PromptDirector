@@ -20,6 +20,7 @@ import {
   collectionSubtreeEntryIdsById,
   collectionSubtreeIds,
   moveCollection,
+  moveEntriesBetweenCollections,
   setCollectionVisibility,
   setEntriesCollection
 } from "../organizer.js";
@@ -48,6 +49,66 @@ test("a case can belong to multiple project collections", () => {
   assert.deepEqual(state.collections.map((item) => item.entryIds), [["one"], ["one"]]);
   assert.equal(renameCollection(state, state.collections[0].id, "广告成片").collections[0].name, "广告成片");
   assert.equal(deleteCollection(state, state.collections[0].id).collections.length, 1);
+});
+
+test("source-aware moves remove only the current source and preserve other project memberships", () => {
+  let state = createCollection({}, "来源").state;
+  state = createCollection(state, "保留").state;
+  state = createCollection(state, "目标").state;
+  const [source, retained, target] = state.collections;
+  state = setEntriesCollection(state, source.id, ["one"], true);
+  state = setEntriesCollection(state, retained.id, ["one"], true);
+
+  state = moveEntriesBetweenCollections(state, source.id, target.id, ["one"]);
+
+  assert.deepEqual(state.collections.map((item) => item.entryIds), [[], ["one"], ["one"]]);
+});
+
+test("moving from unassigned adds the target membership without a source collection", () => {
+  const created = createCollection({}, "目标");
+  const state = moveEntriesBetweenCollections(created.state, null, created.item.id, ["one"]);
+  assert.deepEqual(state.collections[0].entryIds, ["one"]);
+});
+
+test("moving several cases is atomic, preserves visual order, and never duplicates target members", () => {
+  const original = normalizeOrganizerState({ collections: [
+    { id: "source", name: "来源", order: 0, entryIds: ["one", "two", "three", "four"] },
+    { id: "retained", name: "保留", order: 1, entryIds: ["one", "four"] },
+    { id: "target", name: "目标", order: 2, entryIds: ["existing", "two"] }
+  ] });
+
+  const moved = moveEntriesBetweenCollections(original, "source", "target", ["three", "two", "three"]);
+
+  assert.deepEqual(original.collections.map((item) => item.entryIds), [
+    ["one", "two", "three", "four"], ["one", "four"], ["existing", "two"]
+  ]);
+  assert.deepEqual(moved.collections.map((item) => item.entryIds), [
+    ["one", "four"], ["one", "four"], ["existing", "two", "three"]
+  ]);
+});
+
+test("adding cases to a project is repeatable without creating duplicate memberships", () => {
+  const original = normalizeOrganizerState({ collections: [
+    { id: "target", name: "目标", entryIds: ["one"] }
+  ] });
+  const once = setEntriesCollection(original, "target", ["one", "two", "two"], true);
+  const twice = setEntriesCollection(once, "target", ["two"], true);
+
+  assert.deepEqual(original.collections[0].entryIds, ["one"]);
+  assert.deepEqual(once.collections[0].entryIds, ["one", "two"]);
+  assert.deepEqual(twice.collections[0].entryIds, ["one", "two"]);
+});
+
+test("a failed move target leaves the source organizer untouched", () => {
+  const original = normalizeOrganizerState({ collections: [
+    { id: "source", name: "来源", entryIds: ["one", "two"] }
+  ] });
+
+  assert.throws(
+    () => moveEntriesBetweenCollections(original, "source", "missing", ["one"]),
+    /目标项目不存在/
+  );
+  assert.deepEqual(original.collections[0].entryIds, ["one", "two"]);
 });
 
 test("organizer merge remaps entry ids and merges same-name collections", () => {
@@ -132,6 +193,22 @@ test("project membership can be replaced atomically in visual selection order", 
     collections: [{ id: "collection:a", name: "A", entryIds: ["old", "keep"] }]
   }, "collection:a", ["keep", "new", "keep"]);
   assert.deepEqual(state.collections[0].entryIds, ["keep", "new"]);
+});
+
+test("manual case order supports first middle and last positions without hidden step controls", () => {
+  const initial = normalizeOrganizerState({ collections: [{
+    id: "collection:a", name: "A", entryIds: ["one", "two", "three", "four"]
+  }] });
+  const first = replaceCollectionEntries(initial, "collection:a", ["four", "one", "two", "three"]);
+  const middle = replaceCollectionEntries(first, "collection:a", ["four", "two", "one", "three"]);
+  const last = replaceCollectionEntries(middle, "collection:a", ["two", "one", "three", "four"]);
+  const unchanged = replaceCollectionEntries(last, "collection:a", last.collections[0].entryIds);
+
+  assert.deepEqual(initial.collections[0].entryIds, ["one", "two", "three", "four"]);
+  assert.deepEqual(first.collections[0].entryIds, ["four", "one", "two", "three"]);
+  assert.deepEqual(middle.collections[0].entryIds, ["four", "two", "one", "three"]);
+  assert.deepEqual(last.collections[0].entryIds, ["two", "one", "three", "four"]);
+  assert.deepEqual(unchanged, last);
 });
 
 test("project order is normalized after deletion so a new project cannot reuse a stale order", () => {

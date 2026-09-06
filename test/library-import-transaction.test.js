@@ -5,6 +5,7 @@ import {
   assertLibraryImportPlanCurrent,
   claimLibraryImportTransaction,
   createLibraryImportPlanToken,
+  failLibraryImportTransaction,
   normalizeLibraryImportTransactionsState,
   succeedLibraryImportTransaction
 } from "../library-import-transaction.js";
@@ -60,6 +61,21 @@ test("plan tokens bind the confirmed recovery choices and resource mappings", ()
     assert.equal(error.code, "IMPORT_PLAN_STALE");
     return true;
   });
+});
+
+test("plan tokens bind every source package and their order", () => {
+  const before = makeCurrentLibrary();
+  const first = makeImportSource();
+  const second = {
+    ...makeImportSource(),
+    entries: [{ id: "source:second", title: "第二个包", mediaAssets: [] }]
+  };
+  const plan = { sourceType: "share-package-batch", items: [{ sourceIndex: 0 }, { sourceIndex: 1 }] };
+  const token = createLibraryImportPlanToken(before, [first, second], plan);
+
+  assert.equal(token, createLibraryImportPlanToken(before, { batch: [first, second] }, plan));
+  assert.notEqual(token, createLibraryImportPlanToken(before, [second, first], plan));
+  assert.notEqual(token, createLibraryImportPlanToken(before, [first], plan));
 });
 
 test("a completed apply is replayed for the same operationId and planToken without calling the writer again", () => {
@@ -132,6 +148,55 @@ test("a pending receipt never claims success and blocks the same operation from 
   assert.equal(duplicate.pending, true);
   assert.equal(duplicate.result, undefined);
   assert.equal(duplicate.receipt.status, "pending");
+});
+
+test("a failed batch clears only its pending receipt so the same confirmed plan can be retried", () => {
+  const source = [makeImportSource(), {
+    ...makeImportSource(),
+    entries: [{ id: "source:second", title: "第二个包", mediaAssets: [] }]
+  }];
+  const before = makeCurrentLibrary();
+  const plan = { sourceType: "share-package-batch", items: [{ sourceIndex: 0 }, { sourceIndex: 1 }] };
+  const planToken = createLibraryImportPlanToken(before, source, plan);
+  const first = claimLibraryImportTransaction(normalizeLibraryImportTransactionsState(), {
+    operationId: "operation:batch-retry",
+    planToken,
+    stateValue: before,
+    sourceValue: source,
+    planValue: plan
+  });
+
+  const afterFailure = failLibraryImportTransaction(first.state, first.receipt);
+  const retry = claimLibraryImportTransaction(afterFailure, {
+    operationId: "operation:batch-retry",
+    planToken,
+    stateValue: before,
+    sourceValue: source,
+    planValue: plan
+  });
+
+  assert.deepEqual(afterFailure.items, []);
+  assert.equal(retry.acquired, true);
+  assert.equal(retry.replayed, false);
+  assert.equal(retry.receipt.status, "pending");
+});
+
+test("failure cleanup cannot erase a completed import receipt", () => {
+  const source = makeImportSource();
+  const before = makeCurrentLibrary();
+  const planToken = createLibraryImportPlanToken(before, source);
+  const claimed = claimLibraryImportTransaction(normalizeLibraryImportTransactionsState(), {
+    operationId: "operation:completed-cleanup",
+    planToken,
+    stateValue: before,
+    sourceValue: source
+  });
+  const completed = succeedLibraryImportTransaction(claimed.state, claimed.receipt, { ok: true, importedCount: 1 });
+
+  const afterLateFailure = failLibraryImportTransaction(completed.state, claimed.receipt);
+
+  assert.deepEqual(afterLateFailure, completed.state);
+  assert.equal(afterLateFailure.items[0].status, "completed");
 });
 
 test("the same operationId with a different planToken is rejected as a conflict", () => {

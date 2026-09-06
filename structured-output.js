@@ -1,30 +1,30 @@
-export function parseStructuredObject(value, message = "模型返回的结构化 JSON 无效") {
-  const parsed = parseStructuredValue(value, 0);
+export function parseStructuredObject(value, message = "模型返回的结构化 JSON 无效", options = {}) {
+  const parsed = parseStructuredValue(value, 0, options);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(message);
   return parsed;
 }
 
-function parseStructuredValue(value, depth) {
+function parseStructuredValue(value, depth, options) {
   if (depth > 2) throw new Error("模型返回的结构化 JSON 重复编码过多");
   if (value && typeof value === "object") return value;
   const source = String(value ?? "").replace(/^\uFEFF/, "").trim();
   if (!source) throw new Error("模型没有返回结构化 JSON");
-  for (const candidate of jsonCandidates(source)) {
+  for (const candidate of jsonCandidates(source, options)) {
     try {
       const parsed = JSON.parse(removeTrailingCommas(candidate));
-      return typeof parsed === "string" ? parseStructuredValue(parsed, depth + 1) : parsed;
+      return typeof parsed === "string" ? parseStructuredValue(parsed, depth + 1, options) : parsed;
     } catch {}
   }
   throw new Error("模型返回的结构化 JSON 无效");
 }
 
-function jsonCandidates(source) {
+function jsonCandidates(source, options) {
   const candidates = [];
   const unfenced = source.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   candidates.push(unfenced);
   const object = firstBalancedObject(unfenced);
   if (object && object !== unfenced) candidates.push(object);
-  if (!object) candidates.push(...recoverableTruncatedObjectPrefixes(unfenced));
+  if (!object && options.allowTruncatedRecovery !== false) candidates.push(...recoverableTruncatedObjectPrefixes(unfenced));
   return [...new Set(candidates)];
 }
 

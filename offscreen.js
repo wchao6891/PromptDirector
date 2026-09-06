@@ -1,5 +1,6 @@
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
-import { deleteMediaBlob, getMediaBlob } from "./media-store.js";
+import { deleteMediaBlob, getMediaBlob, saveMediaBlob } from "./media-store.js";
+import { readVideoMedia } from "./browser-video-media.js";
 import {
   SCREENSHOT_SETTINGS,
   archiveMarkdownFilename,
@@ -31,6 +32,8 @@ import { normalizeEntryMedia } from "./media.js";
 import { normalizeCreativeRuns } from "./creative-runs.js";
 import { buildCreativeExperimentPackage } from "./creative-experiment-package.js";
 import { runCreativeJob } from "./creative-job-runner.js";
+import { runVideoAnalysisJob } from "./video-analysis-runner.js";
+import { sanitizeAnalysisDiagnostic } from "./analysis-response.js";
 import { composerServiceErrorDetails } from "./composer-service.js";
 import { resolvePortableAssetFormat } from "./asset-formats.js";
 import {
@@ -41,6 +44,7 @@ import {
 
 const blobUrls = new Set();
 let creativeJobRunner = null;
+const videoAnalysisRunners = new Map();
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -54,6 +58,13 @@ if (globalThis.chrome?.runtime?.onMessage) {
 
 async function handleMessage(message) {
   switch (message.type) {
+    case "PREPARE_STORED_VIDEO_POSTER": {
+      const blob = await getMediaBlob(message.assetId);
+      if (!blob) throw new Error("本地视频文件缺失");
+      const prepared = await readVideoMedia(blob, blob.type, message.assetId, { timeoutMs: message.timeoutMs });
+      if (prepared.poster) await saveMediaBlob(prepared.poster.asset.id, prepared.poster.blob);
+      return { ok: true, metadata: prepared.metadata, poster: prepared.poster?.asset || null };
+    }
     case "CROP_AND_STORE_SCREENSHOT":
       return cropScreenshot(message);
     case "CROP_AND_STORE_SCREENSHOTS":
@@ -74,12 +85,86 @@ async function handleMessage(message) {
       return cancelCreativeJob(message.jobId);
     case "GET_CREATIVE_JOB_RUNNER":
       return { ok: true, jobId: creativeJobRunner?.jobId ?? "" };
+    case "RUN_VIDEO_ANALYSIS":
+      return startVideoAnalysis(message.job);
+    case "CANCEL_VIDEO_ANALYSIS":
+      return cancelVideoAnalysis(message.taskId, message.attemptId);
+    case "GET_VIDEO_ANALYSIS_RUNNER":
+      return {
+        ok: true,
+        runners: [...videoAnalysisRunners.values()].map(({ taskId, attemptId }) => ({ taskId, attemptId }))
+      };
     case "REVOKE_BLOB_URL":
       if (blobUrls.delete(message.url)) URL.revokeObjectURL(message.url);
       return { ok: true };
     default:
       return { ok: false, message: "未知后台画布操作" };
   }
+}
+
+function startVideoAnalysis(job) {
+  const taskId = String(job?.taskId ?? "").trim();
+  const attemptId = String(job?.attemptId ?? "").trim();
+  if (!taskId || !attemptId) throw new Error("视频分析任务标识无效");
+  const runnerKey = `${taskId}\u0000${attemptId}`;
+  if (videoAnalysisRunners.has(runnerKey)) return { ok: true, taskId, attemptId, running: true };
+  const controller = new AbortController();
+  const runner = { taskId, attemptId, controller, cancelRequested: false, promise: null };
+  runner.promise = runVideoAnalysisJob(job, {
+    signal: controller.signal,
+    progress: async ({ phase, providerMayHaveAccepted, requestBudget, requestId, diagnostic }) => {
+      const response = await sendBackgroundMessage({
+        type: "UPDATE_VIDEO_ANALYSIS_PROGRESS",
+        taskId,
+        attemptId,
+        phase,
+        requestBudget,
+        requestId,
+        diagnostic,
+        providerMayHaveAccepted: providerMayHaveAccepted === true
+      });
+      if (response?.ok === false) throw new DOMException("分析任务已经失效", "AbortError");
+      return response;
+    }
+  }).then((analysis) => sendBackgroundMessage({
+    type: "COMPLETE_VIDEO_ANALYSIS",
+    taskId,
+    attemptId,
+    analysis
+  })).catch(async (error) => {
+    if (runner.cancelRequested || error?.name === "AbortError") return { ok: false, canceled: true };
+    return sendBackgroundMessage({
+      type: "FAIL_VIDEO_ANALYSIS",
+      taskId,
+      attemptId,
+      error: {
+        message: String(error?.message || "视频分析失败"),
+        status: Number(error?.status) || 0,
+        code: String(error?.code || ""),
+        diagnostic: sanitizeAnalysisDiagnostic(error?.diagnostic || { code: error?.code || "analysis_failed" }),
+        requestBudget: error?.requestBudget,
+        usage: error?.usage
+      }
+    }).catch(() => ({ ok: false }));
+  }).finally(() => {
+    if (videoAnalysisRunners.get(runnerKey) === runner) videoAnalysisRunners.delete(runnerKey);
+  });
+  videoAnalysisRunners.set(runnerKey, runner);
+  return { ok: true, taskId, attemptId, running: true };
+}
+
+async function cancelVideoAnalysis(taskIdValue, attemptIdValue) {
+  const taskId = String(taskIdValue ?? "").trim();
+  const attemptId = String(attemptIdValue ?? "").trim();
+  const runnerKey = `${taskId}\u0000${attemptId}`;
+  const runner = videoAnalysisRunners.get(runnerKey);
+  if (!runner) {
+    return { ok: false, message: "后台没有找到正在运行的视频分析" };
+  }
+  runner.cancelRequested = true;
+  runner.controller.abort();
+  await runner.promise;
+  return { ok: true, taskId, attemptId, canceled: true };
 }
 
 function startCreativeJob(job) {
@@ -153,9 +238,25 @@ async function cancelCreativeJob(jobIdValue) {
 }
 
 async function sendBackgroundMessage(message) {
-  const response = await chrome.runtime.sendMessage(message);
-  if (!response?.ok) throw new Error(response?.message || "创作任务状态保存失败");
-  return response;
+  const recoveryDeadline = Date.now() + 5_000;
+  let transportError;
+  do {
+    try {
+      const response = await chrome.runtime.sendMessage(message);
+      if (!response?.ok) throw new Error(response?.message || "后台任务状态保存失败");
+      return response;
+    } catch (error) {
+      transportError = error;
+      if (!isTransientRuntimeMessageError(error) || Date.now() >= recoveryDeadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  } while (Date.now() < recoveryDeadline);
+  throw transportError || new Error("后台任务状态保存失败");
+}
+
+function isTransientRuntimeMessageError(error) {
+  const message = String(error?.message ?? "");
+  return /message channel closed|receiving end does not exist|extension context invalidated/iu.test(message);
 }
 
 async function createCreativeExperimentArchiveUrl({

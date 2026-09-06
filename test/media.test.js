@@ -11,6 +11,7 @@ import {
   normalizeEntryMedia,
   normalizeMediaAsset,
   posterAssetForVideo,
+  replaceCurrentVideoReconstruction,
   removeEntryMedia,
   setPrimaryMedia,
   updateLocalAssetReferenceMetadata
@@ -201,6 +202,36 @@ test("editing current video reconstruction changes only its reusable prompt and 
   assert.equal(current.userEdited, true);
   assert.match(current.editedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(edited.text, "ORIGINAL_PROMPT_SENTINEL");
+});
+
+test("a new video reverse-analysis replaces only the current AI result and preserves older compatibility data", () => {
+  const source = normalizeEntryMedia({
+    id: "case:replace-video",
+    mediaAssets: [{ id: "video:one", kind: "video", storageMode: "managed", mimeType: "video/mp4" }],
+    text: "ORIGINAL_PROMPT_SENTINEL",
+    videoAnalyses: [
+      { id: "legacy:review", assetId: "video:one", mode: "ad-review", text: "旧广告评价", createdAt: "2026-08-29T00:00:00.000Z" },
+      {
+        id: "reconstruction:current", assetId: "video:one", mode: "visual-reconstruction",
+        requestId: "attempt:old", contractVersion: "visual-v3-1",
+        reconstructionPrompt: "旧逆推", tags: [{ g: "style.render", t: "旧标签" }], uncertainties: [], includeTags: true,
+        analysisScope: "visual", finishReason: "stop", createdAt: "2026-08-30T00:00:00.000Z", version: 3
+      }
+    ]
+  });
+  const replaced = replaceCurrentVideoReconstruction(source, "video:one", {
+    id: "reconstruction:new-id-is-not-used",
+    reconstructionPrompt: "新逆推", tags: [{ g: "style.render", t: "写实" }], uncertainties: [],
+    requestId: "attempt:new", contractVersion: "visual-v3-1",
+    includeTags: true, analysisScope: "visual", finishReason: "stop", createdAt: "2026-09-03T00:00:00.000Z"
+  });
+
+  assert.equal(replaced.videoAnalyses.length, 2);
+  assert.equal(replaced.videoAnalyses[0].text, "旧广告评价");
+  assert.equal(currentVideoReconstruction(replaced, "video:one").id, "reconstruction:current");
+  assert.equal(currentVideoReconstruction(replaced, "video:one").version, 4);
+  assert.equal(currentVideoReconstruction(replaced, "video:one").reconstructionPrompt, "新逆推");
+  assert.equal(replaced.text, "ORIGINAL_PROMPT_SENTINEL");
 });
 
 test("external video references keep only supported playback modes", () => {

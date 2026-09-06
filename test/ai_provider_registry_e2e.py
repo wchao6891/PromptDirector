@@ -519,12 +519,12 @@ def main() -> None:
         expect(library.locator("#ai-provider-list")).to_contain_text("Kimi")
         expect(library.locator("#open-ai-routing")).to_have_text("连接 AI 服务")
         expect(library.locator("#ai-provider-list").get_by_role("button", name="编辑配置")).to_have_count(5)
-        expect(library.locator("#settings-ai-panel > .ai-advanced-settings")).not_to_have_attribute("open", "")
-        expect(library.locator("#settings-ai-panel > .ai-advanced-settings > summary")).to_contain_text("分析规则与创作方法（高级）")
+        expect(library.locator("#settings-ai-panel > .ai-advanced-settings")).to_have_count(0)
+        expect(library.locator('[data-settings-tab="rules"]')).to_have_text("分析与创作规则")
         expect(library.locator("#deepseek-api-key")).to_have_count(0)
         expect(library.locator("#vision-provider")).to_have_count(0)
         expect(library.locator("#text-ai-provider")).to_have_count(0)
-        library.locator("#settings-ai-panel > .ai-advanced-settings > summary").click()
+        library.locator('[data-settings-tab="rules"]').click()
         expect(library.locator("#analysis-instructions-zh")).to_be_visible()
         expect(library.locator("#ai-settings-status")).to_contain_text("规则保存在本机")
         assignments_before_rules = library.evaluate("() => chrome.storage.local.get('aiTaskAssignments').then(value => value.aiTaskAssignments)")
@@ -568,6 +568,7 @@ def main() -> None:
             "providerId": "custom-media", "model": "gpt-5.6-terra"
         }, image_runtime
 
+        library.locator('[data-settings-tab="ai"]').click()
         library.locator("#open-ai-routing").click()
         dialog = library.locator("#promptdirector-app-dialog")
         expect(dialog).to_be_visible()

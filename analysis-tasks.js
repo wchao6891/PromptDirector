@@ -1,3 +1,6 @@
+import { sanitizeAnalysisDiagnostic } from "./analysis-response.js";
+import { createAnalysisRequestBudget } from "./analysis-retry-policy.js";
+
 export const ANALYSIS_TASK_PRIORITIES = Object.freeze(["interactive", "user_batch", "background_import"]);
 
 export function normalizeAnalysisPriority(value) {
@@ -25,6 +28,9 @@ export function createAnalysisTask(value = {}) {
     updatedAt: now,
     activeAttemptId: "",
     attemptCount: 0,
+    phase: "queued",
+    deadlineAt: "",
+    requestStartedAt: "",
     providerMayHaveAccepted: false,
     attempts: []
   };
@@ -55,6 +61,26 @@ export function startAnalysisAttempt(value, options = {}) {
   task.attemptCount = attemptNumber;
   task.status = "running";
   task.executionState = "running";
+  task.phase = "queued";
+  task.deadlineAt = String(options.deadlineAt ?? "");
+  task.requestStartedAt = "";
+  task.providerMayHaveAccepted = false;
+  task.updatedAt = now;
+  return task;
+}
+
+export function updateAnalysisTaskProgress(value, options = {}) {
+  const task = normalizeAnalysisTask(value);
+  const attempt = requireActiveAttempt(task, options.attemptId);
+  if (options.requestBudget) attempt.requestBudget = normalizeRequestBudget(options.requestBudget);
+  if (options.requestId) attempt.requestId = String(options.requestId);
+  if (options.diagnostic) attempt.diagnostic = sanitizeAnalysisDiagnostic(options.diagnostic);
+  const now = timestamp(options.now);
+  task.phase = normalizeAnalysisPhase(options.phase, task.phase);
+  if (options.providerMayHaveAccepted === true) {
+    task.providerMayHaveAccepted = true;
+    task.requestStartedAt ||= now;
+  }
   task.updatedAt = now;
   return task;
 }
@@ -64,13 +90,15 @@ export function restartRunningAnalysisTask(value, options = {}) {
   if (task.status !== "running") return task;
   const now = timestamp(options.now);
   const attempt = currentAttempt(task);
+  const executionState = task.providerMayHaveAccepted ? "execution_state_unknown" : "canceled";
   if (attempt) {
-    attempt.status = "execution_state_unknown";
+    attempt.status = executionState;
     attempt.finishedAt = now;
   }
   task.activeAttemptId = "";
   task.status = "stopped";
-  task.executionState = "execution_state_unknown";
+  task.executionState = executionState;
+  task.phase = "stopped";
   task.updatedAt = now;
   return task;
 }
@@ -111,6 +139,7 @@ export function completeAnalysisAttempt(value, options = {}) {
   attempt.finishedAt = timestamp(options.now);
   task.status = "completed";
   task.executionState = "completed";
+  task.phase = "completed";
   task.activeAttemptId = "";
   task.updatedAt = attempt.finishedAt;
   return task;
@@ -123,8 +152,11 @@ export function failAnalysisAttempt(value, options = {}) {
   attempt.status = "failed";
   attempt.finishedAt = now;
   attempt.error = String(options.error ?? "").trim();
+  if (options.diagnostic) attempt.diagnostic = sanitizeAnalysisDiagnostic(options.diagnostic);
+  if (options.requestBudget) attempt.requestBudget = normalizeRequestBudget(options.requestBudget);
   task.status = "failed";
   task.executionState = "failed";
+  task.phase = "failed";
   task.activeAttemptId = "";
   task.updatedAt = now;
   return task;
@@ -138,6 +170,9 @@ export function retryAnalysisAttempt(value, options = {}) {
   }
   task.status = "queued";
   task.executionState = "queued";
+  task.phase = "queued";
+  task.deadlineAt = "";
+  task.requestStartedAt = "";
   task.activeAttemptId = "";
   task.providerMayHaveAccepted = false;
   return startAnalysisAttempt(task, options);
@@ -148,13 +183,13 @@ export function stopAnalysisTask(value, options = {}) {
   if (["completed", "failed", "canceled"].includes(task.status)) return task;
   const now = timestamp(options.now);
   const attempt = currentAttempt(task);
-  task.providerMayHaveAccepted = task.status === "running" || Boolean(attempt);
   if (attempt?.status === "running") {
     attempt.status = "canceled";
     attempt.finishedAt = now;
   }
   task.status = "stopped";
   task.executionState = "canceled";
+  task.phase = "stopped";
   task.activeAttemptId = "";
   task.updatedAt = now;
   return task;
@@ -174,6 +209,9 @@ export function normalizeAnalysisTask(value) {
   task.updatedAt = String(task.updatedAt ?? task.createdAt ?? "");
   task.activeAttemptId = String(task.activeAttemptId ?? "");
   task.attemptCount = Math.max(0, Math.floor(Number(task.attemptCount) || 0));
+  task.phase = normalizeAnalysisPhase(task.phase, task.status === "running" ? "queued" : task.status);
+  task.deadlineAt = String(task.deadlineAt ?? "");
+  task.requestStartedAt = String(task.requestStartedAt ?? "");
   task.providerMayHaveAccepted = task.providerMayHaveAccepted === true;
   task.attempts = Array.isArray(task.attempts)
     ? task.attempts.flatMap((attempt) => normalizeAttempt(attempt))
@@ -204,8 +242,18 @@ function normalizeAttempt(value) {
     finishedAt: String(value.finishedAt ?? ""),
     result: Object.hasOwn(value, "result") ? structuredClone(value.result) : null,
     error: String(value.error ?? ""),
+    diagnostic: value.diagnostic ? sanitizeAnalysisDiagnostic(value.diagnostic) : null,
+    requestBudget: normalizeRequestBudget(value.requestBudget),
+    requestId: String(value.requestId ?? ""),
     writeCount: Math.max(0, Math.floor(Number(value.writeCount) || 0))
   }];
+}
+
+function normalizeRequestBudget(value = {}) {
+  const budget = createAnalysisRequestBudget();
+  budget.providerCalls = Math.max(0, Math.floor(Number(value.providerCalls) || 0));
+  budget.outputCorrectionRequests = Math.max(0, Math.floor(Number(value.outputCorrectionRequests) || 0));
+  return budget;
 }
 
 function normalizeTaskStatus(value) {
@@ -229,6 +277,13 @@ function normalizeAttemptStatus(value) {
   return ["queued", "running", "execution_state_unknown", "completed", "failed", "canceled"].includes(status)
     ? status
     : "queued";
+}
+
+function normalizeAnalysisPhase(value, fallback = "queued") {
+  const phase = String(value ?? "").trim();
+  return ["queued", "encoding", "uploading", "processing", "analyzing", "retrying", "correcting", "completed", "failed", "stopped"].includes(phase)
+    ? phase
+    : String(fallback ?? "queued").trim() || "queued";
 }
 
 function currentAttempt(task) {

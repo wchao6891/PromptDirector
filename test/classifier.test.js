@@ -10,6 +10,16 @@ import {
 } from "../classifier.js";
 import { CONTENT_IDS, CONTENT_ROLES, createContentType, createDefaultTaxonomy, removeContentType } from "../taxonomy.js";
 
+test("declared creative works use their medium even when prompt text resembles an article or a broad site rule", () => {
+  const entry = { url: "https://example.com/work", title: "Workflow", text: "First use the attached image. Then follow these steps, because identity consistency matters.",
+    sourceFacts: { pageType: "video", extractionMethod: "structured" },
+    mediaAssets: [{ id: "video", kind: "video", storageMode: "reference", sourceUrl: "https://cdn.example.com/movie.mp4" }] };
+  const rules = [{ hostname: "example.com", pathIds: [CONTENT_IDS.tutorial], enabled: true }];
+  assert.deepEqual(classifyContent(entry, rules).pathIds, [CONTENT_IDS.promptVideo]);
+  assert.deepEqual(classifyContent({ ...entry, classification: { pathIds: [CONTENT_IDS.reference], status: "confirmed", source: "manual" } }, rules).pathIds, [CONTENT_IDS.reference]);
+  assert.deepEqual(classifyContent({ ...entry, sourceFacts: {pageType: "article", extractionMethod: "structured"} }, rules).pathIds, [CONTENT_IDS.tutorial]);
+});
+
 test("universal prompt-structure teaching stays tutorial", () => {
   const result = classifyContent({
     text: "提示词结构教学：先定义主体，再补充环境、镜头和约束。这个框架适用于不同模型与题材。",

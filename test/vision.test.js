@@ -467,7 +467,7 @@ test("Zhipu-compatible vision sends raw image Base64 without OpenAI-only detail 
   assert.match(body.messages[0].content.find((item) => item.type === "text").text, /reconstructionPrompt/);
 });
 
-test("compatible empty vision results get exactly one structured-output correction request", async () => {
+test("only normally completed empty vision output gets one correction; refusal and truncation never repeat", async () => {
   const input = {
     imageDataUrl: "data:image/png;base64,AAAA",
     catalog: createDefaultFacetCatalog(),
@@ -500,7 +500,7 @@ test("compatible empty vision results get exactly one structured-output correcti
       };
     }), expected);
   }
-  assert.equal(calls, cases.length * 2);
+  assert.equal(calls, cases.length + 1);
 });
 
 test("vision provider calls share one budget across service retries and output correction", async () => {
@@ -681,7 +681,7 @@ test("vision service refusal, invalid JSON, missing description and HTTP errors 
   await assert.rejects(() => analyzeImageWithVision(input, async () => ({
     ok: true,
     json: async () => ({ output: [{ content: [{ type: "refusal", refusal: "not allowed" }] }] })
-  })), /拒绝分析/);
+  })), error => error.code === "output_refused" && error.recovery === "none");
   let invalidJsonCalls = 0;
   await assert.rejects(() => analyzeImageWithVision(input, async () => {
     invalidJsonCalls += 1;
@@ -704,6 +704,7 @@ test("vision service refusal, invalid JSON, missing description and HTTP errors 
   })).catch((error) => error);
   assert.match(rateLimited.message, /请求过于频繁/);
   assert.equal(rateLimited.status, 429);
-  assert.match(rateLimited.detail, /rate limited/);
+  assert.equal(rateLimited.diagnostic.httpStatus, 429);
+  assert.equal(rateLimited.detail, undefined, "raw provider messages are not retained");
   assert.doesNotMatch(rateLimited.message, /rate limited/);
 });

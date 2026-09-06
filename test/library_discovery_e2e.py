@@ -140,12 +140,23 @@ def main() -> None:
         initial_loaded = library.locator(".detail-discovery-grid img[src]").count()
         assert initial_loaded < 24, initial_loaded
 
-        library.locator("#detail-content").evaluate("element => { element.scrollTop = element.scrollHeight; }")
+        library.locator("#detail-content").hover(position={"x": 40, "y": 200})
+        library.mouse.wheel(0, library.locator("#detail-content").evaluate("element => element.scrollHeight"))
         expect(library.locator("#detail-navigation")).not_to_be_in_viewport()
         expect(similar).not_to_have_count(24, timeout=10_000)
         incremental_count = similar.count()
         assert 24 < incremental_count <= 60, incremental_count
         expect(library.locator(".detail-discovery-grid img[src]").first).to_be_attached()
+
+        while similar.count() < 60:
+            previous_count = similar.count()
+            library.locator("#detail-content").hover(position={"x": 40, "y": 200})
+            library.mouse.wheel(0, library.locator("#detail-content").evaluate("element => element.scrollHeight"))
+            library.wait_for_function(
+                """previous => document.querySelectorAll('.detail-discovery-grid .local-discovery-item').length > previous""",
+                arg=previous_count,
+            )
+        expect(similar).to_have_count(60)
 
         target = similar.nth(30)
         target.scroll_into_view_if_needed()
@@ -207,6 +218,7 @@ def main() -> None:
         print({
             "initial_discovery_batch": 24,
             "incremental_discovery_count": incremental_count,
+            "complete_discovery_count": 60,
             "media_lazy_loaded": True,
             "similar_switch_resets_scroll": True,
             "single_reference_composer": True,

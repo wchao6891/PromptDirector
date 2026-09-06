@@ -93,7 +93,9 @@ export function replaceAnalysisTask(value, taskValue) {
 
 export function recoverInterruptedAnalysisTasks(value, options = {}) {
   const state = normalizeAnalysisTaskRegistry(value);
-  state.items = state.items.map((task) => task.status === "running"
+  const activeAttemptIds = new Set((Array.isArray(options.activeAttemptIds) ? options.activeAttemptIds : [])
+    .map(clean).filter(Boolean));
+  state.items = state.items.map((task) => task.status === "running" && !activeAttemptIds.has(task.activeAttemptId)
     ? normalizeRegistryTask(restartRunningAnalysisTask(task, options))
     : task);
   return state;

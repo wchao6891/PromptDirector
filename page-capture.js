@@ -1,5 +1,5 @@
 import { PAGE_CAPTURE_ADAPTERS, resolvePageCaptureAdapter } from "./page-capture-adapter-registry.js";
-import { PAGE_CAPTURE_QUALITY_LIMITS } from "./resource-limits.js";
+import { PAGE_CAPTURE_QUALITY_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { normalizeArticleDocument, remapArticleDocumentAssets } from "./article-document.js";
 import { isSupportedDocumentMimeType } from "./bounded-media.js";
 
@@ -14,7 +14,7 @@ export function detectPageCaptureAdapter(value, adapters = PAGE_CAPTURE_ADAPTERS
 
 export function pageCaptureDefaultMediaIds(candidateValue = {}) {
   return (normalizePageCaptureCandidate(candidateValue)?.media || [])
-    .filter((item) => item.placement === "inline")
+    .filter((item) => item.placement === "inline" || item.isCover)
     .map((item) => item.id);
 }
 
@@ -318,7 +318,7 @@ function filterCandidateArticleDocument(value, selection) {
   return normalizeArticleDocument({
     ...documentValue,
     blocks: documentValue.blocks.filter((block) => {
-      if (["image", "video", "document"].includes(block.kind)) return selection.selectedMediaIds.has(block.assetId);
+      if (["image", "video", "document", "attachment"].includes(block.kind)) return selection.selectedMediaIds.has(block.assetId);
       if (block.kind === "link") return true;
       return selection.includeText && (selection.selectedAllText || selection.selectedTextBlockIds.has(block.id));
     })
@@ -333,7 +333,7 @@ export function normalizePageCaptureCandidate(value = {}) {
   const rawContentText = normalizeText(value.contentText);
   const rawTextBlocks = normalizeTextBlocks(value.textBlocks, rawContentText, canonicalUrl);
   const prepared = rawTextBlocks.some((item) => item.kind && item.kind !== "section")
-    ? prepareCreativeSections(rawTextBlocks, { canonicalUrl, title, sourceFacts })
+    ? prepareCreativeSections(rawTextBlocks, { canonicalUrl, title, sourceFacts, pageType: value.pageType })
     : {
         textBlocks: rawTextBlocks,
         possibleOmissions: normalizeTextBlocks(value.possibleOmissions, "", canonicalUrl),
@@ -370,7 +370,8 @@ export function normalizePageCaptureCandidate(value = {}) {
       method: ["selection", "readability", "structured", "page"].includes(value.extraction?.method)
         ? value.extraction.method
         : "page",
-      textBlockCount: textBlocks.length
+      textBlockCount: textBlocks.length,
+      pendingMediaCount: positiveInteger(value.extraction?.pendingMediaCount, 0)
     },
     adapter: clean(value.adapter) || "generic"
   };
@@ -381,7 +382,7 @@ function suppressVideoPosterImages(values) {
     .filter((item) => item.kind === "video")
     .map((item) => pageCaptureMediaIdentity(item.posterUrl) || item.posterUrl)
     .filter(Boolean));
-  return values.filter((item) => item.kind !== "image" || !posterIdentities.has(pageCaptureMediaIdentity(item.url) || item.url));
+  return values.filter((item) => item.isCover || item.kind !== "image" || !posterIdentities.has(pageCaptureMediaIdentity(item.url) || item.url));
 }
 
 function normalizeCaptureRegion(value = {}) {
@@ -397,7 +398,7 @@ function normalizeCaptureRegion(value = {}) {
     mediaCount: positiveInteger(value.mediaCount, 0),
     contentTargets: (Array.isArray(value.contentTargets) ? value.contentTargets : []).flatMap((target, index) => {
       const path = clean(target?.path);
-      const kind = ["text", "image", "video", "document", "group"].includes(target?.kind) ? target.kind : "";
+      const kind = ["text", "image", "video", "document", "attachment", "group"].includes(target?.kind) ? target.kind : "";
       if (!path || !kind) return [];
       return [{
         id: clean(target.id) || `target:${index}`,
@@ -462,7 +463,7 @@ function prepareCreativeSections(blocks, context) {
       relevance: promptLike ? "explicit-creative" : "general-content",
       score: (promptLike ? 1_000_000 : 0) + [...text].length
     };
-    if (promptLike || [...text].length >= PAGE_CAPTURE_QUALITY_LIMITS.minOrdinarySectionCharacters) sections.push(item);
+    if (context.pageType === "article" || promptLike || [...text].length >= PAGE_CAPTURE_QUALITY_LIMITS.minOrdinarySectionCharacters) sections.push(item);
     else omitted.push({ ...item, reason: "short-or-uncertain" });
     current = null;
   };
@@ -484,7 +485,7 @@ function prepareCreativeSections(blocks, context) {
   }
   flush();
 
-  const textBlocks = sections
+  const textBlocks = context.pageType === "article" ? sections : sections
     .sort((left, right) => right.score - left.score || left.sourceOrder - right.sourceOrder)
     .slice(0, PAGE_CAPTURE_QUALITY_LIMITS.maxCreativeSections);
   const retained = [...textBlocks].sort((left, right) => left.sourceOrder - right.sourceOrder);
@@ -510,6 +511,8 @@ export function normalizeSourceFacts(value = {}, canonicalUrl = "") {
   const capturedAt = validIso(value.capturedAt) || new Date().toISOString();
   return {
     provider: clean(value.provider) || hostname(canonicalUrl),
+    ...(value.description ? { description: normalizeText(value.description) } : {}),
+    ...(typeof value.originalPromptAvailable === "boolean" ? { originalPromptAvailable: value.originalPromptAvailable } : {}),
     pageType: PAGE_TYPES.has(value.pageType) ? value.pageType : "generic",
     itemId: clean(value.itemId),
     author: clean(value.author),
@@ -595,7 +598,7 @@ export async function resolvePageCaptureImage(mediaValue = {}, options = {}) {
       failures.push({ url: "pixel-fallback", message: String(error?.message || error) });
     }
   }
-  const reason = failures.at(-1)?.message || "没有可用的图片来源";
+  const reason = [...new Set(failures.map((item) => item.message))].join("；") || "没有可用的图片来源";
   throw new Error(reason);
 }
 
@@ -606,10 +609,12 @@ export async function collectPageCaptureSnapshot(options = {}) {
   const capturedAt = new Date().toISOString();
   const sessionId = clean(options.sessionId);
   let cancelled = false;
+  const cancellation = new AbortController();
   const handleCaptureMessage = (message, _sender, sendResponse) => {
     if (message?.type !== "PROMPTDIRECTOR_PAGE_CAPTURE" || message.sessionId !== sessionId) return undefined;
     if (message.action === "cancel") {
       cancelled = true;
+      cancellation.abort();
       sendResponse({ ok: true, sessionId, cancelled: true });
       return false;
     }
@@ -635,12 +640,17 @@ export async function collectPageCaptureSnapshot(options = {}) {
       element.removeAttribute?.("data-promptdirector-capture-region");
     }
     const adapter = detectAdapter(location.hostname);
+    const pendingContentMedia = await prepareContentMedia(adapter) + (Number(options.downloads?.failures) || 0);
     const canonicalUrl = safeHttpUrl(document.querySelector('link[rel="canonical"]')?.href || location.href);
     const metadata = collectMetadata();
     const structured = collectStructuredData();
     const article = readArticle();
     const siteData = options.siteData && typeof options.siteData === "object" ? options.siteData : null;
     const pageSelection = options.mode === "whole" ? null : collectPageSelection();
+    const contentRoot = !pageSelection
+      ? (adapter.fields?.content || []).map((selector) => document.querySelector(selector))
+        .find((element) => cleanBlockText(element?.innerText)) || null
+      : null;
     if (editedRoot) {
       const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: 0 });
       const candidate = candidateForRoot(editedRoot, 0, {
@@ -663,6 +673,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     }
     const accumulated = new Map();
     const collectVisible = () => {
+      if (contentRoot || siteData?.pageKind === "detail") return [];
       const current = [];
       const adapterRoots = adapter.cardSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
       const repeatedRoots = adapterRoots.length > 1 ? [] : collectRepeatedCardRoots(maxCandidates);
@@ -689,11 +700,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
     await collectVisibleWithFallbacks();
     const capturedCards = [...accumulated.values()];
     const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: capturedCards.length });
-    const bodyCandidate = candidateForRoot(document.body, 0, {
-      adapter, metadata, structured, article, siteData, pageSelection, canonicalUrl, pageType, maxMedia
+    const pageRoot = contentRoot || document.body;
+    const bodyCandidate = candidateForRoot(pageRoot, 0, {
+      adapter, metadata, structured, article, siteData, pageSelection, canonicalUrl,
+      pageType: contentRoot ? "article" : siteData?.pageType || pageType, maxMedia, pageRoot, contentRoot
     });
     if (bodyCandidate) await attachViewportFallbacks([bodyCandidate]);
-    const regionCandidates = !siteData && !pageSelection && !["feed", "gallery"].includes(pageType)
+    const regionCandidates = !contentRoot && !siteData && !pageSelection && !["feed", "gallery"].includes(pageType)
       ? collectSubjectRegionRoots(positiveInteger(options.maxRegionCandidates, 5)).flatMap((root, index) => {
           const candidate = candidateForRoot(root, index, {
             adapter, metadata, structured, article: null, siteData: null, canonicalUrl, pageType, maxMedia
@@ -706,6 +719,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
       ? capturedCards.slice(0, maxCandidates)
       : regionCandidates.length ? regionCandidates
         : bodyCandidate ? [bodyCandidate] : capturedCards.slice(0, maxCandidates);
+    if (pendingContentMedia) {
+      for (const candidate of candidates) {
+        candidate.completeness = "partial";
+        candidate.sourceFacts.status = "partial";
+        candidate.extraction.pendingMediaCount = pendingContentMedia;
+      }
+    }
     return {
       id: sessionId,
       sourceUrl: canonicalUrl,
@@ -734,6 +754,44 @@ export async function collectPageCaptureSnapshot(options = {}) {
       stableRounds = position === previousPosition && position + viewport >= nextHeight ? stableRounds + 1 : 0;
       previousPosition = position;
     }
+  }
+
+  async function prepareContentMedia(adapter) {
+    const root = (adapter.fields?.content || []).map((selector) => document.querySelector(selector)).find(Boolean);
+    if (!root || !adapter.fields?.mediaContainers?.length || typeof MutationObserver !== "function") return 0;
+    const containers = [...new Set(adapter.fields.mediaContainers.flatMap((selector) => [...root.querySelectorAll(selector)]))];
+    const ready = (element) => Boolean(element.querySelector('img[src],video[src],video source[src],iframe[src],a[href]')
+      || (adapter.fields.downloadButtons && element.querySelector('button[aria-label="Download file"]')));
+    const pending = containers.filter((element) => !ready(element));
+    if (!pending.length) return 0;
+    const positions = [];
+    for (let element = root; element; element = element.parentElement) {
+      positions.push({ element, top: element.scrollTop, left: element.scrollLeft });
+    }
+    const position = { x: window.scrollX, y: window.scrollY };
+    const deadline = Date.now() + positiveInteger(options.mediaTimeoutMs, 1200);
+    try {
+      for (const element of pending.slice(0, maxMedia)) {
+        if (cancelled || Date.now() >= deadline) break;
+        if (ready(element)) continue;
+        element.scrollIntoView({ block: "center", behavior: "instant" });
+        await waitForVisibleMedia();
+      }
+      if (!cancelled && containers.some((element) => !ready(element)) && Date.now() < deadline) {
+        await new Promise((resolve) => {
+          const finish = () => { observer.disconnect(); clearTimeout(timer); cancellation.signal.removeEventListener("abort", finish); resolve(); };
+          const observer = new MutationObserver(() => { if (containers.every(ready) || cancelled) finish(); });
+          const timer = setTimeout(finish, Math.max(0, deadline - Date.now()));
+          observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ["src", "href"] });
+          cancellation.signal.addEventListener("abort", finish, { once: true });
+          if (cancelled || containers.every(ready)) finish();
+        });
+      }
+    } finally {
+      for (const { element, top, left } of positions) element.scrollTo?.({ top, left, behavior: "instant" });
+      window.scrollTo({ left: position.x, top: position.y, behavior: "instant" });
+    }
+    return containers.filter((element) => !ready(element)).length;
   }
 
   async function attachViewportFallbacks(candidates) {
@@ -778,7 +836,10 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const frame = typeof globalThis.requestAnimationFrame === "function"
       ? globalThis.requestAnimationFrame.bind(globalThis)
       : (callback) => setTimeout(callback, 16);
-    await new Promise((resolve) => frame(() => frame(resolve)));
+    await Promise.race([
+      new Promise((resolve) => frame(() => frame(resolve))),
+      new Promise((resolve) => setTimeout(resolve, 1200))
+    ]);
   }
 
   function detectAdapter(host) {
@@ -913,22 +974,24 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function candidateForRoot(root, index, context) {
-    const siteData = root === document.body ? context.siteData : null;
+    const isPageRoot = root === document.body || root === context.pageRoot;
+    const siteData = isPageRoot ? context.siteData : null;
     const adapterFields = collectAdapterFields(root, context.adapter);
-    const cardLink = root === document.body || context.pageType === "article" ? "" : safeHttpUrl(root.querySelector("a[href]")?.href);
+    const cardLink = isPageRoot || context.pageType === "article" ? "" : safeHttpUrl(root.querySelector("a[href]")?.href);
     const canonicalUrl = adapterFields.canonicalUrl || cardLink || safeHttpUrl(siteData?.canonicalUrl) || context.canonicalUrl;
     const structured = context.structured.find((item) => sameUrl(item.url || item.mainEntityOfPage, canonicalUrl)) || context.structured[0] || {};
-    let title = cleanText(root === document.body
+    let title = cleanText(isPageRoot
       ? siteData?.title || context.article?.title || structured.headline || structured.name || (context.pageType === "post" ? "" : context.metadata.title)
       : adapterFields.title || root.querySelector("h1,h2,h3,[role=heading]")?.textContent || structured.headline || structured.name || (context.pageType === "post" ? "" : root.querySelector("img[alt]")?.alt));
-    const pageSelection = root === document.body ? context.pageSelection : null;
-    const text = cleanBlockText(root === document.body
-      ? pageSelection?.text || siteData?.contentText || context.article?.textContent || structured.articleBody || root.innerText || context.metadata.description
+    const pageSelection = isPageRoot ? context.pageSelection : null;
+    const articleText = context.pageType === "article" ? context.article?.textContent : "";
+    const text = cleanBlockText(context.contentRoot ? root.innerText : isPageRoot
+      ? pageSelection?.text || articleText || siteData?.contentText || context.article?.textContent || structured.articleBody || root.innerText || context.metadata.description
       : root.innerText || root.textContent);
-    const contentHtml = root === document.body
+    const contentHtml = context.contentRoot ? root.innerHTML : isPageRoot
       ? pageSelection?.html || context.article?.content || ""
       : "";
-    const structuredTextBlocks = siteData?.contentText
+    const structuredTextBlocks = !context.contentRoot && !articleText && siteData?.contentText
       ? [{
           id: "text:structured:" + hashText(siteData.contentText),
           text: cleanBlockText(siteData.contentText),
@@ -947,6 +1010,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
       if (visible) pairedDomIds.add(visible.id);
       return visible ? {
         ...item,
+        width: item.width || visible.width,
+        height: item.height || visible.height,
+        posterUrl: item.posterUrl || visible.posterUrl,
         variants: [...(item.variants || []), ...(visible.variants || [])],
         fallbackRect: visible.fallbackRect,
         dataUrl: visible.dataUrl,
@@ -961,7 +1027,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const article = collectArticleDocument(root, contentHtml, textBlocks, media, context.maxMedia);
     media = mergeCollectedMedia([...media, ...article.media], context.maxMedia);
     if (!title && !text && !media.length) return null;
-    const pageType = root === document.body ? context.pageType : ["post", "video"].includes(context.adapter.pageType) ? context.adapter.pageType : "artwork";
+    const pageType = isPageRoot || context.pageType === "article" ? context.pageType : ["post", "video"].includes(context.adapter.pageType) ? context.adapter.pageType : "artwork";
     const author = cleanText(siteData?.sourceFacts?.author || adapterFields.author || structuredAuthorName(structured.author) || context.metadata.author || root.querySelector('[rel=author],[data-testid*=author],[class*=author]')?.textContent);
     if (!title && pageType === "post") {
       const identity = author || (adapterFields.handle ? `@${adapterFields.handle}` : "");
@@ -1022,6 +1088,14 @@ export async function collectPageCaptureSnapshot(options = {}) {
       },
       adapter: context.adapter.id
     };
+  }
+
+  // The injected snapshot must carry its own helpers across the extension/page boundary.
+  function mediaValuesOverlap(left, right) {
+    if (left.kind !== right.kind) return false;
+    const urls = new Set([left.url, left.posterUrl, ...(left.variants || []).map((item) => item.url)].filter(Boolean));
+    return [right.url, right.posterUrl, ...(right.variants || []).map((item) => item.url)]
+      .some((url) => url && urls.has(url));
   }
 
   function buildEditedRegionRoot(baseRoot, token) {
@@ -1141,7 +1215,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function collectContentTargets(root, articleBlocks, media, limit) {
     const excludedSelector = "nav,aside,header,footer,[role=navigation],[role=banner],[role=complementary],[role=contentinfo],[class*=comment],[class*=recommend],[data-testid*=comment],[data-testid*=recommend]";
-    const semanticSelector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,img,video,iframe,a[href]";
+    const semanticSelector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,code[data-language],table,img,video,iframe,a[href]";
     const pathFor = (element) => {
       const parts = [];
       let current = element;
@@ -1200,7 +1274,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     });
     const leaves = leafElements.flatMap((element, sourceOrder) => {
       const kind = kindFor(element);
-      const text = kind === "text" ? cleanBlockText(element.textContent) : "";
+      const text = kind === "text" ? readBlockText(element) : "";
       const articleBlockIds = kind === "text"
         ? articleBlocks.filter((block) => !block.assetId && cleanBlockText(block.text) === text).map((block) => block.id)
         : [];
@@ -1251,13 +1325,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
       } catch {
       }
     }
-    const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figure,table";
-    const containers = "li,blockquote,pre,figure,table";
+    const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,code[data-language],figure,table";
+    const containers = "li,blockquote,pre,code[data-language],figure,table";
     const blocks = [];
     for (const node of blockRoot?.querySelectorAll?.(selector) || []) {
       const parentContainer = node.parentElement?.closest?.(containers);
       if (parentContainer && parentContainer !== node) continue;
-      const text = cleanBlockText(node.textContent);
+      const text = readBlockText(node);
       if (!text) continue;
       const tagName = cleanText(node.tagName).toLowerCase();
       blocks.push({
@@ -1268,7 +1342,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
           ? "heading"
           : node.closest?.("nav,aside,header,footer,[role=navigation],[role=complementary],[role=contentinfo],[class*=comment],[class*=recommend],[data-testid*=comment],[data-testid*=recommend]")
             ? "noise"
-            : tagName === "li" ? "list" : tagName === "blockquote" ? "quote" : tagName === "pre" ? "code" : tagName === "figure" ? "figure" : tagName === "table" ? "table" : "paragraph",
+            : tagName === "li" ? "list" : tagName === "blockquote" ? "quote" : ["pre", "code"].includes(tagName) ? "code" : tagName === "figure" ? "figure" : tagName === "table" ? "table" : "paragraph",
         sourceOrder: blocks.length
       });
     }
@@ -1294,12 +1368,29 @@ export async function collectPageCaptureSnapshot(options = {}) {
       const key = cleanBlockText(block.text);
       if (key && !textByValue.has(key)) textByValue.set(key, block);
     }
-    const selector = "h1,h2,h3,h4,h5,h6,p,ul,ol,blockquote,pre,table,figcaption,img,video,iframe,a[href]";
-    const structuralContainers = "p,ul,ol,blockquote,pre,table,figcaption";
+    const downloadCards = [...(blockRoot.querySelectorAll?.(".rde-asset-embed") || [])];
+    const selector = "h1,h2,h3,h4,h5,h6,p,ul,ol,blockquote,pre,code[data-language],table,figcaption,img,video,iframe,a[href],.rde-asset-embed";
+    const structuralContainers = "p,ul,ol,blockquote,pre,code[data-language],table,figcaption";
     const elements = [...(blockRoot?.querySelectorAll?.(selector) || [])];
     for (const element of elements) {
       if (element.closest?.("nav,aside,header,footer,[role=navigation],[role=complementary],[role=contentinfo],[class*=comment],[class*=recommend],[data-testid*=comment],[data-testid*=recommend]")) continue;
       const tagName = cleanText(element.tagName).toLowerCase();
+      if (element.matches?.(".rde-asset-embed")) {
+        const download = options.downloads?.items?.find((item) => item.index === downloadCards.indexOf(element));
+        if (download) {
+          const link = document.createElement("a");
+          link.href = download.url;
+          link.download = download.filename;
+          const attachment = attachmentDescriptor(link, download.url, download.filename);
+          if (attachment?.mimeType) {
+            attachment.id = `article:download:${hashText(`${download.index}:${download.filename}`)}`;
+            attachment.downloadDataUrl = download.downloadDataUrl;
+            media.push(attachment);
+            blocks.push({ id: attachment.id, kind: attachment.kind, assetId: attachment.id, sourceUrl: download.url, label: download.filename, mimeType: attachment.mimeType, sourceOrder: blocks.length });
+          }
+        }
+        continue;
+      }
       if (element.matches?.("a[href]")) {
         const sourceUrl = safeHttpUrl(element.href || element.getAttribute?.("href"));
         if (!sourceUrl) continue;
@@ -1308,7 +1399,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         if (attachment) {
           if (attachment.mimeType) {
             media.push(attachment);
-            blocks.push({ id: `article:document:${hashText(sourceUrl)}`, kind: "document", assetId: attachment.id, sourceUrl, label, mimeType: attachment.mimeType, sourceOrder: blocks.length });
+            blocks.push({ id: `article:document:${hashText(sourceUrl)}`, kind: attachment.kind, assetId: attachment.id, sourceUrl, label, mimeType: attachment.mimeType, sourceOrder: blocks.length });
           } else {
             blocks.push({ id: `article:link:${hashText(sourceUrl)}`, kind: "link", sourceUrl, label, sourceOrder: blocks.length });
           }
@@ -1363,14 +1454,14 @@ export async function collectPageCaptureSnapshot(options = {}) {
       }
       const parentContainer = element.parentElement?.closest?.(structuralContainers);
       if (parentContainer && parentContainer !== element) continue;
-      const text = cleanBlockText(element.textContent);
+      const text = readBlockText(element);
       if (!text) continue;
       const known = textByValue.get(text);
       const kind = /^h[1-6]$/u.test(tagName)
         ? "heading"
         : ["ul", "ol"].includes(tagName) ? "list"
           : tagName === "blockquote" ? "quote"
-            : tagName === "pre" ? "code"
+            : ["pre", "code"].includes(tagName) ? "code"
               : tagName === "table" ? "table" : "paragraph";
       blocks.push({
         id: known?.id || `article:text:${blocks.length}:${hashText(text)}`,
@@ -1400,8 +1491,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function attachmentDescriptor(element, sourceUrl, label) {
     const declaredType = cleanText(element.type || element.getAttribute?.("type")).toLocaleLowerCase("en-US").split(";", 1)[0];
-    const extension = fileExtension(sourceUrl);
+    const extension = cleanText(element.getAttribute?.("download")).split(".").at(-1)?.toLowerCase() || fileExtension(sourceUrl);
     const mimeByExtension = {
+      skill: "application/zip",
       pdf: "application/pdf",
       md: "text/markdown",
       markdown: "text/markdown",
@@ -1415,7 +1507,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (!mimeType && !explicitlyDownloadable) return null;
     return {
       id: `article:document:${hashText(sourceUrl)}`,
-      kind: "document",
+      kind: extension === "skill" ? "attachment" : "document",
       url: sourceUrl,
       filename: cleanText(element.getAttribute?.("download")) || label || filenameFromUrl(sourceUrl),
       mimeType,
@@ -1490,6 +1582,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return images;
   }
 
+  function readBlockText(node) {
+    if (!node.querySelector?.("br")) return cleanBlockText(node.textContent);
+    const clone = node.cloneNode(true);
+    for (const br of clone.querySelectorAll("br")) br.replaceWith("\n");
+    return cleanBlockText(clone.textContent);
+  }
+
   function serializeBlockHtml(node) {
     try {
       const clone = node.cloneNode(true);
@@ -1501,7 +1600,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
           if (absoluteUrl) element.setAttribute(attribute, absoluteUrl);
         }
       }
-      return String(clone.outerHTML || "");
+      return node.matches?.("code[data-language]") ? `<pre>${clone.outerHTML}</pre>` : String(clone.outerHTML || "");
     } catch {
       return String(node.outerHTML || "");
     }
@@ -1596,7 +1695,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         width: imageSource?.declaredWidth || (responsiveCandidate ? 0 : Number(element.naturalWidth || element.videoWidth || element.width) || 0),
         height: responsiveCandidate ? 0 : Number(element.naturalHeight || element.videoHeight || element.height) || 0,
         captureMethod: "source",
-        sourceKind: imageSource?.sourceKind || "current",
+        sourceKind: imageSource?.sourceKind || (element.matches("video") ? "video-element" : "current"),
         declaredWidth: imageSource?.declaredWidth || 0,
         density: imageSource?.density || 0,
         variants,
@@ -1690,6 +1789,22 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (currentUrl) candidates.push({ url: currentUrl, sourceKind: "current", declaredWidth: 0, density: 0 });
     const sourceUrl = safeHttpUrl(image.src);
     if (sourceUrl) candidates.push({ url: sourceUrl, sourceKind: "source", declaredWidth: 0, density: 0 });
+    const adapter = detectAdapter(location.hostname);
+    if (adapter.id === "higgsfield") {
+      for (const candidate of [...candidates]) {
+        try {
+          const proxy = new URL(candidate.url);
+          const source = proxy.hostname === "images.higgs.ai" ? proxy.searchParams.get("url")
+            : proxy.hostname === location.hostname && proxy.pathname.startsWith("/cdn-cgi/image/")
+              ? proxy.pathname.slice(proxy.pathname.indexOf("/https://") + 1) : "";
+          if (!source) continue;
+          const original = new URL(source);
+          if (original.protocol !== "https:" || !adapter.trustedMediaHosts.some((host) => original.hostname === host || original.hostname.endsWith(`.${host}`))) continue;
+          candidates.push({ url: original.href, sourceKind: "site-original", declaredWidth: 0, density: 0 });
+        } catch {
+        }
+      }
+    }
     const seen = new Set();
     return candidates.filter((candidate) => candidate.url && !seen.has(candidate.url) && seen.add(candidate.url))
       .sort((left, right) => imageVariantScore(right) - imageVariantScore(left));
@@ -1761,11 +1876,12 @@ export async function collectPageCaptureSnapshot(options = {}) {
       if (!item || typeof item !== "object") return [];
       const variants = (Array.isArray(item.variants) ? item.variants : []).filter((variant) => safeHttpUrl(variant?.url));
       const primaryUrl = safeHttpUrl(item.url) || variants[0]?.url || "";
-      const itemKind = ["video", "document"].includes(item.kind) ? item.kind : "image";
+      const itemKind = ["video", "document", "attachment"].includes(item.kind) ? item.kind : "image";
       const id = cleanText(item.id) || `${itemKind}:${index}:${hashText(primaryUrl || item.dataUrl)}`;
-      if (seenIds.has(id) || primaryUrl && seenUrls.has(primaryUrl)) return [];
+      const identity = item.downloadDataUrl ? id : primaryUrl;
+      if (seenIds.has(id) || identity && seenUrls.has(identity)) return [];
       seenIds.add(id);
-      if (primaryUrl) seenUrls.add(primaryUrl);
+      if (identity) seenUrls.add(identity);
       return [{ ...item, id, kind: itemKind, url: primaryUrl, variants }];
     }).slice(0, limit);
   }
@@ -1894,12 +2010,13 @@ function uniqueMedia(values) {
     const previewDataUrl = safeImageDataUrl(value?.previewDataUrl);
     const id = clean(value?.id) || stableCandidateId(url || posterUrl || dataUrl || previewDataUrl, value?.kind);
     const keyUrl = url || posterUrl;
-    const kind = ["video", "document"].includes(value?.kind) ? value.kind : "image";
+    const kind = ["video", "document", "attachment"].includes(value?.kind) ? value.kind : "image";
     if (!keyUrl && !dataUrl && !previewDataUrl) continue;
     const item = {
       id,
       kind,
       placement: value?.placement === "inline" ? "inline" : "unplaced",
+      ...(value?.isCover === true && kind === "image" ? { isCover: true } : {}),
       url,
       posterUrl,
       ...(dataUrl ? { dataUrl } : {}),
@@ -1909,6 +2026,8 @@ function uniqueMedia(values) {
       alt: clean(value.alt),
       filename: clean(value.filename),
       mimeType: clean(value.mimeType).toLocaleLowerCase("en-US"),
+      ...(["document", "attachment"].includes(kind) && /^data:(?:text\/[a-z0-9.+-]+|application\/(?:pdf|rtf|zip|gzip|x-gzip|octet-stream))(?:;charset=[a-z0-9-]+)?;base64,[a-z0-9+/=]+$/i.test(value.downloadDataUrl || "")
+        && value.downloadDataUrl.length <= PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes ? { downloadDataUrl: value.downloadDataUrl } : {}),
       sourceTitle: clean(value.sourceTitle),
       sourceAuthor: clean(value.sourceAuthor),
       originalWorkUrl: safeUrl(value.originalWorkUrl),
@@ -1919,7 +2038,7 @@ function uniqueMedia(values) {
       density: positiveNumber(variants[0]?.density || value.density, 0),
       captureMethod: ["source", "css-background", "page-session", "pixel-fallback"].includes(value.captureMethod) ? value.captureMethod : "source"
     };
-    const identity = kind === "image" ? pageCaptureMediaIdentity(url) : keyUrl;
+    const identity = item.downloadDataUrl ? id : kind === "image" ? pageCaptureMediaIdentity(url) : keyUrl;
     const existingIndex = indexById.get(id) ?? (identity ? indexByIdentity.get(identity) : undefined);
     if (existingIndex !== undefined) {
       const existing = items[existingIndex];

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 import time
@@ -20,8 +21,14 @@ SCRIPTS = [
     "import_job_lifecycle_e2e.py",
     "library_media_actions_e2e.py",
     "video_detail_layout_e2e.py",
+    "prompt_panels_e2e.py",
+    "detail_visual_stability_e2e.py",
+    "detail_content_editing_e2e.py",
     "media_reference_cards_e2e.py",
     "library_detail_actions_e2e.py",
+    "library_detail_rendering_e2e.py",
+    "library_detail_sidebar_responsive_e2e.py",
+    "library_responsive_layout_e2e.py",
     "library_discovery_e2e.py",
     "projects_and_categories_e2e.py",
     "project_deletion_e2e.py",
@@ -39,10 +46,13 @@ SCRIPTS = [
     "region_and_smart_picker_e2e.py",
     "smart_visual_picker_e2e.py",
     "page_capture_e2e.py",
+    "higgsfield_capture_e2e.py",
+    "libtv_capture_e2e.py",
     "jimeng_capture_e2e.py",
     "ai_provider_registry_e2e.py",
     "ai_multimodel_routing_regression_e2e.py",
     "zhipu_glm_analysis_e2e.py",
+    "composer_video_dialogue_e2e.py",
     "creative_skills_e2e.py",
     "skill_source_density_e2e.py",
     "manager_regression_e2e.py",
@@ -57,6 +67,20 @@ SCRIPTS = [
     "settings_visual_anchor_e2e.py",
     "brand_i18n_e2e.py",
     "english_interaction_states_e2e.py",
+    "case_management_batch_regression_e2e.py",
+]
+
+CASE_MANAGEMENT_SCRIPTS = [
+    "library_navigation_e2e.py",
+    "historical_zip_salvage_e2e.py",
+    "video_detail_layout_e2e.py",
+    "library_detail_actions_e2e.py",
+    "library_detail_rendering_e2e.py",
+    "library_detail_sidebar_responsive_e2e.py",
+    "library_responsive_layout_e2e.py",
+    "library_discovery_e2e.py",
+    "projects_and_categories_e2e.py",
+    "case_management_batch_regression_e2e.py",
 ]
 
 
@@ -68,9 +92,18 @@ class Result:
     output: str
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run PromptDirector browser regression scripts")
+    parser.add_argument("--group", choices=["all", "case-management"], default="all")
+    parser.add_argument("--script", choices=SCRIPTS, help="Run one registered browser regression script")
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    scripts = [args.script] if args.script else CASE_MANAGEMENT_SCRIPTS if args.group == "case-management" else SCRIPTS
     results: list[Result] = []
-    for script in SCRIPTS:
+    for script in scripts:
         started = time.monotonic()
         completed = subprocess.run(
             [sys.executable, str(TEST_DIR / script)],
@@ -86,7 +119,7 @@ def main() -> None:
         if result.returncode:
             print(result.output.rstrip(), flush=True)
 
-    print("\nE2E summary")
+    print(f"\nE2E summary: {len(results) - sum(result.returncode != 0 for result in results)}/{len(results)} passed")
     for result in results:
         state = "通过" if result.returncode == 0 else "失败"
         print(f"- {state} {result.script}: {result.duration:.1f}s")

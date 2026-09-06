@@ -60,8 +60,13 @@ def main() -> None:
     with extension_session("prompt-director-page-capture-") as run:
         screenshots = Path(tempfile.gettempdir())
         fixture_url = f"{FIXTURE_ORIGIN}/promptdirector-capture-fixture"
+        video_available = False
+        video_bytes = (Path(__file__).resolve().parent / "fixtures/zhipu-local-video-smoke.mp4").read_bytes()
         def route_fixture(route) -> None:
             request_url = route.request.url
+            if request_url.endswith("/film.mp4"):
+                route.fulfill(status=200, body=video_bytes if video_available else PNG, content_type="video/mp4")
+                return
             if request_url.endswith("/deferred-original.png"):
                 route.fulfill(status=403, body=b"expired", content_type="text/plain")
                 return
@@ -186,11 +191,19 @@ def main() -> None:
         expect(collector.locator("#page-capture-save")).to_have_text("保存案例 · 含 6 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         collector.locator("#page-capture-save").click()
+        # A media failure must remain reviewable and retryable, with the real reason.
+        expect(collector.locator("#page-capture-help")).to_contain_text("有效视频文件", timeout=8000)
+        partial_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        assert len(partial_saved) == 1, partial_saved
+        original_entry_id = partial_saved[0]['id']
+        video_available = True
+        collector.locator("#page-capture-save").click()
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)
         expect(fixture.locator("#promptdirector-page-capture-region-preview")).to_have_count(0)
         expect(fixture.locator("[data-promptdirector-capture-region]")).to_have_count(0)
         media_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
-        assert len(media_saved) == 1 and len(media_saved[0].get("mediaAssets", [])) == 6, media_saved
+        assert len(media_saved) == 1 and media_saved[0]['id'] == original_entry_id, media_saved
+        assert len([asset for asset in media_saved[0].get("mediaAssets", []) if asset.get('usage') != 'poster']) == 6, media_saved
         assert "real injected page capture path" in media_saved[0]["text"], media_saved[0]
         assert "A second paragraph" not in media_saved[0]["text"], media_saved[0]
         assert "downloadable production notes" in media_saved[0]["text"], media_saved[0]
@@ -201,10 +214,11 @@ def main() -> None:
         assert block_kinds.count("link") == 1, media_saved[0]
         assert any(asset["sourceUrl"].endswith("/placeholder.png") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert any(asset.get("mimeType") == "image/gif" and asset["sourceUrl"].endswith("/animation.gif") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
-        assert any(asset.get("kind") == "video" and asset["sourceUrl"].endswith("/film.mp4") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
+        assert any(asset.get("kind") == "video" and asset["sourceUrl"].endswith("/film.mp4") and asset['storageMode'] == 'managed' and asset['byteSize'] == len(video_bytes) for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert any(asset.get("kind") == "document" and asset.get("mimeType") == "application/pdf" for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert not any(asset.get("sourceUrl", "").endswith("/unsafe-package.zip") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert media_saved[0]["sourceFacts"]["captureScope"] == "document", media_saved[0]
+        assert media_saved[0]["sourceFacts"]["pageType"] == "article", media_saved[0]
         assert media_saved[0]["sourceFacts"]["extractionMethod"] == "page", media_saved[0]
         library = run.open_page("library.html", wait_until="networkidle")
         expect(library.locator(".case-card")).to_have_count(1, timeout=8000)
@@ -262,7 +276,11 @@ def main() -> None:
         collector.locator("#page-capture-save-mode").select_option("multiple")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         collector.locator("#page-capture-save").click()
-        expect(collector.locator("#page-capture")).to_be_hidden(timeout=10000)
+        try:
+            expect(collector.locator("#page-capture")).to_be_hidden(timeout=10000)
+        except AssertionError:
+            print({'saveFailure': collector.locator('#page-capture-help').inner_text()}, flush=True)
+            raise
         multiple_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
         assert len(multiple_saved) == 3, multiple_saved
         assert fixture.url == list_url, fixture.url

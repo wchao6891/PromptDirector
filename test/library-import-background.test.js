@@ -21,3 +21,26 @@ test("library import commits business data and its completed receipt atomically"
   assert.match(apply, /await commitLocalChanges\(\{[\s\S]*storagePayload\(result\.targetState\)[\s\S]*completed\.state/);
   assert.match(apply, /failLibraryImportTransaction/);
 });
+
+test("multi-package import previews and commits one batch transaction", () => {
+  const preview = background.slice(
+    background.indexOf("function previewLibraryImportBatch"),
+    background.indexOf("async function applyLibraryImport")
+  );
+  const apply = background.slice(
+    background.indexOf("async function applyLibraryImportBatch"),
+    background.indexOf("async function restoreLibraryReplacementPoint")
+  );
+
+  assert.match(background, /case "PREVIEW_LIBRARY_IMPORT_BATCH"/);
+  assert.match(background, /case "APPLY_LIBRARY_IMPORT_BATCH"/);
+  assert.match(preview, /planLibraryTransferBatch/);
+  assert.match(preview, /canApply: *result\.canApply/);
+  assert.match(apply, /sourceValue *= *packages\.map/);
+  assert.match(apply, /planLibraryTransferBatch/);
+  assert.match(apply, /!result\.canApply/);
+  assert.match(apply, /result\.planToken\s*!==\s*message\.planToken/);
+  assert.match(apply, /succeedLibraryImportTransaction/);
+  assert.match(apply, /storagePayload\(result\.targetState\)/);
+  assert.match(apply, /failLibraryImportTransaction/);
+});

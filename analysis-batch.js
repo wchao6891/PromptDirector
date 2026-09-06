@@ -10,6 +10,7 @@ import {
 import { prepareFacetRebuild, validateAnalysisTagResponse } from "./tag-taxonomy.js";
 import { currentVideoReconstruction, entryMediaAssets, primaryImageAsset } from "./media.js";
 import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
+import { sanitizeAnalysisDiagnostic } from "./analysis-response.js";
 
 export const ANALYSIS_BATCH_VERSION = 2;
 export const ANALYSIS_BATCH_CONCURRENCY = 20;
@@ -380,6 +381,7 @@ export function normalizeAnalysisBatchJob(value) {
         ? value.kind === "vision" ? "旧版图片分析结果不完整，请重试" : "旧版分析结果不完整，请重试"
         : String(item.error ?? ""),
       statusCode: Math.max(0, Number(item.statusCode) || 0),
+      diagnostic: item.diagnostic ? sanitizeAnalysisDiagnostic(item.diagnostic) : null,
       serviceRequests: Math.max(0, Number(item.serviceRequests) || 0),
       outputCorrectionRequests: Math.max(0, Number(item.outputCorrectionRequests) || 0),
       cacheHit: item.cacheHit === true,
@@ -587,7 +589,9 @@ export function recoverInterruptedAnalysisBatch(value) {
   if (job.status === "canceled") return job;
   for (const item of job.items) {
     if (item.status !== "running") continue;
-    item.status = "pending";
+    item.status = "failed";
+    item.error = "上次执行状态未知，未自动重试；服务商可能已收到请求";
+    item.diagnostic = sanitizeAnalysisDiagnostic({ code: "execution_state_unknown" });
     item.claimId = "";
   }
   if (job.items.some((item) => item.status === "pending")) job.status = "running";
@@ -787,6 +791,7 @@ function normalizeRetryPolicy(value) {
 }
 
 function recordItemExecution(item, metadata = {}) {
+  if (metadata.diagnostic) item.diagnostic = sanitizeAnalysisDiagnostic(metadata.diagnostic);
   item.serviceRequests += Math.max(0, Number(metadata.attempts?.serviceRequests ?? metadata.serviceRequests) || 0);
   item.outputCorrectionRequests += Math.max(0, Number(metadata.attempts?.outputCorrectionRequests ?? metadata.outputCorrectionRequests) || 0);
   item.cacheHit = item.cacheHit || metadata.cacheHit === true;

@@ -17,9 +17,11 @@ test("top navigation keeps search-adjacent actions focused on adding, creating, 
   assert.match(html, /<aside[^>]*id="filter-sidebar"[\s\S]*id="manage-facets"/);
   const workspace = html.slice(html.indexOf('<nav class="workspace-navigation"'), html.indexOf('</nav>', html.indexOf('<nav class="workspace-navigation"')));
   assert.match(workspace, /id="workspace-library"[^>]*aria-current="page"/);
+  assert.match(workspace, /id="workspace-unassigned"/);
   assert.match(workspace, /id="open-curated"/);
   assert.match(workspace, /id="open-skills"/);
-  assert.ok(workspace.indexOf('id="workspace-library"') < workspace.indexOf('id="open-curated"'));
+  assert.ok(workspace.indexOf('id="workspace-library"') < workspace.indexOf('id="workspace-unassigned"'));
+  assert.ok(workspace.indexOf('id="workspace-unassigned"') < workspace.indexOf('id="open-curated"'));
   assert.doesNotMatch(html, /动态视图|save-dynamic-view|dynamic-view-list/);
 });
 
