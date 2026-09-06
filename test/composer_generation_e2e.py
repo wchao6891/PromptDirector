@@ -115,6 +115,7 @@ def main() -> None:
             setup,
             {
                 "schemaVersion": 24,
+                "uiPreferences": {"locale": "zh-CN"},
                 "entries": [entry, jimeng_character, retrieved_case, retrieved_guide],
                 **ai_configuration_fixture(
                     providers={
@@ -173,6 +174,7 @@ def main() -> None:
             }"""
         )
         composer = session.open_page("composer.html")
+        expect(composer.locator("html")).to_have_attribute("lang", "zh-CN")
         composer.locator("#composer-reference-open").click()
         composer.locator(".composer-case-option", has_text="精选场景案例").locator("input").check()
         composer.locator(".composer-case-option", has_text="即梦角色").locator("input").check()
