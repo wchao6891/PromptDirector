@@ -55,6 +55,25 @@ def main():
         expect(reader).to_contain_text(article['text'])
         expect(reader.get_by_role('button', name='编辑正文', exact=True)).to_be_focused()
         reader.get_by_role('button', name='编辑正文', exact=True).click()
+        # Hold the actual save boundary to verify input cannot race a persisted snapshot.
+        page.evaluate("""() => {
+          const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+          window.releaseArticleSave = null;
+          chrome.runtime.sendMessage = (message, ...args) => message?.type === 'UPDATE_ENTRY_ARTICLE_TEXT'
+            ? new Promise(resolve => { window.releaseArticleSave = () => resolve({ok:false, message:'测试保存失败'}); })
+            : send(message, ...args);
+          window.restoreArticleTransport = () => { chrome.runtime.sendMessage = send; };
+        }""")
+        reader.get_by_role('textbox', name='编辑正文段落', exact=True).fill('失败后仍可编辑的草稿')
+        reader.get_by_role('button', name='保存', exact=True).click()
+        page.wait_for_function('() => typeof window.releaseArticleSave === "function"')
+        expect(reader.get_by_role('textbox', name='编辑正文段落', exact=True)).not_to_be_editable()
+        expect(reader.get_by_role('button', name='保存', exact=True)).to_be_disabled()
+        expect(reader.get_by_role('button', name='取消', exact=True)).to_be_disabled()
+        page.evaluate('() => {window.restoreArticleTransport(); window.releaseArticleSave()}')
+        expect(reader.get_by_role('textbox', name='编辑正文段落', exact=True)).to_be_editable()
+        expect(reader.get_by_role('textbox', name='编辑正文段落', exact=True)).to_contain_text('失败后仍可编辑的草稿')
+        expect(reader.get_by_role('button', name='保存', exact=True)).to_be_enabled()
         reader.get_by_role('textbox', name='编辑正文段落', exact=True).fill('保存后的文章正文。')
         reader.get_by_role('button', name='保存', exact=True).click()
         expect(reader).to_contain_text('保存后的文章正文。')

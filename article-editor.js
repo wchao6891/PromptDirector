@@ -12,6 +12,7 @@ export function attachArticleEditor(reader, entry, { onSave, onError, t }) {
   reader.prepend(toolbar);
   reader.dataset.articleIdentity = JSON.stringify(entry.articleDocument);
   let blocks = entry.articleDocument.blocks;
+  let saving = false;
   const textNodes = () => [...reader.querySelectorAll('[data-article-block-id]')];
   const setEditing = editing => {
     reader.dataset.editing = String(editing);
@@ -30,6 +31,17 @@ export function attachArticleEditor(reader, entry, { onSave, onError, t }) {
       }
     }
   };
+  const setSaving = value => {
+    saving = value;
+    reader.setAttribute("aria-busy", String(value));
+    save.disabled = value || reader.dataset.dirty !== "true";
+    cancel.disabled = value;
+    for (const node of textNodes()) {
+      node.contentEditable = !value && reader.dataset.editing === "true" ? "plaintext-only" : "false";
+      if (value) node.setAttribute("aria-readonly", "true");
+      else node.removeAttribute("aria-readonly");
+    }
+  };
   const resetText = () => {
     for (const node of textNodes()) {
       const block = blocks.find(item => item.id === node.dataset.articleBlockId);
@@ -40,7 +52,7 @@ export function attachArticleEditor(reader, entry, { onSave, onError, t }) {
   };
   edit.addEventListener("click", () => { setEditing(true); save.disabled = true; });
   reader.addEventListener("input", event => {
-    if (!event.target.closest('[data-article-block-id]')) return;
+    if (saving || !event.target.closest('[data-article-block-id]')) return;
     reader.dataset.dirty = "true";
     save.disabled = false;
   });
@@ -50,8 +62,9 @@ export function attachArticleEditor(reader, entry, { onSave, onError, t }) {
     edit.focus({ preventScroll: true });
   });
   save.addEventListener("click", async () => {
+    if (saving) return;
     const restore = preserveElementPosition(toolbar);
-    save.disabled = cancel.disabled = true;
+    setSaving(true);
     const patches = textNodes().flatMap(node => {
       const block = blocks.find(item => item.id === node.dataset.articleBlockId);
       const text = node.innerText.replace(/\r\n?/gu, "\n");
@@ -66,7 +79,7 @@ export function attachArticleEditor(reader, entry, { onSave, onError, t }) {
       restore();
       edit.focus({ preventScroll: true });
     } catch (error) { onError(error); }
-    finally { save.disabled = reader.dataset.dirty !== "true"; cancel.disabled = false; }
+    finally { setSaving(false); }
   });
   function button(label, className = "") {
     const node = document.createElement("button");
