@@ -70,12 +70,13 @@ test("page capture replaces failed remote thumbnails with an explicit unavailabl
   assert.match(pageCaptureRenderer, /preview\.replaceChildren\(textNode\("span", t\("预览不可用"\)\)\)/);
   assert.match(pageCaptureRenderer, /pageCaptureMediaSourceLabel\(media\.sourceKind, media\.captureMethod\)/);
   const collectorHtml = await readFile(new URL("../collector.html", import.meta.url), "utf8");
-  assert.match(collectorHtml, /id="page-capture-help"[^>]*>确认一个主体后即可保存/);
+  assert.match(collectorHtml, /id="page-capture-help"/);
+  assert.match(collectorSource, /t\("选择要保存的内容"\)/);
 });
 
 test("page capture uses the final save as media authorization and keeps uncertain media separate", async () => {
   const [collectorSource, collectorHtml, backgroundSource] = await Promise.all([
-    readFile(new URL("../collector.js", import.meta.url), "utf8"),
+    Promise.all(["../collector.js", "../collector-page-capture-view.js"].map(path => readFile(new URL(path, import.meta.url), "utf8"))).then(parts => parts.join("\n")),
     readFile(new URL("../collector.html", import.meta.url), "utf8"),
     readFile(new URL("../background.js", import.meta.url), "utf8")
   ]);
@@ -88,12 +89,12 @@ test("page capture uses the final save as media authorization and keeps uncertai
   assert.match(pageCaptureRenderer, /pageCaptureDefaultMediaIds\(candidate\)/);
   assert.match(pageCaptureRenderer, /mediaDecision: "pending"/);
   assert.match(pageCaptureRenderer, /finalizePageCaptureSelectionsForSave/);
-  assert.match(pageCaptureRenderer, /t\("保存案例 · 含 \{count\} 项媒体"/);
+  assert.match(pageCaptureRenderer, /t\("已选 \{count\} 项内容 · \{media\} 项媒体"/);
   assert.match(pageCaptureRenderer, /可能遗漏媒体/);
   assert.match(pageCaptureRenderer, /batchStructureStatus === "review"/);
   assert.match(pageCaptureRenderer, /updatePageCaptureMediaSelection/);
   assert.match(pageCaptureRenderer, /openPageCaptureMediaViewer/);
-  assert.match(pageCaptureRenderer, /possibleOmissions/);
+  assert.match(collectorSource, /possibleOmissions/);
   assert.match(collectorHtml, /id="page-capture-media-review"/);
   assert.doesNotMatch(collectorHtml, /id="page-capture-confirm-media"/);
   assert.match(collectorHtml, /id="page-capture-save-text-only"/);
@@ -184,9 +185,15 @@ test("the collector auto-reads only highlights and reserves clipboard access for
   );
   assert.match(focusFlow, /void tryAutoSelection\(\)/);
   assert.match(focusFlow, /void refreshPageCapturePermissionState\(\)/);
-  const autoFlow = collectorSource.slice(collectorSource.indexOf("async function tryAutoSelection"), collectorSource.indexOf("async function extractClipboardOrSelection"));
+  const autoFlow = collectorSource.slice(collectorSource.indexOf("async function tryAutoSelection"), collectorSource.indexOf("async function extractPageSelection"));
   assert.doesNotMatch(autoFlow, /clipboard|readClipboardContentAfterFocus|ensureClipboardReadPermission/);
-  const explicitFlow = collectorSource.slice(collectorSource.indexOf("async function extractClipboardOrSelection"), collectorSource.indexOf("function render"));
+  const explicitFlow = collectorSource.slice(collectorSource.indexOf("async function extractPageSelection"), collectorSource.indexOf("function render"));
+  const selectionOnly = collectorSource.slice(collectorSource.indexOf("async function extractPageSelection"), collectorSource.indexOf("async function extractClipboard("));
+  assert.doesNotMatch(selectionOnly, /readClipboard|extractClipboardContent|pendingClipboardButton/);
+  const clipboardOnly = collectorSource.slice(collectorSource.indexOf("async function extractClipboard("), collectorSource.indexOf("function cancelClipboardPermissionEnable"));
+  assert.doesNotMatch(clipboardOnly, /ADD_ACTIVE_SELECTION_TO_DRAFT/);
+  assert.match(collectorHtml, /id="start-clipboard"/);
+  assert.match(collectorHtml, /id="add-clipboard"/);
   assert.match(explicitFlow, /ADD_ACTIVE_SELECTION_TO_DRAFT/);
   assert.match(explicitFlow, /ensureClipboardReadPermission/);
   assert.match(explicitFlow, /readClipboardContentAfterFocus/);
@@ -198,8 +205,8 @@ test("the collector auto-reads only highlights and reserves clipboard access for
   assert.match(backgroundSource, /case "TRY_ACTIVE_SELECTION_TO_DRAFT"/);
   assert.match(backgroundSource, /case "ADD_CLIPBOARD_TEXT_TO_DRAFT"/);
   assert.doesNotMatch(backgroundSource, /lastCommittedClipboardFingerprint/);
-  assert.match(collectorHtml, /id="start-selection"[^>]*>[\s\S]*?<strong[^>]*>提取文字\/图片<\/strong>/);
-  assert.match(collectorHtml, /id="add-selection"[^>]*>[\s\S]*?提取文字\/图片<\/button>/);
+  assert.match(collectorHtml, /id="start-selection"[^>]*>[\s\S]*?<strong[^>]*>选区<\/strong>/);
+  assert.match(collectorHtml, /id="add-selection"[^>]*>[\s\S]*?选区<\/span><\/button>/);
   assert.doesNotMatch(collectorHtml, /自动识别已复制文字|id="clipboard-access"|id="enable-clipboard"/);
   assert.doesNotMatch(collectorSource, /querySelectorAll\("button"\)/);
   assert.ok(collectorHtml.indexOf('id="start-smart-visuals"') < collectorHtml.indexOf('id="start-selection"'));
@@ -211,11 +218,12 @@ test("the collector auto-reads only highlights and reserves clipboard access for
   assert.match(collectorHtml, /id="start-selection"[\s\S]*icon-file-text/);
   assert.match(collectorHtml, /id="start-screenshot"[\s\S]*icon-maximize-2/);
   assert.ok(collectorHtml.indexOf('id="add-smart-visuals"') < collectorHtml.indexOf('id="add-selection"'));
-  assert.ok(collectorHtml.indexOf('id="add-selection"') < collectorHtml.indexOf('id="add-other-capture-methods"'));
+  assert.ok(collectorHtml.indexOf('id="add-selection"') < collectorHtml.indexOf('id="add-page-capture"'));
+  assert.doesNotMatch(collectorHtml, /id="add-other-capture-methods"/);
   assert.doesNotMatch(collectorHtml.match(/id="add-other-capture-methods"[\s\S]*?<\/details>/)?.[0] || "", /id="add-selection"/);
   assert.match(collectorSource, /fallbackAction === "capture-region"/);
   assert.doesNotMatch(collectorSource, /otherCaptureMethods\.open = smartVisualFallback/);
-  assert.match(collectorSource, /addOtherCaptureMethods\.open = smartVisualFallback/);
+  assert.match(collectorSource, /addScreenshot\.classList\.toggle\("fallback-highlight", smartVisualFallback\)/);
   assert.match(collectorSource, /if \(draft\) render\(\)/);
 });
 
@@ -231,17 +239,19 @@ test("every captured draft exposes project and the shared multi-tag editor befor
   );
   assert.match(metadata, /id="capture-collection"/);
   assert.match(metadata, /id="capture-new-collection-name"/);
-  assert.match(metadata, /添加标签/);
+  assert.match(metadata, /data-i18n="标签"/);
   assert.doesNotMatch(metadata, /自由标签|可选|不用预先创建|输入任意新标签/);
   assert.match(metadata, /id="custom-labels"/);
-  assert.doesNotMatch(metadata, /<details/);
+  assert.doesNotMatch(metadata, /id="capture-extra-metadata"[^>]*open/);
+  assert.ok(metadata.indexOf("</details>") < metadata.indexOf('id="custom-labels"'));
+  assert.doesNotMatch(collectorSource, /captureExtraMetadata\.open = !pageCaptureBatch/);
   assert.match(collectorSource, /collections = response\.collections \?\? \[\]/);
   assert.match(collectorSource, /const selectedCollection = elements\.captureCollection\.value/);
   assert.match(collectorSource, /newCollectionName: selectedCollection === NEW_COLLECTION_OPTION_VALUE/);
   assert.match(collectorSource, /const customLabelEditor = createTagEditor/);
   assert.match(collectorSource, /customLabels: customLabelEditor\.values/);
   assert.match(collectorSource, /type: "COMMIT_CAPTURE_DRAFT",[\s\S]*\.\.\.metadata/);
-  assert.match(collectorSource, /type: "COMMIT_PAGE_CAPTURE",[\s\S]*\.\.\.captureMetadataForCommit\(\)/);
+  assert.match(collectorSource, /type: "COMMIT_PAGE_CAPTURE",[\s\S]*\.\.\.metadata/);
   assert.match(collectorSource, /pageCaptureActions\.before\(elements\.captureMetadata\)/);
   assert.match(collectorSource, /captureAddMoreActions\.before\(elements\.captureMetadata\)/);
   assert.match(draftSource, /collectionId: clean\(value\.collectionId\)/);

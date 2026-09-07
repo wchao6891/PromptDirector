@@ -50,13 +50,13 @@ test("creative result capture and metadata commit cross both queues as one trans
   assert.ok(transaction.indexOf("dispatchCaptureMessage") < transaction.indexOf("commitCreativeOutputsTransaction"));
 });
 
-test("a text-bearing captured post is classified from its text instead of its video attachment", async () => {
+test("captured posts retain real media facts when suggesting a case category", async () => {
   const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
   const start = source.indexOf("async function commitPageCapture");
   const end = source.indexOf("async function", start + 20);
   const save = source.slice(start, end);
-  assert.match(save, /candidate\.sourceFacts\.pageType === "post" && base\.text/);
-  assert.match(save, /classificationMediaAssets/);
+  assert.match(save, /classifyContent\(\{ \.\.\.base, sourceFacts: candidate\.sourceFacts, mediaAssets \}/);
+  assert.doesNotMatch(save, /classificationMediaAssets/);
 });
 
 test("restoring an overwritten screenshot marks that existing media id dirty", async () => {

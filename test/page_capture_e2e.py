@@ -36,6 +36,16 @@ PNG = bytes.fromhex(
     "0000000d49444154789c6360f8cfc000000301010018dd8db10000000049454e44ae426082"
 )
 
+def fixture_png(url):
+    # Distinct artwork bytes; all responsive variants of the same artwork remain identical.
+    import struct, zlib
+    import re
+    list_image = re.search(r'list-image-(\d+)', url)
+    rgba = bytes([int(list_image[1]) * 40, 80, 150, 255] if list_image else [220, 50, 50, 255] if 'secondary' in url else [50, 50, 220, 255] if 'placeholder' in url else [50, 220, 50, 255])
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(b'\0' + rgba)) + chunk(b'IEND', b'')
+
 GIF = bytes.fromhex(
     "47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b"
 )
@@ -84,7 +94,7 @@ def main() -> None:
                 return
             route.fulfill(
                 status=200,
-                body=ARTICLE if request_url == fixture_url else PNG,
+                body=ARTICLE if request_url == fixture_url else fixture_png(request_url),
                 content_type="text/html; charset=utf-8" if request_url == fixture_url else "image/png",
             )
 
@@ -107,9 +117,9 @@ def main() -> None:
         capture_entry_boxes = collector.locator("#normal-start .capture-actions > button").evaluate_all(
             "nodes => nodes.map(node => ({top: node.getBoundingClientRect().top, height: node.getBoundingClientRect().height}))"
         )
-        assert len(capture_entry_boxes) == 3, capture_entry_boxes
-        assert all(item["height"] >= 58 for item in capture_entry_boxes), capture_entry_boxes
-        assert capture_entry_boxes[0]["top"] < capture_entry_boxes[1]["top"] < capture_entry_boxes[2]["top"], capture_entry_boxes
+        assert len(capture_entry_boxes) == 4, capture_entry_boxes
+        assert all(item["height"] >= 40 for item in capture_entry_boxes), capture_entry_boxes
+        assert capture_entry_boxes[0]["top"] < capture_entry_boxes[1]["top"] == capture_entry_boxes[2]["top"], capture_entry_boxes
         collector.screenshot(path=str(screenshots / "promptdirector-collector-entry-390.png"), full_page=True)
         collector.evaluate("() => document.querySelector('#capture-permission-onboarding').showModal()")
         permission_layout = collector.locator("#capture-permission-onboarding").evaluate(
@@ -159,13 +169,13 @@ def main() -> None:
         collector.locator("#page-capture-media-close").click()
 
         collector.locator(".page-capture-inspect").first.click()
-        expect(fixture.locator("#promptdirector-page-capture-region-preview")).to_be_visible(timeout=8000)
+        expect(fixture.locator("[data-promptdirector-capture-highlight]").first).to_be_attached(timeout=8000)
         collector.locator(".page-capture-confirm").first.click()
         expect(collector.locator(".page-capture-item.confirmed")).to_have_count(1)
         expect(collector.locator("#page-capture-media-review")).to_be_visible()
         expect(collector.locator("#page-capture-media-review-list .page-capture-media-review-item")).to_have_count(6)
         expect(collector.locator(".page-capture-media-review-group")).to_contain_text("可能遗漏媒体（1）")
-        expect(collector.locator("#page-capture-save")).to_have_text("保存案例 · 含 5 项媒体")
+        expect(collector.locator("#page-capture-save-summary")).to_contain_text("5 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         collector.locator(".page-capture-tools > summary").click()
         collector.locator("#page-capture-add-region").click()
@@ -175,11 +185,13 @@ def main() -> None:
         fixture.get_by_role("button", name="完成").click()
         confirmed_article = collector.locator(".page-capture-item.confirmed .page-capture-article")
         expect(confirmed_article).to_contain_text("downloadable production notes", timeout=8000)
+        expect(fixture.locator("#appendix p")).to_have_attribute("data-promptdirector-capture-highlight", "true")
         collector.locator("#page-capture-exclude-region").click()
         fixture.bring_to_front()
         fixture.locator("article p").nth(1).click()
         fixture.get_by_role("button", name="完成").click()
         expect(confirmed_article).not_to_contain_text("A second paragraph", timeout=8000)
+        expect(fixture.locator("article p").nth(1)).not_to_have_attribute("data-promptdirector-capture-highlight", "true")
         collector.locator("#page-capture-undo-region").click()
         expect(confirmed_article).to_contain_text("A second paragraph")
         collector.locator("#page-capture-exclude-region").click()
@@ -187,8 +199,9 @@ def main() -> None:
         fixture.locator("article p").nth(1).click()
         fixture.get_by_role("button", name="完成").click()
         expect(confirmed_article).not_to_contain_text("A second paragraph", timeout=8000)
+        expect(fixture.locator("article p").nth(1)).not_to_have_attribute("data-promptdirector-capture-highlight", "true")
         expect(collector.locator("#page-capture-media-review-list .page-capture-media-review-item")).to_have_count(7)
-        expect(collector.locator("#page-capture-save")).to_have_text("保存案例 · 含 6 项媒体")
+        expect(collector.locator("#page-capture-save-summary")).to_contain_text("6 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         collector.locator("#page-capture-save").click()
         # A media failure must remain reviewable and retryable, with the real reason.
@@ -245,10 +258,11 @@ def main() -> None:
         fixture.bring_to_front()
         collector.evaluate("() => document.querySelector('#start-page-capture').click()")
         expect(collector.locator("#page-capture")).to_be_visible(timeout=8000)
-        expect(collector.locator(".page-capture-item > header small")).to_contain_text("原网页选区")
+        expect(collector.locator(".page-capture-confirm small")).to_contain_text("原网页选区")
         expect(collector.locator(".page-capture-article p")).to_have_count(1)
         collector.locator(".page-capture-confirm").click()
-        expect(collector.locator("#page-capture-save")).to_have_text("只保存正文")
+        expect(collector.locator("#page-capture-save")).to_have_text("保存案例")
+        expect(collector.locator("#page-capture-save-summary")).to_contain_text("0 项媒体")
         collector.locator("#page-capture-save").click()
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)
         selected_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
@@ -266,7 +280,7 @@ def main() -> None:
         expect(collector.locator("#page-capture")).to_be_visible(timeout=8000)
         expect(collector.locator(".page-capture-item")).to_have_count(2)
         collector.locator(".page-capture-confirm").first.click()
-        collector.locator("#page-capture-scan").click()
+        collector.locator("#page-capture-mode").select_option("list")
         collector.locator("#page-capture-target-count").fill("3")
         collector.locator("#page-capture-list-run").click()
         expect(collector.locator("#page-capture-list-result")).to_be_visible(timeout=15000)
@@ -290,7 +304,7 @@ def main() -> None:
         collector.evaluate("() => document.querySelector('#start-page-capture').click()")
         expect(collector.locator(".page-capture-item")).to_have_count(2)
         collector.locator(".page-capture-confirm").first.click()
-        collector.locator("#page-capture-scan").click()
+        collector.locator("#page-capture-mode").select_option("list")
         collector.locator("#page-capture-target-count").fill("3")
         collector.locator("#page-capture-list-run").click()
         expect(collector.locator("#page-capture-list-result")).to_be_visible(timeout=15000)

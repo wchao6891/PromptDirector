@@ -135,11 +135,11 @@ test("document navigation moves into the top toolbar and long documents use a re
   assert.match(documentItem, /overflow:\s*visible/);
 });
 
-test("captured posts use a compact post view while articles show only genuinely unplaced media separately", async () => {
+test("text-only posts retain their reader while structured articles show only genuinely unplaced media separately", async () => {
   const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
   const styles = await readFile(cssUrl, "utf8");
   const detail = script.slice(script.indexOf("async function renderDetail"), script.indexOf("function createLocalDiscovery"));
-  assert.match(detail, /const capturedPost = isCapturedPost\(entry\)/);
+  assert.match(detail, /const capturedPost = usesPostReader\(entry\)/);
   assert.match(detail, /createCapturedPostView\(entry\)/);
   assert.match(detail, /createUnplacedMediaShelf\(entry\)/);
   assert.match(script, /function articleReferencedAssetIds/);

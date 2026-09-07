@@ -100,7 +100,7 @@ def run_jimeng_flow(home_html: bytes, detail_html: bytes) -> None:
         first_candidate.locator(".page-capture-confirm").click()
         expect(collector.locator("#page-capture-media-review")).to_be_visible()
         expect(collector.locator("#page-capture-media-review-list .page-capture-media-review-item")).to_have_count(1)
-        expect(collector.locator("#page-capture-save")).to_have_text("保存案例 · 含 1 项媒体")
+        expect(collector.locator("#page-capture-save-summary")).to_contain_text("1 项媒体")
 
         collector.evaluate("() => document.querySelector('#page-capture-save').click()")
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)

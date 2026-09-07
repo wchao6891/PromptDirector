@@ -224,13 +224,13 @@ test("collector presents one compact first-use authorization and resumes only th
   assert.match(html, /一次授权，之后直接采集/);
   assert.match(html, /统一开启网页读取与截图能力/);
   assert.match(html, /id="capture-permission-clipboard"[^>]*checked/);
-  assert.match(html, /仅在你主动点击“提取文字\/图片”且网页没有高亮内容时读取/);
+  assert.match(html, /仅在你点击“剪贴板”时读取/);
   assert.match(html, /不会自动保存案例/);
   assert.match(source, /pendingCaptureAction = \{ action, permissionStatus \}/);
   assert.match(source, /await pending\.action\(\{ clipboardPreferenceJustDeclined: !includeClipboard \}\)/);
   const cancelFlow = source.slice(source.indexOf("function cancelCapturePermissionOnboarding"), source.indexOf("async function confirmCapturePermissionOnboarding"));
   assert.doesNotMatch(cancelFlow, /storage\.local\.set|pending\.action/);
-  const autoFlow = source.slice(source.indexOf("async function tryAutoSelection"), source.indexOf("async function extractClipboardOrSelection"));
+  const autoFlow = source.slice(source.indexOf("async function tryAutoSelection"), source.indexOf("async function extractPageSelection"));
   assert.doesNotMatch(autoFlow, /readClipboardContentAfterFocus|ensureClipboardReadPermission/);
 });
 
@@ -240,7 +240,7 @@ test("declining clipboard is honored for the original action and later enablemen
     readFile(new URL("collector.html", projectRoot), "utf8")
   ]);
   const fallback = source.slice(
-    source.indexOf("async function extractClipboardOrSelection"),
+    source.indexOf("async function extractClipboard("),
     source.indexOf("function cancelClipboardPermissionEnable")
   );
   assert.match(fallback, /clipboardPreferenceJustDeclined/);

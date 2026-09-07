@@ -1,14 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { usesArticleReader, mediaFormatLabel } from "../case-presentation.js";
+import { usesArticleReader, usesPostReader, mediaFormatLabel } from "../case-presentation.js";
 
-test("captured prompt works use the media stage even when capture retains structured text", () => {
+test("creative classifications open existing case details regardless of webpage origin", () => {
   const articleDocument = { blocks: [{ kind: "paragraph", text: "Original prompt" }] };
-  for (const pageType of ["video", "artwork", "post"]) {
-    assert.equal(usesArticleReader({ articleDocument, sourceFacts: { pageType } }), false);
+  for (const id of ["content:prompt:image", "content:prompt:video", "content:image-case", "content:video-case"]) {
+    for (const pageType of ["article", "post", "video", "artwork"]) {
+      const entry = { classification: { pathIds: [id] }, articleDocument, sourceFacts: { pageType } };
+      assert.equal(usesArticleReader(entry), false);
+      assert.equal(usesPostReader(entry), false);
+      assert.equal(usesPostReader({ ...entry, articleDocument: null }), false);
+    }
   }
-  assert.equal(usesArticleReader({ articleDocument, sourceFacts: { pageType: "article" } }), true);
+});
+
+test("article roles retain structured reading including X quotes and media", () => {
+  const articleDocument = { blocks: [{ kind: "quote", text: "Quoted context" }] };
+  for (const id of ["content:tutorial", "content:reference"]) {
+    for (const pageType of ["article", "post", "video", "artwork"]) {
+      const entry = { classification: { pathIds: [id] }, articleDocument, sourceFacts: { pageType } };
+      assert.equal(usesArticleReader(entry), true);
+      assert.equal(usesPostReader(entry), false);
+    }
+  }
   assert.equal(usesArticleReader({ articleDocument }), true);
+  assert.equal(usesPostReader({ sourceFacts: { pageType: "post" } }), true);
+  assert.equal(usesArticleReader({ text: "Ordinary text case" }), false);
+});
+
+test("renamed and custom categories use their resolved purpose, not their display label", () => {
+  const base = { articleDocument: { blocks: [{ kind: "paragraph", text: "text" }] }, sourceFacts: { pageType: "post" } };
+  assert.equal(usesArticleReader({ ...base, contentRole: "prompt_video" }), false);
+  assert.equal(usesPostReader({ ...base, contentRole: "prompt_video" }), false);
+  assert.equal(usesArticleReader({ ...base, contentRole: "reference" }), true);
 });
 
 test("media format comes from recognized file metadata, never a creator's title", () => {

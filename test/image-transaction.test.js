@@ -122,7 +122,7 @@ test("external Skill deletion commits metadata before cleaning package files", a
 
 test("page capture never deletes committed media when a post-commit action fails", async () => {
   const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
-  const start = source.indexOf("async function commitPageCapture(batchValue)");
+  const start = source.indexOf("async function commitPageCapture(");
   const block = source.slice(start, source.indexOf("async function startCaptureForCase", start));
   assert.match(block, /metadataCommitted = true/);
   assert.match(block, /if \(!metadataCommitted\) await Promise\.allSettled/);

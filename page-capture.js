@@ -14,7 +14,7 @@ export function detectPageCaptureAdapter(value, adapters = PAGE_CAPTURE_ADAPTERS
 
 export function pageCaptureDefaultMediaIds(candidateValue = {}) {
   return (normalizePageCaptureCandidate(candidateValue)?.media || [])
-    .filter((item) => item.placement === "inline" || item.isCover)
+    .filter((item) => !item.quotedPostUrl && (item.placement === "inline" || item.isCover))
     .map((item) => item.id);
 }
 
@@ -359,6 +359,11 @@ export function normalizePageCaptureCandidate(value = {}) {
     textBlocks,
     articleDocument,
     possibleOmissions: prepared.possibleOmissions,
+    supplements: (Array.isArray(value.supplements) ? value.supplements : []).flatMap(item => {
+      const text = normalizeText(item?.text);
+      const sourceUrl = safeUrl(item?.sourceUrl);
+      return text && sourceUrl ? [{ id: clean(item.id) || stableCandidateId(sourceUrl, text), text, sourceUrl, partial: item.partial === true }] : [];
+    }),
     batchStructureStatus: value.batchStructureStatus === "review" ? "review" : value.batchStructureStatus === "matched" ? "matched" : "",
     region: normalizeCaptureRegion(value.region),
     excerpt: clean(value.excerpt),
@@ -371,7 +376,8 @@ export function normalizePageCaptureCandidate(value = {}) {
         ? value.extraction.method
         : "page",
       textBlockCount: textBlocks.length,
-      pendingMediaCount: positiveInteger(value.extraction?.pendingMediaCount, 0)
+      pendingMediaCount: positiveInteger(value.extraction?.pendingMediaCount, 0),
+      textTruncated: value.extraction?.textTruncated === true
     },
     adapter: clean(value.adapter) || "generic"
   };
@@ -539,7 +545,7 @@ export function pageCapturePermissionOrigins(candidates = []) {
   const origins = new Set();
   for (const candidate of candidates) {
     for (const media of normalizePageCaptureCandidate(candidate)?.media || []) {
-      if (media.kind === "document" && !isSupportedDocumentMimeType(media.mimeType)) continue;
+      if (media.localAssetId || media.kind === "document" && !isSupportedDocumentMimeType(media.mimeType)) continue;
       for (const value of [media.posterUrl, ...pageCaptureMediaFetchCandidates(media)]) {
         try {
           const url = new URL(value);
@@ -670,6 +676,30 @@ export async function collectPageCaptureSnapshot(options = {}) {
         capturedAt,
         siteStatus: siteData.completeness === "complete" ? "complete" : "partial"
       };
+    }
+    if (adapter.id === "x" && !pageSelection) {
+      const posts = [...document.querySelectorAll('article[data-testid="tweet"]')];
+      const current = posts.find(post => ownPostLinks(post).some(link => sameUrl(link.href, canonicalUrl)));
+      if (current || !wholePage) {
+        const roots = current ? [current] : posts;
+        const candidates = roots.slice(0, maxCandidates).flatMap((root, index) => {
+          const candidate = candidateForRoot(root, index, {
+            adapter, metadata, structured: [], article: null, siteData: null,
+            canonicalUrl, pageType: "post", maxMedia
+          });
+          return candidate ? [candidate] : [];
+        });
+        if (current && candidates[0]) {
+          const author = collectAdapterFields(current, adapter).handle;
+          candidates[0].supplements = posts.filter(post => post !== current && author && collectAdapterFields(post, adapter).handle === author)
+            .flatMap(post => {
+              const content = xPostContent(post);
+              const url = collectAdapterFields(post, adapter).canonicalUrl;
+              return content?.text && url ? [{ id: "supplement:" + hashText(url), text: content.text, sourceUrl: url, partial: content.partial }] : [];
+            });
+        }
+        return { id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id, candidates, capturedAt };
+      }
     }
     const accumulated = new Map();
     const collectVisible = () => {
@@ -973,10 +1003,61 @@ export async function collectPageCaptureSnapshot(options = {}) {
     };
   }
 
+  function ownPostLinks(root) {
+    return [...root.querySelectorAll('a[href*="/status/"]')].filter(link =>
+      link.querySelector("time") && !link.closest('[role="link"][data-testid="quoteTweet"], [data-testid="quoteTweet"], [role="link"][tabindex="0"]'));
+  }
+
+  function copyPostInline(source, target) {
+    for (const child of source.childNodes) {
+      if (child.nodeType === 3) target.append(child.cloneNode());
+      else if (child.nodeType === 1) {
+        const tag = child.tagName.toLowerCase();
+        if (["button", "script", "style"].includes(tag)) continue;
+        if (tag === "img") {
+          if (child.alt) target.append(document.createTextNode(child.alt));
+        } else if (tag === "br") target.append(document.createElement("br"));
+        else {
+          const inline = document.createElement(["a", "strong", "em", "b", "i", "code"].includes(tag) ? tag : "span");
+          if (tag === "a" && safeHttpUrl(child.href)) inline.setAttribute("href", child.href);
+          if (["div", "p"].includes(tag)) target.append(document.createTextNode("\n"));
+          copyPostInline(child, inline);
+          target.append(inline);
+          if (["div", "p"].includes(tag)) target.append(document.createTextNode("\n"));
+        }
+      }
+    }
+  }
+
+  function xPostContent(root) {
+    const texts = [...root.querySelectorAll('[data-testid="tweetText"]')];
+    if (!texts.length && !root.querySelector("video, [data-testid=tweetPhoto]")) return null;
+    const fragment = document.createElement("div");
+    const content = [];
+    for (const node of texts) {
+      const value = cleanBlockText(node.innerText || node.textContent);
+      if (!value) continue;
+      const quote = node.closest('[data-testid="quoteTweet"], [role="link"][tabindex="0"]');
+      const p = document.createElement(quote ? "blockquote" : "p");
+      // Keep inline links and paragraph breaks, without nesting tweet divs inside paragraphs.
+      copyPostInline(node, p);
+      fragment.append(p);
+      content.push({ id: "text:x:" + hashText(value), text: value, html: p.outerHTML,
+        kind: quote ? "quote" : "paragraph", relevance: "explicit-creative", sourceOrder: content.length });
+    }
+    const media = collectMedia(root, maxMedia).filter(item => item.kind !== "image" ||
+      !/profile_images|profile_banners/u.test(item.url));
+    return { text: content.map(b => b.text).join("\n\n"), html: fragment.innerHTML, textBlocks: content, media,
+      partial: Boolean(root.querySelector('[data-testid="tweet-text-show-more-link"]')) };
+  }
+
   function candidateForRoot(root, index, context) {
     const isPageRoot = root === document.body || root === context.pageRoot;
     const siteData = isPageRoot ? context.siteData : null;
     const adapterFields = collectAdapterFields(root, context.adapter);
+    const capturePost = context.adapter.id === "x" && !context.pageSelection && !options.editedRegion?.token;
+    const post = capturePost ? xPostContent(root) : null;
+    if (capturePost && !post) return null;
     const cardLink = isPageRoot || context.pageType === "article" ? "" : safeHttpUrl(root.querySelector("a[href]")?.href);
     const canonicalUrl = adapterFields.canonicalUrl || cardLink || safeHttpUrl(siteData?.canonicalUrl) || context.canonicalUrl;
     const structured = context.structured.find((item) => sameUrl(item.url || item.mainEntityOfPage, canonicalUrl)) || context.structured[0] || {};
@@ -985,10 +1066,10 @@ export async function collectPageCaptureSnapshot(options = {}) {
       : adapterFields.title || root.querySelector("h1,h2,h3,[role=heading]")?.textContent || structured.headline || structured.name || (context.pageType === "post" ? "" : root.querySelector("img[alt]")?.alt));
     const pageSelection = isPageRoot ? context.pageSelection : null;
     const articleText = context.pageType === "article" ? context.article?.textContent : "";
-    const text = cleanBlockText(context.contentRoot ? root.innerText : isPageRoot
+    const text = post ? post.text : cleanBlockText(context.contentRoot ? root.innerText : isPageRoot
       ? pageSelection?.text || articleText || siteData?.contentText || context.article?.textContent || structured.articleBody || root.innerText || context.metadata.description
       : root.innerText || root.textContent);
-    const contentHtml = context.contentRoot ? root.innerHTML : isPageRoot
+    const contentHtml = post ? post.html : context.contentRoot ? root.innerHTML : isPageRoot
       ? pageSelection?.html || context.article?.content || ""
       : "";
     const structuredTextBlocks = !context.contentRoot && !articleText && siteData?.contentText
@@ -1001,9 +1082,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
           sourceOrder: 0
         }]
       : null;
-    const textBlocks = pageSelection?.textBlocks || structuredTextBlocks || collectTextBlocks(root, contentHtml, text);
+    const textBlocks = post?.textBlocks || pageSelection?.textBlocks || structuredTextBlocks || collectTextBlocks(root, contentHtml, text);
     const siteMedia = Array.isArray(siteData?.media) ? siteData.media : [];
-    const domMedia = pageSelection || root.isConnected === false ? [] : collectMedia(root, context.maxMedia);
+    const domMedia = post?.media || (pageSelection || root.isConnected === false ? [] : collectMedia(root, context.maxMedia));
     const pairedDomIds = new Set();
     const pairedSiteMedia = siteMedia.map((item) => {
       const visible = domMedia.find((candidate) => mediaValuesOverlap(item, candidate));
@@ -1025,6 +1106,16 @@ export async function collectPageCaptureSnapshot(options = {}) {
       ...domMedia.filter((item) => !pairedDomIds.has(item.id))
     ], context.maxMedia);
     const article = collectArticleDocument(root, contentHtml, textBlocks, media, context.maxMedia);
+    if (capturePost) {
+      for (const item of media.filter(item => item.postPhotoUrl)) {
+        item.quotedPostUrl = sameUrl(item.postPhotoUrl, canonicalUrl) ? "" : item.postPhotoUrl;
+        item.originalWorkUrl = item.postPhotoUrl;
+        if (!article.blocks.some(block => block.assetId === item.id)) article.blocks.push({
+          id: `article:photo:${item.id}`, kind: "image", assetId: item.id, sourceUrl: item.url,
+          sourceOrder: article.blocks.length
+        });
+      }
+    }
     media = mergeCollectedMedia([...media, ...article.media], context.maxMedia);
     if (!title && !text && !media.length) return null;
     const pageType = isPageRoot || context.pageType === "article" ? context.pageType : ["post", "video"].includes(context.adapter.pageType) ? context.adapter.pageType : "artwork";
@@ -1039,7 +1130,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       ? "selection"
       : siteData?.sourceFacts?.extractionMethod === "structured" ? "structured"
         : context.article?.content ? "readability" : structured.articleBody ? "structured" : "page";
-    const complete = siteData?.completeness === "complete" || Boolean(title && (text || media.length));
+    const complete = !post?.partial && (siteData?.completeness === "complete" || Boolean(title && (text || media.length)));
     const region = markCaptureRegion(root, index, text, media.length);
     if (region && root.isConnected !== false) {
       region.contentTargets = collectContentTargets(
@@ -1082,6 +1173,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       },
       completeness: complete ? "complete" : "partial",
       extraction: {
+        textTruncated: post?.partial === true,
         scope: captureScope,
         method: extractionMethod,
         textBlockCount: textBlocks.length
@@ -1533,7 +1625,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
   function isVideoUrl(value) {
     try {
       const url = new URL(value);
-      return /\.(?:mp4|webm|mov)(?:$|[?#])/iu.test(url.pathname) || ["youtube.com", "youtu.be", "vimeo.com", "bilibili.com", "douyin.com", "x.com"].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+      if (["x.com", "twitter.com"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return /^\/[^/]+\/status\/\d+\/video\/\d+\/?$/u.test(url.pathname);
+      return /\.(?:mp4|webm|mov)(?:$|[?#])/iu.test(url.pathname) || ["youtube.com", "youtu.be", "vimeo.com", "bilibili.com", "douyin.com"].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
     } catch {
       return false;
     }
@@ -1649,9 +1742,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
       title: firstText(fields.title),
       author: firstText(fields.author),
       handle: handleFromLink(fields.handle),
-      canonicalUrl: firstUrl(fields.canonicalUrl),
+      canonicalUrl: adapter.id === "x" ? safeHttpUrl(ownPostLinks(root)[0]?.href) : firstUrl(fields.canonicalUrl),
       model: firstText(fields.model),
-      publishedAt: firstText(fields.publishedAt),
+      publishedAt: adapter.id === "x" ? cleanText(ownPostLinks(root)[0]?.querySelector("time")?.dateTime) : firstText(fields.publishedAt),
       engagement
     };
   }
@@ -1691,6 +1784,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         kind,
         url,
         posterUrl,
+        postPhotoUrl: xPostPhotoUrl(element),
         alt: cleanText(element.alt),
         width: imageSource?.declaredWidth || (responsiveCandidate ? 0 : Number(element.naturalWidth || element.videoWidth || element.width) || 0),
         height: responsiveCandidate ? 0 : Number(element.naturalHeight || element.videoHeight || element.height) || 0,
@@ -1711,7 +1805,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         const url = safeHttpUrl(match?.[1]);
         const rect = element.getBoundingClientRect();
         if (!url || sameUrl(url, location.href) || rect.width < 48 || rect.height < 48) continue;
-        media.push({ id: `background:${hashText(url)}`, kind: "image", url, posterUrl: "", alt: "", width: element.clientWidth, height: element.clientHeight, captureMethod: "css-background", sourceKind: "css-background", variants: [{ url, sourceKind: "css-background", width: element.clientWidth, height: element.clientHeight }] });
+        media.push({ id: `background:${hashText(url)}`, kind: "image", url, postPhotoUrl: xPostPhotoUrl(element), posterUrl: "", alt: "", width: element.clientWidth, height: element.clientHeight, captureMethod: "css-background", sourceKind: "css-background", variants: [{ url, sourceKind: "css-background", width: element.clientWidth, height: element.clientHeight }] });
         if (media.length >= limit) break;
       }
     }
@@ -1922,14 +2016,24 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return candidates;
   }
 
+  function xPostPhotoUrl(element) {
+    if (!["x.com", "twitter.com"].includes(location.hostname) || !element.closest('article[data-testid="tweet"]')) return "";
+    const link = element.closest('a[href*="/photo/"]');
+    const url = safeHttpUrl(link?.href);
+    if (!url) return "";
+    const match = new URL(url).pathname.match(/^\/([^/]+)\/status\/(\d+)\/photo\/\d+\/?$/);
+    return match ? new URL(`/${match[1]}/status/${match[2]}`, url).href : "";
+  }
+
   function isExcludedMedia(element) {
-    if (element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
+    const postPhoto = Boolean(xPostPhotoUrl(element));
+    if (!postPhoto && element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
     const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0 || rect.width < 48 || rect.height < 48) return true;
     const style = typeof globalThis.getComputedStyle === "function" ? globalThis.getComputedStyle(element) : null;
-    if (style?.display === "none" || style?.visibility === "hidden" || Number(style?.opacity) === 0) return true;
+    if (style?.display === "none" || style?.visibility === "hidden" || !postPhoto && Number(style?.opacity) === 0) return true;
     const description = `${element.alt || ""} ${element.className || ""} ${element.id || ""} ${element.getAttribute?.("aria-label") || ""}`.toLowerCase();
-    return /avatar|emoji|icon|logo|badge|advert|qr[-_ ]?code|二维码/.test(description);
+    return !postPhoto && /avatar|emoji|icon|logo|badge|advert|qr[-_ ]?code|二维码/.test(description);
   }
 
   function isContentRoot(root) {
@@ -2011,11 +2115,15 @@ function uniqueMedia(values) {
     const id = clean(value?.id) || stableCandidateId(url || posterUrl || dataUrl || previewDataUrl, value?.kind);
     const keyUrl = url || posterUrl;
     const kind = ["video", "document", "attachment"].includes(value?.kind) ? value.kind : "image";
-    if (!keyUrl && !dataUrl && !previewDataUrl) continue;
+    const localAssetId = clean(value?.localAssetId);
+    if (!keyUrl && !dataUrl && !previewDataUrl && !localAssetId) continue;
     const item = {
       id,
       kind,
       placement: value?.placement === "inline" ? "inline" : "unplaced",
+      ...(localAssetId ? { localAssetId } : {}),
+      ...(value?.contentHash ? { contentHash: clean(value.contentHash) } : {}),
+      ...(safeUrl(value?.quotedPostUrl) ? { quotedPostUrl: safeUrl(value.quotedPostUrl) } : {}),
       ...(value?.isCover === true && kind === "image" ? { isCover: true } : {}),
       url,
       posterUrl,
@@ -2068,12 +2176,13 @@ function uniqueMedia(values) {
   return items;
 }
 
-function pageCaptureMediaIdentity(value) {
+export function pageCaptureMediaIdentity(value) {
   try {
     const url = new URL(value);
     for (const key of [...url.searchParams.keys()]) {
       if (/^(?:w|width|h|height|q|quality|resize|size|dpr|format)$/iu.test(key)) url.searchParams.delete(key);
     }
+    if (url.hostname === "pbs.twimg.com" && url.pathname.startsWith("/media/")) url.searchParams.delete("name");
     url.hash = "";
     return url.href;
   } catch {

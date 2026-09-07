@@ -10,7 +10,7 @@ PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY4
 
 
 def main():
-    article = base_entry("article-edit", "文章编辑回归", "文章正文只读一次。", "content:prompt:image")
+    article = base_entry("article-edit", "文章编辑回归", "文章正文只读一次。", "content:reference")
     article["sourceFacts"] = {"pageType": "article"}
     article["articleDocument"] = {"version": 1, "blocks": [{"kind": "paragraph", "text": article["text"]}]}
     article["mediaAssets"] = [{"id": f"article-image-{i}", "kind": "image", "usage": "content", "storageMode": "managed", "mimeType": "image/png"} for i in range(2)]

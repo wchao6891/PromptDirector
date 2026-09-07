@@ -1,8 +1,9 @@
 import { attachArticleEditor } from "./article-editor.js";
+import { renderArticleBlockText } from "./article-text-view.js";
 import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
 import { readImageDimensions } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
-import { mediaFormatLabel, usesArticleReader } from "./case-presentation.js";
+import { mediaFormatLabel, usesArticleReader, usesPostReader } from "./case-presentation.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import {
   assertStorageCapacity,
@@ -4985,6 +4986,7 @@ function bindDetailSidebarResize() {
     elements.detailResizer.classList.add("is-resizing");
     event.preventDefault();
   });
+  const presentation = usesArticleReader(entry) ? "article" : usesPostReader(entry) ? "post" : "case";
   elements.detailResizer.addEventListener("pointermove", (event) => {
     if (event.pointerId !== pointerId) return;
     const width = detailSidebarRuntimeWidth(startWidth + startX - event.clientX);
@@ -5024,12 +5026,14 @@ function clearFilters() {
   renderGallery();
 }
 
+  body.dataset.presentation = presentation;
 function openUnassignedView() {
   selectedCollectionId = "";
   unassignedViewActive = true;
   caseOrderManagementActive = false;
   projectOrderManagementActive = false;
   selectedContentId = "";
+  elements.detailContent.classList.toggle("is-article-detail", presentation !== "case" && !entry.compoundCase);
   selectedFacets.clear();
   elements.pendingFilter.checked = false;
   elements.searchInput.value = "";
@@ -5109,15 +5113,15 @@ async function renderDetail({ resetScroll = false } = {}) {
   const mountedBody = elements.detailContent.querySelector(".detail-primary > .detail-body");
   const mountedArticle = mountedBody?.querySelector(":scope > .article-document-reader");
   if (!resetScroll && usesArticleReader(entry) && elements.detailDrawer.dataset.entryId === entry.id
-    && mountedBody?.dataset.mediaIdentity === mediaIdentity
+    && mountedBody?.dataset.mediaIdentity === mediaIdentity && mountedBody.dataset.presentation === presentation
     && (mountedArticle?.dataset.editing === "true" || mountedArticle?.dataset.articleIdentity === JSON.stringify(normalizeEntryMedia(entry).articleDocument))) {
     const header = mountedBody.querySelector(":scope > .detail-header-section");
     if (header) replaceDetailSection(header, createDetailHeader(entry));
     refreshActiveDetailAssetSections(entry);
     return;
   }
-  if (!resetScroll && !entry.compoundCase && !isCapturedPost(entry) && !usesArticleReader(entry)
-      && elements.detailDrawer.dataset.entryId === entry.id && mountedBody?.dataset.mediaIdentity === mediaIdentity) {
+  if (!resetScroll && !entry.compoundCase && !usesPostReader(entry) && !usesArticleReader(entry)
+      && elements.detailDrawer.dataset.entryId === entry.id && mountedBody?.dataset.mediaIdentity === mediaIdentity && mountedBody.dataset.presentation === presentation) {
     elements.detailContent.querySelector(".detail-visual-gallery")?.updateEntry?.(entry);
     refreshActiveDetailAssetSections(entry);
     // Editors stay mounted while open; updates to unrelated sections remain local.
@@ -5146,7 +5150,7 @@ async function renderDetail({ resetScroll = false } = {}) {
   const body = el("div", "detail-body");
   body.dataset.mediaIdentity = mediaIdentity;
   const hasPrimaryMedia = entryHasMedia(entry);
-  const capturedPost = isCapturedPost(entry);
+  const capturedPost = usesPostReader(entry);
   const hasArticleDocument = !capturedPost && usesArticleReader(entry);
   const usesStageNavigation = !capturedPost && !hasArticleDocument && (entryHasMedia(entry, "image") || entryHasMedia(entry, "video"));
   elements.detailContent.classList.toggle("has-primary-media", hasPrimaryMedia && !hasArticleDocument && !capturedPost);
@@ -5220,7 +5224,7 @@ function invalidateDetailContent(entryId) {
   elements.detailDrawer.dataset.loadingEntryId = entryId;
   elements.drawerToolbar.prepend(elements.detailNavigation);
   elements.drawerToolbar.classList.add("has-document-navigation");
-  elements.detailContent.classList.remove("has-primary-media", "is-compound-detail");
+  elements.detailContent.classList.remove("has-primary-media", "is-compound-detail", "is-article-detail");
   const loading = el("div", "detail-loading");
   loading.setAttribute("role", "status");
   loading.setAttribute("aria-label", `正在打开${entry?.title ? `：${entry.title}` : "案例"}`);
@@ -5428,6 +5432,7 @@ function createCompoundOrganizer(entry) {
   renderOrder();
   const actions = el("div", "compound-organizer-actions");
   const save = textEl("button", "", "保存整理");
+      link.classList.add("has-poster");
   save.addEventListener("click", async () => {
     const response = await perform(save, {
       type: "UPDATE_COMPOUND_CASE",
@@ -5441,10 +5446,6 @@ function createCompoundOrganizer(entry) {
   body.append(title.label, textEl("span", "form-label", "部分顺序"), order, actions);
   details.append(body);
   return details;
-}
-
-function isCapturedPost(entry) {
-  return entry?.sourceFacts?.pageType === "post";
 }
 
 function articleReferencedAssetIds(entry) {
@@ -5463,6 +5464,7 @@ async function createCapturedPostView(entryValue) {
   heading.append(textEl("h3", "", "帖子文字"), rawTextEl("small", "", facts));
   section.append(heading);
   if (promptEditState?.entryId === entry.id && !promptEditState.assetId) {
+      renderArticleBlockText(node, block);
     const textarea = document.createElement("textarea");
     textarea.className = "captured-post-editor";
     textarea.value = promptEditState.draftText;
@@ -5511,6 +5513,9 @@ async function createCapturedPostView(entryValue) {
       renderDetail();
     });
     actions.append(copy, edit);
+    contextParts: [entry.sourceFacts?.author, entry.sourceFacts?.handle ? `@${entry.sourceFacts.handle}` : "",
+      entry.sourceFacts?.publishedAt ? formatDate(entry.sourceFacts.publishedAt) : ""].filter(Boolean),
+    onCopy: button => copyTextWithFeedback(button, entry.text, "已复制", "浏览器未允许复制，请选中文字后复制"),
     section.append(actions);
   }
   const media = entry.mediaAssets.filter((asset) => asset.usage !== "poster");
@@ -5582,7 +5587,7 @@ async function createArticleDocumentReader(entryValue) {
       continue;
     }
     if (["paragraph", "list", "quote", "code", "table"].includes(block.kind)) {
-      const tagName = block.kind === "quote" ? "blockquote" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
+      const tagName = block.kind === "quote" ? "blockquote" : block.kind === "list" ? "div" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
       const node = rawTextEl(tagName, block.kind === "table" ? "article-table-text" : "", block.text);
       node.dataset.articleBlockId = block.id;
       reader.append(node);
