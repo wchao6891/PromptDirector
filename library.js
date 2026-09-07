@@ -32,12 +32,13 @@ import {
 } from "./library-export-plan.js";
 import { buildLibraryImportReport, importReportDescription } from "./library-import-dialog.js";
 import { parseCreativeExperimentPackage } from "./creative-experiment-package.js";
-import { readZipBlob } from "./zip.js";
+import { readZipBlob, openZipBlob } from "./zip.js";
 import { analysisDiagnosticSummary } from "./analysis-response.js";
 import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 import {
   ASSET_IMPORT_FAILURE_CODES,
   PORTABLE_LIBRARY_LIMITS,
+  LIBRARY_TRANSFER_LIMITS,
   assertImageDimensions,
   formatBytes,
   importFailureDetails
@@ -3441,7 +3442,12 @@ async function createCompleteFolderBackup() {
   if (dataSafetyOperationActive) return showDataSafetyFeedback("当前操作仍在进行，请等待完成", true);
   if (typeof window.showDirectoryPicker !== "function") return showDataSafetyFeedback("当前浏览器不支持资料夹备份，请使用最新版 Chrome", true);
   setDataSafetyBusy(true);
+  let stage = "picker";
   try {
+    const parent = await window.showDirectoryPicker({ mode: "readwrite" });
+    const permission = typeof parent.requestPermission === "function" ? await parent.requestPermission({ mode: "readwrite" }) : "granted";
+    if (permission !== "granted") throw new Error("没有获得所选资料夹的写入权限");
+    stage = "preflight";
     const response = await chrome.runtime.sendMessage({ type: "GET_FOLDER_BACKUP_STATE" });
     if (!response?.ok) throw new Error(response?.message || "无法读取资料库");
     const plannedFiles = new Map();
@@ -3620,13 +3626,13 @@ async function createCompleteFolderBackup() {
     const plannedLibrary = JSON.parse(libraryJson);
     const initialMediaSizes = [...backupMediaPaths(plannedLibrary)].map((path) => plannedFiles.get(path)?.size ?? 0);
     const initialTotalBytes = initialMediaSizes.reduce((sum, size) => sum + size, 0);
-    const initialLargestMedia = Math.max(1, ...initialMediaSizes);
+    const initialLargestMedia = initialMediaSizes.reduce((largest, size) => Math.max(largest, size), 1);
     const inspectPlannedBackup = (sourceType, sourceReport) => inspectLibraryTransfer({
       sourceType,
       library: plannedLibrary,
       files: plannedFiles,
       limits: {
-        ...PORTABLE_LIBRARY_LIMITS,
+        ...LIBRARY_TRANSFER_LIMITS,
         maxArchiveBytes: Math.max(1, initialTotalBytes),
         maxFileBytes: initialLargestMedia,
         maxImageBytes: initialLargestMedia,
@@ -3680,7 +3686,7 @@ async function createCompleteFolderBackup() {
     const finalMediaSizes = [...backupMediaPaths(finalLibrary)].map((path) => finalFiles.get(path)?.size ?? 0);
     byteSize = finalMediaSizes.reduce((sum, size) => sum + size, 0);
     mediaCount = finalMediaSizes.length;
-    const largestPlannedMedia = Math.max(1, ...finalMediaSizes);
+    const largestPlannedMedia = finalMediaSizes.reduce((largest, size) => Math.max(largest, size), 1);
     const plannedTotalBytes = byteSize;
     const trashCaseCount = (exportState.trashState?.items ?? []).filter((item) => item.kind === "entry").length;
     const trashProjectCount = (exportState.trashState?.items ?? []).filter((item) => item.kind === "collection").length;
@@ -3707,11 +3713,9 @@ async function createCompleteFolderBackup() {
         return;
       }
     }
-    const parent = await window.showDirectoryPicker({ mode: "readwrite" });
-    const permission = typeof parent.requestPermission === "function" ? await parent.requestPermission({ mode: "readwrite" }) : "granted";
-    if (permission !== "granted") throw new Error("没有获得所选资料夹的写入权限");
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const directoryName = writePlan.mode === "rescue" ? `PromptDirector-Rescue-${stamp}` : `PromptDirector-Backup-${stamp}`;
+    stage = "write";
     const directory = await parent.getDirectoryHandle(directoryName, { create: true });
     let writtenCount = 0;
     for (const [path, blob] of writePlan.files) {
@@ -3732,7 +3736,7 @@ async function createCompleteFolderBackup() {
       library: writtenLibrary,
       files: writtenFiles,
       limits: {
-        ...PORTABLE_LIBRARY_LIMITS,
+        ...LIBRARY_TRANSFER_LIMITS,
         maxArchiveBytes: Math.max(1, plannedTotalBytes),
         maxFileBytes: largestPlannedMedia,
         maxImageBytes: largestPlannedMedia,
@@ -3746,7 +3750,16 @@ async function createCompleteFolderBackup() {
     const completionLabel = writePlan.mode === "rescue" ? "救援备份已完成" : "完整备份已完成";
     showDataSafetyFeedback(`${completionLabel} · ${exportState.entries.length} 个案例 · ${mediaCount} 项媒体 · ${formatBytes(byteSize)}`);
   } catch (error) {
-    if (error?.name !== "AbortError") showDataSafetyFeedback(`${error.message}；未写入完成标记的资料夹不会被当作有效备份`, true);
+    if (error?.name === "AbortError" && stage !== "write") {
+      showDataSafetyFeedback("已取消备份，没有创建任何资料夹");
+    } else if (stage === "picker") {
+      const message = ["NotAllowedError", "SecurityError"].includes(error?.name)
+        ? "目录选择器未在有效用户操作中打开或未获得权限，请重新点击备份按钮并允许访问"
+        : error.message;
+      showDataSafetyFeedback(message, true);
+    } else {
+      showDataSafetyFeedback(`${error.message}；未写入完成标记的资料夹不会被认定为完整备份，只能尝试救援恢复`, true);
+    }
   } finally {
     setDataSafetyBusy(false);
   }
@@ -3776,9 +3789,9 @@ async function restoreCompleteFolderBackup() {
     )) {
       throw new Error("完整备份的媒体数量或大小校验失败，未写入资料库");
     }
-    const largestMediaBytes = Math.max(1, ...backupMediaSizes);
+    const largestMediaBytes = backupMediaSizes.reduce((largest, size) => Math.max(largest, size), 1);
     const restoreLimits = {
-      ...PORTABLE_LIBRARY_LIMITS,
+      ...LIBRARY_TRANSFER_LIMITS,
       maxArchiveBytes: Math.max(1, totalBytes),
       maxFileBytes: largestMediaBytes,
       maxImageBytes: largestMediaBytes,
@@ -3995,29 +4008,38 @@ async function openLibraryPackageBatch(packageItems, ordinaryItems = []) {
     submitError: "",
     plannedBytes: 0,
     revision: 0,
-    submitting: false
+    submitting: false,
+    controller: new AbortController()
   };
   pendingLibraryPackageBatch = batch;
   setDataSafetyBusy(true, "IMPORT_LIBRARY_PACKAGE_BATCH");
   elements.libraryPackageImportDialog.showModal();
   renderLibraryPackageBatch();
-  await Promise.all(batch.items.map((item) => inspectLibraryPackageBatchItem(batch, item)));
+  for (const item of batch.items) {
+    if (pendingLibraryPackageBatch !== batch) break;
+    await inspectLibraryPackageBatchItem(batch, item);
+  }
   if (pendingLibraryPackageBatch === batch) await refreshLibraryPackageBatchPlan(batch);
 }
 
 async function inspectLibraryPackageBatchItem(batch, item) {
   try {
     const file = item.file;
-    const limits = { ...PORTABLE_LIBRARY_LIMITS };
-    const files = await readZipBlob(file, limits);
+    const limits = { ...LIBRARY_TRANSFER_LIMITS };
+    const reader = await openZipBlob(file, limits);
+    if (!reader.names.includes("library.json")) throw new Error("缺少 library.json");
+    const files = await reader.read(["library.json"], { signal: batch.controller.signal });
     const libraryFile = files.get("library.json");
     if (!libraryFile) throw new Error("缺少 library.json");
-    if (libraryFile.size > PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes) {
-      throw new Error(`library.json 超过 ${formatBytes(PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes)}`);
+    if (libraryFile.size > LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes) {
+      throw new Error(`library.json 超过 ${formatBytes(LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes)}`);
     }
     let library;
-    try { library = JSON.parse(await libraryFile.text()); }
+    const libraryText = await libraryFile.text();
+    try { library = JSON.parse(libraryText); }
     catch { throw new Error("library.json 已损坏"); }
+    const resources = await reader.read(reader.names.filter((name) => name !== "library.json"), { signal: batch.controller.signal });
+    for (const [name, blob] of resources) files.set(name, blob);
     const inspection = await inspectLibraryTransfer({
       sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
       library,
@@ -4296,6 +4318,7 @@ function cancelLibraryPackageBatch() {
 }
 
 function finishLibraryPackageBatch() {
+  pendingLibraryPackageBatch?.controller.abort();
   pendingLibraryPackageBatch = null;
   if (elements.libraryPackageImportDialog.open) elements.libraryPackageImportDialog.close();
   elements.libraryPackageFile.value = "";
@@ -4562,7 +4585,7 @@ async function validateImportedImageDimensions(images) {
 
 async function validateImportedImage(image) {
   const metadata = await readImageDimensions(image);
-  assertImageDimensions(metadata.width, metadata.height);
+  assertImageDimensions(metadata.width, metadata.height, LIBRARY_TRANSFER_LIMITS);
 }
 
 async function hydrateCardImage(image) {

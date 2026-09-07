@@ -27,3 +27,7 @@ PromptDirector includes Turndown for local HTML-to-Markdown conversion. It is li
 ## Mozilla Readability
 
 PromptDirector includes Mozilla Readability for local article extraction. It is licensed under the Apache License 2.0; the complete license is included at `vendor/document-ingestion/readability-LICENSE`.
+
+## @noble/hashes
+
+Incremental SHA-256 for library file integrity verification. MIT licensed. Source: https://github.com/paulmillr/noble-hashes . The pinned version is recorded in package-lock.json; its license is included in vendor/noble-hashes/LICENSE.

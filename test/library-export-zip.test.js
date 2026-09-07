@@ -161,10 +161,18 @@ test("self-read keeps a JPEG case while the production parser drops only its bro
   assert.equal(parsed.importStats.droppedAiAssignments, 1);
 });
 
-test("export self-read uses recipient limits instead of approving an unimportable attachment", async () => {
-  const libraryJson = renderLibraryJson([]);
-  await assert.rejects(createVerifiedLibraryZip([
-    { name: "library.json", data: libraryJson },
-    { name: "attachments/oversize.pdf", data: new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1)]) }
-  ], libraryJson), /导出自检失败.*单个文件超过/);
+test("export self-read accepts original attachments above the capture budget through default import", async () => {
+  const bytes = new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1)]);
+  const assetPath = "attachments/source/original.psd";
+  const libraryJson = renderLibraryJson([{
+    id: "source", title: "Original source", text: "Keep original bytes",
+    mediaAssets: [{ id: "original", kind: "attachment", storageMode: "managed", mimeType: "image/vnd.adobe.photoshop", sourceFormat: "psd", byteSize: bytes.size, capturedAt: "2026-09-07T00:00:00.000Z", assetPath }],
+    primaryMediaId: "original"
+  }]);
+  const archive = await createVerifiedLibraryZip([
+    { name: "library.json", data: libraryJson }, { name: assetPath, data: bytes }
+  ], libraryJson);
+  const files = await readZipBlob(archive);
+  const parsed = parseLibraryPackage(JSON.parse(await files.get("library.json").text()), files);
+  assert.equal(parsed.assets.get("original").size, bytes.size);
 });

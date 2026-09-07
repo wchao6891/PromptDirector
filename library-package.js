@@ -12,7 +12,7 @@ import {
 import { normalizeComposerSessions, normalizeComposerSettings } from "./composer.js";
 import { normalizeCreativeExperimentSettings, normalizeCreativeRuns } from "./creative-runs.js";
 import { mergeCreativeSkillsState, normalizeCreativeSkillsState } from "./creative-skills.js";
-import { formatBytes, portableLibraryLimits, portableAssetByteLimit } from "./resource-limits.js";
+import { formatBytes, libraryTransferLimits, portableAssetByteLimit } from "./resource-limits.js";
 import { normalizeEntryVisuals } from "./visuals.js";
 import { normalizeEntryMedia, removeEntryMedia } from "./media.js";
 import { expandLogicalCaseIds, normalizeCompoundCases, removeEntriesFromCompoundCases } from "./compound-cases.js";
@@ -20,7 +20,7 @@ import { prepareLibraryPackageDraft } from "./library-package-migrations.js";
 import { remapArticleDocumentAssets } from "./article-document.js";
 import { caseSemanticFingerprint } from "./library-semantic-identity.js";
 import { normalizeTrashState } from "./trash.js";
-import { boundedMediaBlobFromResponse, isSupportedDocumentMimeType } from "./bounded-media.js";
+import { verifiedDocumentBlob, isSupportedDocumentMimeType } from "./bounded-media.js";
 import {
   assetFormatForExtension,
   fileExtension,
@@ -37,22 +37,18 @@ export function hasLibrarySalvageDiagnostics(diagnosticsValue) {
 
 export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}) {
   const preparedFiles = new Map(files);
-  const limits = portableLibraryLimits(limitsValue);
+  const limits = libraryTransferLimits(limitsValue);
   for (const [path, mimeType] of completeBackupDocumentPaths(value)) {
     const blob = preparedFiles.get(path);
     if (!(blob instanceof Blob)) continue;
-    const verified = await boundedMediaBlobFromResponse(new Response(blob), {
-      kind: "document",
-      expectedMimeType: mimeType,
-      maxBytes: limits.maxFileBytes
-    });
+    const verified = await verifiedDocumentBlob(blob, mimeType, limits.maxFileBytes);
     preparedFiles.set(path, verified);
   }
   return parseLibraryPackage(value, preparedFiles, { ...limitsValue, salvageInvalidMedia: false });
 }
 
 export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) {
-  const limits = portableLibraryLimits(limitsValue);
+  const limits = libraryTransferLimits(limitsValue);
   const skipMediaByteValidation = limitsValue?.skipMediaByteValidation === true;
   const salvageInvalidMedia = limitsValue?.salvageInvalidMedia === true;
   const prepared = prepareLibraryPackageDraft(value);

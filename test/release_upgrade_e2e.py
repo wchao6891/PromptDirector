@@ -26,7 +26,7 @@ def open_extension(playwright: Playwright, profile: str, extension_dir: Path):
     return context, worker.url.split("/")[2]
 
 
-def seed_previous_release(playwright: Playwright, profile: str) -> tuple[str, str]:
+def seed_previous_release(playwright: Playwright, profile: str) -> tuple[str, str, list[dict]]:
     context, extension_id = open_extension(playwright, profile, PREVIOUS_EXTENSION_DIR)
     errors: list[str] = []
     try:
@@ -50,6 +50,22 @@ def seed_previous_release(playwright: Playwright, profile: str) -> tuple[str, st
                 ...structuredClone(active), id: 'upgrade:trashed', title: '回收站案例',
                 customLabels: ['回收站标签']
               };
+              const media = await import(chrome.runtime.getURL('media-store.js'));
+              const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='), c => c.charCodeAt(0));
+              const assets = [
+                ['upgrade:image', new Blob([png], {type: 'image/png'})],
+                ['upgrade:trashed-source', new Blob(['original source kept in Trash'], {type: 'image/vnd.adobe.photoshop'})]
+              ];
+              active.mediaAssets = [{id: assets[0][0], kind: 'image', storageMode: 'managed', mimeType: 'image/png', sourceFormat: 'png', width: 1, height: 1, byteSize: assets[0][1].size}];
+              active.primaryMediaId = assets[0][0];
+              trashed.mediaAssets = [{id: assets[1][0], kind: 'attachment', storageMode: 'managed', mimeType: 'image/vnd.adobe.photoshop', sourceFormat: 'psd', byteSize: assets[1][1].size}];
+              trashed.primaryMediaId = assets[1][0];
+              const mediaProof = [];
+              for (const [id, blob] of assets) {
+                await media.saveMediaBlob(id, blob, {checkCapacity: false});
+                const saved = await media.getMediaBlob(id);
+                mediaProof.push({id, bytes: Array.from(new Uint8Array(await saved.arrayBuffer()))});
+              }
               await chrome.storage.local.clear();
               await chrome.storage.local.set({
                 schemaVersion: taxonomy.SCHEMA_VERSION,
@@ -80,6 +96,7 @@ def seed_previous_release(playwright: Playwright, profile: str) -> tuple[str, st
               });
               const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
               return {
+                mediaProof,
                 version: chrome.runtime.getManifest().version,
                 activeIds: state.entries.map((entry) => entry.id),
                 trashIds: state.trashState.items.map((item) => item.targetId),
@@ -91,12 +108,12 @@ def seed_previous_release(playwright: Playwright, profile: str) -> tuple[str, st
         assert result["trashIds"] == ["upgrade:trashed"], result
         assert result["sessionIds"] == ["upgrade:composer"], result
         assert not errors, errors
-        return result["version"], extension_id
+        return result["version"], extension_id, result["mediaProof"]
     finally:
         context.close()
 
 
-def verify_current_package(playwright: Playwright, profile: str, previous_version: str, expected_id: str) -> None:
+def verify_current_package(playwright: Playwright, profile: str, previous_version: str, expected_id: str, expected_media: list[dict]) -> None:
     context, extension_id = open_extension(playwright, profile, CURRENT_EXTENSION_DIR)
     errors: list[str] = []
     try:
@@ -107,7 +124,16 @@ def verify_current_package(playwright: Playwright, profile: str, previous_versio
         result = page.evaluate(
             """async () => {
               const state = await chrome.runtime.sendMessage({type: 'GET_STATE'});
+              const {getMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
+              const mediaProof = [];
+              for (const entry of [state.entries[0], state.trashState.items[0].snapshot]) {
+                const id = entry.primaryMediaId;
+                if (entry.mediaAssets[0]?.id !== id) throw new Error('Upgrade lost the primary media relationship');
+                const blob = await getMediaBlob(id);
+                mediaProof.push({id, bytes: Array.from(new Uint8Array(await blob.arrayBuffer()))});
+              }
               return {
+                mediaProof,
                 version: chrome.runtime.getManifest().version,
                 schemaVersion: state.schemaVersion,
                 active: state.entries.map((entry) => ({
@@ -124,6 +150,7 @@ def verify_current_package(playwright: Playwright, profile: str, previous_versio
               };
             }"""
         )
+        assert result["mediaProof"] == expected_media, result["mediaProof"]
         assert version_tuple(result["version"]) >= version_tuple(previous_version), result
         assert result["active"] == [{
             "id": "upgrade:active", "title": "升级保留的案例",
@@ -151,8 +178,8 @@ def main() -> None:
     assert CURRENT_EXTENSION_DIR.joinpath("manifest.json").exists(), CURRENT_EXTENSION_DIR
     with tempfile.TemporaryDirectory(prefix="promptdirector-release-profile-") as profile:
         with sync_playwright() as playwright:
-            previous_version, extension_id = seed_previous_release(playwright, profile)
-            verify_current_package(playwright, profile, previous_version, extension_id)
+            previous_version, extension_id, media = seed_previous_release(playwright, profile)
+            verify_current_package(playwright, profile, previous_version, extension_id, media)
     print(f"升级资料保持通过：{PREVIOUS_RELEASE_TAG} → 当前最终包")
 
 

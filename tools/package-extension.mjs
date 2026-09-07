@@ -44,6 +44,10 @@ for (const path of await runtimeFiles(join(projectRoot, "vendor", "document-inge
   files.push(await packageFile(path));
 }
 
+for (const path of await runtimeFiles(join(projectRoot, "vendor", "noble-hashes"))) {
+  files.push(await packageFile(path));
+}
+
 for (const locale of await readdir(join(projectRoot, "_locales"), { withFileTypes: true })) {
   if (locale.isDirectory()) {
     files.push(await packageFile(join(projectRoot, "_locales", locale.name, "messages.json")));

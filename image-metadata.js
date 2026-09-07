@@ -6,15 +6,28 @@ const JPEG_START_OF_FRAME = new Set([
 
 export async function readImageDimensions(blob) {
   if (!(blob instanceof Blob) || !blob.size) throw invalidDimensions();
+  if (blob.type === "image/avif") {
+    if (typeof createImageBitmap !== "function") throw new Error("当前环境无法校验 AVIF 图片");
+    const bitmap = await createImageBitmap(blob);
+    try { return dimensions(bitmap.width, bitmap.height); }
+    finally { bitmap.close(); }
+  }
   const bytes = new Uint8Array(await blob.slice(0, HEADER_SCAN_BYTES).arrayBuffer());
   try {
+    if (blob.type === "image/gif") return gifDimensions(bytes);
     if (blob.type === "image/png") return pngDimensions(bytes);
     if (blob.type === "image/jpeg") return jpegDimensions(bytes);
     if (blob.type === "image/webp") return webpDimensions(bytes);
   } catch {
     throw invalidDimensions();
   }
-  throw new Error("只支持 PNG、JPEG 或 WebP 图片");
+  throw new Error("无法识别支持的图片格式");
+}
+
+function gifDimensions(bytes) {
+  if (bytes.length < 10 || !["GIF87a", "GIF89a"].includes(text(bytes, 0, 6))) throw invalidDimensions();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return dimensions(view.getUint16(6, true), view.getUint16(8, true));
 }
 
 function pngDimensions(bytes) {

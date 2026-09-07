@@ -121,11 +121,12 @@ test("fixed-ratio gallery covers crop mismatched source images inside the card",
   assert.match(css, /\.case-image-wrap-fixed \.case-shot\s*\{[^}]*height:\s*100%;[^}]*object-fit:\s*cover/);
 });
 
-test("folder backup preflights every resource before choosing a folder and writes its marker last", () => {
+test("folder backup opens the picker before asynchronous preparation and creates files only after approval", () => {
   const backup = source.slice(source.indexOf("async function createCompleteFolderBackup"), source.indexOf("async function restoreCompleteFolderBackup"));
   const pickerCall = backup.indexOf("const parent = await window.showDirectoryPicker");
-  assert.ok(backup.indexOf("GET_FOLDER_BACKUP_STATE") < pickerCall);
-  assert.ok(backup.indexOf("inspectLibraryTransfer({") < pickerCall);
+  assert.ok(pickerCall < backup.indexOf("GET_FOLDER_BACKUP_STATE"));
+  assert.ok(pickerCall < backup.indexOf("inspectLibraryTransfer({"));
+  assert.ok(backup.indexOf("confirmAppAction({") < backup.indexOf("parent.getDirectoryHandle"));
   assert.match(backup, /plannedFiles\.set\(assetPath, blob\)/);
   assert.match(backup, /portableManagedBackupAsset\(asset, blob, assetPath, await sha256Blob\(blob\), portableFormat\)/);
   assert.match(backup, /materializeEntry\(item\.snapshot, `trash-entry-/);

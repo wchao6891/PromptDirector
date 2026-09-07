@@ -139,7 +139,7 @@ test("complete-backup inspection drops one invalid descriptor and keeps the heal
 test("an unexpected strict parser fault is never disguised as rescue content loss", async () => {
   const source = portablePackage([portableEntry("case:healthy", "image:healthy")]);
   let faultInjected = false;
-  const limits = new Proxy({}, {
+  const limits = new Proxy({ maxEntries: 1 }, {
     get() {
       if (!faultInjected) {
         faultInjected = true;

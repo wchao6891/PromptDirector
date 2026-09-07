@@ -14,7 +14,8 @@ test("ZIP roundtrip preserves original image bytes above the document limit", as
   assert.deepEqual(new Uint8Array(await files.get("images/original.png").arrayBuffer()), bytes);
   await assert.rejects(() => readZipBlob(archive, { maxImageBytes: bytes.length - 1 }), /单个文件超过/);
   const document = await createZipBlob([{ name: "documents/notes.md", data: new Blob([bytes]) }]);
-  await assert.rejects(() => readZipBlob(document), /单个文件超过/);
+  assert.equal((await readZipBlob(document)).get("documents/notes.md").size, bytes.length);
+  await assert.rejects(() => readZipBlob(document, { maxFileBytes: bytes.length - 1 }), /单个文件超过/);
 });
 
 test("createZipBlob produces a UTF-8 ZIP containing markdown and image paths", async () => {

@@ -19,6 +19,15 @@ export const REQUIRED_MODEL_CHAIN_SCRIPTS = [
   "composer_video_dialogue_e2e.py"
 ];
 
+export const REQUIRED_DATA_CONTINUITY_SCRIPTS = [
+  "sharing_and_data_safety_e2e.py",
+  "historical_zip_salvage_e2e.py",
+  "folder_picker_activation_e2e.py",
+  "library_zip_scale_e2e.py",
+  "library_image_formats_e2e.py",
+  "manual_sync_e2e.py"
+];
+
 export function parseE2eOutput(value = "") {
   const scripts = [];
   for (const match of String(value).matchAll(/^\[(PASS|FAIL)\]\s+([^\s]+)\s+\(([^)]+)\)$/gmu)) {
@@ -71,11 +80,15 @@ export function buildLabReceipt({
   const missingModelChainScripts = REQUIRED_MODEL_CHAIN_SCRIPTS.filter((script) => !scriptStatus.has(script));
   const failedModelChainScripts = REQUIRED_MODEL_CHAIN_SCRIPTS.filter((script) => scriptStatus.get(script) === "failed");
   const modelChainPassed = missingModelChainScripts.length === 0 && failedModelChainScripts.length === 0;
+  const missingDataScripts = REQUIRED_DATA_CONTINUITY_SCRIPTS.filter((script) => !scriptStatus.has(script));
+  const failedDataScripts = REQUIRED_DATA_CONTINUITY_SCRIPTS.filter((script) => scriptStatus.get(script) === "failed");
+  const dataContinuityPassed = missingDataScripts.length === 0 && failedDataScripts.length === 0;
   const passed = preflightFactsValid
     && e2e.code === 0
     && e2eSummary.failed === 0
     && e2eSummary.total > 0
-    && modelChainPassed;
+    && modelChainPassed
+    && dataContinuityPassed;
   return {
     schema: "promptdirector-local-extension-lab",
     version: 1,
@@ -100,6 +113,12 @@ export function buildLabReceipt({
     checks: {
       packagedRuntimeLoaded: preflightFactsValid,
       fullBrowserSuitePassed: e2e.code === 0 && e2eSummary.failed === 0 && e2eSummary.total > 0,
+      dataContinuityPassed,
+      dataContinuity: {
+        required: REQUIRED_DATA_CONTINUITY_SCRIPTS,
+        missing: missingDataScripts,
+        failed: failedDataScripts
+      },
       modelChainPassed,
       modelChain: {
         required: REQUIRED_MODEL_CHAIN_SCRIPTS,
