@@ -1,5 +1,5 @@
 import { parseLibraryPackage } from "./library-package.js";
-import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { createZipBlob, readZipBlob } from "./zip.js";
 
 export async function createVerifiedLibraryZip(files, expectedLibraryJson) {
@@ -18,7 +18,7 @@ export async function verifyLibraryZipRoundtrip(archive, expectedLibraryJson) {
 }
 
 async function verifyRoundtrip(archive, expectedLibraryJson) {
-  const limits = PORTABLE_LIBRARY_LIMITS;
+  const limits = LIBRARY_TRANSFER_LIMITS;
   const extracted = await readZipBlob(archive, limits);
   const libraryFile = extracted.get("library.json");
   if (!(libraryFile instanceof Blob)) throw new Error("导出的 ZIP 缺少 library.json");

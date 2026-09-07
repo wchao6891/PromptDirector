@@ -74,6 +74,46 @@ export function isSupportedDocumentMimeType(value) {
   return DOCUMENT_MIME_TYPES.has(cleanMimeType(value));
 }
 
+// Validate an already-local document without copying its entire payload into JS memory.
+export async function verifiedDocumentBlob(blob, expectedMimeType, maxBytes) {
+  if (!blob.size) throw new Error("媒体文件为空");
+  if (blob.size > maxBytes) throw new Error(`媒体文件超过本地容量上限（${maxBytes} bytes）`);
+  // Document signatures use the same 256-byte prefix as detectDocumentMimeType.
+  const prefix = new Uint8Array(await blob.slice(0, 256).arrayBuffer());
+  const detected = detectDocumentMimeType(prefix);
+  const text = ["text/plain", "text/markdown"].includes(cleanMimeType(expectedMimeType));
+  const type = verifiedDocumentMimeType(text ? new Uint8Array() : prefix, detected, blob.type, expectedMimeType);
+  if (text) {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const reader = blob.stream().getReader();
+    let length = 0;
+    let controls = 0;
+    const inspect = (value) => {
+      if (value.includes("\u0000")) throw new Error("来源没有返回有效文档文件");
+      length += value.length;
+      for (const character of value) {
+        const code = character.codePointAt(0);
+        if ((code < 0x20 && ![0x09, 0x0a, 0x0d].includes(code)) || code === 0x7f) controls += 1;
+      }
+    };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        inspect(decoder.decode(value, { stream: true }));
+      }
+      inspect(decoder.decode());
+      if (controls > Math.max(1, Math.floor(length * 0.01))) throw new Error("来源没有返回有效文档文件");
+    } catch (error) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("来源没有返回有效文档文件", { cause: error });
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  return blob.slice(0, blob.size, type);
+}
+
 export function detectImageDimensions(bytesValue, mimeTypeValue = "") {
   const bytes = bytesValue instanceof Uint8Array ? bytesValue : new Uint8Array(bytesValue || []);
   const mimeType = cleanMimeType(mimeTypeValue) || detectMediaMimeType(bytes);

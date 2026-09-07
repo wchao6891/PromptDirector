@@ -5,6 +5,7 @@ import {
   buildLabReceipt,
   hashRuntimeFiles,
   parseE2eOutput,
+  REQUIRED_DATA_CONTINUITY_SCRIPTS,
   REQUIRED_MODEL_CHAIN_SCRIPTS
 } from "../tools/local-extension-lab.mjs";
 
@@ -29,7 +30,7 @@ test("local extension lab parses every browser scenario instead of stopping at t
 });
 
 test("local extension receipt requires model analysis and Composer generation chains", () => {
-  const modelChainOutput = REQUIRED_MODEL_CHAIN_SCRIPTS
+  const modelChainOutput = [...REQUIRED_MODEL_CHAIN_SCRIPTS, ...REQUIRED_DATA_CONTINUITY_SCRIPTS]
     .map((script) => `[PASS] ${script} (1.0s)`)
     .join("\n");
   const receipt = buildLabReceipt({
@@ -58,6 +59,7 @@ test("local extension receipt requires model analysis and Composer generation ch
   });
   assert.equal(receipt.status, "passed");
   assert.equal(receipt.checks.modelChainPassed, true);
+  assert.equal(receipt.checks.dataContinuityPassed, true);
   assert.equal(receipt.proofBoundary.localPackagedChromeForTesting, true);
   assert.equal(receipt.proofBoundary.userInstalledChrome, false);
   assert.equal(receipt.proofBoundary.liveProvider, false);
@@ -80,4 +82,6 @@ test("local extension receipt fails when a required model-chain scenario disappe
   });
   assert.equal(receipt.status, "failed");
   assert.ok(receipt.checks.modelChain.missing.includes("composer_video_generation_e2e.py"));
+  assert.equal(receipt.checks.dataContinuityPassed, false);
+  assert.ok(receipt.checks.dataContinuity.missing.includes("library_zip_scale_e2e.py"));
 });

@@ -60,6 +60,22 @@ export const PORTABLE_LIBRARY_LIMITS = Object.freeze({
   maxVideoBytes: 128 * MEBIBYTE
 });
 
+// Transfer limits describe representable byte/count values, not a library quota.
+// Interactive capture and provider inputs retain their own bounded-media policy.
+export const LIBRARY_TRANSFER_LIMITS = Object.freeze(Object.fromEntries(
+  Object.keys(PORTABLE_LIBRARY_LIMITS).map((key) => [key, Number.MAX_SAFE_INTEGER])
+));
+
+export function libraryTransferLimits(value = {}) {
+  const limits = { ...LIBRARY_TRANSFER_LIMITS, ...value };
+  if (Object.hasOwn(value, "maxFileBytes")) {
+    for (const key of ["maxImageBytes", "maxVideoBytes"]) {
+      if (!Object.hasOwn(value, key)) limits[key] = value.maxFileBytes;
+    }
+  }
+  return portableLibraryLimits(limits);
+}
+
 export const SMART_VISUAL_SELECTION_LIMIT = 12;
 export const SMART_VISUAL_MINIMUM_EDGE = 64;
 export const MEDIA_FINGERPRINT_CHUNK_BYTES = 8 * MEBIBYTE;

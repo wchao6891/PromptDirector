@@ -1,3 +1,5 @@
+import { sha256Blob } from "./blob-digest.js";
+export { sha256Blob } from "./blob-digest.js";
 import { readImageDimensions as readStoredImageDimensions } from "./image-metadata.js";
 import {
   ASSET_IMPORT_FAILURE_CODES,
@@ -181,7 +183,7 @@ async function prepareLocalMediaValue(file, assetId, options) {
   }
   const readDimensions = typeof options.readImageDimensions === "function"
     ? options.readImageDimensions
-    : readLocalImageDimensions;
+    : readStoredImageDimensions;
   const dimensions = await readDimensions(blob);
   assertImageDimensions(dimensions.width, dimensions.height, limits);
   let poster = null;
@@ -251,12 +253,6 @@ export async function findExactMediaDuplicate(file, entries = [], options = {}) 
   return { contentHash, duplicateAssetId: "" };
 }
 
-export async function sha256Blob(blob) {
-  if (!(blob instanceof Blob)) throw new Error("无法计算无效媒体的内容摘要");
-  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
 export async function chunkedBlobFingerprint(blob, options = {}) {
   if (!(blob instanceof Blob) || !blob.size) throw new Error("无法计算空媒体的内容指纹");
   const chunkBytes = Math.max(1, Number(options.chunkBytes) || MEDIA_FINGERPRINT_CHUNK_BYTES);
@@ -268,15 +264,6 @@ export async function chunkedBlobFingerprint(blob, options = {}) {
   const descriptor = `${blob.size}:${blob.type}:${chunkDigests.join(":")}`;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(descriptor));
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-async function readLocalImageDimensions(blob) {
-  if (blob.type !== "image/gif") return readStoredImageDimensions(blob);
-  const bytes = new Uint8Array(await blob.slice(0, 10).arrayBuffer());
-  if (bytes.length < 10 || !["GIF87a", "GIF89a"].includes(String.fromCharCode(...bytes.slice(0, 6)))) {
-    throw new Error("无法读取 GIF 图片尺寸");
-  }
-  return { width: bytes[6] | (bytes[7] << 8), height: bytes[8] | (bytes[9] << 8) };
 }
 
 async function createGifFirstFrame(blob) {

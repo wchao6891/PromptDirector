@@ -1,3 +1,4 @@
+import { sha256Blob } from "./blob-digest.js";
 const FOLDER_BACKUP_FORMAT = "prompt-director-folder-backup";
 const FOLDER_RESCUE_FORMAT = "prompt-director-folder-rescue";
 const BACKUP_MARKER_PATHS = new Set(["complete.json", "rescue.json"]);
@@ -208,11 +209,6 @@ function safePath(value) {
   const path = String(value ?? "").replaceAll("\\", "/").trim();
   if (!path || path.startsWith("/") || path.includes("..") || path.split("/").some((part) => !part || part === ".")) return "";
   return path;
-}
-
-async function sha256Blob(blob) {
-  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function nonNegativeInteger(value) {

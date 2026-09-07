@@ -276,7 +276,10 @@ def main() -> None:
               window.__installBackupRoot = () => {
                 window.__backupRoot = new MemoryDirectoryHandle('chosen-parent');
                 Object.defineProperty(window, 'showDirectoryPicker', {
-                  value: async () => window.__backupRoot,
+                  value: async () => {
+                    if (!navigator.userActivation.isActive) throw new DOMException('Must be handling a user gesture', 'SecurityError');
+                    return window.__backupRoot;
+                  },
                   configurable: true
                 });
               };
