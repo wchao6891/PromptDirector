@@ -43,7 +43,7 @@ test("product pages do not leave Chinese interface text outside the translation 
 });
 
 test("dynamic interface helpers only receive Chinese copy with an English translation", async () => {
-  const paths = ["../library.js", "../composer-page.js", "../skills-page.js", "../collector.js", "../curated-page.js", "../ui-dialogs.js", "../tag-editor.js", "../local-extension-upgrade-ui.js"];
+  const paths = ["../library.js", "../composer-page.js", "../skills-page.js", "../collector.js", "../collector-page-capture-view.js", "../curated-page.js", "../ui-dialogs.js", "../tag-editor.js", "../local-extension-upgrade-ui.js"];
   const missing = [];
   for (const path of paths) {
     const source = await readFile(new URL(path, import.meta.url), "utf8");

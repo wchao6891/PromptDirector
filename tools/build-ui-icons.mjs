@@ -6,11 +6,11 @@ const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourcePath = join(projectRoot, "node_modules", "lucide-static", "icon-nodes.json");
 const outputPath = join(projectRoot, "assets", "ui-icons.svg");
 const iconNames = [
-  "arrow-down", "arrow-left", "arrow-up", "check", "chevron-down", "chevron-left", "chevron-right", "circle-check-big", "copy",
+  "arrow-down", "arrow-left", "arrow-up", "check", "chevron-down", "chevron-left", "chevron-right", "circle-check-big", "clipboard", "copy",
   "download", "ellipsis", "external-link", "file-text", "folder", "image", "library",
   "list-checks", "maximize-2", "menu", "moon", "panel-left", "paperclip", "pencil", "play", "plus",
   "refresh-cw", "save", "search", "send", "settings", "sliders-horizontal", "sparkles", "square-check-big",
-  "square", "sun", "tag", "trash-2", "upload", "video", "wand-sparkles", "x"
+  "square", "sun", "tag", "trash-2", "undo-2", "upload", "video", "wand-sparkles", "x"
 ];
 
 const iconNodes = JSON.parse(await readFile(sourcePath, "utf8"));

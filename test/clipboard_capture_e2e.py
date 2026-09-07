@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import os
+import tempfile
+from pathlib import Path
 
 from playwright.sync_api import expect
 
@@ -36,7 +39,7 @@ def main() -> None:
               Object.defineProperty(chrome.tabs, 'query', {
                 configurable: true,
                 value: async query => query?.active
-                  ? [{id: 999, url: 'chrome://extensions/', title: '扩展程序'}]
+                  ? [{id: 999, url: 'https://example.com/capture-fixture', title: 'Selection fixture'}]
                   : originalQuery(query)
               });
             }
@@ -76,7 +79,20 @@ def main() -> None:
         })""")
         assert collector.evaluate("window.__promptDirectorClipboardReads") == 0
 
-        collector.locator("#start-selection").click()
+        for width in (320, 390):
+            collector.set_viewport_size({'width': width, 'height':844})
+            boxes=collector.locator('#normal-start .capture-actions button').evaluate_all("es=>es.map(e=>({top:e.getBoundingClientRect().top,height:e.getBoundingClientRect().height,overflow:e.scrollWidth>e.clientWidth}))")
+            assert len(boxes)==5 and len({b['top'] for b in boxes[1:]})==1,boxes
+            assert len({b['height'] for b in boxes[1:]})==1 and not any(b['overflow'] for b in boxes),boxes
+        collector.locator('#start-selection').click()
+        expect(collector.locator('#feedback')).to_contain_text('请先在网页中选中文字')
+        assert collector.evaluate('window.__promptDirectorClipboardReads')==0
+        expect(collector.locator('#preview-state')).to_be_hidden()
+        screenshot_dir=Path(os.environ.get('PROMPTDIRECTOR_E2E_SCREENSHOT_DIR',tempfile.gettempdir()))
+        screenshot_dir.mkdir(parents=True,exist_ok=True)
+        collector.screenshot(path=str(screenshot_dir/'sidebar-entry-390.png'),full_page=True)
+
+        collector.locator("#start-clipboard").click()
         expect(collector.locator("#preview-state")).to_be_visible()
         expect(collector.locator("#content-summary")).to_have_text("1 张图片")
         expect(collector.locator("#quick-preview .quick-visuals img")).to_have_count(1)
@@ -88,15 +104,27 @@ def main() -> None:
         cleared_image_draft = collector.evaluate("() => chrome.runtime.sendMessage({type: 'GET_CAPTURE_WORKSPACE'}).then(result => result.draft)")
         assert cleared_image_draft["visuals"] == [], cleared_image_draft
 
-        collector.locator("#start-selection").click()
+        collector.locator("#start-clipboard").click()
         expect(collector.locator("#preview-state")).to_be_visible()
         expect(collector.locator("#content-summary")).to_have_text("1 张图片")
         assert collector.evaluate("window.__promptDirectorClipboardReads") == 2
 
+        expect(collector.get_by_role('textbox',name='添加标签',exact=True)).to_be_visible()
+        collector.get_by_role('textbox',name='添加标签',exact=True).fill('镜头参考')
+        collector.get_by_role('textbox',name='添加标签',exact=True).press('Enter')
+        expect(collector.locator('.tag-editor-chip')).to_contain_text('镜头参考')
+        for width in (320,390):
+            collector.set_viewport_size({'width':width,'height':844})
+            assert collector.locator('#capture-add-more-actions > button').evaluate_all("es=>es.every(e=>e.scrollWidth<=e.clientWidth && getComputedStyle(e).whiteSpace==='nowrap')")
+            expect(collector.get_by_role('textbox',name='添加标签',exact=True)).to_be_visible()
+            tops=collector.locator('#capture-add-more-actions > *').evaluate_all('es=>es.map(e=>e.getBoundingClientRect().top)')
+            assert len(set(tops))==1,tops
+        collector.screenshot(path=str(screenshot_dir/'sidebar-image-draft-390.png'),full_page=True)
         collector.locator("#save-draft").click()
         expect(collector.locator("#start-state")).to_be_visible()
         saved = collector.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(result => result.entries)")
         assert len(saved) == 1 and len(saved[0]["mediaAssets"]) == 1, saved
+        assert "镜头参考" in saved[0]["customLabels"],saved
 
         collector.evaluate("window.dispatchEvent(new Event('focus'))")
         collector.wait_for_timeout(250)
@@ -104,7 +132,7 @@ def main() -> None:
         assert collector.evaluate("window.__promptDirectorClipboardReads") == 2
 
         collector.evaluate("window.__promptDirectorClipboardMode = 'text'")
-        collector.locator("#start-selection").click()
+        collector.locator("#start-clipboard").click()
         expect(collector.locator("#preview-state")).to_be_visible()
         expect(collector.locator("#quick-preview")).to_contain_text("第一段剪贴板文字")
         assert collector.evaluate("window.__promptDirectorClipboardReads") == 3
@@ -122,7 +150,7 @@ def main() -> None:
             clipboardIncluded: false
           }
         })""")
-        collector.locator("#start-selection").click()
+        collector.locator("#start-clipboard").click()
         expect(collector.locator("#clipboard-permission-dialog")).to_be_visible()
         assert collector.evaluate("window.__promptDirectorClipboardReads") == reads_before_decline
         collector.locator("#clipboard-permission-cancel").click()
