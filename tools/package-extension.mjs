@@ -6,6 +6,7 @@ import { validateChromeStoreManifest } from "./chrome-store-manifest.mjs";
 import { verifyPdfjsRuntime } from "./pdfjs-runtime.mjs";
 import { chromeStoreUploadManifest, extensionArchiveName } from "./release-identity.mjs";
 import { packageRuntimeFiles } from "./extension-package-variants.mjs";
+import { isExtensionProgramPath } from "../local-extension-upgrade.js";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceManifest = JSON.parse(await readFile(join(projectRoot, "manifest.json"), "utf8"));
@@ -64,6 +65,9 @@ validateChromeStoreManifest({ manifest, locales });
 validateManifest(manifest, files.map((file) => file.name));
 await mkdir(join(projectRoot, "dist"), { recursive: true });
 const runtimeFilesForDistribution = packageRuntimeFiles(files, { release });
+for (const file of runtimeFilesForDistribution) {
+  if (!isExtensionProgramPath(file.name)) throw new Error(`更新器无法接收发布文件：${file.name}`);
+}
 const archive = await createZipBlob(runtimeFilesForDistribution);
 const outputPath = join(projectRoot, "dist", extensionArchiveName(sourceManifest, { release }));
 await writeFile(outputPath, new Uint8Array(await archive.arrayBuffer()));
