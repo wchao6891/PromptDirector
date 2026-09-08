@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -114,7 +116,7 @@ def seed_previous_release(playwright: Playwright, profile: str) -> tuple[str, st
 
 
 def verify_current_package(playwright: Playwright, profile: str, previous_version: str, expected_id: str, expected_media: list[dict]) -> None:
-    context, extension_id = open_extension(playwright, profile, CURRENT_EXTENSION_DIR)
+    context, extension_id = open_extension(playwright, profile, PREVIOUS_EXTENSION_DIR)
     errors: list[str] = []
     try:
         assert extension_id == expected_id, (extension_id, expected_id)
@@ -151,7 +153,9 @@ def verify_current_package(playwright: Playwright, profile: str, previous_versio
             }"""
         )
         assert result["mediaProof"] == expected_media, result["mediaProof"]
-        assert version_tuple(result["version"]) >= version_tuple(previous_version), result
+        assert version_tuple(result["version"]) > version_tuple(previous_version), result
+        expected_version = json.loads(CURRENT_EXTENSION_DIR.joinpath("manifest.json").read_text())["version"]
+        assert result["version"] == expected_version, result
         assert result["active"] == [{
             "id": "upgrade:active", "title": "升级保留的案例",
             "text": "用户正文必须跨版本保留", "customLabels": ["用户标签"]
@@ -179,6 +183,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="promptdirector-release-profile-") as profile:
         with sync_playwright() as playwright:
             previous_version, extension_id, media = seed_previous_release(playwright, profile)
+            subprocess.run([
+                os.environ.get("PROMPTDIRECTOR_NODE", "node"),
+                str(Path(__file__).resolve().parents[1] / "tools" / "apply-release-upgrade-fixture.mjs"),
+                str(PREVIOUS_EXTENSION_DIR),
+                os.environ["PROMPTDIRECTOR_CURRENT_ARCHIVE"],
+            ], check=True)
             verify_current_package(playwright, profile, previous_version, extension_id, media)
     print(f"升级资料保持通过：{PREVIOUS_RELEASE_TAG} → 当前最终包")
 
