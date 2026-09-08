@@ -118,6 +118,11 @@ def main() -> None:
             serialized = str(jobs)
             assert "apiKey" not in serialized and "data:image" not in serialized
 
+            # Recovery UI was verified above. Stop its autosaves before directly
+            # injecting missing-runner fixtures into storage outside the product queue.
+            composer.goto(f"chrome-extension://{second_id}/manifest.json")
+            composer.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
+
             cancel_result = composer.evaluate(
                 """async () => {
                   const {createCreativeJob, updateCreativeJob} = await import(chrome.runtime.getURL('creative-jobs.js'));
@@ -140,6 +145,7 @@ def main() -> None:
             unknown_stop = composer.evaluate(
                 """async () => {
                   const {createCreativeJob, updateCreativeJob} = await import(chrome.runtime.getURL('creative-jobs.js'));
+                  await chrome.runtime.sendMessage({type: 'GET_STATE'});
                   const stored = await chrome.storage.local.get('creativeJobs');
                   const sourceRequest = stored.creativeJobs.items[0].request;
                   const request = {
