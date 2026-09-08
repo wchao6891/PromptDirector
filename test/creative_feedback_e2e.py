@@ -73,29 +73,31 @@ def main() -> None:
                 expect(collector.locator("#result-start")).to_be_hidden()
                 expect(collector.locator("#normal-start")).to_be_visible()
                 expect(collector.locator("#normal-start .start-copy")).to_have_count(0)
-                expect(collector.locator("#start-smart-visuals")).to_have_text("智能选图")
-                expect(collector.locator("#start-selection")).to_have_text("提取文字/图片")
-                expect(collector.locator("#start-screenshot")).to_have_text("框选截图")
+                expect(collector.locator("#start-smart-visuals")).to_have_text("选图")
+                expect(collector.locator("#start-selection")).to_have_text("选区")
+                expect(collector.locator("#start-screenshot")).to_have_text("截图")
+                expect(collector.locator("#start-clipboard")).to_have_text("剪贴板")
                 normal_geometry = collector.evaluate(
-                    """() => {
-                      const smart = document.querySelector('#start-smart-visuals').getBoundingClientRect();
-                      const text = document.querySelector('#start-selection').getBoundingClientRect();
-                      const backup = document.querySelector('#start-screenshot').getBoundingClientRect();
-                      return {
-                        pageWidth: document.documentElement.scrollWidth,
-                        smart: {height: smart.height, top: smart.top, right: smart.right},
-                        text: {height: text.height, top: text.top, right: text.right},
-                        backup: {height: backup.height, top: backup.top, right: backup.right},
-                      };
-                    }"""
+                    """() => ({
+                      pageWidth: document.documentElement.scrollWidth,
+                      actions: ['start-smart-visuals', 'start-selection', 'start-clipboard', 'start-screenshot'].map(id => {
+                        const button = document.getElementById(id);
+                        const rect = button.getBoundingClientRect();
+                        const label = button.querySelector('strong');
+                        return {id, height: rect.height, width: rect.width, top: rect.top, right: rect.right,
+                          labelHeight: label.getBoundingClientRect().height,
+                          lineHeight: parseFloat(getComputedStyle(label).lineHeight)};
+                      })
+                    })"""
                 )
                 assert normal_geometry["pageWidth"] == 390
-                assert normal_geometry["smart"]["height"] == 58
-                assert normal_geometry["text"]["height"] == 58
-                assert normal_geometry["text"]["top"] >= normal_geometry["smart"]["top"] + normal_geometry["smart"]["height"]
-                assert normal_geometry["backup"]["height"] == 30, normal_geometry
-                assert normal_geometry["backup"]["top"] >= normal_geometry["text"]["top"] + normal_geometry["text"]["height"]
-                assert max(normal_geometry[key]["right"] for key in ("smart", "text", "backup")) <= 390
+                first = normal_geometry["actions"][0]
+                for action in normal_geometry["actions"]:
+                    assert action["height"] == first["height"] > 0, normal_geometry
+                    assert abs(action["width"] - first["width"]) < 1, normal_geometry
+                    assert action["top"] == first["top"], normal_geometry
+                    assert action["right"] <= 390, normal_geometry
+                    assert action["labelHeight"] <= action["lineHeight"] + 1, normal_geometry
                 collector.screenshot(path=str(screenshots / "promptdirector-step5-collector-normal.png"), full_page=True)
 
                 add_result_button = composer.locator(".composer-message.prompt").get_by_role("button", name="添加生成图片")
