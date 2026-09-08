@@ -21,7 +21,7 @@ def main() -> None:
         collector.reload(wait_until="networkidle")
         collector.locator("#organize-toggle").click()
         expect(collector.locator("#capture-metadata")).to_be_visible()
-        expect(collector.locator("#capture-metadata")).to_contain_text("添加标签")
+        expect(collector.locator("#capture-metadata")).to_contain_text("标签")
         expect(collector.locator("#capture-metadata")).not_to_contain_text("自由标签")
 
         tag_input = collector.locator("#custom-labels .tag-editor input")

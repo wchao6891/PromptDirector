@@ -153,7 +153,7 @@ def main():
             source.goto(PROJECT, wait_until='networkidle')
             source.bring_to_front()
             collector.evaluate("() => document.querySelector('#start-page-capture').click()")
-            collector.wait_for_function("() => document.querySelector('#page-capture-title').textContent.includes('正在读取')")
+            collector.wait_for_function("() => document.querySelector('#page-capture-cancel').textContent === '停止扫描' && !document.querySelector('#page-capture-cancel').disabled")
             assert collector.locator('#page-capture-list-setup').is_hidden()
             collector.evaluate("() => document.querySelector('#page-capture-cancel').click()")
             collector.wait_for_function("() => !document.querySelector('#page-capture-help').textContent.includes('正在扫描')", timeout=3000)
