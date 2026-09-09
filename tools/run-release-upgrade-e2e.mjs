@@ -24,26 +24,21 @@ try {
   const currentArchive = join(projectRoot, "dist", extensionArchiveName(manifest));
   const previousDirectory = join(temporaryRoot, "previous-release");
   const currentDirectory = join(temporaryRoot, "current-package");
-  const previousArchive = join(temporaryRoot, "previous-release.tar");
+  const previousArchive = join(temporaryRoot, "previous-release.zip");
   await mkdir(previousDirectory);
   await mkdir(currentDirectory);
 
-  execFileSync("git", ["archive", "--format=tar", baselineTag, "-o", previousArchive], {
+  execFileSync("git", ["archive", "--format=zip", baselineTag, "-o", previousArchive], {
     cwd: projectRoot,
     stdio: "inherit"
   });
-  execFileSync("tar", ["-xf", previousArchive, "-C", previousDirectory], { stdio: "inherit" });
+  execFileSync(python, ["-m", "zipfile", "-e", previousArchive, previousDirectory], { stdio: "inherit" });
   try {
     await access(currentArchive);
   } catch {
     throw new Error(`最终固定 ID 包不存在，请先运行 npm run package：${currentArchive}`);
   }
-  try {
-    execFileSync("unzip", ["-q", currentArchive, "-d", currentDirectory], { stdio: "inherit" });
-  } catch (error) {
-    if (error?.code === "ENOENT") throw new Error("系统缺少 unzip，无法解压最终固定 ID 包进行升级演练");
-    throw error;
-  }
+  execFileSync(python, ["-m", "zipfile", "-e", currentArchive, currentDirectory], { stdio: "inherit" });
 
   execFileSync(python, [join(projectRoot, "test", "release_upgrade_e2e.py")], {
     cwd: projectRoot,
@@ -59,7 +54,7 @@ try {
   });
   const nativePreviousDirectory = join(temporaryRoot, "native-previous-release");
   await mkdir(nativePreviousDirectory);
-  execFileSync("tar", ["-xf", previousArchive, "-C", nativePreviousDirectory], { stdio: "inherit" });
+  execFileSync(python, ["-m", "zipfile", "-e", previousArchive, nativePreviousDirectory], { stdio: "inherit" });
   execFileSync(python, [join(projectRoot, "test", "local_upgrade_native_e2e.py"), nativePreviousDirectory, currentArchive], {
     cwd: projectRoot,
     stdio: "inherit",
