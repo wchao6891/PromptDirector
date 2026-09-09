@@ -17,17 +17,30 @@ from e2e_support import base_entry, seed_extension_storage
 def grant_directory_by_drop(page, context, installed):
     page.bring_to_front()
     page.evaluate("""() => {
-      window.addEventListener('dragover', event => {event.preventDefault();event.stopImmediatePropagation();}, {capture:true,once:true});
+      window.installationHandle = null;
+      window.installationDrop = {events:[]};
+      window.addEventListener('dragenter', event => {window.installationDrop.events.push({type:'enter',items:event.dataTransfer.items.length,files:event.dataTransfer.files.length});}, {capture:true,once:true});
+      // CDP sends another dragover immediately before drop. Keep accepting it
+      // until the drop so Chromium can negotiate the directory operation.
+      const accept = event => {event.preventDefault();event.stopImmediatePropagation();};
+      window.addEventListener('dragover', accept, {capture:true});
       window.addEventListener('drop', async event => {
         event.preventDefault();event.stopImmediatePropagation();
-        window.installationHandle=await event.dataTransfer.items[0].getAsFileSystemHandle();
+        window.removeEventListener('dragover', accept, {capture:true});
+        window.installationDrop.events.push({type:'drop',items:event.dataTransfer.items.length,files:event.dataTransfer.files.length});
+        try { window.installationHandle=await event.dataTransfer.items[0]?.getAsFileSystemHandle(); }
+        catch(error){window.installationDrop.error=String(error);}
       }, {capture:true,once:true});
     }""")
     cdp = context.new_cdp_session(page)
     data = {"items": [], "files": [str(installed)], "dragOperationsMask": 1}
     for kind in ["dragEnter", "dragOver", "drop"]:
         cdp.send("Input.dispatchDragEvent", {"type": kind, "x": 50, "y": 50, "data": data})
-    page.wait_for_function("() => Boolean(window.installationHandle)")
+    try:
+        page.wait_for_function("() => Boolean(window.installationHandle)")
+    except Exception:
+        print({'directoryDrop': page.evaluate("() => window.installationDrop"), 'url':page.url, 'path':str(installed)},flush=True)
+        raise
     assert page.evaluate("() => installationHandle.queryPermission({mode:'readwrite'})") == "granted"
 
 
