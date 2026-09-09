@@ -13,7 +13,7 @@ from e2e_support import base_entry, extension_session
 
 
 PNG_BYTES = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/catalog.json"
+CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/public-catalog.json"
 METRICS_URL = "https://wchao6891.github.io/PromptDirector-Curated/metrics.json"
 COVER_URL = "https://wchao6891.github.io/PromptDirector-Curated/covers/video-workflow.png"
 PREVIEW_URL = "https://wchao6891.github.io/PromptDirector-Curated/previews/video-workflow/preview.json"

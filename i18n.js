@@ -2225,6 +2225,7 @@ const EN = Object.freeze({
   "暂无提示词": "No prompt available",
   "以此创作": "Create from this",
   "权利归原作者": "Rights belong to the original creator",
+  "权利归原作者 · 授权未核验": "Rights belong to the original creator · Permission unverified",
   "无法创建批量任务": "The batch could not be created",
   "无法更新批量任务": "The batch could not be updated",
   "无法领取批量任务": "Batch work could not be claimed",

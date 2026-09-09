@@ -303,10 +303,12 @@ function normalizeCuratedOrigin(value) {
   const normalized = Object.fromEntries(required.map((key) => [key, String(value[key] ?? "").trim()]));
   if (required.some((key) => !normalized[key])) return undefined;
   const installedAt = String(value.installedAt ?? "").trim();
-  const sourceEntryId = String(value.sourceEntryId ?? "").trim();
+  const optional = Object.fromEntries(["sourceEntryId", "rightsStatus", "rightsReviewUrl"]
+    .map((key) => [key, String(value[key] ?? "").trim()])
+    .filter(([, text]) => text));
   return {
     ...normalized,
-    ...(sourceEntryId ? { sourceEntryId } : {}),
+    ...optional,
     ...(installedAt && !Number.isNaN(Date.parse(installedAt))
       ? { installedAt: new Date(installedAt).toISOString() }
       : {})

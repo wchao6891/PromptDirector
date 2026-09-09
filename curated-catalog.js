@@ -10,7 +10,7 @@ export const CURATED_METRICS_FORMAT = "prompt-director-curated-metrics";
 export const CURATED_METRICS_VERSION = 1;
 
 const TYPES = new Set(["editorial", "image_prompt", "video_prompt"]);
-const VERIFIED_RIGHTS_STATUSES = new Set(["verified_original", "verified_authorized"]);
+const PUBLISHED_RIGHTS_STATUSES = new Set(["verified_original", "verified_authorized", "source_unverified"]);
 const COVER_HOSTS = new Set(["wchao6891.github.io"]);
 const DOWNLOAD_HOSTS = new Set([
   "github.com",
@@ -334,7 +334,7 @@ function normalizeItem(value = {}) {
   const previewUrl = trustedUrl(value.previewUrl, COVER_HOSTS, "精选预览地址不受信任");
   const downloadUrl = trustedUrl(value.downloadUrl, DOWNLOAD_HOSTS, "精选下载地址不受信任");
   const sha256 = String(value.sha256 ?? "").toLocaleLowerCase("en-US");
-  if (!id || !title || !type || !packageId || !packageVersion || !authorId || !author || !license || !VERIFIED_RIGHTS_STATUSES.has(rightsStatus) || !updatedAt ||
+  if (!id || !title || !type || !packageId || !packageVersion || !authorId || !author || !license || !PUBLISHED_RIGHTS_STATUSES.has(rightsStatus) || !updatedAt ||
       !/^[a-f0-9]{64}$/.test(sha256)) {
     throw new Error("精选目录条目缺少必填字段或校验值");
   }

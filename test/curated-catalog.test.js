@@ -355,3 +355,17 @@ test("a curated package index validates every reviewed media path before extract
   }, names), /无效或重复/);
   assert.throws(() => validateCuratedPackageIndex(catalogItem({ imageCount: 1, videoCount: 1 }), library, names), /图片数量与目录不一致/);
 });
+
+
+test("source selections can be browsed and saved without inventing authorization", () => {
+  const item = catalogItem({ rightsStatus: "source_unverified", license: "权利归原作者 · 授权未核验" });
+  const catalog = normalizeCuratedCatalog({
+    format: "prompt-director-curated", version: 2,
+    updatedAt: item.updatedAt, themes: [item]
+  });
+  assert.equal(catalog.themes[0].rightsStatus, "source_unverified");
+  const saved = applyCuratedOrigin({ id: "source-case", title: "来源案例" }, catalog.themes[0]);
+  assert.equal(saved.curatedOrigin.rightsStatus, "source_unverified");
+  assert.equal(saved.curatedOrigin.license, item.license);
+  assert.equal(saved.curatedOrigin.rightsReviewUrl, item.rightsReviewUrl);
+});

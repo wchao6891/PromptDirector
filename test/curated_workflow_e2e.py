@@ -17,7 +17,7 @@ from e2e_support import base_entry, extension_session
 
 
 PNG_BYTES = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/catalog.json"
+CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/public-catalog.json"
 METRICS_URL = "https://wchao6891.github.io/PromptDirector-Curated/metrics.json"
 COVER_URL = "https://wchao6891.github.io/PromptDirector-Curated/covers/workflow.png"
 PREVIEW_URL = "https://wchao6891.github.io/PromptDirector-Curated/previews/workflow/preview.json"
@@ -71,7 +71,7 @@ def main() -> None:
         "authorId": "author-editorial",
         "author": "PromptDirector 编辑精选",
         "license": "权利归原作者",
-        "rightsStatus": "verified_authorized",
+        "rightsStatus": "source_unverified",
         "rightsReviewUrl": "https://wchao6891.github.io/PromptDirector-Curated/reviews/workflow.json",
         "updatedAt": "2026-08-08T00:00:00.000Z",
         "coverUrl": COVER_URL,
@@ -190,6 +190,7 @@ def main() -> None:
         expect(curated.locator(".detail-meta")).to_contain_text("2 个案例")
         expect(curated.locator(".detail-actions button")).to_have_count(3)
         expect(curated.locator(".download-action")).to_have_text("保存整包")
+        expect(curated.locator(".detail-meta")).to_contain_text("授权未核验")
         expect(curated.locator(".follow-action")).to_have_text("关注")
         expect(curated.locator(".detail-actions button").nth(2)).to_have_text("复制链接")
         expect(curated.locator(".case-list .case-card")).to_have_count(2)
@@ -223,6 +224,7 @@ def main() -> None:
         expect(curated.locator("#case-detail-drawer")).to_have_class("case-detail-drawer open")
         expect(curated.locator(".case-detail-heading h2")).to_have_text("精选工作流案例")
         expect(curated.locator(".case-detail-heading p")).to_have_text("原作者")
+        expect(curated.locator(".case-detail-source")).to_contain_text("授权未核验")
         expect(curated.locator(".case-detail-prompt")).to_have_text("统一层级并保留清晰主体。")
         expect(curated.locator(".case-detail-source a")).to_have_attribute("href", "https://example.com/workflow-case")
         assert curated.locator("#detail-content").get_attribute("inert") == ""
