@@ -52,7 +52,9 @@ def main():
     package = args.current_archive.read_bytes()
     with zipfile.ZipFile(args.current_archive) as archive:
         target = json.loads(archive.read("manifest.json"))
-    with tempfile.TemporaryDirectory(prefix="pd-native-release-") as temp, sync_playwright() as playwright:
+    # Windows OS temp lives under AppData, which Chrome blocks for directory
+    # access. Install beside the built package, in an ordinary user workspace.
+    with tempfile.TemporaryDirectory(prefix="pd-native-release-", dir=args.current_archive.resolve().parent) as temp, sync_playwright() as playwright:
         root = Path(temp)
         installed = root / "installation"
         shutil.copytree(args.previous_directory, installed)
