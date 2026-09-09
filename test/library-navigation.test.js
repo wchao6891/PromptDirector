@@ -74,14 +74,14 @@ test("share and combine are contextual actions after entering selection mode", (
   assert.match(selection, /id="selection-more-menu"/);
 });
 
-test("project heading keeps only creation and ordering while selected projects toggle off in place", () => {
+test("project heading keeps only creation and collapse while selected projects toggle off in place", () => {
   const sidebar = html.slice(html.indexOf('<aside id="filter-sidebar"'), html.indexOf('</aside>'));
   assert.doesNotMatch(html, /id="active-filter-bar"|id="active-filters"/);
   assert.doesNotMatch(sidebar, /id="clear-filters"|id="active-filter-badge"|sidebar-filter-tools|清除全部筛选/);
   const projectHeading = sidebar.slice(sidebar.indexOf('id="project-section"'), sidebar.indexOf('id="collection-filters"'));
   assert.match(projectHeading, /id="create-collection"[\s\S]*icon-plus[\s\S]*data-i18n="新建"/);
-  assert.match(projectHeading, /id="manage-project-order"/);
-  assert.ok(projectHeading.indexOf('id="create-collection"') < projectHeading.indexOf('id="manage-project-order"'));
+  assert.match(projectHeading, /id="collapse-projects"/);
+  assert.ok(projectHeading.indexOf('id="create-collection"') < projectHeading.indexOf('id="collapse-projects"'));
   assert.match(source, /selectedCollectionId = selectedCollectionId === collection\.id \? "" : collection\.id/);
   assert.match(source, /toggleFilters\.dataset\.filterCount/);
 });

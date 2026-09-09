@@ -18,6 +18,7 @@ SCRIPTS = [
     "curated_skills_install_e2e.py",
     "curated_video_workflow_e2e.py",
     "library_import_ui_e2e.py",
+    "library_import_resources_e2e.py",
     "historical_zip_salvage_e2e.py",
     "import_job_lifecycle_e2e.py",
     "library_media_actions_e2e.py",
@@ -33,6 +34,7 @@ SCRIPTS = [
     "library_responsive_layout_e2e.py",
     "library_discovery_e2e.py",
     "projects_and_categories_e2e.py",
+    "project_tree_e2e.py",
     "project_deletion_e2e.py",
     "text_and_image_analysis_e2e.py",
     "single_case_visual_batch_e2e.py",
@@ -44,6 +46,7 @@ SCRIPTS = [
     "composer_temp_references_e2e.py",
     "composer_session_layout_e2e.py",
     "sharing_and_data_safety_e2e.py",
+    "library_import_interruption_e2e.py",
     "folder_picker_activation_e2e.py",
     "library_zip_scale_e2e.py",
     "library_image_formats_e2e.py",
@@ -90,6 +93,7 @@ CASE_MANAGEMENT_SCRIPTS = [
     "library_responsive_layout_e2e.py",
     "library_discovery_e2e.py",
     "projects_and_categories_e2e.py",
+    "project_tree_e2e.py",
     "case_management_batch_regression_e2e.py",
 ]
 

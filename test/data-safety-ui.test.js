@@ -128,7 +128,8 @@ test("multi-ZIP import uses one wide preflight with blocking failures and one ba
   assert.match(flow, /retryLibraryPackageItem/);
   assert.match(flow, /removeLibraryPackageItem/);
   assert.match(flow, /batch\.preview\?\.unresolvedConflicts/);
-  assert.match(flow, /savePortableAssetBlob\(write\.targetId, blob, \{ checkCapacity: false \}\)/);
+  assert.match(flow, /await savePortableAssetBlobs\(resourceWrites,/);
+  assert.match(flow, /readZipResources\(file,/);
 });
 
 test("data safety cannot be dismissed accidentally while a storage operation is running", async () => {

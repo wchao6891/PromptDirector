@@ -90,3 +90,9 @@ test("rescue validation removes undecodable images from every private backup sco
   assert.deepEqual([...salvageFiles.keys()], []);
   assert.equal(files.size, 4);
 });
+
+test('cancelling image validation stops subsequent reads without classifying cancellation as damage',async()=>{
+  const controller=new AbortController();let reads=0;const progress=[];
+  await assert.rejects(findInvalidImportedImageIds(new Map([['a',new Blob(['a'])],['b',new Blob(['b'])]]),async()=>{reads++;controller.abort();throw controller.signal.reason;},{signal:controller.signal,onProgress:value=>progress.push(value)}),{name:'AbortError'});
+  assert.equal(reads,1);assert.equal(progress.length,0);
+});

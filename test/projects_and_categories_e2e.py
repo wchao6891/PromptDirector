@@ -5,6 +5,7 @@ import re
 from playwright.sync_api import expect
 
 from e2e_support import base_entry, extension_session, wait_for_async_condition
+from project_tree_e2e import move_dialog
 
 
 def main() -> None:
@@ -39,16 +40,14 @@ def main() -> None:
         )
         library = session.open_page("library.html", wait_until="networkidle")
         expect(library.locator("body")).to_have_attribute("data-library-state", "ready")
-        expect(library.locator(".project-row.project-ordering")).to_have_count(0)
+        expect(library.locator(".project-row.project-draggable")).to_have_count(2)
         long_name = library.locator(".project-filter-name", has_text="完整长项目名称")
         expect(long_name).to_be_visible()
         assert long_name.evaluate("node => getComputedStyle(node).whiteSpace") == "normal"
-        library.locator("#manage-project-order").click()
-        expect(library.locator("#manage-project-order")).to_have_attribute("aria-label", "完成项目结构管理")
-        expect(library.locator(".project-row.project-ordering")).to_have_count(2)
-        assert library.locator(".project-row.project-ordering").first.evaluate("node => getComputedStyle(node).userSelect") == "none"
-        expect(library.locator(".project-row > .project-menu:visible")).to_have_count(0)
-        expect(library.locator(".project-row.project-ordering .project-filter").first).to_have_attribute("tabindex", "-1")
+        expect(library.locator(".project-row.project-draggable")).to_have_count(2)
+        assert library.locator(".project-row.project-draggable").first.evaluate("node => getComputedStyle(node).userSelect") == "none"
+        expect(library.locator(".project-row > .project-menu:visible")).to_have_count(2)
+        expect(library.locator(".project-row.project-draggable .project-filter").first).to_have_attribute("tabindex", "0")
         source_box = library.locator(".project-row", has_text="辅助项目").bounding_box()
         target_box = library.locator(".project-row", has_text="项目与分类验收").bounding_box()
         assert source_box and target_box
@@ -59,7 +58,8 @@ def main() -> None:
         assert library.evaluate("window.getSelection()?.toString() || ''") == ""
         expect(library.locator(".project-filter-name").first).to_have_text("辅助项目")
         library.locator(".project-row", has_text="辅助项目").focus()
-        library.locator(".project-row", has_text="辅助项目").press("ArrowDown")
+        dialog = move_dialog(library, "collection:e2e-extra", "项目与分类验收", "项目与分类验收的完整长项目名称", "after")
+        dialog.get_by_role("button", name="移动", exact=True).click()
         expect(library.locator("#project-order-status")).to_contain_text("辅助项目")
         expect(library.locator(".project-filter-name").first).to_contain_text("项目与分类验收")
 
@@ -95,10 +95,11 @@ def main() -> None:
         expect(library.locator(".project-filter-name").first).to_have_text("辅助项目")
         library.evaluate("""() => { chrome.runtime.sendMessage = window.__originalProjectSendMessage; }""")
         library.locator(".project-row", has_text="项目与分类验收").focus()
-        library.locator(".project-row", has_text="项目与分类验收").press("ArrowRight")
+        dialog = move_dialog(library, project_id, "辅助项目", "辅助项目")
+        dialog.get_by_role("button", name="移动", exact=True).click()
+        library.locator('.project-row[data-collection-id="collection:e2e-extra"] .project-disclosure').click()
         expect(library.locator(".project-row", has_text="项目与分类验收")).to_have_attribute("aria-level", "2")
-        library.locator("#manage-project-order").click()
-        expect(library.locator(".project-row.project-ordering")).to_have_count(0)
+        expect(library.locator(".project-row.project-draggable")).to_have_count(2)
         expect(library.locator(".project-row > .project-menu:visible")).to_have_count(2)
 
         library.locator(".project-filter", has_text="辅助项目").click()
@@ -162,9 +163,8 @@ def main() -> None:
         library.locator("#search-input").fill("project-case")
         expect(library.locator(".case-card")).to_have_count(2)
         library.locator("#select-cases").click()
-        expect(library.locator("#manage-project-order")).to_be_visible()
-        expect(library.locator("#manage-project-order")).to_be_disabled()
-        expect(library.locator("#manage-project-order")).to_have_attribute("title", "结束案例选择后可管理项目结构")
+        expect(library.locator(".project-row.project-draggable")).to_have_count(0)
+        expect(library.locator("#collapse-projects")).to_be_visible()
         library.locator(".case-card").nth(0).click()
         library.locator(".case-card").nth(1).click()
         library.locator("#selection-more-menu > summary").click()

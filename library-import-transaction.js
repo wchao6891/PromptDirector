@@ -74,6 +74,13 @@ export function claimLibraryImportTransaction(stateValue, request = {}, options 
         pending: false
       };
     }
+    // Only the background's serialized write queue may resume: once this callback
+    // runs, no earlier apply is still executing in this worker. A completed write
+    // always includes its receipt, so a remaining pending claim was interrupted.
+    if (options.resumePending === true) {
+      assertLibraryImportPlanCurrent(planToken, request.stateValue, request.sourceValue, request.planValue);
+      return { state, receipt: current, acquired: true, replayed: false, pending: true };
+    }
     return {
       state,
       receipt: current,

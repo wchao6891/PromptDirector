@@ -1,3 +1,5 @@
+import { applyLibraryImportWithReceipt } from "./library-import-client.js";
+import { readZipResources } from "./zip-reader.js";
 import { attachArticleEditor } from "./article-editor.js";
 import { renderArticleBlockText } from "./article-text-view.js";
 import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
@@ -15,7 +17,8 @@ import {
   saveDerivedMetadata,
   saveDerivedMedia,
   saveMediaBlob,
-  savePortableAssetBlob
+  savePortableAssetBlob,
+  savePortableAssetBlobs
 } from "./media-store.js";
 import { projectPackageEntryIds } from "./library-package.js";
 import {
@@ -199,6 +202,7 @@ import { CURATED_SUBMISSION_URL } from "./curated-config.js";
 import { moveProjectLogicalCase, sortLibraryCases } from "./library-view.js";
 import { createTagEditor, normalizeTagValue } from "./tag-editor.js";
 import { attachProjectCombobox } from "./project-combobox.js";
+import { createProjectTreeInteractions, projectTreeRows, readProjectExpansion } from "./project-tree.js";
 import {
   DETAIL_SIDEBAR_WIDTH_LIMITS,
   SIDEBAR_WIDTH_LIMITS,
@@ -230,7 +234,7 @@ const elements = Object.fromEntries([
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
   "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
-  "project-section", "project-root-drop", "manage-project-order", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
+  "project-section", "project-root-drop", "collapse-projects", "project-search", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "video-instructions-en", "video-instructions-zh", "video-settings-form", "video-settings-status", "restore-video-default", "video-protocol",
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
@@ -309,10 +313,9 @@ let unassignedViewActive = false;
 let caseSortMode = "added-desc";
 let caseOrderManagementActive = false;
 let caseOrderDragState = null;
-let projectOrderManagementActive = false;
-let projectOrderSaving = false;
-let projectDragState = null;
-const expandedProjectIds = new Set();
+let projectTreeInteractions;
+let lastProjectSelection = "";
+const expandedProjectIds = readProjectExpansion();
 let selectionProjectTargetTouched = false;
 let caseSelectionSweep = null;
 let caseSelectionSweepUiFrame = 0;
@@ -668,7 +671,13 @@ function bindEvents() {
     renderGalleryResults({ refreshNavigation: false });
   });
   elements.manageCaseOrder.addEventListener("click", toggleCaseOrderManagement);
-  elements.manageProjectOrder.addEventListener("click", toggleProjectOrderManagement);
+  elements.collapseProjects.addEventListener("click", () => {
+    projectTreeController().cancel();
+    expandedProjectIds.clear();
+    elements.projectSearch.value = "";
+    renderProjectFilters();
+  });
+  elements.projectSearch.addEventListener("input", renderProjectFilters);
   elements.projectSelectionSelectFiltered.addEventListener("click", () => selectVisionCases("filtered"));
   elements.projectSelectionSelectAll.addEventListener("click", () => selectVisionCases("all"));
   elements.projectSelectionClear.addEventListener("click", clearVisionSelection);
@@ -1844,54 +1853,39 @@ async function extractAndCachePdfText(assetId, blob, derived) {
 }
 
 function renderProjectFilters() {
+  const openProjectId = elements.collectionFilters.querySelector(".project-menu[open]")
+    ?.closest(".project-row")?.dataset.collectionId;
   const fragment = document.createDocumentFragment();
   const subtreeEntryIdsByProject = collectionSubtreeEntryIdsById(organizerState);
   const pathLabelsByProject = collectionPathLabelsById(organizerState);
   const childrenByParent = indexProjectChildren();
+  const query = elements.projectSearch.value.trim();
   const projectOrderingUnavailable = Boolean(selectionMode);
-  elements.manageProjectOrder.hidden = false;
-  elements.manageProjectOrder.disabled = projectOrderingUnavailable;
-  const managementLabel = projectOrderingUnavailable
-    ? "结束案例选择后可管理项目结构"
-    : projectOrderManagementActive ? "完成项目结构管理" : "管理项目结构";
-  elements.manageProjectOrder.setAttribute("aria-label", managementLabel);
-  elements.manageProjectOrder.title = managementLabel;
-  elements.manageProjectOrder.replaceChildren(createUiIcon(projectOrderManagementActive ? "circle-check-big" : "sliders-horizontal"));
-  elements.projectRootDrop.hidden = !projectOrderManagementActive;
-  if (selectedCollectionId) {
+  if (selectedCollectionId !== lastProjectSelection) {
+    lastProjectSelection = selectedCollectionId;
     for (const ancestor of collectionPath(organizerState, selectedCollectionId).slice(0, -1)) expandedProjectIds.add(ancestor.id);
   }
-  const visibleCollections = [];
-  const pendingCollections = [...(childrenByParent.get(null) ?? [])]
-    .reverse()
-    .map((collection) => ({ collection, depth: 0 }));
-  while (pendingCollections.length) {
-    const current = pendingCollections.pop();
-    visibleCollections.push(current);
-    if (!expandedProjectIds.has(current.collection.id)) continue;
-    const children = childrenByParent.get(current.collection.id) ?? [];
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      pendingCollections.push({ collection: children[index], depth: current.depth + 1 });
-    }
-  }
+  elements.collapseProjects.disabled = !expandedProjectIds.size;
+  const visibleCollections = projectTreeRows(childrenByParent, expandedProjectIds, query, pathLabelsByProject);
   for (const [projectIndex, { collection, depth }] of visibleCollections.entries()) {
     const children = childrenByParent.get(collection.id) ?? [];
     const siblings = childrenByParent.get(collection.parentId) ?? [];
     const row = el("div", "project-row");
     row.dataset.collectionId = collection.id;
-    row.style.setProperty("--project-depth", String(depth));
+    row.style.setProperty("--project-depth", String(query ? 0 : depth));
     row.setAttribute("role", "treeitem");
-    row.setAttribute("aria-level", String(depth + 1));
-    row.setAttribute("aria-setsize", String(siblings.length));
-    row.setAttribute("aria-posinset", String(siblings.findIndex((item) => item.id === collection.id) + 1));
-    if (children.length) row.setAttribute("aria-expanded", String(expandedProjectIds.has(collection.id)));
-    row.classList.toggle("project-ordering", projectOrderManagementActive);
-    row.tabIndex = projectOrderManagementActive ? 0 : -1;
-    row.setAttribute("aria-label", projectOrderManagementActive ? `移动项目：${pathLabelsByProject.get(collection.id)}，树中位置 ${projectIndex + 1}` : collection.name);
+    row.setAttribute("aria-level", String(query ? 1 : depth + 1));
+    row.setAttribute("aria-setsize", String(query ? visibleCollections.length : siblings.length));
+    row.setAttribute("aria-posinset", String(query ? projectIndex + 1 : siblings.findIndex((item) => item.id === collection.id) + 1));
+    if (children.length && !query) row.setAttribute("aria-expanded", String(expandedProjectIds.has(collection.id)));
+    row.classList.toggle("project-draggable", !projectOrderingUnavailable);
+    row.classList.toggle("project-search-result", Boolean(query));
+    row.tabIndex = -1;
+    row.setAttribute("aria-label", query ? pathLabelsByProject.get(collection.id) : collection.name);
     const disclosure = el("button", "project-disclosure");
     disclosure.type = "button";
     disclosure.tabIndex = -1;
-    disclosure.disabled = projectOrderManagementActive;
+    disclosure.hidden = Boolean(query);
     disclosure.setAttribute("aria-label", expandedProjectIds.has(collection.id) ? `折叠 ${collection.name}` : `展开 ${collection.name}`);
     disclosure.classList.toggle("is-placeholder", !children.length);
     if (children.length) disclosure.append(createUiIcon(expandedProjectIds.has(collection.id) ? "chevron-down" : "chevron-right"));
@@ -1904,25 +1898,30 @@ function renderProjectFilters() {
       .map((id) => logicalIdByEntryId.get(id)).filter(Boolean)).size;
     const filter = el("button", "project-filter");
     filter.type = "button";
-    filter.tabIndex = projectOrderManagementActive ? -1 : 0;
+    filter.tabIndex = 0;
     filter.disabled = ["project", "vision", "combine"].includes(selectionMode);
     filter.setAttribute("aria-pressed", String(selectedCollectionId === collection.id));
     filter.setAttribute("aria-label", `${collection.name} ${logicalCount}`);
     const meta = el("span", "project-filter-meta");
     meta.append(rawTextEl("span", "project-filter-count", String(logicalCount)));
     filter.addEventListener("click", () => {
-      if (projectOrderManagementActive) return;
       caseOrderManagementActive = false;
       unassignedViewActive = false;
       selectedCollectionId = selectedCollectionId === collection.id ? "" : collection.id;
+      if (query) elements.projectSearch.value = "";
       renderGallery();
     });
     if (collection.visibility === COLLECTION_VISIBILITY.projectOnly) {
       meta.append(textEl("span", "project-visibility", "仅项目"));
     }
-    filter.append(rawTextEl("span", "project-filter-name", collection.name), meta);
+    const name = rawTextEl("span", "project-filter-name", collection.name);
+    if (query) {
+      const label = el("span", "project-search-label");
+      label.append(name, rawTextEl("small", "project-search-path", pathLabelsByProject.get(collection.id)));
+      filter.append(label, meta);
+    } else filter.append(name, meta);
     const menu = el("details", "project-menu");
-    menu.hidden = projectOrderManagementActive || ["project", "vision", "combine"].includes(selectionMode);
+    menu.hidden = ["project", "vision", "combine"].includes(selectionMode);
     const summary = el("summary", "");
     summary.append(createUiIcon("ellipsis"));
     summary.setAttribute("aria-label", `${t("管理项目")}：${collection.name}`);
@@ -1936,6 +1935,13 @@ function renderProjectFilters() {
       "button-secondary",
       collection.visibility === COLLECTION_VISIBILITY.projectOnly ? "资料库可见" : "仅项目可见"
     );
+    const move = textEl("button", "button-secondary", "移动到…");
+    move.disabled = projectOrderingUnavailable;
+    move.title = projectOrderingUnavailable ? t("结束案例选择后可移动项目") : "";
+    move.addEventListener("click", () => {
+      menu.open = false;
+      void projectTreeController().openMove(collection);
+    });
     const rename = textEl("button", "button-secondary", "重命名");
     const remove = textEl("button", "quiet-danger", "仅删除项目");
     const removeWithEntries = textEl("button", "quiet-danger", "删除项目及案例");
@@ -1946,14 +1952,19 @@ function renderProjectFilters() {
     rename.addEventListener("click", () => renameProjectCollection(collection));
     remove.addEventListener("click", () => deleteProjectCollection(collection));
     removeWithEntries.addEventListener("click", () => deleteProjectCollectionWithEntries(collection, removeWithEntries));
-    actions.append(manage, analyze, share, visibility, rename, remove, removeWithEntries);
+    actions.append(manage, move, analyze, share, visibility, rename, remove, removeWithEntries);
     menu.append(summary, actions);
-    if (projectOrderManagementActive) bindProjectOrderInteractions(row, collection);
-    else bindProjectTreeNavigation(row, collection);
+    bindProjectTreeNavigation(row, collection);
     row.append(disclosure, filter, menu);
     fragment.append(row);
   }
+  if (!visibleCollections.length && query) fragment.append(textEl("p", "project-search-empty", "没有匹配的项目"));
   elements.collectionFilters.replaceChildren(fragment);
+  if (openProjectId) {
+    const menu = elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(openProjectId)}"] .project-menu`);
+    if (menu && !menu.hidden) menu.open = true;
+  }
+  projectTreeController().sync();
 }
 
 function projectChildren(parentId = null) {
@@ -1973,145 +1984,21 @@ function indexProjectChildren() {
   return result;
 }
 
-function toggleProjectOrderManagement() {
-  if (selectionMode) return;
-  cancelProjectDrag();
-  projectOrderManagementActive = !projectOrderManagementActive;
-  if (projectOrderManagementActive) {
-    for (const parentId of indexProjectChildren().keys()) if (parentId) expandedProjectIds.add(parentId);
-  }
-  renderProjectFilters();
-}
-
-function bindProjectOrderInteractions(row, collection) {
-  row.addEventListener("pointerdown", (event) => {
-    if (projectOrderSaving || event.button > 0) return;
-    event.preventDefault();
-    row.focus({ preventScroll: true });
-    projectDragState = {
-      pointerId: event.pointerId,
-      row,
-      collectionId: collection.id,
-      startY: event.clientY,
-      moved: false,
-      drop: null
-    };
-    try { row.setPointerCapture(event.pointerId); } catch {}
+function projectTreeController() {
+  return projectTreeInteractions ??= createProjectTreeInteractions({
+    elements,
+    expanded: expandedProjectIds,
+    getState: () => organizerState,
+    unavailable: () => Boolean(selectionMode),
+    render: renderProjectFilters,
+    onState: (state) => { organizerState = state; renderGallery(); },
+    feedback: showFeedback
   });
-  row.addEventListener("pointermove", (event) => {
-    const drag = projectDragState;
-    if (!drag || drag.row !== row || drag.pointerId !== event.pointerId) return;
-    if (!drag.moved && Math.abs(event.clientY - drag.startY) < 4) return;
-    event.preventDefault();
-    drag.moved = true;
-    row.classList.add("is-dragging");
-    elements.collectionFilters.classList.add("is-project-dragging");
-    clearProjectDropIndicators();
-    const hit = document.elementFromPoint(event.clientX, event.clientY);
-    if (hit?.closest?.("#project-root-drop")) {
-      elements.projectRootDrop.classList.add("is-drop-target");
-      drag.drop = { parentId: null, index: projectChildren(null).filter((item) => item.id !== collection.id).length };
-      return;
-    }
-    const targetRow = hit?.closest?.(".project-row");
-    if (!targetRow || targetRow === row) return;
-    const target = organizerState.collections.find((item) => item.id === targetRow.dataset.collectionId);
-    if (!target) return;
-    const rect = targetRow.getBoundingClientRect();
-    const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
-    const position = ratio < .28 ? "before" : ratio > .72 ? "after" : "inside";
-    targetRow.classList.add(`drop-${position}`);
-    drag.drop = projectDropPlan(collection.id, target, position);
-  });
-  const finish = (event) => {
-    const drag = projectDragState;
-    if (!drag || drag.row !== row || drag.pointerId !== event.pointerId) return;
-    const moved = drag.moved;
-    const drop = drag.drop;
-    cancelProjectDrag();
-    if (!moved || !drop) return;
-    void persistProjectCollectionMove(collection.id, drop.parentId, drop.index);
-  };
-  row.addEventListener("pointerup", finish);
-  row.addEventListener("pointercancel", () => {
-    cancelProjectDrag();
-    renderProjectFilters();
-  });
-  row.addEventListener("keydown", (event) => {
-    if (!projectOrderManagementActive || projectOrderSaving || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const siblings = projectChildren(collection.parentId);
-    const index = siblings.findIndex((item) => item.id === collection.id);
-    if (event.key === "Home" || event.key === "End") {
-      const target = event.key === "Home" ? siblings[0] : siblings.at(-1);
-      return focusProjectRow(target?.id);
-    }
-    if (event.key === "ArrowUp" && index > 0) return void persistProjectCollectionMove(collection.id, collection.parentId, index - 1);
-    if (event.key === "ArrowDown" && index >= 0 && index < siblings.length - 1) return void persistProjectCollectionMove(collection.id, collection.parentId, index + 1);
-    if (event.key === "ArrowRight" && index > 0) {
-      const parent = siblings[index - 1];
-      expandedProjectIds.add(parent.id);
-      return void persistProjectCollectionMove(collection.id, parent.id, projectChildren(parent.id).length);
-    }
-    if (event.key === "ArrowLeft" && collection.parentId) {
-      const parent = organizerState.collections.find((item) => item.id === collection.parentId);
-      if (!parent) return;
-      const parentSiblings = projectChildren(parent.parentId).filter((item) => item.id !== collection.id);
-      const parentIndex = parentSiblings.findIndex((item) => item.id === parent.id);
-      return void persistProjectCollectionMove(collection.id, parent.parentId, parentIndex + 1);
-    }
-  });
-}
-
-function projectDropPlan(collectionId, target, position) {
-  if (position === "inside") {
-    return { parentId: target.id, index: projectChildren(target.id).filter((item) => item.id !== collectionId).length };
-  }
-  const siblings = projectChildren(target.parentId).filter((item) => item.id !== collectionId);
-  const targetIndex = siblings.findIndex((item) => item.id === target.id);
-  return { parentId: target.parentId, index: targetIndex + (position === "after" ? 1 : 0) };
-}
-
-function clearProjectDropIndicators() {
-  elements.projectRootDrop.classList.remove("is-drop-target");
-  for (const item of elements.collectionFilters.querySelectorAll(".drop-before, .drop-inside, .drop-after")) {
-    item.classList.remove("drop-before", "drop-inside", "drop-after");
-  }
-}
-
-function cancelProjectDrag() {
-  const drag = projectDragState;
-  if (!drag) return;
-  if (drag.row.hasPointerCapture?.(drag.pointerId)) {
-    try { drag.row.releasePointerCapture(drag.pointerId); } catch {}
-  }
-  drag.row.classList.remove("is-dragging");
-  elements.collectionFilters.classList.remove("is-project-dragging");
-  clearProjectDropIndicators();
-  projectDragState = null;
-}
-
-async function persistProjectCollectionMove(collectionId, parentId, index) {
-  if (projectOrderSaving) return;
-  projectOrderSaving = true;
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "MOVE_COLLECTION", collectionId, parentId, index });
-    if (!response?.ok) throw new Error(response?.message || "项目结构保存失败");
-    organizerState = response.organizerState ?? organizerState;
-    const project = organizerState.collections.find((item) => item.id === collectionId);
-    elements.projectOrderStatus.textContent = `已移动“${project?.name || "项目"}”到 ${collectionPathLabel(organizerState, collectionId)}`;
-    renderProjectFilters();
-    queueMicrotask(() => focusProjectRow(collectionId));
-  } catch (error) {
-    showFeedback(error.message || "项目结构保存失败", true);
-    renderProjectFilters();
-  } finally {
-    projectOrderSaving = false;
-  }
 }
 
 function bindProjectTreeNavigation(row, collection) {
   row.addEventListener("keydown", (event) => {
+    if (event.target.closest(".project-menu")) return;
     const rows = [...elements.collectionFilters.querySelectorAll(".project-row")];
     const index = rows.indexOf(row);
     if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
@@ -2120,20 +2007,20 @@ function bindProjectTreeNavigation(row, collection) {
         : event.key === "End" ? rows.at(-1)
         : rows[index + (event.key === "ArrowDown" ? 1 : -1)];
       target?.querySelector(".project-filter")?.focus();
-    } else if (event.key === "ArrowRight") {
+    } else if (event.key === "ArrowRight" && !elements.projectSearch.value.trim()) {
       event.preventDefault();
       if (projectChildren(collection.id).length && !expandedProjectIds.has(collection.id)) {
         expandedProjectIds.add(collection.id);
         renderProjectFilters();
-        queueMicrotask(() => focusProjectRow(collection.id, true));
-      } else if (projectChildren(collection.id).length) focusProjectRow(projectChildren(collection.id)[0].id, true);
-    } else if (event.key === "ArrowLeft") {
+        queueMicrotask(() => focusProjectRow(collection.id));
+      } else if (projectChildren(collection.id).length) focusProjectRow(projectChildren(collection.id)[0].id);
+    } else if (event.key === "ArrowLeft" && !elements.projectSearch.value.trim()) {
       event.preventDefault();
       if (expandedProjectIds.has(collection.id)) {
         expandedProjectIds.delete(collection.id);
         renderProjectFilters();
-        queueMicrotask(() => focusProjectRow(collection.id, true));
-      } else if (collection.parentId) focusProjectRow(collection.parentId, true);
+        queueMicrotask(() => focusProjectRow(collection.id));
+      } else if (collection.parentId) focusProjectRow(collection.parentId);
     } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const match = rows.find((candidate, candidateIndex) => candidateIndex > index && candidate.querySelector(".project-filter-name")?.textContent?.toLocaleLowerCase().startsWith(event.key.toLocaleLowerCase()))
         ?? rows.find((candidate) => candidate.querySelector(".project-filter-name")?.textContent?.toLocaleLowerCase().startsWith(event.key.toLocaleLowerCase()));
@@ -2142,9 +2029,9 @@ function bindProjectTreeNavigation(row, collection) {
   });
 }
 
-function focusProjectRow(collectionId, filter = false) {
+function focusProjectRow(collectionId) {
   const row = elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(collectionId || "")}"]`);
-  (filter ? row?.querySelector(".project-filter") : row)?.focus({ preventScroll: true });
+  row?.querySelector(".project-filter")?.focus({ preventScroll: true });
 }
 
 async function updateProjectVisibility(collection, button) {
@@ -2221,7 +2108,7 @@ async function enterProjectSelection(collectionId) {
   selectionMode = "project";
   projectSelectionId = collection.id;
   caseOrderManagementActive = false;
-  projectOrderManagementActive = false;
+  projectTreeInteractions?.cancel();
   unassignedViewActive = false;
   selectedCollectionId = collection.id;
   selectedCaseIds.clear();
@@ -2250,7 +2137,7 @@ async function enterVisionSelection(collection) {
   selectionMode = "vision";
   projectSelectionId = collection.id;
   caseOrderManagementActive = false;
-  projectOrderManagementActive = false;
+  projectTreeInteractions?.cancel();
   unassignedViewActive = false;
   selectedCollectionId = collection.id;
   replaceSelectedCaseIds(getVisionSelectableEntries("all").map((entry) => entry.id));
@@ -2266,7 +2153,7 @@ async function enterSelectMode() {
   cancelCaseSelectionSweep();
   selectionMode = "select";
   caseOrderManagementActive = false;
-  projectOrderManagementActive = false;
+  projectTreeInteractions?.cancel();
   selectionProjectTargetTouched = false;
   elements.selectionProjectTarget.value = "";
   selectedCaseIds.clear();
@@ -2957,6 +2844,7 @@ function applyLibraryReturnSnapshot(snapshot) {
   selectedCollectionId = organizerState.collections.some((item) => item.id === snapshot.collectionId)
     ? snapshot.collectionId
     : "";
+  lastProjectSelection = selectedCollectionId;
   caseSortMode = snapshot.sortMode;
   selectedContentId = snapshot.contentId;
   selectedFacets = new Map();
@@ -3008,7 +2896,7 @@ async function openRequestedLibraryTarget() {
   selectedContentId = "";
   selectedFacets.clear();
   caseOrderManagementActive = false;
-  projectOrderManagementActive = false;
+  projectTreeInteractions?.cancel();
   elements.pendingFilter.checked = false;
   elements.searchInput.value = "";
   libraryReturnScrollY = null;
@@ -3954,7 +3842,7 @@ async function restoreCompleteFolderBackup() {
     showDataSafetyFeedback(`${translateUiMessage(response.message)} · ${t("{label}已按预检方案完成", { label: recoveryLabel })}`);
     await renderDataSafetyStatus();
   } catch (error) {
-    const retained = applySucceeded
+    const retained = (applySucceeded || error?.code === "IMPORT_OUTCOME_UNKNOWN")
       ? new Set(savedIds)
       : applyStarted ? await committedMediaIds(savedIds) : new Set();
     await Promise.allSettled(savedIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
@@ -3966,6 +3854,7 @@ async function restoreCompleteFolderBackup() {
 
 async function restoreLastLibraryReplacementPoint() {
   if (dataSafetyOperationActive) return showDataSafetyFeedback(t("当前操作仍在进行，请等待完成"), true);
+  const expectedPointId = elements.restoreLibraryReplacementPoint.dataset.pointId;
   const approved = await confirmAppAction({
     title: t("回退上次精确恢复？"),
     description: t("资料库会回到上次精确恢复前的状态；当前状态也会保存成新的回退点，因此仍可再次切换回来。"),
@@ -3975,7 +3864,7 @@ async function restoreLastLibraryReplacementPoint() {
   if (!approved) return;
   await runDataSafetyAction(
     elements.restoreLibraryReplacementPoint,
-    { type: "RESTORE_LIBRARY_REPLACEMENT_POINT" }
+    { type: "RESTORE_LIBRARY_REPLACEMENT_POINT", expectedPointId, operationId: crypto.randomUUID() }
   );
 }
 
@@ -4039,14 +3928,21 @@ async function inspectLibraryPackageBatchItem(batch, item) {
     const libraryText = await libraryFile.text();
     try { library = JSON.parse(libraryText); }
     catch { throw new Error("library.json 已损坏"); }
-    const resources = await reader.read(reader.names.filter((name) => name !== "library.json"), { signal: batch.controller.signal });
+    const resources = await readZipResources(file, reader.names.filter((name) => name !== "library.json"), limits, {
+      signal: batch.controller.signal,
+      onProgress: ({ extractedBytes }) => updateLibraryPackageProgress(batch, item,
+        t("读取校验 · {done} / {total}", { done: formatBytes(extractedBytes), total: formatBytes(reader.expandedBytes - libraryFile.size) }))
+    });
     for (const [name, blob] of resources) files.set(name, blob);
     const inspection = await inspectLibraryTransfer({
       sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
       library,
       files,
       limits,
-      validateImage: validateImportedImage
+      validateImage: validateImportedImage,
+      signal: batch.controller.signal,
+      onImageProgress: ({ completed, total }) => updateLibraryPackageProgress(batch, item,
+        t("检查图片 · {done}/{total}", { done: completed, total }))
     });
     if (pendingLibraryPackageBatch !== batch || !batch.items.includes(item)) return;
     item.status = "ready";
@@ -4059,6 +3955,14 @@ async function inspectLibraryPackageBatchItem(batch, item) {
     item.inspection = null;
   }
   renderLibraryPackageBatch();
+}
+
+function updateLibraryPackageProgress(batch, item, message) {
+  if (pendingLibraryPackageBatch !== batch || !batch.items.includes(item)) return;
+  item.progress = message;
+  const row = elements.libraryPackageImportList.children[batch.items.indexOf(item)];
+  const status = row?.querySelector(".library-package-import-status");
+  if (status) status.textContent = message;
 }
 
 async function refreshLibraryPackageBatchPlan(batch = pendingLibraryPackageBatch) {
@@ -4168,7 +4072,7 @@ function createLibraryPackageBatchRow(batch, item, sourceIndex) {
     ? (batch.preview?.conflicts ?? []).filter((conflict) => conflict.sourceIndex === sourceIndex && conflict.requiresResolution)
     : [];
   const status = el("div", `library-package-import-status${item.status === "error" ? " error" : ""}`);
-  if (item.status === "checking") status.textContent = t("检查中");
+  if (item.status === "checking") status.textContent = item.progress || t("检查中");
   else if (item.status === "error") status.textContent = translateUiMessage(item.error);
   else if (conflicts.some((conflict) => conflict.unresolved)) status.textContent = t("待选择");
   else if (importReport) {
@@ -4245,6 +4149,7 @@ async function removeLibraryPackageItem(batch, item) {
 async function retryLibraryPackageItem(batch, item) {
   if (pendingLibraryPackageBatch !== batch || batch.submitting) return;
   item.status = "checking";
+  item.progress = "";
   item.error = "";
   item.inspection = null;
   batch.conflictResolutions = {};
@@ -4270,15 +4175,24 @@ async function applyLibraryPackageBatch() {
   batch.submitting = true;
   renderLibraryPackageBatch();
   try {
-    for (const write of batch.preview.resourceWrites ?? []) {
+    const resourceWrites = (batch.preview.resourceWrites ?? []).map(write => {
       const source = ready[write.sourceIndex]?.inspection?.resources;
       const blob = write.resourceType === "skill"
         ? source?.skillAssets.get(write.sourceId)
         : source?.assets.get(write.sourceId);
       if (!(blob instanceof Blob)) throw new Error("预检后的案例包资源已经变化，请重新检查");
-      await savePortableAssetBlob(write.targetId, blob, { checkCapacity: false });
-      savedIds.push(write.targetId);
-    }
+      return { assetId: write.targetId, blob };
+    });
+    await savePortableAssetBlobs(resourceWrites, {
+      checkCapacity: false,
+      onProgress: ({ writtenBytes, totalBytes }) => {
+        elements.libraryPackageImportFeedback.textContent = t("保存资源 · {done} / {total}", {
+          done: formatBytes(writtenBytes), total: formatBytes(totalBytes)
+        });
+      }
+    });
+    for (const write of resourceWrites) savedIds.push(write.assetId);
+    elements.libraryPackageImportFeedback.textContent = t("正在提交案例…");
     applyStarted = true;
     const operationId = createLibraryImportOperationId();
     const response = await applyLibraryImportWithReceipt({
@@ -4297,7 +4211,7 @@ async function applyLibraryPackageBatch() {
     await renderDataSafetyStatus();
     if (ordinaryItems.length) await prepareLocalImport(ordinaryItems, { source: ordinaryItems.some((item) => item.relativePath.includes("/")) ? "folder" : "files" });
   } catch (error) {
-    const retained = applySucceeded
+    const retained = (applySucceeded || error?.code === "IMPORT_OUTCOME_UNKNOWN")
       ? new Set(savedIds)
       : applyStarted ? await committedMediaIds(savedIds) : new Set();
     await Promise.allSettled(savedIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
@@ -4330,17 +4244,6 @@ function createLibraryImportOperationId() {
   return `library-import:${crypto.randomUUID()}`;
 }
 
-async function applyLibraryImportWithReceipt(message) {
-  try {
-    return await chrome.runtime.sendMessage(message);
-  } catch (firstError) {
-    try {
-      return await chrome.runtime.sendMessage(message);
-    } catch {
-      throw firstError;
-    }
-  }
-}
 
 function backupMediaPaths(library) {
   return new Set([
@@ -4557,22 +4460,9 @@ async function importCreativeExperimentArchive() {
 
 async function committedMediaIds(ids) {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+    const response = await chrome.runtime.sendMessage({ type: "GET_LIBRARY_ASSET_RETENTION", assetIds: ids });
     if (!response?.ok) return new Set(ids);
-    const targets = new Set(ids);
-    const retained = [
-      ...(response.entries ?? []).flatMap((entry) => entry.mediaAssets ?? entry.visuals ?? []).map((asset) => asset.id),
-      ...(response.creativeSkills?.items ?? []).flatMap((skill) => skill.packageFiles ?? []).map((file) => file.assetId),
-      ...(response.creativeRuns ?? []).flatMap((run) => run.outputs ?? []).map((output) => output.visual?.id),
-      ...(response.composerSessions ?? []).flatMap((session) => session.referenceSnapshots ?? [])
-        .flatMap((reference) => reference.assetRefs ?? []).map((asset) => asset.assetId),
-      ...(response.trashState?.items ?? []).flatMap((item) => {
-        if (item?.kind === "entry") return item.snapshot?.mediaAssets ?? item.snapshot?.visuals ?? [];
-        if (item?.kind === "media") return item.snapshot?.mediaAssets ?? [];
-        return [];
-      }).map((asset) => asset.id)
-    ];
-    return new Set(retained.filter((id) => targets.has(id)));
+    return new Set(response.assetIds);
   } catch {
     return new Set(ids);
   }
@@ -5017,7 +4907,7 @@ function clearFilters() {
   selectedCollectionId = "";
   unassignedViewActive = false;
   caseOrderManagementActive = false;
-  projectOrderManagementActive = false;
+  projectTreeInteractions?.cancel();
   selectedContentId = "";
   selectedFacets.clear();
   elements.pendingFilter.checked = false;
@@ -5029,7 +4919,7 @@ function openUnassignedView() {
   selectedCollectionId = "";
   unassignedViewActive = true;
   caseOrderManagementActive = false;
-  projectOrderManagementActive = false;
+  projectTreeInteractions?.cancel();
   selectedContentId = "";
   selectedFacets.clear();
   elements.pendingFilter.checked = false;
@@ -10635,6 +10525,7 @@ async function renderDataSafetyStatus() {
   elements.cancelSync.disabled = syncStatus.cancelRequested === true;
   elements.dataSafetyPassword.hidden = !(needsFolder || needsUnlock);
   elements.disconnectSyncFolder.hidden = !syncStatus.connected;
+  elements.restoreLibraryReplacementPoint.dataset.pointId = response.replacementPointId || "";
   elements.restoreLibraryReplacementPoint.hidden = !response.canRestoreReplacementPoint;
   elements.restoreLibraryReplacementPoint.disabled = dataSafetyOperationActive || !response.canRestoreReplacementPoint;
   elements.restoreLibraryReplacementPoint.title = response.replacementPointCreatedAt
@@ -10780,7 +10671,9 @@ async function runDataSafetyAction(button, message, refresh = true, options = {}
         String(message.password ?? "").length < 8) {
       throw new Error(t("同步密码至少需要 8 个字符"));
     }
-    const response = await chrome.runtime.sendMessage(message);
+    const response = message.type === "RESTORE_LIBRARY_REPLACEMENT_POINT"
+      ? await applyLibraryImportWithReceipt(message)
+      : await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || t("操作失败"));
     elements.syncPassword.value = "";
     showDataSafetyFeedback(response.message || t("操作完成"));

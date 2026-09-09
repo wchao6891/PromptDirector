@@ -67,8 +67,15 @@ export async function openZipBlob(archive, limitsValue = {}) {
   if (disk || directoryDisk || diskCount !== fileCount) throw new Error("暂不支持分卷 ZIP");
   if (endOffset + 22 + commentLength !== archive.size) throw invalidZip();
   let directoryEnd = endOffset;
-  if (fileCount === ZIP16_MAX || directorySize === ZIP32_MAX || directoryOffset === ZIP32_MAX) {
-    ({ fileCount, directorySize, directoryOffset, directoryEnd } = await readZip64Directory(archive, endOffset));
+  const locatorBytes = endOffset >= 20 && directoryOffset + directorySize !== endOffset
+    ? await readBlobBytes(archive, endOffset - 20, endOffset) : null;
+  const hasZip64Locator = locatorBytes && dataView(locatorBytes).getUint32(0, true) === 0x07064b50;
+  if (fileCount === ZIP16_MAX || directorySize === ZIP32_MAX || directoryOffset === ZIP32_MAX || hasZip64Locator) {
+    const extended = await readZip64Directory(archive, endOffset);
+    if ((fileCount !== ZIP16_MAX && fileCount !== extended.fileCount)
+      || (directorySize !== ZIP32_MAX && directorySize !== extended.directorySize)
+      || (directoryOffset !== ZIP32_MAX && directoryOffset !== extended.directoryOffset)) throw invalidZip();
+    ({ fileCount, directorySize, directoryOffset, directoryEnd } = extended);
   }
   if (fileCount > limits.maxFileCount) throw new Error(`ZIP 文件数量超过 ${limits.maxFileCount} 个上限`);
   if (zipSafeInteger(directoryOffset + directorySize) !== directoryEnd || fileCount > directorySize / 46) throw invalidZip();
@@ -144,6 +151,7 @@ export async function openZipBlob(archive, limitsValue = {}) {
       const onProgress = typeof options.onProgress === "function" ? options.onProgress : () => undefined;
       const files = new Map();
       let extractedBytes = 0;
+      const totalBytes = targets.reduce((sum, record) => sum + record.size, 0);
       for (let index = 0; index < targets.length; index += 1) {
         options.signal?.throwIfAborted();
         const record = targets[index];
@@ -151,11 +159,15 @@ export async function openZipBlob(archive, limitsValue = {}) {
         const compressed = archive.slice(dataOffset, dataEnd);
         let data;
         let actualChecksum;
+        const onBytes = bytes => options.onReadProgress?.({
+          completed: index, total: targets.length, name: record.name,
+          extractedBytes: extractedBytes + bytes, totalBytes
+        });
         if (record.method === STORE_METHOD) {
           data = compressed.slice(0, compressed.size, mimeTypeForPath(record.name));
-          actualChecksum = await crc32Blob(data, options.signal);
+          actualChecksum = await crc32Blob(data, options.signal, onBytes);
         } else {
-          const inflated = await inflateRaw(compressed, record.size, record.name, options.signal);
+          const inflated = await inflateRaw(compressed, record.size, record.name, options.signal, onBytes);
           data = inflated.blob.slice(0, inflated.blob.size, mimeTypeForPath(record.name));
           actualChecksum = inflated.checksum;
         }
@@ -205,7 +217,7 @@ async function resolveLocalRecord(archive, record, directoryOffset) {
   return { dataOffset, dataEnd };
 }
 
-async function inflateRaw(compressedBlob, expectedSize, name, signal) {
+async function inflateRaw(compressedBlob, expectedSize, name, signal, onBytes) {
   if (typeof DecompressionStream !== "function") throw new Error("当前浏览器不支持读取压缩 ZIP");
   let total = 0;
   let checksum = 0xffffffff;
@@ -218,6 +230,7 @@ async function inflateRaw(compressedBlob, expectedSize, name, signal) {
           total += value.byteLength;
           if (total > expectedSize) throw new Error(`ZIP 解压内容超过声明大小：${name}`);
           checksum = crc32Update(checksum, value);
+          onBytes?.(total);
           controller.enqueue(value);
         }
       }), { signal });
@@ -237,15 +250,18 @@ function dataView(bytes) {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
-async function crc32Blob(blob, signal) {
+async function crc32Blob(blob, signal, onBytes) {
   const reader = blob.stream().getReader();
   let checksum = 0xffffffff;
+  let total = 0;
   try {
     while (true) {
       signal?.throwIfAborted();
       const { done, value } = await reader.read();
       if (done) break;
       checksum = crc32Update(checksum, value);
+      total += value.byteLength;
+      onBytes?.(total);
     }
   } finally {
     reader.releaseLock();
@@ -331,7 +347,16 @@ function mimeTypeForPath(path) {
 
 function crc32Update(initial, bytes) {
   let checksum = initial;
-  for (let index = 0; index < bytes.length; index += 1) {
+  let index = 0;
+  // Eight-byte slicing computes the same ZIP CRC with fewer dependent lookups.
+  for (; index + 8 <= bytes.length; index += 8) {
+    const word = checksum ^ (bytes[index] | bytes[index + 1] << 8 | bytes[index + 2] << 16 | bytes[index + 3] << 24);
+    checksum = CRC_SLICES[7][word & 255] ^ CRC_SLICES[6][word >>> 8 & 255]
+      ^ CRC_SLICES[5][word >>> 16 & 255] ^ CRC_SLICES[4][word >>> 24]
+      ^ CRC_SLICES[3][bytes[index + 4]] ^ CRC_SLICES[2][bytes[index + 5]]
+      ^ CRC_SLICES[1][bytes[index + 6]] ^ CRC_SLICES[0][bytes[index + 7]];
+  }
+  for (; index < bytes.length; index += 1) {
     checksum = CRC_TABLE[(checksum ^ bytes[index]) & 0xff] ^ (checksum >>> 8);
   }
   return checksum >>> 0;
@@ -348,4 +373,9 @@ for (let index = 0; index < CRC_TABLE.length; index += 1) {
     value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
   }
   CRC_TABLE[index] = value >>> 0;
+}
+
+const CRC_SLICES = [CRC_TABLE];
+for (let slice = 1; slice < 8; slice += 1) {
+  CRC_SLICES.push(CRC_SLICES[slice - 1].map(value => CRC_TABLE[value & 255] ^ (value >>> 8)));
 }

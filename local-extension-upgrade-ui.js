@@ -1,6 +1,7 @@
 import { showAppDialog } from "./ui-dialogs.js";
 import { t } from "./i18n.js";
-import { blobDigest, installLocalUpgrade, localReleasePackageUrl, localUpgradeRecord, prepareLocalUpgrade, RECOVERY_DIRECTORY, verifyRecoveredUpgrade, verifyRunningUpgrade } from "./local-extension-upgrade.js";
+import { blobDigest, cleanupLocalUpgrade, installLocalUpgrade, localInstallationDirectory, localReleasePackageUrl, localUpgradeRecord, prepareLocalUpgrade, RECOVERY_DIRECTORY, verifyRecoveredUpgrade, verifyRunningUpgrade, withLocalUpgradeLock } from "./local-extension-upgrade.js";
+import { resolveLocalInstallationDirectory } from "./local-installation-directory.js";
 
 let active = false;
 
@@ -11,10 +12,11 @@ export async function openLocalUpgrade(status, archive = null) {
   try {
     const pending = await localUpgradeRecord();
     if (pending) {
-      if (pending.phase !== "preparing" && !await verifyRunningUpgrade(pending, chrome.runtime)) throw new Error(t("上次升级尚未完成，请先处理升级恢复提示"));
+      const recovered = pending.phase !== "preparing" && await verifyRecoveredUpgrade(pending, chrome.runtime);
+      if (pending.phase !== "preparing" && !recovered && !await verifyRunningUpgrade(pending, chrome.runtime)) throw new Error(t("上次升级尚未完成，请先处理升级恢复提示"));
       const cleared = await showAppDialog({
         title: "清理上次程序恢复副本",
-        description: pending.phase === "preparing" ? "上次准备更新中断，原插件未更改。清理临时程序副本后继续。" : "已确认上次升级成功。允许清理程序恢复副本后继续；不会删除案例。",
+        description: recovered ? "原版本可用，清理上次更新记录后继续；案例保持不变。" : pending.phase === "preparing" ? "上次准备更新中断，原插件未更改。清理临时程序副本后继续。" : "已确认上次升级成功。允许清理程序恢复副本后继续；不会删除案例。",
         confirmLabel: "允许并继续",
         onSubmit: finishLocalUpgrade
       });
@@ -45,10 +47,13 @@ export async function openLocalUpgrade(status, archive = null) {
     });
     if (!ready) return;
     let writing = false;
+    let savedDirectory = await localInstallationDirectory();
     await showAppDialog({
       title: t("升级到 {version}", { version: prepared.manifest.version }),
-      description: "请选择 Chrome 当前加载的插件文件夹。无需卸载、备份或导入案例。",
-      confirmLabel: "选择安装文件夹并升级",
+      description: savedDirectory
+        ? t("更新到原安装位置：{folder}。案例保留，文件夹名称不影响版本。", { folder: savedDirectory.name })
+        : "选择 Chrome 当前加载的插件文件夹，以后复用此位置。文件夹名称不影响版本。",
+      confirmLabel: savedDirectory ? "继续升级" : "选择安装文件夹并升级",
       pendingLabel: "正在核对安装目录…",
       dismissOnBackdrop: false,
       onReady: ({ dialog }) => {
@@ -58,14 +63,17 @@ export async function openLocalUpgrade(status, archive = null) {
       },
       onSubmit: async (_values, controls) => {
         let root;
-        try { root = await window.showDirectoryPicker({ mode: "readwrite" }); }
-        catch (error) { if (error.name === "AbortError") return false; throw error; }
+        try { root = await resolveLocalInstallationDirectory(savedDirectory); }
+        catch (error) {
+          savedDirectory = await localInstallationDirectory();
+          if (error.name === "AbortError") return false;
+          throw error;
+        }
         writing = true;
         const beforeUnload = event => { event.preventDefault(); event.returnValue = ""; };
         window.addEventListener("beforeunload", beforeUnload);
         try {
-          await navigator.locks.request("promptdirector-extension-upgrade", { ifAvailable: true }, async lock => {
-            if (!lock) throw new Error(t("另一个页面正在升级，请等待完成"));
+          await withLocalUpgradeLock(async () => {
             await installLocalUpgrade(root, prepared, {
               runtime: chrome.runtime,
               saveRecord: localUpgradeRecord,
@@ -93,21 +101,18 @@ export async function runningUpgradeFeedback() {
   if (!record) return { message: "", cleanupRequired: false };
   if (record.phase === "preparing") return { message: t("上次准备更新中断，原插件未更改。清理临时程序副本后继续。"), cleanupRequired: true };
   if (await verifyRecoveredUpgrade(record, chrome.runtime)) {
-    // The recovery folder may now be the active installation. Never delete it here.
-    await localUpgradeRecord(null);
-    return { message: t("已恢复原版本，案例与媒体仍在原资料库"), cleanupRequired: false };
+    return { message: t("已恢复原版本，案例与媒体仍在原资料库"), cleanupRequired: true };
   }
   if (!await verifyRunningUpgrade(record, chrome.runtime)) {
     return { message: t("上次升级未完成。请在 Chrome 扩展管理中加载安装目录内的 {folder}，恢复原版本；无需卸载或导入案例。", { folder: RECOVERY_DIRECTORY }), cleanupRequired: false };
   }
   let cleanupRequired = true;
+  await localInstallationDirectory(record.root);
   if (await record.root.queryPermission({ mode: "readwrite" }) === "granted") {
     try {
-      await record.root.removeEntry(RECOVERY_DIRECTORY, { recursive: true });
-      await localUpgradeRecord(null);
-      cleanupRequired = false;
+      cleanupRequired = !await clearLocalUpgradeRecord(record);
     } catch (error) {
-      console.warn("Upgrade verified; program recovery cleanup pending", error);
+      if (error?.code !== "UPGRADE_BUSY") console.warn("Upgrade verified; program recovery cleanup pending", error);
     }
   }
   return { message: t("已升级到 {version}", { version: record.targetVersion }), cleanupRequired };
@@ -117,11 +122,17 @@ export async function finishLocalUpgrade() {
   const record = await localUpgradeRecord();
   if (!record) return true;
   if (await record.root.requestPermission({ mode: "readwrite" }) !== "granted") return false;
-  if (record.phase !== "preparing" && !await verifyRunningUpgrade(record, chrome.runtime)) {
-    throw new Error(t("上次升级尚未完成，请先处理升级恢复提示"));
-  }
-  try { await record.root.removeEntry(RECOVERY_DIRECTORY, { recursive: true }); }
-  catch (error) { if (error.name !== "NotFoundError") throw error; }
-  await localUpgradeRecord(null);
-  return true;
+  return clearLocalUpgradeRecord(record);
+}
+
+async function clearLocalUpgradeRecord(record) {
+  return withLocalUpgradeLock(async () => {
+    const current = await localUpgradeRecord();
+    if (!current) return true;
+    if (current.targetVersion !== record.targetVersion || current.phase !== record.phase) return false;
+    if (!await cleanupLocalUpgrade(current, { runtime: chrome.runtime })) return false;
+    await localInstallationDirectory(current.root);
+    await localUpgradeRecord(null);
+    return true;
+  });
 }

@@ -24,6 +24,9 @@ export const REQUIRED_DATA_CONTINUITY_SCRIPTS = [
   "historical_zip_salvage_e2e.py",
   "folder_picker_activation_e2e.py",
   "library_zip_scale_e2e.py",
+  "library_import_resources_e2e.py",
+  "library_import_interruption_e2e.py",
+  "project_tree_e2e.py",
   "library_image_formats_e2e.py",
   "manual_sync_e2e.py"
 ];

@@ -223,3 +223,41 @@ function deflatedZipWithDeclaredSize({ name, data, declaredSize }) {
 
   return new Blob([local, nameBytes, compressed, central, nameBytes, end], { type: "application/zip" });
 }
+
+test("ZIP64 written before the ZIP32 boundary remains importable across tools", async () => {
+  const { readFile } = await import("node:fs/promises");
+  // Python zipfile emits a ZIP64 trailer even when ordinary end fields still fit.
+  const archive = new Blob([await readFile(new URL("fixtures/zip/optional-zip64.zip", import.meta.url))]);
+  const files = await readZipBlob(archive);
+  assert.equal(await files.get("library.json").text(), '{"fixture":"optional ZIP64, not user data"}');
+});
+
+test('optional ZIP64 rejects conflicting directory fields and accepts the maximum ZIP comment', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const bytes = new Uint8Array(await readFile(new URL('fixtures/zip/optional-zip64.zip', import.meta.url)));
+  const bad = bytes.slice();
+  const view = new DataView(bad.buffer);
+  view.setUint16(bad.length - 22 + 10, 2, true);
+  view.setUint16(bad.length - 22 + 8, 2, true);
+  await assert.rejects(readZipBlob(new Blob([bad])), /ZIP/);
+  const commented = bytes.slice();
+  new DataView(commented.buffer).setUint16(commented.length - 2, 0xffff, true);
+  const files = await readZipBlob(new Blob([commented,new Uint8Array(0xffff)]));
+  assert.equal(files.size,1);
+});
+
+test('accelerated ZIP CRC matches independent bytewise CRC across odd lengths and stream chunks', async () => {
+  const bytes = new Uint8Array(65539);
+  for(let i=0;i<bytes.length;i++) bytes[i]=(i*17+(i>>>8))&255;
+  for(const length of [1,7,8,9,15,16,17,65535,65539]) {
+    const source = bytes.subarray(0,length);
+    let crc = 0xffffffff;
+    for(const byte of source) {
+      crc ^= byte;
+      for(let bit=0;bit<8;bit++) crc=(crc>>>1)^((crc&1)?0xedb88320:0);
+    }
+    const archive = await createZipBlob([{name:'attachment.psd',data:source}]);
+    const header = new DataView(await archive.slice(0,30).arrayBuffer());
+    assert.equal(header.getUint32(14,true),(crc^0xffffffff)>>>0);
+  }
+});

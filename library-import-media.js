@@ -1,15 +1,20 @@
-export async function findInvalidImportedImageIds(images, validateImage) {
+export async function findInvalidImportedImageIds(images, validateImage, { signal, onProgress } = {}) {
   if (!(images instanceof Map) || typeof validateImage !== "function") {
     throw new Error("图片校验输入无效");
   }
   const invalidIds = new Set();
+  let completed = 0;
   for (const [assetId, blob] of images) {
+    signal?.throwIfAborted();
     if (!(blob instanceof Blob) || !clean(assetId)) throw new Error("图片校验输入无效");
     try {
       await validateImage(blob);
     } catch {
+      signal?.throwIfAborted();
       invalidIds.add(assetId);
     }
+    signal?.throwIfAborted();
+    onProgress?.({ completed: ++completed, total: images.size });
   }
   return invalidIds;
 }

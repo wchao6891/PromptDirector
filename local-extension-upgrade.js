@@ -9,7 +9,7 @@ export function isExtensionProgramPath(path) {
   return /^(?:[^/]+\.(?:js|css|html)|manifest\.json|LICENSE|NOTICE|THIRD_PARTY_NOTICES\.md)$/u.test(path)
     || /^assets\/(?:ui-icons\.svg|icons\/(?:icon-source\.svg|icon-(?:16|32|48|128)\.png))$/u.test(path)
     || /^_locales\/[^/]+\/messages\.json$/u.test(path)
-    || /^vendor\/(?:pdfjs|document-ingestion)\/.+/u.test(path);
+    || /^vendor\/(?:pdfjs|document-ingestion|noble-hashes)\/.+/u.test(path);
 }
 
 export async function extensionIdForKey(key) {
@@ -82,32 +82,50 @@ async function* programFiles(root, prefix = "") {
   for await (const [name, handle] of root.entries()) {
     const path = prefix + name;
     if (handle.kind === "file" && isExtensionProgramPath(path)) yield [path, await handle.getFile()];
-    if (handle.kind === "directory" && ["assets", "assets/icons", "_locales", "vendor", "vendor/pdfjs", "vendor/document-ingestion"].some(base => path === base || path.startsWith(base + "/"))) {
+    if (handle.kind === "directory" && ["assets", "assets/icons", "_locales", "vendor", "vendor/pdfjs", "vendor/document-ingestion", "vendor/noble-hashes"].some(base => path === base || path.startsWith(base + "/"))) {
       yield* programFiles(handle, path + "/");
     }
   }
 }
 
 export async function verifyInstallationDirectory(root, runtime, fetchFn = fetch) {
-  try {
-    await root.getDirectoryHandle(".git");
-    throw new Error("这是源码工作目录，请通过项目更新代码，避免覆盖尚未发布的修改");
-  } catch (error) { if (error.name !== "NotFoundError") throw error; }
+  for await (const [name] of root.entries()) {
+    if (name === ".git") throw new Error("这是源码工作目录，请通过项目更新代码，避免覆盖尚未发布的修改");
+  }
   const disk = await readFile(root, "manifest.json");
   if (!disk) throw new Error("所选文件夹不是插件安装目录");
   const manifest = JSON.parse(await disk.text());
   if (manifest.version !== runtime.getManifest().version || await extensionIdForKey(manifest.key) !== runtime.id) {
     throw new Error("所选目录与正在运行的插件不一致");
   }
+  if (!await isRunningDirectory(root, runtime, fetchFn)) {
+    throw new Error("请选择 Chrome 当前实际加载的安装目录，不能选择另一份解压副本");
+  }
+}
+
+async function isRunningDirectory(root, runtime, fetchFn) {
   const name = `promptdirector-directory-check-${crypto.randomUUID()}.txt`;
   const token = crypto.randomUUID();
   try {
     await writeFile(root, name, new Blob([token]));
     const response = await fetchFn(runtime.getURL(name), { cache: "no-store" });
-    if (!response.ok || await response.text() !== token) throw new Error("请选择 Chrome 当前实际加载的安装目录，不能选择另一份解压副本");
+    return response.ok && await response.text() === token;
   } finally {
     await root.removeEntry(name).catch(error => { if (error.name !== "NotFoundError") throw error; });
   }
+}
+
+export async function cleanupLocalUpgrade(record, { runtime, fetchFn = fetch }) {
+  if (record.phase !== "preparing" && !await verifyRunningUpgrade(record, runtime, fetchFn)
+    && !await verifyRecoveredUpgrade(record, runtime, fetchFn)) {
+    throw new Error("上次升级尚未完成，请先处理升级恢复提示");
+  }
+  // The recovery copy can itself be the active install. Only remove it when the
+  // original directory is proven active; otherwise leave all its files intact.
+  if (!await isRunningDirectory(record.root, runtime, fetchFn)) return false;
+  try { await record.root.removeEntry(RECOVERY_DIRECTORY, { recursive: true }); }
+  catch (error) { if (error.name !== "NotFoundError") throw error; }
+  return true;
 }
 
 export async function installLocalUpgrade(root, prepared, { runtime, fetchFn = fetch, saveRecord, onProgress = () => undefined }) {
@@ -167,6 +185,14 @@ export async function installLocalUpgrade(root, prepared, { runtime, fetchFn = f
 }
 
 export async function localUpgradeRecord(value = undefined) {
+  return updaterState(RECORD_KEY, value);
+}
+
+export async function localInstallationDirectory(value = undefined) {
+  return updaterState("installation-directory", value);
+}
+
+async function updaterState(key, value) {
   const db = await new Promise((resolve, reject) => {
     const request = indexedDB.open("promptdirector-extension-updater", 1);
     request.onupgradeneeded = () => request.result.createObjectStore("state");
@@ -177,7 +203,7 @@ export async function localUpgradeRecord(value = undefined) {
     return await new Promise((resolve, reject) => {
       const transaction = db.transaction("state", value === undefined ? "readonly" : "readwrite");
       const store = transaction.objectStore("state");
-      const request = value === undefined ? store.get(RECORD_KEY) : value === null ? store.delete(RECORD_KEY) : store.put(value, RECORD_KEY);
+      const request = value === undefined ? store.get(key) : value === null ? store.delete(key) : store.put(value, key);
       transaction.oncomplete = () => resolve(request.result);
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error || new Error("无法记录升级进度"));
@@ -197,4 +223,11 @@ export async function verifyRunningUpgrade(record, runtime, fetchFn = fetch) {
 export async function verifyRecoveredUpgrade(record, runtime, fetchFn = fetch) {
   if (!record.oldHashes || !Object.keys(record.oldHashes).length) return false;
   return verifyRunningUpgrade({ targetVersion: record.previousVersion, hashes: record.oldHashes }, runtime, fetchFn);
+}
+
+export async function withLocalUpgradeLock(task) {
+  return navigator.locks.request("promptdirector-extension-upgrade", { ifAvailable: true }, async lock => {
+    if (!lock) throw Object.assign(new Error("另一个页面正在升级，请等待完成"), { code: "UPGRADE_BUSY" });
+    return task();
+  });
 }
