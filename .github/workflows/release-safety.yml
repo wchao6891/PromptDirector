@@ -53,6 +53,14 @@ jobs:
       - name: Install the pinned Chromium test runtime
         run: |
           python -m pip install playwright==1.58.0
+          # Playwright supplies Chromium; the runner's unrelated Chrome APT mirror
+          # can publish inconsistent indexes and is not needed for OS dependencies.
+          sudo python - <<'PYTHON'
+          from pathlib import Path
+          for source in Path('/etc/apt/sources.list.d').iterdir():
+              if source.suffix in ('.list', '.sources') and 'dl.google.com/linux/chrome' in source.read_text():
+                  source.rename(source.with_suffix(source.suffix + '.disabled'))
+          PYTHON
           python -m playwright install --with-deps chromium
       - run: npm run test:local-extension
       - run: npm run package:release

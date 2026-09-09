@@ -108,6 +108,7 @@ def exercise_settings(page, viewport: dict) -> None:
             viewport, f"advanced-tab:{tab}", internal_anchor, current
         )
     page.locator('[data-analysis-kind="composer"]').click()
+    settle(page)
     scrolled_to = active_panel.evaluate(
         "panel => { panel.scrollTop = Math.min(120, panel.scrollHeight - panel.clientHeight); return panel.scrollTop; }"
     )
@@ -115,7 +116,10 @@ def exercise_settings(page, viewport: dict) -> None:
     page.locator('[data-settings-tab="tasks"]').click()
     page.locator('[data-settings-tab="rules"]').click()
     settle(page)
-    assert abs(active_panel.evaluate("panel => panel.scrollTop") - scrolled_to) <= MAX_ANCHOR_SHIFT_PX
+    restored = active_panel.evaluate("panel => panel.scrollTop")
+    assert abs(restored - scrolled_to) <= MAX_ANCHOR_SHIFT_PX, {
+        "expected": scrolled_to, "actual": restored, "viewport": viewport,
+    }
 
     expect(page.locator("#settings-close")).to_be_visible()
     page.locator("#settings-close").click()
