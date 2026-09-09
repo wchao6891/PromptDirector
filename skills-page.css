@@ -254,3 +254,39 @@ body:not([data-skill-view="list"]) .skills-main { padding-top: 20px; }
   .skills-top-actions { gap: 6px; }
   .skills-top-actions > button { padding-inline: 9px; }
 }
+
+/* Source selection and the goal form share the workspace; detail view is unchanged. */
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) { display: block; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) > .skill-builder-content { display: grid; grid-template-columns: minmax(0, 1fr) 340px; align-items: start; gap: 16px; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-source-step { grid-column: 1; grid-row: 1; min-width: 0; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-target-step { grid-column: 2; grid-row: 1; position: sticky; top: 80px; min-width: 0; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) :is(#skill-draft-step, #skill-versions-step, #skill-run-evidence-step) { grid-column: 1 / -1; }
+#skill-source-step #skill-source-sidebar { position: static; display: grid; grid-template-columns: auto minmax(0, 1fr) 36px; align-items: center; gap: 8px; margin: 12px 0; padding: 0; border: 0; background: transparent; }
+#skill-source-step #skill-source-sidebar > label { min-width: 0; }
+#skill-source-step #skill-case-search { min-width: 0; width: 100%; }
+#skill-source-step #skill-project-picker { margin: 0; }
+#skill-source-step #skill-project-picker > summary { white-space: nowrap; }
+#skill-source-step #skill-clear-selection { width: 36px; min-width: 36px; min-height: 36px; padding: 0; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-case-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-case-scroll { max-height: calc(100dvh - 340px); min-height: 260px; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-goal { min-height: 150px; line-height: 1.7; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) .skill-section-heading { align-items: center; flex-wrap: wrap; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) .skill-section-heading small { display: none; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) .skill-vision-toggle { border: 0; padding: 10px 0; background: transparent; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) .skill-advanced { border: 0; background: transparent; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) .skill-step-actions { justify-content: flex-start; flex-wrap: wrap; }
+.skill-builder:is([data-mode="create"], [data-mode="refine"]) .skill-step-actions button { white-space: nowrap; }
+@media (max-width: 900px) {
+  .skill-builder:is([data-mode="create"], [data-mode="refine"]) > .skill-builder-content { grid-template-columns: minmax(0, 1fr) 300px; }
+}
+@media (max-width: 700px) {
+  .skill-builder:is([data-mode="create"], [data-mode="refine"]) > .skill-builder-content { display: flex; flex-direction: column; }
+  .skill-builder:is([data-mode="create"], [data-mode="refine"]) > .skill-builder-content > section { width: 100%; }
+  .skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-target-step { position: static; }
+  #skill-source-step #skill-source-sidebar { grid-template-columns: minmax(0, 1fr) 36px; }
+  #skill-source-step #skill-source-sidebar > div { grid-column: 1 / -1; }
+  .skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-case-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .skill-builder:is([data-mode="create"], [data-mode="refine"]) #skill-case-scroll { max-height: 330px; }
+}
+.skills-page:is([data-skill-view="create"], [data-skill-view="refine"]) .skills-topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.skills-page:is([data-skill-view="create"], [data-skill-view="refine"]) .skills-top-actions { margin: 0; flex-wrap: wrap; }

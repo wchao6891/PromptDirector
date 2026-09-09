@@ -24,6 +24,11 @@ export const PAGE_CAPTURE_ADAPTERS = Object.freeze([
   }, ["higgsfield.ai", "higgs.ai", "d2ol7oe51mr4n9.cloudfront.net", "du4zrvwy3vtek.cloudfront.net", "d8j0ntlcm91z4.cloudfront.net"]),
   adapter("krea", "Krea", ["krea.ai"], "verified-declarative", ["a[href^='/feed/']", "[data-testid*=generation]", "[class*=gallery] > *"], {}, ["krea.ai"]),
   adapter("tapnow", "TapNow", ["tapnow.ai"], "generic", ["[data-testid*=work]", "[class*=gallery] > *"]),
+  adapter("lovart", "Lovart", ["lovart.ai"], "generic", GENERIC_CARD_SELECTORS),
+  adapter("midjourney", "Midjourney", ["midjourney.com"], "generic", GENERIC_CARD_SELECTORS),
+  adapter("civitai", "Civitai", ["civitai.com"], "generic", GENERIC_CARD_SELECTORS),
+  adapter("runway", "Runway", ["runwayml.com"], "generic", GENERIC_CARD_SELECTORS),
+  adapter("kling", "可灵", ["klingai.com", "klingai.kuaishou.com"], "generic", GENERIC_CARD_SELECTORS),
 
   adapter("pinterest", "Pinterest", ["pinterest.com", "pin.it"], "verified-deep", ["[data-test-id=pin]", "[data-grid-item]"], {}, ["i.pinimg.com"]),
   adapter("behance", "Behance", ["behance.net"], "verified-declarative", ["[data-project-id]", "main article"], {}, ["mir-s3-cdn-cf.behance.net"]),
@@ -47,6 +52,9 @@ export const PAGE_CAPTURE_ADAPTERS = Object.freeze([
   }),
   adapter("imgur", "Imgur", ["imgur.com"], "generic", ["main article", "[class*=Gallery-Content]"]),
   adapter("weibo", "微博", ["weibo.com", "weibo.cn"], "generic", ["article", "[class*=Feed_wrap]"]),
+  adapter("xiaohongshu", "小红书", ["xiaohongshu.com", "xhslink.com"], "generic", GENERIC_CARD_SELECTORS),
+  adapter("tiktok", "TikTok", ["tiktok.com"], "generic", GENERIC_CARD_SELECTORS),
+  adapter("douyin", "抖音", ["douyin.com", "iesdouyin.com"], "generic", GENERIC_CARD_SELECTORS),
   adapter("jike", "即刻", ["okjike.com"], "generic", ["main article", "[data-testid*=post]"]),
   adapter("qzone", "QQ 空间相册", ["qzone.qq.com", "photo.qq.com"], "generic", ["main article", "[class*=photo]"]),
   adapter("douban", "豆瓣相册", ["douban.com"], "generic", ["main article", ".photo_wrap", ".photolst li"]),
@@ -130,8 +138,8 @@ function platformAdapter(id, label, signalPatterns) {
 }
 
 function defaultPageType(id) {
-  if (["youtube", "bilibili"].includes(id)) return "video";
-  if (["x", "reddit", "instagram", "weibo", "jike"].includes(id)) return "post";
+  if (["youtube", "bilibili", "tiktok", "douyin"].includes(id)) return "video";
+  if (["x", "reddit", "instagram", "weibo", "jike", "xiaohongshu"].includes(id)) return "post";
   if (["wechat", "medium", "architectural-digest", "house-beautiful", "officesnapshots", "archdaily", "archdaily-cn", "dezeen", "interior-design"].includes(id)) return "article";
   return "artwork";
 }

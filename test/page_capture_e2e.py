@@ -204,12 +204,16 @@ def main() -> None:
         expect(collector.locator("#page-capture-save-summary")).to_contain_text("6 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         collector.locator("#page-capture-save").click()
-        # A media failure must remain reviewable and retryable, with the real reason.
-        expect(collector.locator("#page-capture-help")).to_contain_text("有效视频文件", timeout=8000)
+        # A committed case leaves the draft; its exact media failure remains in the case.
+        expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)
         partial_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
         assert len(partial_saved) == 1, partial_saved
         original_entry_id = partial_saved[0]['id']
+        assert any('有效视频文件' in warning for warning in partial_saved[0]['sourceFacts']['captureWarnings']), partial_saved
         video_available = True
+        fixture.bring_to_front()
+        collector.locator('#start-page-capture').click()
+        collector.locator('.page-capture-confirm').first.click()
         collector.locator("#page-capture-save").click()
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)
         expect(fixture.locator("#promptdirector-page-capture-region-preview")).to_have_count(0)

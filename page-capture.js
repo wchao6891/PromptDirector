@@ -14,7 +14,7 @@ export function detectPageCaptureAdapter(value, adapters = PAGE_CAPTURE_ADAPTERS
 
 export function pageCaptureDefaultMediaIds(candidateValue = {}) {
   return (normalizePageCaptureCandidate(candidateValue)?.media || [])
-    .filter((item) => !item.quotedPostUrl && (item.placement === "inline" || item.isCover))
+    .filter((item) => !item.isQuoted && !item.quotedPostUrl && (item.placement === "inline" || item.isCover))
     .map((item) => item.id);
 }
 
@@ -26,6 +26,7 @@ export function resolvePageCapturePageType({
   metadataType = ""
 } = {}) {
   if (adapterPageType === "post") return "post";
+  if (structuredTypes.some((type) => ["Article", "NewsArticle", "BlogPosting"].includes(type))) return "article";
   if (structuredTypes.includes("VideoObject") || ["youtube", "bilibili"].includes(adapterPageType)) return "video";
   if (structuredTypes.some((type) => ["Article", "NewsArticle", "BlogPosting"].includes(type)) || articleTextLength > 500) return "article";
   if (cardCount > 1) return metadataType === "website" ? "gallery" : "feed";
@@ -271,6 +272,13 @@ export function applyPageCaptureSelections(batchValue = {}) {
       selectedTextBlockIds,
       selectedMediaIds
     });
+    const sourceFacts = { ...candidate.sourceFacts };
+    if (!selection.includeText) sourceFacts.originalPromptAvailable = false;
+    else if (!selectedAllText && sourceFacts.originalPromptAvailable === true) {
+      const knownPrompts = candidate.media.map(item => item.originalPrompt).filter(Boolean);
+      if (knownPrompts.length) sourceFacts.originalPromptAvailable = knownPrompts.some(prompt => selectedText.includes(prompt));
+      else delete sourceFacts.originalPromptAvailable;
+    }
     return [{
       ...candidate,
       contentHtml: selection.includeText
@@ -280,7 +288,12 @@ export function applyPageCaptureSelections(batchValue = {}) {
       excerpt: selection.includeText
         ? selectedAllText ? candidate.excerpt : selectedTextBlocks[0]?.text || ""
         : "",
-      media: candidate.media.filter((item) => selectedMediaIds.has(item.id)),
+      media: candidate.media.filter((item) => selectedMediaIds.has(item.id)).map(item => {
+        const { originalPrompt, ...media } = item;
+        return originalPrompt && selection.includeText && (selectedAllText || selectedText.includes(originalPrompt))
+          ? { ...media, originalPrompt } : media;
+      }),
+      sourceFacts,
       articleDocument
     }];
   });
@@ -475,7 +488,7 @@ function prepareCreativeSections(blocks, context) {
   };
 
   for (const block of sourceBlocks) {
-    if (block.text === context.title || block.text === context.sourceFacts.author) continue;
+    if (block.relevance !== "explicit-creative" && (block.text === context.title || block.text === context.sourceFacts.author)) continue;
     if (block.kind === "noise") {
       flush();
       omitted.push({ ...block, reason: "page-chrome" });
@@ -546,7 +559,7 @@ export function pageCapturePermissionOrigins(candidates = []) {
   for (const candidate of candidates) {
     for (const media of normalizePageCaptureCandidate(candidate)?.media || []) {
       if (media.localAssetId || media.kind === "document" && !isSupportedDocumentMimeType(media.mimeType)) continue;
-      for (const value of [media.posterUrl, ...pageCaptureMediaFetchCandidates(media)]) {
+      for (const value of [media.posterUrl, media.streamUrl, ...pageCaptureMediaFetchCandidates(media)]) {
         try {
           const url = new URL(value);
           if (["http:", "https:"].includes(url.protocol)) origins.add(`${url.origin}/*`);
@@ -953,6 +966,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
   function detectPageType({ adapter, metadata, structured, article, cardCount }) {
     const types = structured.flatMap((item) => Array.isArray(item["@type"]) ? item["@type"] : [item["@type"]]).filter(Boolean);
     if (adapter.pageType === "post") return "post";
+    if (types.some((type) => ["Article", "NewsArticle", "BlogPosting"].includes(type))) return "article";
     if (types.includes("VideoObject") || ["youtube", "bilibili"].includes(adapter.id)) return "video";
     if (types.some((type) => ["Article", "NewsArticle", "BlogPosting"].includes(type)) || (article?.length || 0) > 500) return "article";
     if (cardCount > 1) return metadata.type === "website" ? "gallery" : "feed";
@@ -1083,7 +1097,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         }]
       : null;
     const textBlocks = post?.textBlocks || pageSelection?.textBlocks || structuredTextBlocks || collectTextBlocks(root, contentHtml, text);
-    const siteMedia = Array.isArray(siteData?.media) ? siteData.media : [];
+    const siteMedia = [...(Array.isArray(siteData?.media) ? siteData.media : []), ...collectStructuredMedia(structured)];
     const domMedia = post?.media || (pageSelection || root.isConnected === false ? [] : collectMedia(root, context.maxMedia));
     const pairedDomIds = new Set();
     const pairedSiteMedia = siteMedia.map((item) => {
@@ -1102,16 +1116,15 @@ export async function collectPageCaptureSnapshot(options = {}) {
     });
     let media = mergeCollectedMedia([
       ...pairedSiteMedia,
-      ...collectStructuredMedia(structured),
       ...domMedia.filter((item) => !pairedDomIds.has(item.id))
     ], context.maxMedia);
     const article = collectArticleDocument(root, contentHtml, textBlocks, media, context.maxMedia);
     if (capturePost) {
-      for (const item of media.filter(item => item.postPhotoUrl)) {
-        item.quotedPostUrl = sameUrl(item.postPhotoUrl, canonicalUrl) ? "" : item.postPhotoUrl;
-        item.originalWorkUrl = item.postPhotoUrl;
+      for (const item of media.filter(item => item.postMediaUrl)) {
+        item.quotedPostUrl = sameUrl(item.postMediaUrl, canonicalUrl) ? "" : item.postMediaUrl;
+        item.originalWorkUrl = item.postMediaUrl;
         if (!article.blocks.some(block => block.assetId === item.id)) article.blocks.push({
-          id: `article:photo:${item.id}`, kind: "image", assetId: item.id, sourceUrl: item.url,
+          id: `article:media:${item.id}`, kind: item.kind, assetId: item.id, sourceUrl: item.url,
           sourceOrder: article.blocks.length
         });
       }
@@ -1155,6 +1168,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       excerpt: cleanText(context.article?.excerpt || context.metadata.description),
       media,
       sourceFacts: {
+        ...(typeof siteData?.sourceFacts?.originalPromptAvailable === "boolean" ? { originalPromptAvailable: siteData.sourceFacts.originalPromptAvailable } : {}),
+        ...(siteData?.sourceFacts?.description ? { description: cleanBlockText(siteData.sourceFacts.description) } : {}),
         provider: cleanText(siteData?.sourceFacts?.provider) || (context.adapter.id === "generic" ? location.hostname : context.adapter.id),
         pageType,
         itemId,
@@ -1625,6 +1640,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
   function isVideoUrl(value) {
     try {
       const url = new URL(value);
+      if (url.hostname === "www.tiktok.com" && /^\/player\/v1\/\d+\/?$/u.test(url.pathname)) return true;
       if (["x.com", "twitter.com"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return /^\/[^/]+\/status\/\d+\/video\/\d+\/?$/u.test(url.pathname);
       return /\.(?:mp4|webm|mov)(?:$|[?#])/iu.test(url.pathname) || ["youtube.com", "youtu.be", "vimeo.com", "bilibili.com", "douyin.com"].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
     } catch {
@@ -1653,6 +1669,20 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function collectStructuredMedia(value) {
     const images = [];
+    const types = Array.isArray(value?.["@type"]) ? value["@type"] : [value?.["@type"]];
+    const videos = (types.includes("VideoObject") ? [value]
+      : Array.isArray(value?.video) ? value.video : value?.video ? [value.video] : []).flatMap(item => {
+      const source = safeHttpUrl(item?.contentUrl);
+      const embed = safeHttpUrl(item?.embedUrl);
+      const url = source || (embed && isVideoUrl(embed) ? embed : "");
+      if (!url) return [];
+      const posterUrl = safeHttpUrl(Array.isArray(item.thumbnailUrl) ? item.thumbnailUrl[0] : item.thumbnailUrl);
+      return [{ id: `structured-video:${hashText(url)}`, kind: "video", url, posterUrl,
+        width: Number(item.width?.value || item.width) || 0,
+        height: Number(item.height?.value || item.height) || 0,
+        sourceKind: source ? "site-original" : "structured", captureMethod: "source",
+        ...(/\.m3u8(?:\?|$)/iu.test(source) ? { streamUrl: source } : {}) }];
+    });
     const addImage = (candidate) => {
       const item = typeof candidate === "string" ? { url: candidate } : candidate || {};
       const url = safeHttpUrl(item.contentUrl || item.url || item["@id"]);
@@ -1670,9 +1700,11 @@ export async function collectPageCaptureSnapshot(options = {}) {
         variants: [{ url, width, height, sourceKind: "structured" }]
       });
     };
+    if (types.includes("ImageObject") && value.contentUrl) addImage(value);
     for (const image of Array.isArray(value?.image) ? value.image : value?.image ? [value.image] : []) addImage(image);
-    if (!images.length && value?.thumbnailUrl) addImage(value.thumbnailUrl);
-    return images;
+    if (!images.length && !videos.length && value?.thumbnailUrl) addImage(Array.isArray(value.thumbnailUrl) ? value.thumbnailUrl[0] : value.thumbnailUrl);
+    const posters = new Set(videos.map(item => item.posterUrl).filter(Boolean));
+    return [...images.filter(item => !posters.has(item.url)), ...videos];
   }
 
   function readBlockText(node) {
@@ -1784,7 +1816,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         kind,
         url,
         posterUrl,
-        postPhotoUrl: xPostPhotoUrl(element),
+        postMediaUrl: xPostMediaUrl(element), isQuoted: Boolean(xQuoteContainer(element)),
         alt: cleanText(element.alt),
         width: imageSource?.declaredWidth || (responsiveCandidate ? 0 : Number(element.naturalWidth || element.videoWidth || element.width) || 0),
         height: responsiveCandidate ? 0 : Number(element.naturalHeight || element.videoHeight || element.height) || 0,
@@ -1805,7 +1837,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         const url = safeHttpUrl(match?.[1]);
         const rect = element.getBoundingClientRect();
         if (!url || sameUrl(url, location.href) || rect.width < 48 || rect.height < 48) continue;
-        media.push({ id: `background:${hashText(url)}`, kind: "image", url, postPhotoUrl: xPostPhotoUrl(element), posterUrl: "", alt: "", width: element.clientWidth, height: element.clientHeight, captureMethod: "css-background", sourceKind: "css-background", variants: [{ url, sourceKind: "css-background", width: element.clientWidth, height: element.clientHeight }] });
+        media.push({ id: `background:${hashText(url)}`, kind: "image", url, postMediaUrl: xPostMediaUrl(element), isQuoted: Boolean(xQuoteContainer(element)), posterUrl: "", alt: "", width: element.clientWidth, height: element.clientHeight, captureMethod: "css-background", sourceKind: "css-background", variants: [{ url, sourceKind: "css-background", width: element.clientWidth, height: element.clientHeight }] });
         if (media.length >= limit) break;
       }
     }
@@ -1956,8 +1988,12 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const url = safeHttpUrl(element.src);
     if (!url) return false;
     try {
-      const host = new URL(url).hostname.toLocaleLowerCase("en-US");
-      return ["youtube.com", "youtube-nocookie.com", "youtu.be", "player.vimeo.com", "player.bilibili.com", "douyin.com", "open.douyin.com", "platform.twitter.com"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+      const parsed = new URL(url);
+      const host = parsed.hostname.toLocaleLowerCase("en-US");
+      if (parsed.protocol === "https:" && (options.videoFrameRules || []).some(rule =>
+        host === rule.host && parsed.pathname.startsWith(rule.pathPrefix) && parsed.pathname.endsWith(rule.pathSuffix))) return true;
+      if (host === "www.tiktok.com") return /^\/player\/v1\/\d+\/?$/u.test(new URL(element.src).pathname);
+      return ["youtube.com", "youtube-nocookie.com", "youtu.be", "player.vimeo.com", "player.bilibili.com", "douyin.com", "open.douyin.com"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
     } catch {
       return false;
     }
@@ -2016,6 +2052,24 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return candidates;
   }
 
+  function xQuoteContainer(element) {
+    if (!["x.com", "twitter.com"].includes(location.hostname) || !element.closest('article[data-testid="tweet"]')) return null;
+    return element.closest('[data-testid="quoteTweet"], [role="link"][tabindex="0"]');
+  }
+
+  function xPostMediaUrl(element) {
+    const photoUrl = xPostPhotoUrl(element);
+    if (photoUrl) return photoUrl;
+    if (!["x.com", "twitter.com"].includes(location.hostname) || !element.matches("video")) return "";
+    const post = element.closest('article[data-testid="tweet"]');
+    if (!post) return "";
+    const quote = xQuoteContainer(element);
+    const link = quote
+      ? [...quote.querySelectorAll('a[href*="/status/"]')].find(node => node.querySelector("time"))
+      : ownPostLinks(post)[0];
+    return safeHttpUrl(link?.href);
+  }
+
   function xPostPhotoUrl(element) {
     if (!["x.com", "twitter.com"].includes(location.hostname) || !element.closest('article[data-testid="tweet"]')) return "";
     const link = element.closest('a[href*="/photo/"]');
@@ -2026,6 +2080,14 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function isExcludedMedia(element) {
+    if (options.siteData?.adapter === "krea" && options.siteData?.pageKind === "detail") {
+      const link = element.closest?.("a[href]");
+      try {
+        const url = new URL(link?.href);
+        if ((url.hostname === "krea.ai" || url.hostname.endsWith(".krea.ai"))
+          && url.pathname.startsWith("/feed/") && url.pathname !== new URL(options.siteData.canonicalUrl).pathname) return true;
+      } catch { /* This media is not a link to another Krea work. */ }
+    }
     const postPhoto = Boolean(xPostPhotoUrl(element));
     if (!postPhoto && element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
     const rect = element.getBoundingClientRect();
@@ -2123,15 +2185,18 @@ function uniqueMedia(values) {
       placement: value?.placement === "inline" ? "inline" : "unplaced",
       ...(localAssetId ? { localAssetId } : {}),
       ...(value?.contentHash ? { contentHash: clean(value.contentHash) } : {}),
+      ...(value?.isQuoted === true ? { isQuoted: true } : {}),
       ...(safeUrl(value?.quotedPostUrl) ? { quotedPostUrl: safeUrl(value.quotedPostUrl) } : {}),
       ...(value?.isCover === true && kind === "image" ? { isCover: true } : {}),
       url,
       posterUrl,
+      ...(safeUrl(value.streamUrl) ? { streamUrl: safeUrl(value.streamUrl) } : {}),
       ...(dataUrl ? { dataUrl } : {}),
       ...(previewDataUrl ? { previewDataUrl } : {}),
       ...(normalizeFallbackRect(value?.fallbackRect) ? { fallbackRect: normalizeFallbackRect(value.fallbackRect) } : {}),
       variants,
       alt: clean(value.alt),
+      ...(clean(value.originalPrompt) ? { originalPrompt: normalizeText(value.originalPrompt) } : {}),
       filename: clean(value.filename),
       mimeType: clean(value.mimeType).toLocaleLowerCase("en-US"),
       ...(["document", "attachment"].includes(kind) && /^data:(?:text\/[a-z0-9.+-]+|application\/(?:pdf|rtf|zip|gzip|x-gzip|octet-stream))(?:;charset=[a-z0-9-]+)?;base64,[a-z0-9+/=]+$/i.test(value.downloadDataUrl || "")
@@ -2164,6 +2229,7 @@ function uniqueMedia(values) {
         previewDataUrl: existing.previewDataUrl || item.previewDataUrl,
         fallbackRect: existing.fallbackRect || item.fallbackRect,
         alt: existing.alt || item.alt,
+        ...((existing.originalPrompt || item.originalPrompt) ? { originalPrompt: existing.originalPrompt || item.originalPrompt } : {}),
         placement: existing.placement === "inline" || item.placement === "inline" ? "inline" : "unplaced"
       };
       indexById.set(id, existingIndex);
@@ -2230,7 +2296,7 @@ function normalizeMediaVariants(value = {}) {
 
 function normalizeMediaSourceKind(value) {
   const sourceKind = clean(value);
-  return ["site-original", "structured", "picture-srcset", "deferred-srcset", "deferred-src", "img-srcset", "css-background", "current", "source"].includes(sourceKind)
+  return ["site-original", "video-element", "structured", "picture-srcset", "deferred-srcset", "deferred-src", "img-srcset", "css-background", "current", "source"].includes(sourceKind)
     ? sourceKind
     : "source";
 }

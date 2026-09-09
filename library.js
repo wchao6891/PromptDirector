@@ -153,7 +153,8 @@ import {
   officialMediaEmbedUrl,
   resolveMediaReference
 } from "./media-reference-resolver.js";
-import { ensureYouTubePlaybackPermission, youtubePlaybackError } from "./media-playback.js";
+import { attachRemoteVideo } from "./remote-video-player.js";
+import { localVideoController, ensureYouTubePlaybackPermission, youtubePlaybackError, tiktokMediaController, EMBED_PLAYER_RESPONSE_TIMEOUT_MS } from "./media-playback.js";
 import { createPdfPreview, createPdfViewer, extractPdfSearchText } from "./document-viewer.js";
 import { markdownPlainText, renderMarkdownDocument } from "./markdown-renderer.js";
 import {
@@ -216,7 +217,7 @@ bindTransientMenus(document, ".package-menu, .project-menu, .detail-project-menu
 const libraryWindowId = (await chrome.windows.getCurrent()).id;
 
 const elements = Object.fromEntries([
-  "about-version", "add-folder", "add-media", "add-video-reference", "ai-settings-form", "ai-settings-status", "ai-routing-summary", "ai-provider-list", "ai-assignment-list", "open-ai-routing", "analysis-instructions-en", "analysis-instructions-zh", "analysis-protocol", "apply-reanalyze", "case-list", "project-folder-list", "cancel-library-maintenance",
+  "about-version", "add-folder", "add-media", "add-video-reference", "settings-rules-panel", "ai-settings-form", "ai-settings-status", "ai-routing-summary", "ai-provider-list", "ai-assignment-list", "open-ai-routing", "analysis-instructions-en", "analysis-instructions-zh", "analysis-protocol", "apply-reanalyze", "case-list", "project-folder-list", "cancel-library-maintenance",
   "content-filters", "content-type-count", "content-type-name", "content-type-replacement", "content-type-replacement-field", "content-type-role", "content-type-role-help",
   "content-type-list", "content-type-editor", "content-type-editor-title", "content-type-delete-transfer", "content-type-delete-message",
   "add-content-type", "cancel-content-type-edit", "cancel-delete-content-type", "confirm-delete-content-type", "save-content-type",
@@ -232,7 +233,7 @@ const elements = Object.fromEntries([
   "new-node-name", "new-node-parent", "pending-count", "pending-filter",
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
-  "share-dialog", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
+  "share-dialog", "share-dialog-public", "share-dialog-public-panel", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
   "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
   "project-section", "project-root-drop", "collapse-projects", "project-search", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
@@ -300,6 +301,10 @@ let importJobsState = { items: [] };
 let aiSettings = { configured: false, consent: false, analysisModel: "deepseek-v4-flash" };
 let visionSettings = normalizeVisionSettings();
 let aiServiceProfiles = { gemini: { configured: false, model: "" }, xai: { configured: false, textModel: "", imageModel: "", videoModel: "" } };
+const ruleEditorDrafts = new Map();
+const ruleEditorBaselines = new Map();
+const settingsPanelScroll = new Map();
+
 let aiProviderRegistry = { version: 1, providers: {} };
 let aiTaskAssignments = {};
 let aiPreferences = { videoInstructionsByLocale: DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE };
@@ -543,7 +548,7 @@ function renderAnalysisBatch() {
       : t(preview.mode === "rebuild" ? "没有可重建的文字案例。" : "没有需要分析的案例：现有文字均已分析且原文未变化。");
   } else if (!job) {
     elements.batchStatusBadge.textContent = t("尚未开始");
-    elements.analysisBatchSummary.textContent = t("先生成预览，不会直接产生 API 请求。");
+    elements.analysisBatchSummary.textContent = "";
   } else {
     const statusNames = { running: "分析中", paused: "已暂停", completed: unfinishedRebuild ? "重建待完成" : partialRebuildApplied ? "成功结果已应用" : "已完成", partial: "有失败项", failed: "分析失败", canceled: "上次已取消" };
     elements.batchStatusBadge.textContent = t(statusNames[job.status] || job.status);
@@ -657,6 +662,7 @@ function bindEvents() {
     if (dataSafetyOperationActive) event.preventDefault();
   });
   settingsTabs.forEach((button) => button.addEventListener("click", () => {
+    settingsPanelScroll.set(activeSettingsTab, document.querySelector(`[data-settings-panel="${activeSettingsTab}"]`)?.scrollTop || 0);
     activeSettingsTab = button.dataset.settingsTab || "general";
     renderSettingsPanels({ resetActiveScroll: true });
   }));
@@ -763,6 +769,12 @@ function bindEvents() {
   elements.shareDialog.addEventListener("click", (event) => {
     if (event.target === elements.shareDialog) closeShareDialog();
   });
+  elements.shareDialogPublic.addEventListener("click", () => {
+    const expanded = elements.shareDialogPublicPanel.hidden;
+    elements.shareDialogPublicPanel.hidden = !expanded;
+    elements.shareDialogPublic.setAttribute("aria-expanded", String(expanded));
+    if (expanded) elements.shareDialogDisclosure.focus();
+  });
   elements.shareDialogDisclosure.addEventListener("change", () => {
     elements.shareDialogSubmit.disabled = !elements.shareDialogDisclosure.checked;
   });
@@ -812,6 +824,14 @@ function bindEvents() {
     activeManagerTab = button.dataset.managerTab;
     renderManager();
   }));
+  elements.settingsRulesPanel.addEventListener("input", (event) => {
+    const editor = event.target;
+    const key = editor.dataset.ruleDraftKey;
+    if (!key) return;
+    if (editor.value === ruleEditorBaselines.get(key)) ruleEditorDrafts.delete(key);
+    else ruleEditorDrafts.set(key, editor.value);
+    renderRuleDraftStatus();
+  });
   analysisKindTabs.forEach((button) => button.addEventListener("click", () => {
     preserveSettingsAnchor(button.closest(".analysis-kind-tabs"), () => {
       activeAnalysisKind = button.dataset.analysisKind;
@@ -890,6 +910,7 @@ function bindEvents() {
   elements.restoreAnalysisDefault.addEventListener("click", () => {
     const target = activeAnalysisLocale === "en" ? elements.analysisInstructionsEn : elements.analysisInstructionsZh;
     target.value = DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE[activeAnalysisLocale];
+    target.dispatchEvent(new Event("input", { bubbles: true }));
     target.focus();
     showFeedback(t("已恢复编辑框默认内容，点击保存后生效"));
   });
@@ -897,6 +918,7 @@ function bindEvents() {
   elements.restoreVisionDefault.addEventListener("click", () => {
     const target = activeAnalysisLocale === "en" ? elements.visionInstructionsEn : elements.visionInstructionsZh;
     target.value = DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE[activeAnalysisLocale];
+    target.dispatchEvent(new Event("input", { bubbles: true }));
     target.focus();
     showFeedback(t("已恢复编辑框默认内容，点击保存后生效"));
   });
@@ -904,6 +926,7 @@ function bindEvents() {
   elements.restoreVideoDefault.addEventListener("click", () => {
     const target = activeAnalysisLocale === "en" ? elements.videoInstructionsEn : elements.videoInstructionsZh;
     target.value = DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE[activeAnalysisLocale];
+    target.dispatchEvent(new Event("input", { bubbles: true }));
     target.focus();
     showFeedback(t("已恢复编辑框默认内容，点击保存后生效"));
   });
@@ -2648,6 +2671,8 @@ function openShareDialog({ entryIds = [], collectionId = "", title = "", count =
   submissionDownloadIds = [];
   elements.shareDialogTitle.textContent = title || t("分享案例");
   elements.shareDialogMeta.textContent = t("{count} 个案例", { count: selectedCount });
+  elements.shareDialogPublicPanel.hidden = true;
+  elements.shareDialogPublic.setAttribute("aria-expanded", "false");
   elements.shareDialogDisclosure.checked = false;
   elements.shareDialogSubmit.disabled = true;
   elements.shareDialogExport.disabled = true;
@@ -2792,6 +2817,7 @@ async function submitFromShareDialog() {
       : t("投稿包已生成");
     elements.shareDialogResult.hidden = false;
     elements.shareDialogOptions.hidden = true;
+    elements.shareDialogPublicPanel.hidden = true;
   } catch (error) {
     showFeedback(error.message || t("无法生成精选投稿包"), true);
     elements.shareDialogSubmit.disabled = false;
@@ -3149,7 +3175,11 @@ function openSettingsDialog(tab = "general", analysisKind = activeAnalysisKind) 
 function renderSettingsPanels({ resetActiveScroll = false } = {}) {
   settingsTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.settingsTab === activeSettingsTab)));
   settingsPanels.forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== activeSettingsTab; });
-  if (resetActiveScroll) resetActiveSettingsPanelScroll();
+  if (resetActiveScroll) {
+    resetActiveSettingsPanelScroll();
+    const panel = document.querySelector(`[data-settings-panel="${activeSettingsTab}"]`);
+    if (panel) panel.scrollTop = settingsPanelScroll.get(activeSettingsTab) || 0;
+  }
   if (activeSettingsTab === "ai") renderAiRoutingSummary();
   if (activeSettingsTab === "rules") renderAnalysisSettings();
   if (activeSettingsTab === "tasks") renderBatchManager();
@@ -6327,6 +6357,28 @@ async function createReferencedMediaViewer(asset, entry) {
   const url = asset.reference?.url || asset.sourceUrl;
   const provider = asset.reference?.provider || "generic";
   const providerLabel = mediaReferenceProviderLabel(provider);
+  if (asset.reference?.playbackUrl || asset.reference?.streamUrl) {
+    const wrap = el("div", "detail-video-wrap referenced-video-stream");
+    const video = document.createElement("video");
+    video.className = "detail-video";
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    const poster = posterAssetForVideo(entry, asset);
+    const blob = poster ? await getMediaBlob(poster.id) : null;
+    if (blob) video.poster = rememberDetailBlobUrl(blob);
+    const status = textEl("p", "media-playback-status", "播放器正在加载…");
+    const source = textEl("a", "button-secondary media-reference-fallback", "打开来源");
+    source.href = url;
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    wrap.append(video, status, source);
+    wrap.mediaController = await attachRemoteVideo(video, asset.reference, (message, failed) => {
+      status.textContent = t(message);
+      status.classList.toggle("error", failed);
+    });
+    return wrap;
+  }
   const embedUrl = officialMediaEmbedUrl(url, provider);
   if (provider === "youtube" && embedUrl && !await ensureYouTubePlaybackPermission(chrome, { request: false })) {
     return createPlaybackFallback(entry, asset, {
@@ -6359,7 +6411,12 @@ async function createReferencedMediaViewer(asset, entry) {
       ? vimeoMediaController(frame)
       : provider === "youtube"
         ? youtubeMediaController(frame, status, asset.id)
-        : basicEmbedController(frame, status, providerLabel);
+        : provider === "tiktok"
+          ? tiktokMediaController(frame, (message, failed) => {
+            status.textContent = t(message);
+            status.classList.toggle("error", failed);
+          })
+          : basicEmbedController(frame, status, providerLabel);
     const source = textEl("a", "button-secondary media-reference-fallback", "打开来源");
     source.href = provider === "youtube" ? youtubeWatchUrl(url) : url;
     source.target = "_blank";
@@ -6370,29 +6427,26 @@ async function createReferencedMediaViewer(asset, entry) {
     wrap.mediaController = controller;
     return wrap;
   }
-  return createPlaybackFallback(entry, asset, { providerLabel, reason: "此来源没有可验证的官方内嵌播放器" });
+  return createPlaybackFallback(entry, asset, { providerLabel, reason: "暂未取得可在案例库播放的视频" });
 }
 
 async function createPlaybackFallback(entry, asset, { providerLabel, reason, actionLabel = "", onAction = null }) {
   const url = asset.reference?.url || asset.sourceUrl;
-  const card = el("div", "platform-link-card platform-playback-fallback");
+  const card = el("div", "detail-video-wrap platform-playback-fallback");
+  const stage = el("div", "detail-video unavailable-video-stage");
+  stage.setAttribute("role", "img");
+  stage.setAttribute("aria-label", t("视频暂不可播放"));
   const poster = posterAssetForVideo(entry, asset);
   const posterBlob = poster ? await getMediaBlob(poster.id) : null;
   if (posterBlob) {
     const image = document.createElement("img");
     image.src = rememberDetailBlobUrl(posterBlob);
     image.alt = `${entry.title || providerLabel} 封面`;
-    card.append(image);
+    stage.append(image);
   }
-  card.classList.toggle("has-poster", Boolean(posterBlob));
-  if (!posterBlob) card.append(createUiIcon("video"));
-  const label = el("span", "platform-link-label");
-  label.append(
-    textEl("small", "", providerLabel.toLocaleUpperCase("en-US")),
-    rawTextEl("strong", "", entry.title || asset.sourceTitle || `${providerLabel} 视频`),
-    rawTextEl("span", "", t(reason))
-  );
-  const actions = el("span", "platform-link-actions");
+  if (!posterBlob) stage.append(createUiIcon("video"));
+  const status = rawTextEl("p", "media-playback-status", t(reason));
+  const actions = el("div", "media-playback-actions");
   if (actionLabel && onAction) {
     const action = textEl("button", "", actionLabel);
     action.addEventListener("click", () => onAction(action));
@@ -6406,8 +6460,7 @@ async function createPlaybackFallback(entry, asset, { providerLabel, reason, act
     open.rel = "noopener noreferrer";
     actions.append(open);
   }
-  label.append(actions);
-  card.append(label);
+  card.append(stage, status, actions);
   return card;
 }
 
@@ -6417,7 +6470,7 @@ function youtubeMediaController(frame, status, playerId) {
   const origin = "https://www.youtube-nocookie.com";
   const timeoutId = setTimeout(() => {
     if (!ready) status.textContent = t("播放器响应超时，可重试或打开来源");
-  }, 8000);
+  }, EMBED_PLAYER_RESPONSE_TIMEOUT_MS);
   const onMessage = (event) => {
     if (event.origin !== origin || event.source !== frame.contentWindow) return;
     const payload = typeof event.data === "string" ? safeJson(event.data) : event.data;
@@ -6456,7 +6509,7 @@ function youtubeMediaController(frame, status, playerId) {
 function basicEmbedController(frame, status, providerLabel) {
   let timeoutId = setTimeout(() => {
     status.textContent = t("{provider} 播放器响应超时，可打开来源", { provider: providerLabel });
-  }, 8000);
+  }, EMBED_PLAYER_RESPONSE_TIMEOUT_MS);
   const loaded = () => {
     clearTimeout(timeoutId);
     timeoutId = null;
@@ -6594,16 +6647,6 @@ async function saveVideoKeyframe(button, video, entry, asset, text) {
   }
 }
 
-function localVideoController(video) {
-  return {
-    video,
-    getCurrentTimeMs: async () => Math.max(0, Math.round(video.currentTime * 1000)),
-    seekToMs: async (value) => {
-      video.currentTime = Math.max(0, Number(value) || 0) / 1000;
-      await video.play().catch(() => undefined);
-    }
-  };
-}
 
 function vimeoMediaController(frame) {
   const pending = new Map();
@@ -8930,19 +8973,41 @@ function renderBatchManager() {
   );
 }
 
+function renderRuleEditor(editor, savedValue, key = editor.id) {
+  editor.dataset.ruleDraftKey = key;
+  ruleEditorBaselines.set(key, savedValue);
+  editor.value = ruleEditorDrafts.has(key) ? ruleEditorDrafts.get(key) : savedValue;
+}
+
+function forgetSavedRuleDraft(key, submittedValue) {
+  if (ruleEditorDrafts.get(key) === submittedValue) ruleEditorDrafts.delete(key);
+}
+
+function renderRuleDraftStatus() {
+  const groups = [
+    [elements.aiSettingsStatus, ["analysis-instructions-zh", "analysis-instructions-en"]],
+    [elements.visionSettingsStatus, ["vision-instructions-zh", "vision-instructions-en"]],
+    [elements.videoSettingsStatus, ["video-instructions-zh", "video-instructions-en"]],
+    [document.getElementById("composer-agent-save-state"), ["composer-agent-instruction"]],
+    [document.getElementById("composer-task-save-state"), [`composer-task-method:${elements.composerTaskKey.value}`]]
+  ];
+  for (const [status, keys] of groups) {
+    const dirty = keys.some((key) => ruleEditorDrafts.has(key));
+    status.textContent = t(dirty ? "未保存" : "已保存");
+    status.dataset.dirty = String(dirty);
+  }
+}
+
 function renderAnalysisSettings() {
   analysisKindTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.analysisKind === activeAnalysisKind)));
   analysisKindPanels.forEach((panel) => { panel.hidden = panel.dataset.analysisKindPanel !== activeAnalysisKind; });
   elements.showAnalysisDiagnostics.checked = uiPreferences.analysisDiagnostics;
-  elements.analysisInstructionsZh.value = aiSettings.analysisInstructionsByLocale?.["zh-CN"] || DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE["zh-CN"];
-  elements.analysisInstructionsEn.value = aiSettings.analysisInstructionsByLocale?.en || DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE.en;
-  elements.aiSettingsStatus.textContent = t("规则保存在本机，只在对应任务运行时使用。");
-  elements.visionInstructionsZh.value = visionSettings.instructionsByLocale?.["zh-CN"] || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE["zh-CN"];
-  elements.visionInstructionsEn.value = visionSettings.instructionsByLocale?.en || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE.en;
-  elements.visionSettingsStatus.textContent = t("规则保存在本机，只在对应任务运行时使用。");
-  elements.videoInstructionsZh.value = aiPreferences.videoInstructionsByLocale?.["zh-CN"] || DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE["zh-CN"];
-  elements.videoInstructionsEn.value = aiPreferences.videoInstructionsByLocale?.en || DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE.en;
-  elements.videoSettingsStatus.textContent = t("规则保存在本机，只在对应任务运行时使用。");
+  renderRuleEditor(elements.analysisInstructionsZh, aiSettings.analysisInstructionsByLocale?.["zh-CN"] || DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE["zh-CN"]);
+  renderRuleEditor(elements.analysisInstructionsEn, aiSettings.analysisInstructionsByLocale?.en || DEFAULT_ANALYSIS_INSTRUCTIONS_BY_LOCALE.en);
+  renderRuleEditor(elements.visionInstructionsZh, visionSettings.instructionsByLocale?.["zh-CN"] || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE["zh-CN"]);
+  renderRuleEditor(elements.visionInstructionsEn, visionSettings.instructionsByLocale?.en || DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE.en);
+  renderRuleEditor(elements.videoInstructionsZh, aiPreferences.videoInstructionsByLocale?.["zh-CN"] || DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE["zh-CN"]);
+  renderRuleEditor(elements.videoInstructionsEn, aiPreferences.videoInstructionsByLocale?.en || DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE.en);
   elements.videoProtocol.textContent = t("一次有效结果返回提示词、AI 标签和不确定项；必要时自动补救，每轮最多 {requests} 次请求，其中格式纠正最多 {corrections} 次。超时、停止或状态未知不自动重发。", {
     requests: ANALYSIS_RETRY_POLICY.maxProviderCallsPerItem,
     corrections: ANALYSIS_RETRY_POLICY.outputCorrectionRequests
@@ -8950,6 +9015,7 @@ function renderAnalysisSettings() {
   renderComposerMethodSettings();
   renderAnalysisLocale();
   renderAiRoutingSummary();
+  renderRuleDraftStatus();
 }
 
 function renderAiRoutingSummary() {
@@ -8959,29 +9025,49 @@ function renderAiRoutingSummary() {
   elements.aiRoutingSummary.textContent = connected.length
     ? t("已连接 {count} 个服务；文字、图片、视频与生成任务各自明确分配，不会静默切换。", { count: connected.length })
     : t("尚未连接 AI 服务；本地资料整理仍可使用。");
+  const moreProviders = document.createElement("details");
+  moreProviders.className = "ai-more-providers";
+  moreProviders.open = elements.aiProviderList?.querySelector(".ai-more-providers")?.open || false;
+  moreProviders.append(textEl("summary", "", "连接其他服务"));
   const categoryLabels = { official: "官方服务", aggregator: "聚合平台", custom: "自定义兼容服务" };
   const providerGroups = Object.entries(categoryLabels).flatMap(([category, label]) => {
     const members = profiles.filter((profile) => profile.category === category);
     if (!members.length) return [];
     const group = el("section", "ai-provider-group");
     group.dataset.providerCategory = category;
-    group.append(rawTextEl("h5", "", t(label)), ...members.map((profile) => {
+    group.setAttribute("aria-label", t(label));
+    group.append(...members.map((profile) => {
         const row = el("div", "ai-provider-row");
         row.dataset.providerId = profile.id;
         const status = `${providerConnectionLabel(profile)} · ${providerCatalogLabel(profile)}`;
-        const configure = textEl("button", "button-secondary", profile.credentialConfigured ? "编辑配置" : "配置");
+        const configure = document.createElement("button");
+        configure.className = "icon-button";
+        configure.title = `${t(profile.credentialConfigured ? "编辑配置" : "配置")} · ${providerDisplayLabel(profile)}`;
+        configure.setAttribute("aria-label", configure.title);
+        configure.append(createUiIcon(profile.credentialConfigured ? "pencil" : "plus"));
         configure.type = "button";
         configure.addEventListener("click", () => openAiProviderDialog(profile.id));
-        const refresh = textEl("button", "button-secondary", "刷新模型");
+        const refresh = document.createElement("button");
+        refresh.className = "icon-button";
+        refresh.title = `${t("刷新模型")} · ${providerDisplayLabel(profile)}`;
+        refresh.setAttribute("aria-label", refresh.title);
+        refresh.append(createUiIcon("refresh-cw"));
+        refresh.hidden = !profile.credentialConfigured;
         refresh.type = "button";
         refresh.disabled = !profile.credentialConfigured;
         refresh.addEventListener("click", () => refreshAiProviderModels(profile.id, refresh));
-        row.append(rawTextEl("strong", "", providerDisplayLabel(profile)), textEl("span", "", status), configure, refresh);
+        const actions = el("div", "ai-provider-actions");
+        actions.append(configure, refresh);
+        row.append(rawTextEl("strong", "", providerDisplayLabel(profile)), rawTextEl("span", "", status), actions);
         return row;
       }));
-    return [group];
+    for (const row of [...group.children]) {
+      const profile = aiProviderRegistry.providers[row.dataset.providerId];
+      if (!profile.credentialConfigured && !profile.discovery?.error) moreProviders.append(row);
+    }
+    return group.childElementCount ? [group] : [];
   });
-  elements.aiProviderList?.replaceChildren(...providerGroups);
+  elements.aiProviderList?.replaceChildren(...providerGroups, ...(moreProviders.childElementCount > 1 ? [moreProviders] : []));
   elements.aiAssignmentList?.replaceChildren(...AI_ASSIGNMENT_TASKS.map((task) => {
     const assignment = aiTaskAssignments[task.id] ?? {};
     const profile = aiProviderRegistry.providers?.[assignment.providerId];
@@ -9000,12 +9086,14 @@ function renderAiRoutingSummary() {
             : modelUnavailable
               ? `${providerDisplayLabel(profile)} · ${assignment.model} · ${t("已分配但模型不可用")}`
               : `${providerDisplayLabel(profile)} · ${assignment.model}`;
-    const change = textEl("button", "button-secondary", assignment.providerId ? "更换" : "配置");
+    const change = el("button", "button-secondary ai-model-choice");
+    change.title = `${t(task.label)} · ${routeState}`;
+    change.setAttribute("aria-label", `${t(task.label)} · ${t(assignment.providerId ? "更换" : "配置")} · ${routeState}`);
+    change.append(rawTextEl("span", "", routeState), createUiIcon("chevron-down"));
     change.type = "button";
     change.addEventListener("click", () => openAiTaskAssignmentDialog(task.id));
     row.append(
       rawTextEl("strong", "", t(task.label)),
-      rawTextEl("span", "", routeState),
       change
     );
     return row;
@@ -9686,8 +9774,8 @@ function renderComposerMethodSettings() {
   const taskKey = elements.composerTaskKey.value;
   const normalized = normalizeComposerSettings(composerSettings);
   elements.composerMethodVersion.textContent = `v${normalized.methodVersion}`;
-  elements.composerAgentInstruction.value = normalized.agentInstruction.text;
-  elements.composerTaskMethod.value = normalized.taskMethods[taskKey].text;
+  renderRuleEditor(elements.composerAgentInstruction, normalized.agentInstruction.text);
+  renderRuleEditor(elements.composerTaskMethod, normalized.taskMethods[taskKey].text, `composer-task-method:${taskKey}`);
   elements.creativeExperimentEnabled.checked = Boolean(creativeExperimentSettings.enabled);
   elements.creativeExperimentAutoAnalyze.checked = Boolean(creativeExperimentSettings.autoAnalyze);
   elements.creativeExperimentAutoAnalyze.disabled = !creativeExperimentSettings.enabled;
@@ -9697,6 +9785,7 @@ function renderComposerMethodSettings() {
       : t("已开启；可在结果卡手动发起视觉对照。")
     : t("默认关闭。普通结果关联不会调用任何模型。");
   renderComposerMethodStatus();
+  renderRuleDraftStatus();
 }
 
 function renderComposerMethodStatus() {
@@ -9704,17 +9793,15 @@ function renderComposerMethodStatus() {
   const taskKey = elements.composerTaskKey.value;
   const normalized = normalizeComposerSettings(composerSettings);
   elements.composerMethodDefaultText.textContent = DEFAULT_TASK_METHODS[taskKey];
-  const selected = normalized.taskMethods[taskKey];
   elements.composerMethodMigration.textContent = normalized.migrationCandidates[taskKey]?.length > 1
     ? t("这个任务仍有两个历史语言版本；当前会按输出语言继续使用，保存上方单一方法后完成合并。")
     : "";
-  elements.composerSettingsStatus.textContent = [
-    normalized.agentInstruction.customized ? t("系统指令已自定义") : t("系统指令使用当前默认版本"),
-    selected.customized ? t("当前任务方法已自定义") : t("当前任务方法使用当前默认版本")
-  ].join(" · ");
+  elements.composerSettingsStatus.textContent = "";
 }
 
 async function saveComposerMethodSettings(event) {
+  const submittedEditorValue = elements.composerTaskMethod.value;
+  const submittedEditorKey = elements.composerTaskMethod.dataset.ruleDraftKey;
   event.preventDefault();
   const button = event.submitter ?? elements.composerSettingsForm.querySelector('button[type="submit"]');
   button.disabled = true;
@@ -9722,6 +9809,7 @@ async function saveComposerMethodSettings(event) {
     const taskKey = elements.composerTaskKey.value;
     const response = await chrome.runtime.sendMessage({ type: "UPDATE_COMPOSER_SETTINGS", action: "save_task", taskKey, text: elements.composerTaskMethod.value });
     if (!response?.ok) throw new Error(response?.message || "无法保存创作方法");
+    forgetSavedRuleDraft(submittedEditorKey, submittedEditorValue);
     composerSettings = normalizeComposerSettings(response.composerSettings);
     renderComposerMethodSettings();
     showFeedback(response.message);
@@ -9733,27 +9821,36 @@ async function saveComposerMethodSettings(event) {
 }
 
 async function saveComposerAgentInstruction() {
+  const submittedEditorValue = elements.composerAgentInstruction.value;
+  const submittedEditorKey = elements.composerAgentInstruction.dataset.ruleDraftKey;
   const response = await chrome.runtime.sendMessage({ type: "UPDATE_COMPOSER_SETTINGS", action: "save_agent", text: elements.composerAgentInstruction.value });
   if (!response?.ok) return showFeedback(response?.message || "无法保存 Agent 系统指令", true);
+  forgetSavedRuleDraft(submittedEditorKey, submittedEditorValue);
   composerSettings = normalizeComposerSettings(response.composerSettings);
   renderComposerMethodSettings();
   showFeedback(response.message);
 }
 
 async function restoreComposerAgentInstruction() {
+  const submittedEditorValue = elements.composerAgentInstruction.value;
+  const submittedEditorKey = elements.composerAgentInstruction.dataset.ruleDraftKey;
   if (composerSettings.agentInstruction.customized && !await confirmAppAction({ title: "恢复默认系统指令？", description: "当前自定义内容会被替换。", confirmLabel: "恢复默认" })) return;
   const response = await chrome.runtime.sendMessage({ type: "UPDATE_COMPOSER_SETTINGS", action: "reset_agent" });
   if (!response?.ok) return showFeedback(response?.message || "无法恢复默认系统指令", true);
+  forgetSavedRuleDraft(submittedEditorKey, submittedEditorValue);
   composerSettings = normalizeComposerSettings(response.composerSettings);
   renderComposerMethodSettings();
   showFeedback(response.message);
 }
 
 async function restoreComposerTaskDefault() {
+  const submittedEditorValue = elements.composerTaskMethod.value;
+  const submittedEditorKey = elements.composerTaskMethod.dataset.ruleDraftKey;
   const taskKey = elements.composerTaskKey.value;
   if (composerSettings.taskMethods[taskKey].customized && !await confirmAppAction({ title: "恢复默认任务方法？", description: "当前自定义内容会被替换。", confirmLabel: "恢复默认" })) return;
   const response = await chrome.runtime.sendMessage({ type: "UPDATE_COMPOSER_SETTINGS", action: "reset_task", taskKey });
   if (!response?.ok) return showFeedback(response?.message || "无法恢复默认方法", true);
+  forgetSavedRuleDraft(submittedEditorKey, submittedEditorValue);
   composerSettings = normalizeComposerSettings(response.composerSettings);
   renderComposerMethodSettings();
   showFeedback(response.message);
@@ -9785,6 +9882,9 @@ async function saveAiRulePreferences(event) {
   event.preventDefault();
   const button = event.submitter ?? event.currentTarget.querySelector("button[type='submit']");
   button.disabled = true;
+  const submitted = [...document.querySelectorAll("#settings-rules-panel textarea[data-rule-draft-key]")]
+    .filter((editor) => !editor.id.startsWith("composer-"))
+    .map((editor) => [editor.dataset.ruleDraftKey, editor.value]);
   try {
     const response = await chrome.runtime.sendMessage({
       type: "UPDATE_AI_PROVIDER_CONFIGURATION",
@@ -9805,6 +9905,7 @@ async function saveAiRulePreferences(event) {
       }
     });
     if (!response?.ok) throw new Error(response?.message || t("分析规则保存失败"));
+    for (const [key, value] of submitted) forgetSavedRuleDraft(key, value);
     applyAiConfigurationResponse(response);
     const message = t("分析规则已保存");
     elements.aiSettingsStatus.textContent = message;

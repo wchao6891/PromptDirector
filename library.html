@@ -166,10 +166,10 @@
       <div class="data-safety-body share-dialog-body">
         <p id="share-dialog-meta" class="share-dialog-meta"></p>
         <div id="share-dialog-options" class="share-dialog-options">
-          <button id="share-dialog-export" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-download"></use></svg><span data-i18n="导出分享包">导出分享包</span></button>
-          <button id="share-dialog-submit" type="button" disabled><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-upload"></use></svg><span data-i18n="投稿到精选">投稿到精选</span></button>
+          <button id="share-dialog-export" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-download"></use></svg><span data-i18n="下载分享包">下载分享包</span></button>
+          <button id="share-dialog-public" class="button-secondary" type="button" aria-expanded="false" aria-controls="share-dialog-public-panel"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-upload"></use></svg><span data-i18n="公开投稿">公开投稿</span></button>
         </div>
-        <label class="share-dialog-disclosure"><input id="share-dialog-disclosure" type="checkbox" /><span data-i18n="我确认素材将公开上传到 GitHub 审核队列">我确认素材将公开上传到 GitHub 审核队列</span></label>
+        <section id="share-dialog-public-panel" class="share-dialog-public-panel" hidden><label class="share-dialog-disclosure"><input id="share-dialog-disclosure" type="checkbox" /><span data-i18n="我确认素材将公开上传到 GitHub 审核队列">我确认素材将公开上传到 GitHub 审核队列</span></label><button id="share-dialog-submit" type="button" disabled><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-upload"></use></svg><span data-i18n="投稿到精选">投稿到精选</span></button></section>
         <section id="share-dialog-result" class="share-dialog-result" hidden>
           <strong id="share-dialog-result-text"></strong>
           <div><button id="share-dialog-show-files" class="button-secondary" type="button" data-i18n="显示投稿文件">显示投稿文件</button><button id="share-dialog-open-form" type="button" data-i18n="打开投稿表单">打开投稿表单</button></div>
@@ -340,17 +340,9 @@
           </footer>
         </section>
         <section id="settings-tasks-panel" class="settings-panel settings-tasks-panel" data-settings-panel="tasks" hidden>
-          <label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label>
+
           <div class="batch-card batch-primary">
-            <div class="batch-card-heading"><div><h3 data-i18n="批量文字分析">批量文字分析</h3><p data-i18n="使用“文字工作”中已分配的供应商和模型；只处理未分析或原文已变化的文字案例。">使用“文字工作”中已分配的供应商和模型；只处理未分析或原文已变化的文字案例。</p></div><span id="batch-status-badge" data-i18n="尚未开始">尚未开始</span></div>
-            <div id="analysis-batch-summary" class="batch-summary" data-i18n="先生成预览，不会直接产生 API 请求。">先生成预览，不会直接产生 API 请求。</div>
-            <details id="analysis-diagnostics" class="analysis-diagnostics" hidden>
-              <summary><span data-i18n="分析诊断">分析诊断</span><span id="analysis-runtime-version"></span></summary>
-              <div class="analysis-diagnostics-heading"><p data-i18n="仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。">仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。</p><button id="copy-analysis-diagnostics" class="button-secondary" type="button" data-i18n="复制诊断日志">复制诊断日志</button></div>
-              <ol id="analysis-diagnostic-events"></ol>
-            </details>
-            <div id="analysis-progress" class="maintenance-progress" hidden><progress id="analysis-progress-bar" max="1" value="0"></progress></div>
-            <div class="batch-actions">
+            <div class="batch-card-heading"><div><h3 data-i18n="批量文字分析">批量文字分析</h3></div><div class="batch-actions"><span id="batch-status-badge" data-i18n="尚未开始">尚未开始</span>
               <button id="preview-analysis-batch" type="button" data-i18n="生成预览">生成预览</button>
               <button id="start-analysis-batch" type="button" disabled data-i18n="确认并开始">确认并开始</button>
               <button id="pause-analysis-batch" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>
@@ -359,33 +351,38 @@
               <button id="apply-staged-analysis-rebuild" type="button" hidden data-i18n="应用已成功结果">应用已成功结果</button>
               <button id="cancel-analysis-batch" class="quiet-danger" type="button" hidden data-i18n="取消">取消</button>
               <button id="undo-analysis-batch" class="button-secondary" type="button" hidden data-i18n="撤回本次分析">撤回本次分析</button>
-            </div>
-            <details class="advanced-reanalysis"><summary data-i18n="重建标签系统">重建标签系统</summary><p data-i18n="付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。">付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。</p><div class="batch-actions"><button id="preview-analysis-reanalyze" class="button-secondary" type="button" data-i18n="预览重建费用">预览重建费用</button><button id="start-analysis-reanalyze" type="button" disabled hidden data-i18n="确认付费并重建">确认付费并重建</button></div></details>
+            </div></div>
+            <div id="analysis-batch-summary" class="batch-summary" data-i18n="先生成预览，不会直接产生 API 请求。">先生成预览，不会直接产生 API 请求。</div>
+
+            <div id="analysis-progress" class="maintenance-progress" hidden><progress id="analysis-progress-bar" max="1" value="0"></progress></div>
+
+            <details class="task-diagnostics"><summary data-i18n="故障诊断">故障诊断</summary><label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label><details id="analysis-diagnostics" class="analysis-diagnostics" hidden>
+              <summary><span data-i18n="分析诊断">分析诊断</span><span id="analysis-runtime-version"></span></summary>
+              <div class="analysis-diagnostics-heading"><p data-i18n="仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。">仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。</p><button id="copy-analysis-diagnostics" class="button-secondary" type="button" data-i18n="复制诊断日志">复制诊断日志</button></div>
+              <ol id="analysis-diagnostic-events"></ol>
+            </details></details><details class="advanced-reanalysis"><summary data-i18n="重建标签系统">重建标签系统</summary><p data-i18n="付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。">付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。</p><div class="batch-actions"><button id="preview-analysis-reanalyze" class="button-secondary" type="button" data-i18n="预览重建费用">预览重建费用</button><button id="start-analysis-reanalyze" type="button" disabled hidden data-i18n="确认付费并重建">确认付费并重建</button></div></details>
           </div>
-          <div class="batch-card local-index-card">
-            <h3 data-i18n="资料索引自动补全">资料索引自动补全</h3>
-            <p data-i18n="每次导入后会在本机自动补齐内容类型和图片色卡，不调用 AI。这里可查看状态或重试失败项。">每次导入后会在本机自动补齐内容类型和图片色卡，不调用 AI。这里可查看状态或重试失败项。</p>
-            <div class="batch-actions">
+          <div class="batch-card local-index-card"><div class="task-heading"><h3 data-i18n="资料索引自动补全">资料索引自动补全</h3><div class="batch-actions">
               <button id="preview-reanalyze" type="button" data-i18n="检查缺失项">检查缺失项</button>
               <button id="apply-reanalyze" type="button" hidden data-i18n="开始补全">开始补全</button>
               <button id="pause-library-maintenance" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>
               <button id="resume-library-maintenance" type="button" hidden data-i18n="继续">继续</button>
               <button id="retry-library-maintenance" class="button-secondary" type="button" hidden data-i18n="重试失败项">重试失败项</button>
               <button id="cancel-library-maintenance" class="quiet-danger" type="button" hidden data-i18n="取消">取消</button>
-            </div>
+            </div></div>
             <div id="reanalyze-preview" class="reanalyze-preview" role="status" aria-live="polite"></div>
           </div>
           <div id="legacy-candidates" class="batch-card"></div>
         </section>
         <section id="settings-ai-panel" class="settings-panel settings-ai-panel" data-settings-panel="ai" hidden>
           <section class="ai-routing-card">
-            <div class="ai-routing-heading"><h3 data-i18n="AI 配置">AI 配置</h3><p id="ai-routing-summary" data-i18n="AI 服务只连接一次；任务路由显示每类功能实际调用哪个服务与模型。">AI 服务只连接一次；任务路由显示每类功能实际调用哪个服务与模型。</p></div>
+            <div class="ai-routing-heading"><p id="ai-routing-summary" hidden></p></div>
             <nav class="ai-routing-tabs" role="tablist" aria-label="AI 配置视图" data-i18n-aria-label="AI 配置视图">
-              <button type="button" data-ai-routing-tab="tasks" aria-selected="true" data-i18n="任务路由">任务路由</button>
+              <button type="button" data-ai-routing-tab="tasks" aria-selected="true" data-i18n="任务模型">任务模型</button>
               <button type="button" data-ai-routing-tab="providers" aria-selected="false" data-i18n="服务连接">服务连接</button>
             </nav>
             <div class="ai-routing-regions">
-              <section class="ai-task-region" data-ai-routing-panel="tasks"><h4 data-i18n="各任务实际路由">各任务实际路由</h4><div id="ai-assignment-list" class="ai-assignment-list"></div></section>
+              <section class="ai-task-region" data-ai-routing-panel="tasks"><div id="ai-assignment-list" class="ai-assignment-list"></div></section>
               <section data-ai-routing-panel="providers" hidden><div class="ai-provider-region-heading"><h4 data-i18n="服务连接">服务连接</h4><button id="open-ai-routing" type="button" data-i18n="连接 AI 服务">连接 AI 服务</button></div><div id="ai-provider-list" class="ai-provider-list"></div></section>
             </div>
           </section>
@@ -398,28 +395,28 @@
             <button type="button" data-analysis-kind="composer" aria-selected="false" data-i18n="创作方法">创作方法</button>
           </div>
           <form id="ai-settings-form" class="analysis-settings-form" data-analysis-kind-panel="text">
-            <div class="section-heading"><div><h3 data-i18n="文字分析规则">文字分析规则</h3><p data-i18n="这里只显示当前界面语言的规则；切换界面语言后可编辑另一语言。修改不会自动调用 API。">这里只显示当前界面语言的规则；切换界面语言后可编辑另一语言。修改不会自动调用 API。</p></div></div>
+            <div class="rule-toolbar"><h3 id="ai-settings-form-heading-1" data-i18n="文字分析规则">文字分析规则</h3><button class="icon-button" title="恢复默认" aria-label="恢复默认" data-i18n-title="恢复默认" data-i18n-aria-label="恢复默认" id="restore-analysis-default" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button><button class="icon-button" title="保存分析规则" aria-label="保存分析规则" data-i18n-title="保存分析规则" data-i18n-aria-label="保存分析规则" type="submit"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-save"></use></svg></button><span id="ai-settings-status" class="rule-save-state" role="status"></span></div>
             <section data-analysis-locale-panel="zh-CN">
-              <label><span data-i18n="中文分析规则">中文分析规则</span><textarea id="analysis-instructions-zh" rows="10"></textarea></label>
+              <label><textarea aria-labelledby="ai-settings-form-heading-1" id="analysis-instructions-zh" rows="10"></textarea></label>
             </section>
             <section data-analysis-locale-panel="en" hidden>
-              <label><span>English analysis rules</span><textarea id="analysis-instructions-en" rows="10"></textarea></label>
+              <label><textarea aria-labelledby="ai-settings-form-heading-1" id="analysis-instructions-en" rows="10"></textarea></label>
             </section>
-            <div class="analysis-rule-actions"><button id="restore-analysis-default" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button></div>
+
             <details class="analysis-protocol"><summary data-i18n="固定输入与输出协议">固定输入与输出协议</summary><p id="analysis-protocol"></p></details>
-            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存分析规则">保存分析规则</button></div>
-            <p id="ai-settings-status"></p>
+
+
           </form>
           <form id="composer-settings-form" class="analysis-settings-form" data-analysis-kind-panel="composer" hidden>
-            <div class="section-heading"><div><h3 data-i18n="轻量 Agent">轻量 Agent</h3><p data-i18n="系统指令和任务方法分开管理；所有输出语言共用同一份任务方法。">系统指令和任务方法分开管理；所有输出语言共用同一份任务方法。</p></div><span id="composer-method-version" class="status-badge"></span></div>
-            <label><span data-i18n="Agent 系统指令">Agent 系统指令</span><textarea id="composer-agent-instruction" rows="10"></textarea></label>
-            <div class="analysis-settings-actions"><button id="save-composer-agent" class="button-secondary" type="button" data-i18n="保存系统指令">保存系统指令</button><button id="restore-composer-agent" class="button-secondary" type="button" data-i18n="恢复默认系统指令">恢复默认系统指令</button></div>
+
+            <div class="rule-toolbar"><h3 id="composer-settings-form-heading-1" data-i18n="Agent 系统指令">Agent 系统指令</h3><button class="icon-button" title="恢复默认系统指令" aria-label="恢复默认系统指令" data-i18n-title="恢复默认系统指令" data-i18n-aria-label="恢复默认系统指令" id="restore-composer-agent" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button><button class="icon-button" title="保存系统指令" aria-label="保存系统指令" data-i18n-title="保存系统指令" data-i18n-aria-label="保存系统指令" id="save-composer-agent" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-save"></use></svg></button><span id="composer-agent-save-state" class="rule-save-state" role="status"></span><span id="composer-method-version" class="status-badge"></span></div><label><textarea aria-labelledby="composer-settings-form-heading-1" id="composer-agent-instruction" rows="10"></textarea></label>
+
             <label><span data-i18n="任务方法">任务方法</span><select id="composer-task-key"><option value="compose.image" data-i18n="图片提示词">图片提示词</option><option value="compose.video" data-i18n="视频提示词">视频提示词</option><option value="analyze_materials" data-i18n="本地资料分析">本地资料分析</option><option value="chat" data-i18n="普通对话">普通对话</option></select></label>
-            <label><span data-i18n="当前任务方法">当前任务方法</span><textarea id="composer-task-method" rows="10"></textarea></label>
+            <div class="rule-toolbar"><h3 id="composer-settings-form-heading-2" data-i18n="当前任务方法">当前任务方法</h3><button class="icon-button" title="恢复当前任务默认方法" aria-label="恢复当前任务默认方法" data-i18n-title="恢复当前任务默认方法" data-i18n-aria-label="恢复当前任务默认方法" id="restore-composer-task" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button><button class="icon-button" title="保存任务方法" aria-label="保存任务方法" data-i18n-title="保存任务方法" data-i18n-aria-label="保存任务方法" type="submit"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-save"></use></svg></button><span id="composer-task-save-state" class="rule-save-state" role="status"></span></div><label><textarea aria-labelledby="composer-settings-form-heading-2" id="composer-task-method" rows="10"></textarea></label>
             <p id="composer-method-migration" class="privacy-note"></p>
             <details class="composer-method-default"><summary data-i18n="查看当前任务默认方法">查看当前任务默认方法</summary><pre id="composer-method-default-text"></pre></details>
             <details class="analysis-protocol"><summary data-i18n="轻量执行协议">轻量执行协议</summary><p data-i18n="第一阶段只判断任务、必要问题和本地检索；第二阶段按自然语言执行说明流式生成。规划缺少可选字段时会透明提示，并按原始要求继续。">第一阶段只判断任务、必要问题和本地检索；第二阶段按自然语言执行说明流式生成。规划缺少可选字段时会透明提示，并按原始要求继续。</p></details>
-            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存任务方法">保存任务方法</button><button id="restore-composer-task" class="button-secondary" type="button" data-i18n="恢复当前任务默认方法">恢复当前任务默认方法</button></div>
+
             <p id="composer-settings-status"></p>
             <details class="creative-experiment-settings">
               <summary data-i18n="创作实验（高级）">创作实验（高级）</summary>
@@ -438,30 +435,30 @@
             </details>
           </form>
           <form id="vision-settings-form" class="analysis-settings-form" data-analysis-kind-panel="vision" hidden>
-            <div class="section-heading"><div><h3 data-i18n="图片视觉分析规则">图片视觉分析规则</h3></div></div>
+            <div class="rule-toolbar"><h3 id="vision-settings-form-heading-1" data-i18n="图片视觉分析规则">图片视觉分析规则</h3><button class="icon-button" title="恢复默认" aria-label="恢复默认" data-i18n-title="恢复默认" data-i18n-aria-label="恢复默认" id="restore-vision-default" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button><button class="icon-button" title="保存分析规则" aria-label="保存分析规则" data-i18n-title="保存分析规则" data-i18n-aria-label="保存分析规则" type="submit"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-save"></use></svg></button><span id="vision-settings-status" class="rule-save-state" role="status"></span></div>
             <section data-analysis-locale-panel="zh-CN">
-              <label><span data-i18n="中文图片分析规则">中文图片分析规则</span><textarea id="vision-instructions-zh" rows="10"></textarea></label>
+              <label><textarea aria-labelledby="vision-settings-form-heading-1" id="vision-instructions-zh" rows="10"></textarea></label>
             </section>
             <section data-analysis-locale-panel="en" hidden>
-              <label><span>English vision rules</span><textarea id="vision-instructions-en" rows="10"></textarea></label>
+              <label><textarea aria-labelledby="vision-settings-form-heading-1" id="vision-instructions-en" rows="10"></textarea></label>
             </section>
-            <div class="analysis-rule-actions"><button id="restore-vision-default" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button></div>
+
             <details class="analysis-protocol"><summary data-i18n="固定输入与输出协议">固定输入与输出协议</summary><p id="vision-protocol"></p></details>
-            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存分析规则">保存分析规则</button></div>
-            <p id="vision-settings-status"></p>
+
+
           </form>
           <form id="video-settings-form" class="analysis-settings-form" data-analysis-kind-panel="video" hidden>
-            <div class="section-heading"><div><h3 data-i18n="视频逆推规则">视频逆推规则</h3><p data-i18n="这里只管理视频提示词逆推的方法；固定输出结构与证据校验不会被覆盖。">这里只管理视频提示词逆推的方法；固定输出结构与证据校验不会被覆盖。</p></div></div>
+            <div class="rule-toolbar"><h3 id="video-settings-form-heading-1" data-i18n="视频逆推分析规则">视频逆推分析规则</h3><button class="icon-button" title="恢复默认" aria-label="恢复默认" data-i18n-title="恢复默认" data-i18n-aria-label="恢复默认" id="restore-video-default" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button><button class="icon-button" title="保存分析规则" aria-label="保存分析规则" data-i18n-title="保存分析规则" data-i18n-aria-label="保存分析规则" type="submit"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-save"></use></svg></button><span id="video-settings-status" class="rule-save-state" role="status"></span></div>
             <section data-analysis-locale-panel="zh-CN">
-              <label><span data-i18n="中文视频逆推规则">中文视频逆推规则</span><textarea id="video-instructions-zh" rows="8"></textarea></label>
+              <label><textarea aria-labelledby="video-settings-form-heading-1" id="video-instructions-zh" rows="8"></textarea></label>
             </section>
             <section data-analysis-locale-panel="en" hidden>
-              <label><span>English video reconstruction rules</span><textarea id="video-instructions-en" rows="8"></textarea></label>
+              <label><textarea aria-labelledby="video-settings-form-heading-1" id="video-instructions-en" rows="8"></textarea></label>
             </section>
-            <div class="analysis-rule-actions"><button id="restore-video-default" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button></div>
+
             <details class="analysis-protocol"><summary data-i18n="固定输入与输出协议">固定输入与输出协议</summary><p id="video-protocol"></p></details>
-            <div class="analysis-settings-actions"><button type="submit" data-i18n="保存分析规则">保存分析规则</button></div>
-            <p id="video-settings-status"></p>
+
+
           </form>
         </section>
       </div>

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { tiktokMediaController } from "../media-playback.js";
 import assert from "node:assert/strict";
 
 import {
@@ -49,4 +50,30 @@ test("YouTube player errors distinguish author blocks, missing videos and client
   assert.deepEqual(youtubePlaybackError(150), youtubePlaybackError(101));
   assert.match(youtubePlaybackError(100).blockReason, /不存在|私密/);
   assert.match(youtubePlaybackError(153).blockReason, /客户端身份/);
+});
+test("TikTok player messages require the matching frame and report real playback state", async () => {
+  let listener;
+  let removed = false;
+  const statuses = [];
+  const sent = [];
+  const frame = { contentWindow: { postMessage: (...args) => sent.push(args) }, addEventListener: () => {}, removeEventListener: () => {} };
+  const events = { addEventListener: (_, fn) => { listener = fn; }, removeEventListener: (_, fn) => { removed = fn === listener; } };
+  const controller = tiktokMediaController(frame, (...args) => statuses.push(args), events);
+  const event = (type, value, overrides = {}) => ({ origin: "https://www.tiktok.com", source: frame.contentWindow,
+    data: { "x-tiktok-player": true, type, value }, ...overrides });
+  listener(event("onPlayerReady", undefined, { origin: "https://evil.example" }));
+  listener(event("onPlayerReady", undefined, { source: {} }));
+  assert.deepEqual(statuses, []);
+  await assert.rejects(controller.getCurrentTimeMs(), /尚未报告/);
+  listener(event("onPlayerReady"));
+  listener(event("onStateChange", 1));
+  listener(event("onCurrentTime", { currentTime: 3.25 }));
+  assert.equal(await controller.getCurrentTimeMs(), 3250);
+  assert.deepEqual(statuses, [["播放器已加载", false], ["正在播放", false]]);
+  await controller.seekToMs(2000);
+  assert.deepEqual(sent, [[{ type: "seekTo", value: 2, "x-tiktok-player": true }, "https://www.tiktok.com"]]);
+  listener(event("onPlayerError", { errorCode: 1001 }));
+  assert.deepEqual(statuses.at(-1), ["视频不存在、已删除或设为私密", true]);
+  controller.destroy();
+  assert.equal(removed, true);
 });

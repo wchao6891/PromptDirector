@@ -83,7 +83,7 @@ export function normalizeLibTvPublicPayload(value) {
     return [{ id: `libtv:${item.id}`, adapter: 'libtv', pageType: kind === 'video' ? 'video' : 'artwork',
       canonicalUrl: canonicalUrl.href, title: String(item.title || item.id), contentText: text,
       excerpt: String(item.description || ''), completeness: value.limited ? 'partial' : 'complete',
-      media: [{ id: `libtv:${item.id}:media`, kind, url, posterUrl: String(item.posterUrl || ''), placement: 'inline',
+      media: [{ id: `libtv:${item.id}:media`, kind, url, originalPrompt: text, posterUrl: String(item.posterUrl || ''), placement: 'inline',
         sourceKind: 'site-original', sourceTitle: String(item.title || ''), sourceAuthor: String(item.author || ''),
         originalWorkUrl: canonicalUrl.href, captureMethod: 'source' }],
       extraction: { scope: 'document', method: 'structured' },

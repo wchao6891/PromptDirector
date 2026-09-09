@@ -202,6 +202,7 @@ def main() -> None:
         library.locator("#share-export").click()
         expect(library.locator("#share-dialog")).to_be_visible()
         expect(library.locator("#share-dialog-disclosure")).not_to_be_checked()
+        library.locator("#share-dialog-public").click()
         library.locator("#share-dialog-disclosure").check()
         expect(library.locator("#share-dialog-submit")).to_be_enabled()
         library.locator("#share-dialog-submit").click()

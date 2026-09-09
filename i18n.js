@@ -1,6 +1,12 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "视频逆推分析规则": "Video analysis rules",
+  "未保存": "Unsaved",
+  "任务模型": "Task models",
+  "连接其他服务": "Connect another service",
+  "下载分享包": "Download share package",
+  "故障诊断": "Diagnostics",
   "读取校验 · {done} / {total}": "Reading and verifying · {done} / {total}",
   "检查图片 · {done}/{total}": "Checking images · {done}/{total}",
   "保存资源 · {done} / {total}": "Saving files · {done} / {total}",
@@ -1048,6 +1054,9 @@ const EN = Object.freeze({
   "扫描不会自动保存。请确认正文、图片或视频，未勾选的内容不会进入案例库。": "Scanning never saves automatically. Confirm the text, images, or videos you want; unchecked content will not enter the library.",
   "网页": "Webpage",
   "待保存内容没有更新": "The capture draft was not updated",
+  "{message}；部分媒体未完整保存，请在案例库检查": "{message}; some media is incomplete. Check the saved case in the library",
+  "暂未取得可在案例库播放的视频": "A playable video is not available in the library yet",
+  "引用帖 · {count} 个素材": "Quoted post · {count} media items",
   "引用帖 · {count} 张图": "Quoted post · {count} images",
   "已撤销上次调整": "Last change undone",
   "加入这组": "Add this group",
@@ -1095,7 +1104,6 @@ const EN = Object.freeze({
   "你没有授予当前网站访问权限。请再次点击“网页采集”，或在 Chrome 扩展详情的“网站访问权限”中允许此网站；待保存内容没有改变。": "Access to this site was not granted. Click Capture page again, or allow this site under the extension's Site access settings. Unsaved content was not changed.",
   "媒体域名权限未获授权；仍会保存正文和可用引用，并逐项显示下载失败原因。": "Media-domain access was not granted. Text and usable references will still be saved, with download failures shown per item.",
   "网页内容保存失败": "Web content could not be saved",
-  "{message}；{count} 项存在媒体下载问题": "{message}; {count} items have media download issues",
   "跨网页截图权限没有生效，请返回侧边栏重新授权；当前草稿没有改变。": "Cross-page screenshot access is not active. Return to the side panel and grant access again. Your draft has not changed.",
   "本地案例": "Local cases",
   "最近保存": "Latest save",
@@ -1322,6 +1330,7 @@ const EN = Object.freeze({
   "案例已存在": "Case already saved",
   "查看来源": "View source",
   "视频封面": "Video cover",
+  "视频暂不可播放，请从原页面重新采集": "Video unavailable. Capture it again from the original page.",
   "视频暂不可播放": "Video unavailable",
   "视频加载失败": "Video could not be loaded",
   "图片加载失败": "Image could not be loaded",

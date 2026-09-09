@@ -71,3 +71,11 @@ export function savedDraftCaptureItems(draft, candidates, consumed) {
 function comparableText(value) {
   return String(value || "").replace(/\s+/gu, " ").trim();
 }
+
+export function savedPageCaptureCandidateIds(batch, candidates, results) {
+  const persisted = results.filter(item => item.entryId && ["saved", "partial", "duplicate"].includes(item.status));
+  if (batch.captureMode === "list" && batch.saveMode === "combined" && persisted.length === 1) {
+    return new Set(candidates.map(candidate => candidate.id));
+  }
+  return new Set(persisted.map(item => item.candidateId));
+}

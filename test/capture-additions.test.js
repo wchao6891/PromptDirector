@@ -53,3 +53,16 @@ test('adding a webpage preserves headings and quotes without repeating original 
   assert.ok(blocks.some(b => b.kind === 'quote' && b.text === 'A quoted creative direction.'));
   assert.equal(blocks.map(b => b.text || '').join(' ').match(/A quoted creative direction/g).length, 1);
 });
+
+
+test("saved capture outcomes consume partial and duplicate cases but preserve unsaved candidates", async () => {
+  const { savedPageCaptureCandidateIds } = await import("../capture-additions.js");
+  const candidates = ["saved", "partial", "duplicate", "failed"].map(id => ({ id }));
+  const results = candidates.map(({ id }) => ({ candidateId: id, status: id, ...(id !== "failed" ? { entryId: `entry:${id}` } : {}) }));
+  assert.deepEqual([...savedPageCaptureCandidateIds({}, candidates, results)], ["saved", "partial", "duplicate"]);
+  assert.deepEqual([...savedPageCaptureCandidateIds({}, candidates, [])], []);
+  assert.deepEqual([...savedPageCaptureCandidateIds({captureMode:"list",saveMode:"combined"}, candidates,
+    [{candidateId:"combined-id",entryId:"saved-entry",status:"partial"}])], candidates.map(item => item.id));
+  assert.deepEqual([...savedPageCaptureCandidateIds({captureMode:"list",saveMode:"combined"}, candidates,
+    [{candidateId:"combined-id",status:"failed"}])], []);
+});

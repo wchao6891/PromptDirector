@@ -12,7 +12,7 @@ import { CONTENT_IDS, CONTENT_ROLES, createContentType, createDefaultTaxonomy, r
 
 test("declared creative works use their medium even when prompt text resembles an article or a broad site rule", () => {
   const entry = { url: "https://example.com/work", title: "Workflow", text: "First use the attached image. Then follow these steps, because identity consistency matters.",
-    sourceFacts: { pageType: "video", extractionMethod: "structured" },
+    sourceFacts: { pageType: "video", extractionMethod: "structured", originalPromptAvailable: true },
     mediaAssets: [{ id: "video", kind: "video", storageMode: "reference", sourceUrl: "https://cdn.example.com/movie.mp4" }] };
   const rules = [{ hostname: "example.com", pathIds: [CONTENT_IDS.tutorial], enabled: true }];
   assert.deepEqual(classifyContent(entry, rules).pathIds, [CONTENT_IDS.promptVideo]);

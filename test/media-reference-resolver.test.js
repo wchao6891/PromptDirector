@@ -40,7 +40,7 @@ test("Bilibili page and official player URLs normalize to one playable reference
   );
   assert.equal(
     officialMediaEmbedUrl("https://x.com/director/status/123", "x"),
-    "https://platform.twitter.com/embed/Tweet.html?id=123&dnt=true"
+    ""
   );
 });
 
@@ -51,6 +51,21 @@ test("media playback capability starts from honest provider state", async () => 
   const bilibili = await resolveMediaReference("https://www.bilibili.com/video/BV1B7411m7LV", {});
   assert.equal(bilibili.playback.status, "loading");
   assert.match(bilibili.playback.embedUrl, /^https:\/\/player\.bilibili\.com\/player\.html\?/);
+});
+
+test("TikTok uses the official post player and does not pretend a short link is playable", async () => {
+  for (const kind of ["video", "photo"]) {
+    const source = `https://www.tiktok.com/@creator/${kind}/6718335390845095173?is_from_webapp=1`;
+    assert.equal(detectMediaReferenceProvider(source), "tiktok");
+    assert.equal(officialMediaEmbedUrl(source), "https://www.tiktok.com/player/v1/6718335390845095173");
+    const result = await resolveMediaReference(source);
+    assert.equal(result.playbackMode, "embed");
+    assert.equal(result.playback.status, "loading");
+  }
+  const short = await resolveMediaReference("https://vm.tiktok.com/fixture/");
+  assert.equal(short.playbackMode, "source");
+  assert.equal(short.playback.embedUrl, "");
+  assert.equal(detectMediaReferenceProvider("https://tiktok.com.evil.example/@creator/video/123"), "generic");
 });
 
 test("permission denial and metadata failure keep a saveable reference without invented fields", async () => {
@@ -101,4 +116,13 @@ test("Open Graph parser accepts property order variants", () => {
   assert.deepEqual(parseOpenGraphMetadata('<meta content="封面标题" property="og:title"><meta name="author" content="作者">'), {
     title: "封面标题", author: "作者", posterUrl: "", durationMs: 0
   });
+});
+
+
+test("X posts remain source references and never masquerade as standalone video players", async () => {
+  const url = "https://x.com/director/status/123";
+  const reference = await resolveMediaReference(url);
+  assert.equal(reference.playbackMode, "source");
+  assert.equal(reference.playback.embedUrl, "");
+  assert.notEqual(reference.playback.status, "playing");
 });

@@ -173,3 +173,9 @@ test("a compound logical case matches search, content filters, and pending state
   assert.equal(filterEntries([compound], { contentId: CONTENT_IDS.promptVideo }, createDefaultFacetCatalog()).length, 1);
   assert.equal(filterEntries([compound], { pendingOnly: true }, createDefaultFacetCatalog()).length, 1);
 });
+
+
+test("saved capture warnings remain readable in source details after the sidebar clears", () => {
+  const rows = entrySourceMetadataRows({sourceFacts:{captureWarnings:["视频文件未保存"]}});
+  assert.ok(rows.some(row => row.label === "采集问题" && row.value === "视频文件未保存"));
+});

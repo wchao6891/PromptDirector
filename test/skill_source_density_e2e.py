@@ -96,7 +96,11 @@ def main() -> None:
 
         desktop = layout_metrics(skills)
         assert desktop["columns"] == 4, desktop
-        assert desktop["minCardWidth"] >= 240, desktop
+        sources = skills.locator('#skill-source-step').bounding_box()
+        target = skills.locator('#skill-target-step').bounding_box()
+        assert target['x'] >= sources['x'] + sources['width'], (sources, target)
+        assert abs(target['y'] - sources['y']) < 1, (sources, target)
+        assert desktop["minCardWidth"] >= 220, desktop
         assert desktop["pageWidth"] <= desktop["viewportWidth"], desktop
         assert desktop["gridScrollWidth"] <= desktop["gridClientWidth"] + 1, desktop
         assert desktop["titleClearance"] >= 4, desktop
@@ -137,7 +141,7 @@ def main() -> None:
         skills.wait_for_function("""() => [...document.querySelectorAll('.skill-case-visual img')].some((image) => image.complete && image.naturalWidth > 0)""")
         light = layout_metrics(skills)
         assert light["columns"] == 4, light
-        assert light["minCardWidth"] >= 240, light
+        assert light["minCardWidth"] >= 220, light
         assert light["pageWidth"] <= light["viewportWidth"], light
         assert light["headingColor"] == light["bodyColor"], light
         assert light["brandColor"] == light["bodyColor"], light
@@ -146,7 +150,7 @@ def main() -> None:
         skills.set_viewport_size({"width": 1200, "height": 900})
         narrow = layout_metrics(skills)
         assert narrow["columns"] == 3, narrow
-        assert narrow["minCardWidth"] >= 240, narrow
+        assert narrow["minCardWidth"] >= 220, narrow
         assert narrow["pageWidth"] <= narrow["viewportWidth"], narrow
 
         skills.set_viewport_size({"width": 390, "height": 844})

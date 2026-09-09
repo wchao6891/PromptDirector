@@ -14,7 +14,7 @@ const MEDIA_KINDS = new Set(SUPPORTED_ASSET_KINDS);
 const STORAGE_MODES = new Set(["managed", "reference"]);
 const MEDIA_USAGES = new Set(["content", "poster"]);
 const PLAYBACK_MODES = new Set(["local", "embed", "source"]);
-const OFFICIAL_EMBED_PROVIDERS = new Set(["youtube", "vimeo", "bilibili", "douyin", "x"]);
+const OFFICIAL_EMBED_PROVIDERS = new Set(["youtube", "vimeo", "bilibili", "douyin", "tiktok"]);
 const PLAYBACK_CAPABILITIES = new Set(["native", "external", "unknown"]);
 const LOCAL_ASSET_LINK_STATUSES = new Set(["relink-required", "linked", "missing", "needs-permission", "changed"]);
 const GENERIC_ATTACHMENT_MIME_TYPES = new Set(["application/octet-stream", "application/x-unknown"]);
@@ -83,9 +83,10 @@ export function normalizeMediaAsset(value = {}) {
       : {}),
     ...(/^[a-f0-9]{64}$/iu.test(clean(value.contentHash)) ? { contentHash: clean(value.contentHash).toLocaleLowerCase("en-US") } : {}),
     ...(["source", "css-background", "pixel-fallback"].includes(value.captureMethod) ? { captureMethod: value.captureMethod } : {}),
-    playbackCapability: PLAYBACK_CAPABILITIES.has(value.playbackCapability)
-      ? value.playbackCapability
-      : storageMode === "reference" ? "external" : "unknown",
+    playbackCapability: storageMode === "reference" && reference.playbackMode !== "embed" && value.playbackCapability === "embedded"
+      ? "external"
+      : PLAYBACK_CAPABILITIES.has(value.playbackCapability) ? value.playbackCapability
+        : storageMode === "reference" ? "external" : "unknown",
     ...(assetPath ? { assetPath } : {}),
     ...(relativePath ? { relativePath } : {}),
     ...(clean(value.posterAssetId) ? { posterAssetId: clean(value.posterAssetId) } : {}),
@@ -325,10 +326,10 @@ export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source 
     assetId,
     text,
     textRevision: 1,
-    source: source === "ai-suggestion" ? "ai-suggestion" : "manual",
+    source: normalizeMediaPromptSource(source),
     updatedAt: new Date().toISOString()
   });
-  entry.mediaPrompts.sort((a, b) => Number(a.source === "ai-suggestion") - Number(b.source === "ai-suggestion"));
+  entry.mediaPrompts.sort(compareMediaPromptSources);
   return entry;
 }
 
@@ -406,12 +407,21 @@ function normalizeTimeNotes(values, assetIds) {
   }).toSorted((left, right) => left.startMs - right.startMs || left.createdAt.localeCompare(right.createdAt));
 }
 
+function normalizeMediaPromptSource(value) {
+  return ["webpage", "ai-suggestion"].includes(value) ? value : "manual";
+}
+
+function compareMediaPromptSources(a, b) {
+  const sources = ["manual", "webpage", "ai-suggestion"];
+  return sources.indexOf(a.source) - sources.indexOf(b.source);
+}
+
 function normalizeMediaPrompts(values, assetIds) {
   const seen = new Set();
   return (Array.isArray(values) ? values : []).flatMap((value) => {
     const assetId = clean(value?.assetId);
     const text = cleanMultiline(value?.text);
-    const source = value?.source === "ai-suggestion" ? "ai-suggestion" : "manual";
+    const source = normalizeMediaPromptSource(value?.source);
     const identity = JSON.stringify([assetId, source]);
     if (!assetIds.has(assetId) || !text || seen.has(identity)) return [];
     seen.add(identity);
@@ -422,7 +432,7 @@ function normalizeMediaPrompts(values, assetIds) {
       source,
       updatedAt: validIso(value.updatedAt) || new Date().toISOString()
     }];
-  }).sort((a, b) => Number(a.source === "ai-suggestion") - Number(b.source === "ai-suggestion"));
+  }).sort(compareMediaPromptSources);
 }
 
 function normalizeVersionedAnalyses(values, kind) {
@@ -578,7 +588,9 @@ function normalizeReference(value, fallbackUrl) {
     ? value.metadataStatus
     : "partial";
   const author = clean(value?.author);
-  return { url, provider, playbackMode, metadataStatus, ...(author ? { author } : {}) };
+  return { url, provider, playbackMode, metadataStatus, ...(author ? { author } : {}),
+    ...(safeHttpUrl(value?.playbackUrl) ? { playbackUrl: safeHttpUrl(value.playbackUrl) } : {}),
+    ...(safeHttpUrl(value?.streamUrl) ? { streamUrl: safeHttpUrl(value.streamUrl) } : {}) };
 }
 
 function normalizeLocalAssetReference(value, kind) {

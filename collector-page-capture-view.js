@@ -49,7 +49,7 @@ export function createPageCaptureCard(candidate, {
   strip.className = "page-capture-thumbnails";
   strip.classList.toggle("photo-group", candidate.pageType === "post" && candidate.media.filter(m => m.kind === "image" && m.originalWorkUrl).length > 1);
   candidate.media.forEach((media, index) => {
-    if (!["image", "video"].includes(media.kind) || media.placement !== "inline" || (selected || media.quotedPostUrl) && !selectedMediaIds.includes(media.id)) return;
+    if (!["image", "video"].includes(media.kind) || media.placement !== "inline" || (selected || media.isQuoted || media.quotedPostUrl) && !selectedMediaIds.includes(media.id)) return;
     const button = document.createElement("button");
     button.type = "button";
     button.title = media.alt || t(media.kind === "video" ? "视频" : "图片");
@@ -76,12 +76,13 @@ export function createPageCaptureCard(candidate, {
     strip.append(thumbnail);
   });
   if (strip.childElementCount) card.append(strip);
-  if (selected) for (const groupUrl of new Set(candidate.media.map(m => m.quotedPostUrl).filter(Boolean))) {
-    const group = candidate.media.filter(m => m.quotedPostUrl === groupUrl);
+  const quoteGroup = media => media.quotedPostUrl || (media.isQuoted ? "unresolved-quote" : "");
+  if (selected) for (const groupUrl of new Set(candidate.media.map(quoteGroup).filter(Boolean))) {
+    const group = candidate.media.filter(m => quoteGroup(m) === groupUrl);
     const row = document.createElement("div");
     row.className = "page-capture-media-group";
     const label = document.createElement("span");
-    label.textContent = t("引用帖 · {count} 张图", { count: group.length });
+    label.textContent = t(group.every(media => media.kind === "image") ? "引用帖 · {count} 张图" : "引用帖 · {count} 个素材", { count: group.length });
     const add = document.createElement("button");
     add.type = "button";
     const included = group.every(m => selectedMediaIds.includes(m.id));

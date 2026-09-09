@@ -663,3 +663,21 @@ test("YesAnd has no dedicated collector and falls through to the generic page en
     Object.assign(globalThis, original);
   }
 });
+
+
+test("Krea detail keeps original and preview together and does not assign the work prompt to style references", () => {
+  const url = "https://www.krea.ai/feed/work-554bfb91-2a06-5e91-8a21-24a162f3b81f";
+  const original = "https://gen.krea.ai/images/554bfb91-2a06-5e91-8a21-24a162f3b81f.png";
+  const preview = "https://optim-images.krea.ai/preview.webp";
+  const reference = "https://app-uploads.krea.ai/style.webp";
+  const result = normalizePageCaptureSitePayload({ adapter: "krea", pageKind: "detail", canonicalUrl: url,
+    prompt: "A cinematic silhouette.", imagePreviewUrl: preview,
+    jsonLd: [{ "@type": "ImageObject", contentUrl: original }],
+    styleReferences: [{ url: reference, previewUrl: "https://www.krea.ai/api/img?fixture", label: "style reference image 1" }]
+  }, url);
+  assert.equal(result.pageKind, "detail");
+  assert.deepEqual(result.media.map(media => media.url), [original, reference]);
+  assert.deepEqual(result.media[0].variants.map(variant => variant.url), [original, preview]);
+  assert.equal(result.media[0].originalPrompt, "A cinematic silhouette.");
+  assert.equal(result.media[1].originalPrompt, undefined);
+});

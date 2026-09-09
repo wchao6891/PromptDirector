@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
-  "version": "1.20.5",
+  "version": "1.20.6",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq2m8W9ACXJTkJqPAd36sPrtzonmHhOYU34uS7c+D7DXX6ggWNMwB4xZapGFJ4ScBQJv71PeG9KfsEnhcXFZ9RoX/X3wY+57evL19hf6woNX1xxhKOe1rtx5QmzWCEYIr99TzW50k/N9U6tS9Ri+2DHKYA85ssXTC8B2yRQ5zUXhsAWZe/HDU18UFuvUKXYt3ZdIUi31c2vIlgFFBfsyKbIUMny9LlxL/smb4vJzU/+A3LwJDjjvOtS/lmQ2vHoQGjHJItO18bYI6h67fIEvmWk+HJKtO08Ca+5RLS8TYhI+K7l7S0RyDVNujyVWtvhAULot1H0BvteYL87fKu3SNywIDAQAB",
   "homepage_url": "https://github.com/wchao6891/PromptDirector",
   "default_locale": "zh_CN",
@@ -52,7 +52,7 @@
     "default_path": "collector.html"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob: https://github.com https://objects.githubusercontent.com https://release-assets.githubusercontent.com; frame-src blob: https://player.vimeo.com https://www.youtube-nocookie.com https://player.bilibili.com https://www.douyin.com https://open.douyin.com https://platform.twitter.com;"
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; frame-src blob: https://player.vimeo.com https://www.youtube-nocookie.com https://player.bilibili.com https://www.douyin.com https://open.douyin.com https://www.tiktok.com;"
   },
   "commands": {
     "save-selection": {

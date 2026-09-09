@@ -1,5 +1,16 @@
 import { remapArticleDocumentAssets } from "./article-document.js";
 
+export function capturedMediaPrompts(candidate, assetIds, existing = []) {
+  const prompts = existing.map(item => ({ ...item }));
+  for (const media of candidate.media || []) {
+    const assetId = assetIds.get(media.id);
+    const text = String(media.originalPrompt || "").trim();
+    if (!assetId || !text || prompts.some(item => item.assetId === assetId && item.source !== "ai-suggestion")) continue;
+    prompts.push({ assetId, text, source: "webpage", textRevision: 1 });
+  }
+  return prompts;
+}
+
 function sourceUrls(media) {
   return new Set([media.url, media.sourceUrl, media.reference?.url, ...(media.variants || []).map(item => item.url)].filter(Boolean));
 }
@@ -35,7 +46,8 @@ export async function planPageCaptureRepair(entry, candidate, hasBlob) {
       }
     } else pending.push(media);
   }
-  return { pending, matched, assetIds, obsoleteReferences };
+  const promptsChanged = capturedMediaPrompts(candidate, assetIds, entry.mediaPrompts).length > (entry.mediaPrompts || []).length;
+  return { pending, matched, assetIds, obsoleteReferences, promptsChanged };
 }
 
 export function mergePageCaptureRepair(entry, candidate, plan, capturedAssets, assetIds) {
@@ -68,6 +80,7 @@ export function mergePageCaptureRepair(entry, candidate, plan, capturedAssets, a
   return {
     ...entry,
     mediaAssets: assets,
+    mediaPrompts: capturedMediaPrompts(candidate, assetIds, entry.mediaPrompts),
     primaryMediaId: primary?.storageMode === "managed" ? primary.id : preferred?.id || primary?.id || entry.primaryMediaId,
     articleDocument,
     sourceFacts: { ...entry.sourceFacts, ...candidate.sourceFacts }

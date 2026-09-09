@@ -1,4 +1,4 @@
-import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems } from "./capture-additions.js";
+import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems, savedPageCaptureCandidateIds } from "./capture-additions.js";
 import { createPageCaptureCard } from "./collector-page-capture-view.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { addDraftFragment, addDraftVisual } from "./capture-draft.js";
@@ -1273,8 +1273,7 @@ async function cancelPageCapture() {
   }
 }
 
-async function clearPageCaptureMarkers() {
-  const tabId = pageCaptureBatch?.tabId;
+async function clearPageCaptureMarkers(tabId = pageCaptureBatch?.tabId) {
   if (!Number.isInteger(tabId)) return;
   await chrome.runtime.sendMessage({ type: "CLEAR_PAGE_CAPTURE_MARKERS", tabId, removeRegionMarkers: true }).catch(() => undefined);
 }
@@ -1589,37 +1588,44 @@ async function savePageCapture(textOnly = false) {
         ...metadata
       });
       if (!response?.ok) throw new Error(response?.message || t("网页内容保存失败"));
-      const partial = response.results?.filter((item) => item.status === "partial" || item.status === "failed") || [];
-      if (partial.length) {
-        if (metadata.newCollectionName && response.collectionId) {
-          creatingCollection = false;
-          await updateDraft({ ...draft, collectionId: response.collectionId, newCollectionName: "" });
-        }
-        const reasons = [...new Set(partial.flatMap(item => item.warnings || []))];
-        pageCaptureBatch = normalizePageCaptureBatch({ ...saveBatch, status: "preview", error: reasons.join("；") });
-        elements.pageCaptureMediaReview.open = true;
-        showFeedback(t("{message}；{count} 项存在媒体下载问题", { message: response.message, count: partial.length }), true);
-        await refresh();
-        return;
-      }
-      await clearPageCaptureMarkers();
-      const savedCandidateIds = new Set(response.results.filter(item => item.status === "saved").map(item => item.candidateId));
-      const savedDraftItems = savedDraftCaptureItems(draft, selected.filter(c => savedCandidateIds.has(c.id)), pageCaptureDraftIds);
+      const results = response.results || [];
+      const savedCandidateIds = savedPageCaptureCandidateIds(saveBatch, selected, results);
+      const remainingIds = new Set(selected.filter(candidate => !savedCandidateIds.has(candidate.id)).map(candidate => candidate.id));
+      const incomplete = results.filter(item => item.status === "partial");
       const cleanupErrors = [];
+      if (metadata.newCollectionName && response.collectionId) {
+        creatingCollection = false;
+        try { await updateDraft({ ...draft, collectionId: response.collectionId, newCollectionName: "" }); }
+        catch (error) { cleanupErrors.push(error.message); }
+      }
+      const savedDraftItems = savedDraftCaptureItems(draft, selected.filter(c => savedCandidateIds.has(c.id)), pageCaptureDraftIds);
       for (const item of savedDraftItems) {
         try {
           const cleanup = await chrome.runtime.sendMessage(item.kind === "image"
             ? { type: "REMOVE_CAPTURE_VISUAL", visualId: item.id }
             : { type: "REMOVE_CAPTURE_FRAGMENT", fragmentId: item.id });
           if (!cleanup?.ok) throw new Error(cleanup?.message || t("待保存内容没有更新"));
+          pageCaptureDraftIds.delete(`${item.kind}:${item.id}`);
         } catch (error) { cleanupErrors.push(error.message); }
       }
-      pageCaptureDraftIds = new Set();
-      pageCaptureBatch = null;
+      const failures = results.filter(item => !item.entryId || !["saved", "partial", "duplicate"].includes(item.status));
+      const failureReasons = [...new Set(failures.flatMap(item => item.warnings || []))];
+      pageCaptureBatch = remainingIds.size ? normalizePageCaptureBatch({
+        ...saveBatch, status: "preview", error: failureReasons.join("；"),
+        candidates: saveBatch.candidates.filter(candidate => remainingIds.has(candidate.id)),
+        selections: saveBatch.selections.filter(selection => remainingIds.has(selection.candidateId))
+      }) : null;
       pageCaptureEditHistory = [];
       pageCaptureOriginalCandidates = new Map();
-      showFeedback(cleanupErrors.length ? `${response.message}；${cleanupErrors.join("；")}` : response.message, Boolean(cleanupErrors.length));
-      await refresh();
+      if (!remainingIds.size) {
+        pageCaptureDraftIds = new Set();
+        await clearPageCaptureMarkers(saveBatch.tabId);
+      } else elements.pageCaptureMediaReview.open = true;
+      const notice = incomplete.length ? t("{message}；部分媒体未完整保存，请在案例库检查", { message: response.message }) : response.message;
+      const message = [notice, ...failureReasons, ...cleanupErrors].filter(Boolean).join("；");
+      showFeedback(message, Boolean(remainingIds.size || cleanupErrors.length));
+      try { await refresh(); }
+      catch (error) { showFeedback(`${message}；${error.message}`, true); render(); }
     } catch (error) {
       pageCaptureBatch = normalizePageCaptureBatch({ ...reviewBatch, status: "preview", error: error.message });
       showFeedback(error.message || t("网页内容保存失败"), true);

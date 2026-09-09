@@ -43,7 +43,7 @@ test("time notes seek the local player and support optional segment ends", () =>
 
 test("social video references prefer official embeds and never download a platform video", () => {
   const viewer = source.slice(source.indexOf("function createReferencedMediaViewer"), source.indexOf("function renderTimeNotes"));
-  assert.match(viewer, /platform-link-card/);
+  assert.match(viewer, /unavailable-video-stage/);
   assert.match(viewer, /referenced-video-embed/);
   assert.match(viewer, /target = "_blank"/);
   assert.doesNotMatch(viewer, /复制直链|readVideoMedia|saveMediaBlob/);
@@ -52,7 +52,7 @@ test("social video references prefer official embeds and never download a platfo
 test("YouTube references request scoped playback permission and keep an honest source fallback", () => {
   const viewer = source.slice(source.indexOf("function createReferencedMediaViewer"), source.indexOf("function renderTimeNotes"));
   assert.match(viewer, /youtubeWatchUrl/);
-  assert.match(viewer, /platform-link-card/);
+  assert.match(viewer, /unavailable-video-stage/);
   assert.match(viewer, /posterAssetForVideo/);
   assert.match(viewer, /ensureYouTubePlaybackPermission\(chrome, \{ request: true \}\)/);
   assert.match(viewer, /youtubeMediaController/);

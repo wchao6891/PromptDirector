@@ -4,6 +4,7 @@ const PROVIDERS = Object.freeze({
   youtube: { label: "YouTube", origins: ["https://www.youtube.com/*", "https://youtu.be/*", "https://i.ytimg.com/*"] },
   vimeo: { label: "Vimeo", origins: ["https://vimeo.com/*", "https://i.vimeocdn.com/*"] },
   bilibili: { label: "Bilibili", origins: ["https://www.bilibili.com/*", "https://b23.tv/*", "https://bili2233.cn/*"] },
+  tiktok: { label: "TikTok", origins: ["https://www.tiktok.com/*", "https://vm.tiktok.com/*", "https://vt.tiktok.com/*"] },
   douyin: { label: "抖音", origins: ["https://www.douyin.com/*", "https://v.douyin.com/*", "https://iesdouyin.com/*"] },
   x: { label: "X", origins: ["https://x.com/*", "https://twitter.com/*", "https://mobile.twitter.com/*", "https://t.co/*", "https://publish.twitter.com/*"] },
   generic: { label: "视频来源", origins: [] }
@@ -18,6 +19,7 @@ export function detectMediaReferenceProvider(value) {
   if (host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com")) return "youtube";
   if (host === "vimeo.com" || host.endsWith(".vimeo.com")) return "vimeo";
   if (host === "b23.tv" || host === "bili2233.cn" || host === "bilibili.com" || host.endsWith(".bilibili.com")) return "bilibili";
+  if (host === "tiktok.com" || host.endsWith(".tiktok.com")) return "tiktok";
   if (host === "v.douyin.com" || host === "douyin.com" || host.endsWith(".douyin.com") || host === "iesdouyin.com" || host.endsWith(".iesdouyin.com")) return "douyin";
   if (["x.com", "twitter.com", "mobile.twitter.com", "t.co"].includes(host) || host.endsWith(".x.com") || host.endsWith(".twitter.com")) return "x";
   return "generic";
@@ -61,7 +63,7 @@ export async function resolveMediaReference(value, context = {}) {
     author: "",
     posterUrl: "",
     durationMs: 0,
-    playbackMode: ["youtube", "vimeo", "bilibili", "douyin", "x"].includes(provider) ? "embed" : "source",
+    playbackMode: officialMediaEmbedUrl(canonicalUrl, provider) ? "embed" : "source",
     playback: mediaPlaybackCapability(canonicalUrl, provider)
   });
   if (provider === "generic" || typeof context.fetch !== "function") {
@@ -113,13 +115,13 @@ export function officialMediaEmbedUrl(value, providerValue = "") {
     params.set("poster", "1");
     return `https://player.bilibili.com/player.html?${params}`;
   }
+  if (provider === "tiktok") {
+    const id = url.pathname.match(/\/(?:video|photo|player\/v1)\/(\d+)(?:\/|$)/u)?.[1] || "";
+    return id ? `https://www.tiktok.com/player/v1/${id}` : "";
+  }
   if (provider === "douyin") {
     const id = url.pathname.match(/\/video\/(\d+)/u)?.[1] || "";
     return id ? `https://open.douyin.com/player/video?vid=${encodeURIComponent(id)}&autoplay=0` : "";
-  }
-  if (provider === "x") {
-    const id = url.pathname.match(/\/status\/(\d+)/u)?.[1] || "";
-    return id ? `https://platform.twitter.com/embed/Tweet.html?id=${encodeURIComponent(id)}&dnt=true` : "";
   }
   return "";
 }
