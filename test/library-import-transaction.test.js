@@ -318,3 +318,16 @@ function makeImportSource() {
     creativeSkills: { items: [] }
   };
 }
+
+test("serialized recovery resumes a worker-interrupted claim only while its confirmed plan is current", () => {
+  const before = makeCurrentLibrary();
+  const source = makeImportSource();
+  const request = { operationId: "interrupted", planToken: createLibraryImportPlanToken(before, source), stateValue: before, sourceValue: source };
+  const pending = claimLibraryImportTransaction({}, request);
+  const resumed = claimLibraryImportTransaction(pending.state, request, { resumePending: true });
+  assert.equal(resumed.acquired, true);
+  assert.equal(resumed.receipt.operationId, pending.receipt.operationId);
+  assert.throws(() => claimLibraryImportTransaction(pending.state, {
+    ...request, stateValue: { ...before, entries: [] }
+  }, { resumePending: true }), { code: "IMPORT_PLAN_STALE" });
+});

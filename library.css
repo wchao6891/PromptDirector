@@ -318,7 +318,7 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .project-disclosure { display: grid; width: 18px; min-height: 28px; place-items: center; padding: 0; color: var(--muted); border: 0; background: transparent; }
 .project-disclosure .ui-icon { width: 13px; height: 13px; }
 .project-disclosure.is-placeholder { visibility: hidden; }
-.project-row.project-ordering {
+.project-row.project-draggable {
   border: 1px solid transparent;
   border-radius: var(--ui-container-radius);
   cursor: grab;
@@ -326,11 +326,11 @@ details:not([open]) > .selection-menu-panel { display: none; }
   -webkit-user-select: none;
   user-select: none;
 }
-.project-row.project-ordering:hover,
-.project-row.project-ordering:focus-visible { border-color: var(--selection-edge); background: var(--selection-hover); }
-.project-row.project-ordering:active,
-.project-row.project-ordering.is-dragging { cursor: grabbing; }
-.project-row.project-ordering.is-dragging {
+.project-row.project-draggable:hover,
+.project-row.project-draggable:focus-visible { border-color: var(--selection-edge); background: var(--selection-hover); }
+.project-row.project-draggable:active,
+.project-row.project-draggable.is-dragging { cursor: grabbing; }
+.project-row.project-draggable.is-dragging {
   z-index: 4;
   border-color: var(--accent-emphasis);
   background: var(--card);
@@ -342,7 +342,7 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .project-row.drop-before::before { top: -3px; }
 .project-row.drop-after::after { bottom: -3px; }
 .project-row.drop-inside { border-color: var(--accent-emphasis); background: var(--selection); }
-.project-row.project-ordering .project-filter { pointer-events: none; }
+.project-row.project-draggable .project-filter { cursor: grab; }
 .project-list.is-project-dragging .project-row:not(.is-dragging) { transition: transform var(--ui-motion-fast) ease; }
 .project-root-drop { min-height: 34px; border: 1px dashed var(--line); border-radius: var(--ui-container-radius); padding: 8px; color: var(--muted); font-size: 11px; font-weight: 700; text-align: center; }
 .project-root-drop.is-drop-target { border-color: var(--accent-emphasis); color: var(--accent-ink); background: var(--selection); }
@@ -1465,3 +1465,16 @@ details:not([open]) > .selection-menu-panel { display: none; }
   .settings-dialog { --settings-top: max(20px, calc((100dvh - 680px) / 2)); inset: var(--settings-top) 0 auto; margin: 0 auto; max-height: calc(100dvh - var(--settings-top) - 20px); }
   .settings-dialog:has(.compact-general:not([hidden])) { height: auto; }
 }
+
+.project-search { width: 100%; min-height: 30px; padding: 5px 8px; font-size: 12px; }
+.project-search-label, .project-search-path { display: block; min-width: 0; }
+.project-search-path { margin-top: 3px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.project-search-empty, .project-move-preview { color: var(--muted); font-size: 12px; }
+.project-move-feedback { position: fixed; bottom: 20px; left: 20px; z-index: 90; display: flex; align-items: center; gap: 10px; max-width: min(440px, calc(100vw - 40px)); border: 1px solid var(--line); border-radius: var(--ui-control-radius); padding: 10px 12px; color: var(--ink); background: var(--card); box-shadow: var(--shadow); }
+.project-move-feedback p { flex: 1; min-width: 0; margin: 0; font-size: 11px; overflow-wrap: anywhere; }
+.project-move-feedback button { flex: none; min-height: 28px; padding: 4px 7px; font-size: 11px; }
+.project-drag-preview { position: fixed; z-index: 100; pointer-events: none; max-width: min(320px, 80vw); border: 1px solid var(--selection-edge); border-radius: var(--ui-control-radius); padding: 7px 10px; color: var(--ink); background: var(--card); box-shadow: var(--shadow); font-size: 12px; }
+.project-root-drop { position: fixed; z-index: 12; background: var(--sidebar); }
+.project-tree-tools { position: sticky; top: -15px; z-index: 10; display: grid; gap: 8px; padding-block: 8px; background: var(--sidebar); }
+
+.project-row.project-search-result { grid-template-columns: minmax(0, 1fr) auto; }

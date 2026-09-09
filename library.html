@@ -52,10 +52,13 @@
           <button id="open-skills" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-wand-sparkles"></use></svg><span data-i18n="创作 Skill">创作 Skill</span></button>
         </nav>
         <section id="project-section" class="project-section">
-          <div class="filter-heading"><strong data-i18n="项目">项目</strong><span><button id="create-collection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-plus"></use></svg><span data-i18n="新建">新建</span></button><button id="manage-project-order" class="icon-button" type="button" aria-label="管理项目结构" title="管理项目结构" data-i18n-aria-label="管理项目结构" data-i18n-title="管理项目结构"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg></button></span></div>
+          <div class="project-tree-tools">
+          <div class="filter-heading"><strong data-i18n="项目">项目</strong><span><button id="create-collection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-plus"></use></svg><span data-i18n="新建">新建</span></button><button id="collapse-projects" class="icon-button" type="button" aria-label="全部折叠" title="全部折叠" data-i18n-aria-label="全部折叠" data-i18n-title="全部折叠"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg></button></span></div>
+          <input id="project-search" class="project-search" type="search" aria-label="搜索项目" placeholder="搜索项目" data-i18n-aria-label="搜索项目" data-i18n-placeholder="搜索项目" />
+          </div>
           <div id="project-root-drop" class="project-root-drop" hidden data-i18n="移到根级">移到根级</div>
           <div id="collection-filters" class="project-list" role="tree" aria-label="项目树" data-i18n-aria-label="项目树"></div>
-          <p id="project-order-status" class="sr-only" role="status" aria-live="polite"></p>
+          <div id="project-move-feedback" class="project-move-feedback" hidden><p id="project-order-status" role="status" aria-live="polite"></p><button id="project-move-undo" class="button-secondary" type="button" data-i18n="撤销">撤销</button><button class="icon-button project-move-dismiss" type="button" aria-label="关闭" data-i18n-aria-label="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></div>
         </section>
         <section class="sidebar-trash-section">
           <button id="open-trash" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-trash-2"></use></svg><span data-i18n="回收站">回收站</span><strong id="trash-count" class="workspace-navigation-count" hidden></strong></button>

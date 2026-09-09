@@ -9,7 +9,8 @@ export function createLibraryReplacementRecoveryPoint(stateValue, options = {}) 
     id,
     createdAt,
     state,
-    retainedAssetIds: uniqueIds(options.retainedAssetIds)
+    retainedAssetIds: uniqueIds(options.retainedAssetIds),
+    ...restoreReceipt(options.restoreReceipt)
   };
 }
 
@@ -23,7 +24,8 @@ export function normalizeLibraryReplacementRecoveryPoint(value) {
     id,
     createdAt,
     state: cloneManagedState(value.state),
-    retainedAssetIds: uniqueIds(value.retainedAssetIds)
+    retainedAssetIds: uniqueIds(value.retainedAssetIds),
+    ...restoreReceipt(value.restoreReceipt)
   };
 }
 
@@ -35,7 +37,8 @@ export function swapLibraryReplacementRecoveryPoint(currentStateValue, pointValu
     recoveryPoint: createLibraryReplacementRecoveryPoint(currentStateValue, {
       id: options.id,
       createdAt: options.createdAt,
-      retainedAssetIds: options.retainedAssetIds
+      retainedAssetIds: options.retainedAssetIds,
+      restoreReceipt: options.restoreReceipt
     })
   };
 }
@@ -71,4 +74,10 @@ function clean(value) {
 function isoString(value) {
   const timestamp = Date.parse(String(value ?? "").trim());
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function restoreReceipt(value) {
+  const operationId = clean(value?.operationId);
+  const sourcePointId = clean(value?.sourcePointId);
+  return operationId && sourcePointId ? { restoreReceipt: { operationId, sourcePointId } } : {};
 }

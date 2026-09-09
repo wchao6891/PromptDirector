@@ -19,7 +19,7 @@ export function packageRuntimeFiles(files, { release = false } = {}) {
   files = packageHashRuntime(files);
   if (!release) return files;
   return files
-    .filter(file => file.name !== "local-extension-upgrade.js")
+    .filter(file => !["local-extension-upgrade.js", "local-installation-directory.js"].includes(file.name))
     .map(file => file.name === "local-extension-upgrade-ui.js"
       ? { ...file, data: storeUpdateUi }
       : file);

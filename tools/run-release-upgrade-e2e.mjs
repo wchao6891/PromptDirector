@@ -57,6 +57,14 @@ try {
       PROMPTDIRECTOR_PREVIOUS_RELEASE_TAG: baselineTag
     }
   });
+  const nativePreviousDirectory = join(temporaryRoot, "native-previous-release");
+  await mkdir(nativePreviousDirectory);
+  execFileSync("tar", ["-xf", previousArchive, "-C", nativePreviousDirectory], { stdio: "inherit" });
+  execFileSync(python, [join(projectRoot, "test", "local_upgrade_native_e2e.py"), nativePreviousDirectory, currentArchive], {
+    cwd: projectRoot,
+    stdio: "inherit",
+    env: process.env
+  });
   process.stdout.write(`升级演练通过：${baselineTag} 资料 → ${manifest.version} 最终固定 ID 包\n`);
 } catch (error) {
   process.stderr.write(`升级演练失败：${error.message}\n`);

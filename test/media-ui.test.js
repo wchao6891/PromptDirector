@@ -102,7 +102,9 @@ test("video cards resolve a saved local poster and referenced video details stay
 });
 
 test("one top search surface keeps only a concise placeholder hint", () => {
-  assert.equal((html.match(/type="search"/g) ?? []).length, 1);
+  const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
+  assert.equal((header.match(/type="search"/g) ?? []).length, 1);
+  assert.match(html, /id="project-search"[^>]*aria-label="搜索项目"/);
   assert.match(html, /placeholder="[^"]*type:video[^"]*"/);
   assert.doesNotMatch(html, /id="search-help"|source:x\.com.*tag:电影感.*has:video/);
 });

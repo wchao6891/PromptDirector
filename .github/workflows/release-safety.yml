@@ -69,3 +69,39 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
           retention-days: 14
+
+  windows-portability:
+    name: Windows packaged data and project interactions
+    needs: source-contracts
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: python -m pip install playwright==1.58.0
+      - run: python -m playwright install chromium
+      - run: npm run package
+      - name: Check the Windows installation package
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, subprocess, sys, zipfile
+          version = json.loads(pathlib.Path('manifest.json').read_text())['version']
+          destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'PromptDirector'
+          with zipfile.ZipFile(f'dist/PromptDirector-{version}-FIXED-ID-DEV.zip') as archive:
+              archive.extractall(destination)
+          env = {**os.environ, 'PROMPTDIRECTOR_E2E_EXTENSION_DIR': str(destination), 'PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK': '1'}
+          for script in ['project_tree_e2e.py', 'library_import_resources_e2e.py', 'library_import_ui_e2e.py', 'library_import_interruption_e2e.py']:
+              subprocess.run([sys.executable, f'test/{script}'], env=env, check=True)
+          PY
+      - run: npm run test:upgrade

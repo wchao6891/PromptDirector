@@ -217,6 +217,7 @@ import {
 import {
   claimLibraryImportTransaction,
   failLibraryImportTransaction,
+  normalizeLibraryImportTransactionsState,
   succeedLibraryImportTransaction
 } from "./library-import-transaction.js";
 import {
@@ -628,10 +629,21 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => ({ ok: true, ...folderBackupState(await readState()) }));
     case "GET_CAPTURE_WORKSPACE":
       return enqueueCapture(async () => captureWorkspace());
+    case "GET_LIBRARY_ASSET_RETENTION":
+      return enqueue(async () => {
+        const ids = Array.isArray(message.assetIds) ? message.assetIds : [];
+        const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+        const transactions = normalizeLibraryImportTransactionsState(stored[STORAGE_KEYS.libraryImportTransactions]);
+        if (transactions.items.some(item => item.status === "pending")) {
+          return { ok: true, assetIds: ids };
+        }
+        const retained = collectRetainedLocalAssetIds(await readState());
+        return { ok: true, assetIds: ids.filter(id => retained.has(id)) };
+      });
     case "GET_DATA_SAFETY_STATUS":
       return enqueue(async () => dataSafetyStatus(await readState()));
     case "RESTORE_LIBRARY_REPLACEMENT_POINT":
-      return enqueue(async () => restoreLibraryReplacementPoint(await readState()));
+      return enqueue(async () => restoreLibraryReplacementPoint(await readState(), message));
     case "GET_SYNC_RUN_STATUS":
       return Promise.resolve({ ok: true, syncStatus: manualSyncController.status() });
     case "CANCEL_SYNC": {
@@ -8063,7 +8075,7 @@ async function applyLibraryImport(state, message) {
     stateValue: state,
     sourceValue: message.library,
     planValue: message.plan
-  });
+  }, { resumePending: true });
   if (claim.replayed) return claim.result;
   if (!claim.acquired) {
     throw Object.assign(new Error("这次导入仍在提交中，请稍后重试"), {
@@ -8095,7 +8107,6 @@ async function applyLibraryImport(state, message) {
       throw Object.assign(new Error("导入计划已经变化，请重新检查"), { code: "IMPORT_PLAN_STALE" });
     }
     response = libraryImportResponse(result);
-    const completed = succeedLibraryImportTransaction(claim.state, claim.receipt, response);
     const exactReplace = result.context.mode === LIBRARY_TRANSFER_MODES.EXACT_REPLACE;
     const previousRecoveryPoint = normalizeLibraryReplacementRecoveryPoint(state.libraryReplacementRecoveryPoint);
     const recoveryPoint = exactReplace
@@ -8103,6 +8114,8 @@ async function applyLibraryImport(state, message) {
           retainedAssetIds: result.rollback.retainedAssetIds
         })
       : previousRecoveryPoint;
+    if (exactReplace) response.recoveryPointCreatedAt = recoveryPoint.createdAt;
+    const completed = succeedLibraryImportTransaction(claim.state, claim.receipt, response);
     const update = {
       ...storagePayload(result.targetState),
       [STORAGE_KEYS.settings]: normalizeSettings(result.targetState.settings ?? state.settings),
@@ -8117,23 +8130,30 @@ async function applyLibraryImport(state, message) {
       ...(exactReplace ? { [STORAGE_KEYS.libraryReplacementRecoveryPoint]: recoveryPoint } : {})
     };
     await commitLocalChanges(update);
-    if (exactReplace) {
-      const obsoleteAssetIds = obsoleteRecoveryAssetIds(
-        previousRecoveryPoint,
-        [...collectRetainedLocalAssetIds(result.targetState)],
-        recoveryPoint
-      );
-      await deleteMediaBlobs(obsoleteAssetIds).catch((error) => {
-        console.error("Obsolete library recovery media cleanup failed", error);
-      });
-      response = { ...response, recoveryPointCreatedAt: recoveryPoint.createdAt };
-    }
   } catch (error) {
-    const failed = failLibraryImportTransaction(claim.state, claim.receipt);
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+    const current = stored[STORAGE_KEYS.libraryImportTransactions];
+    const completed = current?.items?.find(item => item.operationId === claim.receipt.operationId && item.status === "completed");
+    if (completed) return completed.result;
+    const failed = failLibraryImportTransaction(current, claim.receipt);
     await commitLocalChanges({
       [STORAGE_KEYS.libraryImportTransactions]: failed
     }, { markSyncDirty: false }).catch(() => undefined);
     throw error;
+  }
+
+  if (result.context.mode === LIBRARY_TRANSFER_MODES.EXACT_REPLACE) {
+    try {
+      const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryReplacementRecoveryPoint);
+      const obsoleteAssetIds = obsoleteRecoveryAssetIds(
+        state.libraryReplacementRecoveryPoint,
+        [...collectRetainedLocalAssetIds({ ...state, ...result.targetState, libraryReplacementRecoveryPoint: stored[STORAGE_KEYS.libraryReplacementRecoveryPoint] })],
+        stored[STORAGE_KEYS.libraryReplacementRecoveryPoint]
+      );
+      await deleteMediaBlobs(obsoleteAssetIds);
+    } catch (error) {
+      console.error("Obsolete library recovery media cleanup failed", error);
+    }
   }
 
   const importedEntryIds = result.createdEntryIds;
@@ -8160,7 +8180,7 @@ async function applyLibraryImportBatch(state, message) {
     stateValue: state,
     sourceValue,
     planValue: message.plan
-  });
+  }, { resumePending: true });
   if (claim.replayed) return claim.result;
   if (!claim.acquired) {
     throw Object.assign(new Error("这次导入仍在提交中，请稍后重试"), {
@@ -8200,7 +8220,11 @@ async function applyLibraryImportBatch(state, message) {
       [STORAGE_KEYS.libraryImportTransactions]: completed.state
     });
   } catch (error) {
-    const failed = failLibraryImportTransaction(claim.state, claim.receipt);
+    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+    const current = stored[STORAGE_KEYS.libraryImportTransactions];
+    const completed = current?.items?.find(item => item.operationId === claim.receipt.operationId && item.status === "completed");
+    if (completed) return completed.result;
+    const failed = failLibraryImportTransaction(current, claim.receipt);
     await commitLocalChanges({
       [STORAGE_KEYS.libraryImportTransactions]: failed
     }, { markSyncDirty: false }).catch(() => undefined);
@@ -8220,12 +8244,21 @@ async function applyLibraryImportBatch(state, message) {
   return response;
 }
 
-async function restoreLibraryReplacementPoint(state) {
+async function restoreLibraryReplacementPoint(state, message) {
   const point = normalizeLibraryReplacementRecoveryPoint(state.libraryReplacementRecoveryPoint);
   if (!point) return { ok: false, message: "当前没有可回退的资料库状态" };
+  const operationId = String(message?.operationId || "").trim();
+  const expectedPointId = String(message?.expectedPointId || "").trim();
+  if (operationId && point.restoreReceipt?.operationId === operationId && point.restoreReceipt.sourcePointId === expectedPointId) {
+    return libraryReplacementRestoreResponse(point);
+  }
+  if (!operationId || expectedPointId !== point.id) {
+    return { ok: false, message: "回退点已经变化，请刷新资料库后重新确认" };
+  }
   const currentManagedState = folderBackupState(state);
   const swapped = swapLibraryReplacementRecoveryPoint(currentManagedState, point, {
-    retainedAssetIds: [...collectRetainedLocalAssetIds(currentManagedState)]
+    retainedAssetIds: [...collectRetainedLocalAssetIds(currentManagedState)],
+    restoreReceipt: { operationId, sourcePointId: expectedPointId }
   });
   await commitLocalChanges({
     ...storagePayload(swapped.targetState),
@@ -8239,10 +8272,14 @@ async function restoreLibraryReplacementPoint(state) {
     [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(swapped.targetState.creativeSkills),
     [STORAGE_KEYS.libraryReplacementRecoveryPoint]: swapped.recoveryPoint
   });
+  return libraryReplacementRestoreResponse(swapped.recoveryPoint);
+}
+
+function libraryReplacementRestoreResponse(point) {
   return {
     ok: true,
     message: "已回退到上一次精确替换前的资料库；刚才的状态已保存为新的回退点",
-    recoveryPointCreatedAt: swapped.recoveryPoint.createdAt
+    recoveryPointCreatedAt: point.createdAt
   };
 }
 
@@ -8611,6 +8648,7 @@ async function dataSafetyStatus(state) {
     videoCount: media.filter((asset) => asset.kind === "video").length,
     documentCount: media.filter((asset) => asset.kind === "document").length,
     canRestoreReplacementPoint: Boolean(state.libraryReplacementRecoveryPoint),
+    replacementPointId: state.libraryReplacementRecoveryPoint?.id || "",
     replacementPointCreatedAt: state.libraryReplacementRecoveryPoint?.createdAt || "",
     syncStatus: state.syncStatus
   };

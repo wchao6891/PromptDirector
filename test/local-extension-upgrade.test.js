@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createZipBlob } from "../zip.js";
-import { extensionIdForKey, installLocalUpgrade, isExtensionProgramPath, localReleasePackageUrl, prepareLocalUpgrade, RECOVERY_DIRECTORY, verifyInstallationDirectory, verifyRecoveredUpgrade, verifyRunningUpgrade } from "../local-extension-upgrade.js";
+import { extensionIdForKey, cleanupLocalUpgrade, installLocalUpgrade, isExtensionProgramPath, localReleasePackageUrl, prepareLocalUpgrade, RECOVERY_DIRECTORY, verifyInstallationDirectory, verifyRecoveredUpgrade, verifyRunningUpgrade } from "../local-extension-upgrade.js";
 const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url)));
 const id = await extensionIdForKey(manifest.key);
 const nextVersion = [...manifest.version.split(".").slice(0, -1), Number(manifest.version.split(".").at(-1)) + 1].join(".");
@@ -101,4 +101,37 @@ test("a source checkout or existing recovery point is never overwritten", async 
   await rm(join(f.path, ".git"), { recursive: true });
   await mkdir(join(f.path, RECOVERY_DIRECTORY));
   await assert.rejects(installLocalUpgrade(f.root, await prepareLocalUpgrade(await packageFor(), runtime), { runtime, fetchFn: f.fetchFn, saveRecord: async () => {} }), /恢复副本/);
+});
+
+test("recovery retains hash modules from historical installations, not only files in the incoming ZIP", async t => {
+  const f = await fixture(t);
+  await mkdir(join(f.path, "vendor/noble-hashes"), { recursive: true });
+  await writeFile(join(f.path, "vendor/noble-hashes/sha2.js"), "export const legacyHash = true;");
+  await writeFile(join(f.path, "vendor/noble-hashes/LICENSE"), "upstream license fixture");
+  let record;
+  await installLocalUpgrade(f.root, await prepareLocalUpgrade(await packageFor(), runtime), {
+    runtime, fetchFn: f.fetchFn, saveRecord: async value => { record = value; }
+  });
+  assert.ok(record.oldHashes["vendor/noble-hashes/sha2.js"]);
+  assert.equal(await readFile(join(f.path, RECOVERY_DIRECTORY, "vendor/noble-hashes/sha2.js"), "utf8"), "export const legacyHash = true;");
+});
+
+test("restored original installations can clear the recovery folder and update again", async t => {
+  const f = await fixture(t);
+  const prepared = await prepareLocalUpgrade(await packageFor(), runtime);
+  let record;
+  await installLocalUpgrade(f.root, prepared, {runtime, fetchFn:f.fetchFn, saveRecord:async value=>{record=value;}});
+  for (const path of Object.keys(record.oldHashes)) await writeFile(join(f.path,path), await readFile(join(f.path,RECOVERY_DIRECTORY,path)));
+  await cleanupLocalUpgrade(record, {runtime, fetchFn:f.fetchFn});
+  assert.equal((await readdir(f.path)).includes(RECOVERY_DIRECTORY), false);
+  await installLocalUpgrade(f.root, prepared, {runtime, fetchFn:f.fetchFn, saveRecord:async()=>{}});
+});
+
+test("cleanup after loading a recovery copy cannot delete the running installation", async t => {
+  const f = await fixture(t);
+  const prepared = await prepareLocalUpgrade(await packageFor(), runtime);
+  let record;
+  await installLocalUpgrade(f.root, prepared, {runtime, fetchFn:f.fetchFn, saveRecord:async value=>{record=value;}});
+  await cleanupLocalUpgrade(record, {runtime, fetchFn:served(join(f.path, RECOVERY_DIRECTORY))});
+  assert.equal(await readFile(join(f.path,RECOVERY_DIRECTORY,'background.js'),'utf8'), 'old background');
 });

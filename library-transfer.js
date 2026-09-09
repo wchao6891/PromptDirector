@@ -28,6 +28,8 @@ export async function inspectLibraryTransfer({
   files = new Map(),
   limits = {},
   validateImage,
+  signal,
+  onImageProgress,
   sourceReport
 } = {}) {
   if (!SOURCE_TYPES.has(sourceType)) throw new Error("资料检查缺少有效来源类型");
@@ -58,7 +60,7 @@ export async function inspectLibraryTransfer({
     inspected = parseLibraryPackage(library, files, { ...limits, salvageInvalidMedia: true });
   }
   if (validateImage !== undefined) {
-    const invalidImageIds = await findInvalidImportedImageIds(inspected.images, validateImage);
+    const invalidImageIds = await findInvalidImportedImageIds(inspected.images, validateImage, { signal, onProgress: onImageProgress });
     if (invalidImageIds.size) {
       const salvageFiles = filesWithoutInvalidLibraryImages(library, files, invalidImageIds);
       inspected = parseLibraryPackage(library, salvageFiles, { ...limits, salvageInvalidMedia: true });

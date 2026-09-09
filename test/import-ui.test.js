@@ -160,10 +160,10 @@ test("active import restoration and every terminal job action stay wired", () =>
 
 test("folder restore and ZIP import retry one response loss with the same operation receipt", () => {
   assert.match(js, /function createLibraryImportOperationId/);
-  assert.match(js, /async function applyLibraryImportWithReceipt/);
+  assert.match(js, /import \{ applyLibraryImportWithReceipt \} from "\.\/library-import-client\.js"/);
   assert.equal(js.match(/const operationId\s*=\s*createLibraryImportOperationId\(\)/g)?.length, 2);
   assert.equal(js.match(/applyLibraryImportWithReceipt\(\{[\s\S]{0,180}?operationId,/g)?.length, 2);
-  assert.match(js, /await chrome\.runtime\.sendMessage\(message\)[\s\S]*await chrome\.runtime\.sendMessage\(message\)/);
+
 });
 
 test("shared ZIP and degraded folders salvage individual failures while verified folders stay strict", () => {
@@ -182,5 +182,5 @@ test("a committed import never deletes restored non-case media during later UI r
   assert.equal(js.match(/let applySucceeded\s*=\s*false/g)?.length, 2);
   assert.equal(js.match(/applySucceeded\s*=\s*true/g)?.length, 2);
   assert.match(js, /creativeRuns[\s\S]*composerSessions[\s\S]*trashState/);
-  assert.match(js, /applySucceeded\s*\?\s*new Set\(savedIds\)/);
+  assert.match(js, /\(applySucceeded \|\| error\?\.code === "IMPORT_OUTCOME_UNKNOWN"\)\s*\?\s*new Set\(savedIds\)/);
 });

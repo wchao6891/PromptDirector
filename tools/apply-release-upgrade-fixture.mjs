@@ -24,4 +24,4 @@ assert.equal(record.phase, "written");
 assert.equal(await readFile(join(installation, "media", "upgrade-fixture.bin"), "utf8"), sentinel);
 assert.equal(await updater.verifyRunningUpgrade(record, { ...runtime, getManifest: () => prepared.manifest }, served(installation)), true);
 assert.equal(await updater.verifyRecoveredUpgrade(record, runtime, served(join(installation, updater.RECOVERY_DIRECTORY))), true);
-console.log(`历史更新器原位安装通过：${previous.version} → ${prepared.manifest.version}（${prepared.files.size} 个文件；恢复副本完整）`);
+console.log(`历史更新器原位安装通过：${previous.version} → ${prepared.manifest.version}（${prepared.files.size} 个文件；已校验恢复记录列出的文件）`);

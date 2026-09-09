@@ -26,6 +26,42 @@ export async function savePortableAssetBlob(assetId, blob, options = {}) {
   return writeMediaBlob(assetId, blob, options);
 }
 
+export async function savePortableAssetBlobs(items, options = {}) {
+  if (!Array.isArray(items)) throw new Error("媒体文件列表无效");
+  const ids = new Set();
+  let bytes = 0;
+  for (const { assetId, blob } of items) {
+    validateAssetId(assetId);
+    validatePortableAssetBlob(blob);
+    if (ids.has(assetId)) throw new Error("媒体文件编号重复");
+    ids.add(assetId);
+    bytes += blob.size;
+  }
+  if (!items.length) return;
+  if (options.checkCapacity !== false) assertStorageCapacity(await storageEstimate(options.estimateStorage), bytes);
+  const transaction = (await openDatabase()).transaction(MEDIA_STORE, "readwrite");
+  const completed = transactionAsPromise(transaction);
+  try {
+    const store = transaction.objectStore(MEDIA_STORE);
+    let written = 0;
+    let writtenBytes = 0;
+    // Queue Blob handles in one transaction; no full-file ArrayBuffer copies.
+    // Only transaction completion makes this staged resource group durable.
+    for (const { assetId, blob } of items) {
+      store.put(blob, assetId).onsuccess = () => {
+        written += 1;
+        writtenBytes += blob.size;
+        options.onProgress?.({ completed: written, total: items.length, writtenBytes, totalBytes: bytes });
+      };
+    }
+    await completed;
+  } catch (error) {
+    try { transaction.abort(); } catch {}
+    await completed.catch(() => {});
+    throw mediaStorageWriteError(error);
+  }
+}
+
 async function writeMediaBlob(assetId, blob, options = {}) {
   if (options.checkCapacity !== false) {
     const estimate = await storageEstimate(options.estimateStorage);
