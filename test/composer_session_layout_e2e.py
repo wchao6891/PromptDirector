@@ -37,7 +37,6 @@ def geometry(page) -> dict:
             viewport: window.innerHeight,
             shell: rect('.composer-shell'),
             nav: rect('.composer-nav'),
-            navFooter: rect('.composer-nav-footer'),
             input: rect('.composer-input-area'),
             timeline: rect('.composer-chat-scroll'),
             sessions: {
@@ -53,11 +52,11 @@ def geometry(page) -> dict:
 def assert_stable(first: dict, last: dict) -> None:
     drift = {
         "shell": last["shell"]["bottom"] - first["shell"]["bottom"],
-        "navFooter": last["navFooter"]["bottom"] - first["navFooter"]["bottom"],
+        "nav": last["nav"]["bottom"] - first["nav"]["bottom"],
         "input": last["input"]["bottom"] - first["input"]["bottom"],
     }
     assert max(abs(value) for value in drift.values()) <= 1, drift
-    assert last["navFooter"]["bottom"] <= last["viewport"] + 1, last
+    assert last["nav"]["bottom"] <= last["viewport"] + 1, last
     assert last["input"]["bottom"] <= last["viewport"] + 1, last
     assert last["sessions"]["scrollHeight"] > last["sessions"]["clientHeight"], last
     assert last["sessions"]["overflowY"] == "auto", last
@@ -127,11 +126,11 @@ def main() -> None:
 
         print({
             "desktopDrift": {
-                "navFooter": desktop_last["navFooter"]["bottom"] - desktop_first["navFooter"]["bottom"],
+                "nav": desktop_last["nav"]["bottom"] - desktop_first["nav"]["bottom"],
                 "input": desktop_last["input"]["bottom"] - desktop_first["input"]["bottom"],
             },
             "mobileDrift": {
-                "navFooter": mobile_last["navFooter"]["bottom"] - mobile_first["navFooter"]["bottom"],
+                "nav": mobile_last["nav"]["bottom"] - mobile_first["nav"]["bottom"],
                 "input": mobile_last["input"]["bottom"] - mobile_first["input"]["bottom"],
             },
             "sessionScroll": mobile_last["sessions"],

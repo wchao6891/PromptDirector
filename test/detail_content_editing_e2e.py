@@ -96,7 +96,7 @@ def main():
             defects.append("视频已有封面但缩略区未使用")
         if page.locator('.detail-visual-gallery').get_by_text('附加本地视频', exact=True).count() != 1:
             defects.append("附加本地视频在播放器区域重复出现")
-        expect(page.locator('.platform-playback-fallback > img')).to_have_count(1)
+        expect(page.locator('.platform-playback-fallback .unavailable-video-stage > img')).to_have_count(1)
         for theme in ('light', 'dark'):
             page.evaluate("async theme => {const {initializeUi}=await import('./i18n.js');await initializeUi({theme,locale:'zh-CN',motion:'reduced'});}", theme)
             for width in (1280, 390):
@@ -107,12 +107,12 @@ def main():
                     expect(thumb).to_have_attribute('aria-pressed', 'true')
                     if index == 1:
                         expect(thumb.locator('.media-thumb-label')).to_contain_text('视频')
-                        expect(page.locator('.platform-playback-fallback > img')).to_have_count(0)
+                        expect(page.locator('.platform-playback-fallback .unavailable-video-stage > img')).to_have_count(0)
                     assert page.locator('.detail-visual-gallery').evaluate('e=>e.scrollWidth<=e.clientWidth'), (theme, width)
                     remove = page.get_by_role('button', name='此媒体移入回收站', exact=True)
                     remove.scroll_into_view_if_needed()
                     assert remove.evaluate('e=>{const r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}'), (theme, width)
-                    contrast = page.locator('.platform-link-actions button').evaluate(r"""e => {
+                    contrast = page.locator('.platform-playback-fallback .media-playback-actions button').evaluate(r"""e => {
                       const luminance = color => {const rgb=color.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4});return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2]};
                       const s=getComputedStyle(e), a=luminance(s.color), b=luminance(s.backgroundColor);
                       return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
