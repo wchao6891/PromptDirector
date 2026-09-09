@@ -8,7 +8,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 from e2e_support import extension_session
 
 
-CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/catalog.json"
+CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/public-catalog.json"
 
 
 def main() -> None:
@@ -22,19 +22,20 @@ def main() -> None:
             "async (url) => (await fetch(url, {cache: 'no-store', credentials: 'omit'})).json()",
             CATALOG_URL,
         )
-        assert len(catalog["themes"]) == 1, catalog
-        item = catalog["themes"][0]
-        assert item["id"] == "featured:vol-1", item
-        assert item["caseCount"] == 20, item
-        assert item["rightsStatus"] == "verified_original", item
-        assert item["rightsReviewUrl"].endswith("/reviews/featured-cases-vol-1.json"), item
+        expect(curated.locator(".pack-card")).to_have_count(len(catalog["themes"]), timeout=30_000)
+        assert any(theme["rightsStatus"] == "verified_original" for theme in catalog["themes"])
+        source_items = [theme for theme in catalog["themes"] if theme["rightsStatus"] == "source_unverified" and theme["type"] == "image_prompt"]
+        assert source_items, "公开目录没有已恢复的第三方来源精选"
+        item = min(source_items, key=lambda theme: theme["archiveBytes"])
         card = curated.locator(f'.pack-card[data-pack-id="{item["id"]}"]')
         expect(card).to_be_visible(timeout=30_000)
         card.click()
         expect(curated.locator(".case-card").first).to_be_visible(timeout=30_000)
         expect(curated.locator(".case-video-badge")).to_have_count(0)
+        expect(curated.locator(".detail-meta")).to_contain_text("授权未核验")
         curated.locator(".case-card").first.click()
         expect(curated.locator(".case-detail-figure img")).to_have_count(1)
+        expect(curated.locator(".case-detail-source")).to_contain_text("授权未核验")
         save = curated.locator(".case-save-action")
         expect(save).to_have_text("保存到案例库")
         curated.evaluate(
@@ -70,6 +71,7 @@ def main() -> None:
         expect(curated.locator(".detail-image")).to_have_count(1)
         local_state = curated.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert len(local_state["entries"]) == 1, local_state
+        assert local_state["entries"][0]["curatedOrigin"]["rightsStatus"] == "source_unverified"
         labels = curated.evaluate("async () => (await chrome.storage.local.get('__curatedLiveLabels')).__curatedLiveLabels || []")
         assert not page_errors, page_errors
         assert not console_errors, console_errors
@@ -90,6 +92,8 @@ def main() -> None:
         assert len(project["entryIds"]) == item["caseCount"], project
 
         print({
+            "visible_packages": len(catalog["themes"]),
+            "available_cases": sum(theme["caseCount"] for theme in catalog["themes"]),
             "package": item["id"],
             "case_count": item["caseCount"],
             "rights_status": item["rightsStatus"],

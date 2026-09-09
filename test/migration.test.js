@@ -4,6 +4,21 @@ import assert from "node:assert/strict";
 import { migrateLibraryState, needsMigration } from "../migration.js";
 import { CONTENT_IDS, SCHEMA_VERSION, createDefaultTaxonomy } from "../taxonomy.js";
 
+test("saving and reloading a source selection retains its stated rights without inventing permission", () => {
+  const origin = {
+    catalogId: "featured:source", packageId: "source-pack", packageVersion: "1.0.0",
+    author: "原作者", license: "权利归原作者 · 授权未核验", sourceEntryId: "source-case",
+    rightsStatus: "source_unverified",
+    rightsReviewUrl: "https://wchao6891.github.io/PromptDirector-Curated/reviews/source-pack.json"
+  };
+  const first = migrateLibraryState({ entries: [{ id: "saved-source", title: "收藏的案例", curatedOrigin: origin }] }).state;
+  const reloaded = migrateLibraryState(first).state;
+  assert.deepEqual(reloaded.entries[0].curatedOrigin, origin);
+  const { rightsStatus, rightsReviewUrl, ...withoutRightsRecord } = origin;
+  const historical = migrateLibraryState({ entries: [{ id: "previous-save", curatedOrigin: withoutRightsRecord }] }).state;
+  assert.deepEqual(historical.entries[0].curatedOrigin, withoutRightsRecord);
+});
+
 test("older schemas upgrade without changing entry content", () => {
   const entry = {
     id: "case-a", schemaVersion: 16, title: "原案例", text: "原文", url: "https://example.com",

@@ -1,5 +1,5 @@
 export const CURATED_CATALOG_URL =
-  "https://wchao6891.github.io/PromptDirector-Curated/catalog.json";
+  "https://wchao6891.github.io/PromptDirector-Curated/public-catalog.json";
 
 export const CURATED_METRICS_URL =
   "https://wchao6891.github.io/PromptDirector-Curated/metrics.json";

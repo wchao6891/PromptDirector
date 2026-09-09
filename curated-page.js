@@ -320,7 +320,7 @@ function renderDetail(item, preview, failed = false) {
   const info = element("div", "detail-info");
   info.append(element("h1", "", item.title));
   const meta = element("div", "detail-meta");
-  meta.append(element("span", "", item.author), element("span", "", `${item.caseCount} ${t("个案例")}`), element("span", "", rightsLabel(item.license)));
+  meta.append(element("span", "", item.author), element("span", "", `${item.caseCount} ${t("个案例")}`), element("span", "", rightsLabel(item)));
   info.append(meta);
   const actions = element("div", "detail-actions");
   const download = actionButton("download-action", "save", t("保存整包"));
@@ -493,7 +493,7 @@ function renderCaseDetail(item, entry) {
   promptSection.append(element("h3", "", t("完整提示词")), element("pre", "case-detail-prompt", entry.text));
   body.append(promptSection);
   const source = element("div", "case-detail-source");
-  source.append(element("span", "", entry.rights || rightsLabel(item.license)));
+  source.append(element("span", "", rightsLabel(item, entry.rights)));
   if (entry.sourceUrl) {
     const link = element("a", "", t("查看来源"));
     link.href = entry.sourceUrl;
@@ -948,7 +948,10 @@ function publicPackUrl(id) {
   return url.href;
 }
 
-function rightsLabel(license = "") {
+function rightsLabel(item, entryRights = "") {
+  if (item.rightsStatus === "source_unverified") return t("权利归原作者 · 授权未核验");
+  if (entryRights) return entryRights;
+  const license = item.license || "";
   if (license.includes("PromptDirector 原创")) return t("PromptDirector 原创");
   if (license.includes("权利归原作者")) return t("权利归原作者");
   return license || t("权利未标注");
