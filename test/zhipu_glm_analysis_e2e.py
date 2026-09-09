@@ -479,6 +479,7 @@ def main() -> None:
         expect(library.locator(".video-analysis-task-status .analysis-diagnostics")).to_have_count(0)
         library.locator("#open-settings").dispatch_event("click")
         library.locator('[data-settings-tab="tasks"]').click()
+        library.locator(".task-diagnostics > summary").click()
         details = library.locator("#analysis-diagnostics")
         details.locator("summary").click()
         expect(details).to_contain_text("HTTP: 200")

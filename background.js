@@ -1889,7 +1889,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
               await saveMediaBlob(videoAsset.id, blob);
               savedAssetIds.push(videoAsset.id);
               Object.assign(videoAsset, {
-                storageMode: "managed", mimeType: blob.type, byteSize: blob.size,
+                storageMode: "managed", sourceUrl: media.url, mimeType: blob.type, byteSize: blob.size,
                 contentHash, playbackCapability: "unknown"
               });
               delete videoAsset.reference;
