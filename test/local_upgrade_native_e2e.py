@@ -65,7 +65,7 @@ def main():
         preferences.parent.mkdir(parents=True)
         preferences.write_text(json.dumps({"profile": {"default_content_setting_values": {"file_system_write_guard": 1}}}))
         context = playwright.chromium.launch_persistent_context(
-            str(profile), headless=True, channel="chromium", viewport={"width": 1280, "height": 900},
+            str(profile), headless=True, channel="chromium", locale="zh-CN", viewport={"width": 1280, "height": 900},
             args=[f"--disable-extensions-except={installed}", f"--load-extension={installed}"]
         )
         try:
@@ -91,6 +91,7 @@ def main():
               return {entries:(await chrome.storage.local.get('entries')).entries, media:Array.from(new Uint8Array(await(await(await import('./media-store.js')).getMediaBlob('native-upgrade-media')).arrayBuffer()))};
             }""")
             page.goto(f"chrome-extension://{extension_id}/library.html")
+            expect(page.locator("html")).to_have_attribute("lang", "zh-CN")
             grant_directory_by_drop(page, context, installed)
             page.evaluate("""({version,releaseUrl}) => {
               window.showDirectoryPicker=async()=>window.installationHandle;
@@ -164,6 +165,15 @@ def main():
             print(json.dumps({"native_in_place_upgrade": "passed", "previous": previous["version"], "current": target["version"],
                               "case_media_identity_retained": True, "installation_directory_reused": True,
                               "permission": "preauthorized isolated profile"}), flush=True)
+        except Exception:
+            for candidate in context.pages:
+                if candidate.url.startswith(f"chrome-extension://{extension_id}/"):
+                    try:
+                        print({"nativeUpgradePage": candidate.url,
+                               "dialogs": candidate.locator("dialog").all_text_contents()}, flush=True)
+                    except Exception:
+                        pass  # Keep the original failure when runtime.reload closed the page.
+            raise
         finally:
             context.close()
 
