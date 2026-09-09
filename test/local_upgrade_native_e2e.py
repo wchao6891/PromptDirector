@@ -15,6 +15,7 @@ from e2e_support import base_entry, seed_extension_storage
 
 
 def grant_directory_by_drop(page, context, installed):
+    page.bring_to_front()
     page.evaluate("""() => {
       window.addEventListener('dragover', event => {event.preventDefault();event.stopImmediatePropagation();}, {capture:true,once:true});
       window.addEventListener('drop', async event => {
@@ -130,6 +131,7 @@ def main():
             }""")
             assert retained['saved'] and retained['same'] and retained['name']==installed.name, retained
             # Supply renewed consent by a real directory drop; no replacement chooser.
+            check.goto(f"chrome-extension://{extension_id}/library.html", wait_until="networkidle")
             grant_directory_by_drop(check, context, installed)
             directory_proof = check.evaluate("""async () => {
               const upgrade=await import('./local-extension-upgrade.js');
