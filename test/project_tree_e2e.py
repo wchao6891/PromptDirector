@@ -26,13 +26,24 @@ def state(page):
 
 
 def drag_to(page, source, target, position='inside'):
-    source_box = row(page, source).locator('.project-filter').bounding_box()
+    source_box = project_box(page, source, '.project-filter')
     page.mouse.move(source_box['x'] + source_box['width'] / 2, source_box['y'] + source_box['height'] / 2)
     page.mouse.down()
     page.mouse.move(source_box['x'] + source_box['width'] / 2, source_box['y'] + source_box['height'] / 2 + 8)
-    target_box = row(page, target).bounding_box()
+    target_box = project_box(page, target)
     y = target_box['y'] + (3 if position == 'before' else target_box['height'] - 3 if position == 'after' else target_box['height'] / 2)
     page.mouse.move(target_box['x'] + target_box['width'] / 2, y, steps=6)
+
+
+def project_box(page, project_id, child=''):
+    # Resolve and measure in one browser turn. A saved element handle may be
+    # detached by the storage refresh between Playwright's two protocol calls.
+    return page.wait_for_function("""({id, child}) => {
+      const row=document.querySelector(`.project-row[data-collection-id="${CSS.escape(id)}"]`);
+      const element=child ? row?.querySelector(child) : row;
+      const rect=element?.getBoundingClientRect();
+      return rect?.width && rect?.height ? {x:rect.x,y:rect.y,width:rect.width,height:rect.height} : false;
+    }""", arg={'id':project_id,'child':child}).json_value()
 
 
 def main():
