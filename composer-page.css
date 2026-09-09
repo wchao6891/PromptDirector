@@ -1,7 +1,7 @@
 .composer-page { height: 100dvh; margin: 0; overflow: hidden; background: var(--paper); }
 .composer-shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); width: 100%; height: 100dvh; overflow: hidden; }
 
-.composer-nav { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; border-right: 1px solid var(--line); padding: 16px 12px 14px; background: var(--sidebar); }
+.composer-nav { display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-width: 0; min-height: 0; border-right: 1px solid var(--line); padding: 16px 12px 14px; background: var(--sidebar); }
 .composer-brand { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 18px; }
 .composer-brand-link { display: flex; min-width: 0; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
 .composer-brand-link img { width: 34px; height: 34px; border-radius: 9px; }
@@ -37,8 +37,6 @@
 .composer-session-menu-panel .quiet-danger { width: 100%; min-height: 30px; border: 0; border-radius: 5px; padding: 5px 8px; text-align: left; }
 .composer-session-menu-panel button:disabled { color: var(--muted); }
 .composer-session-running { color: var(--accent-ink) !important; }
-.composer-nav-footer { border-top: 1px solid var(--line); padding: 12px 7px 0; }
-.composer-nav-footer p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 
 .composer-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; background: var(--card); }
 .composer-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; min-height: 62px; border-bottom: 1px solid var(--line); padding: 9px clamp(16px, 3vw, 34px); background: color-mix(in srgb, var(--card) 96%, transparent); }
@@ -55,7 +53,6 @@
 .composer-welcome > div { max-width: 650px; }
 .composer-welcome img { width: 46px; height: 46px; border-radius: 13px; }
 .composer-welcome h1 { margin: 20px 0 9px; font-size: clamp(26px, 4vw, 42px); letter-spacing: -.04em; }
-.composer-welcome p { margin: 0 auto; max-width: 560px; color: var(--muted); font-size: 13px; line-height: 1.75; }
 .composer-welcome-suggestions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
 .composer-welcome-suggestions button { border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px; color: var(--ink); background: var(--subtle-card); font-size: 12px; text-align: left; }
 .composer-welcome-suggestions button:hover:not(:disabled) { background: var(--hover); }
@@ -427,7 +424,6 @@
 .composer-new span:first-child { color: var(--accent-ink); }
 .composer-nav-heading { padding-inline: 9px; color: var(--muted); font-size: 10px; }
 .composer-session-item { border-radius: 6px; }
-.composer-nav-footer { padding-bottom: 2px; }
 .composer-chat { background: var(--card); }
 .composer-toolbar { min-height: 64px; padding: 9px clamp(14px, 2.4vw, 28px); background: var(--card); }
 .composer-title-wrap strong { font-size: 13px; }
@@ -435,7 +431,6 @@
 .composer-welcome { min-height: min(390px, 54vh); }
 .composer-welcome img { width: 48px; height: 48px; border-radius: 7px; }
 .composer-welcome h1 { margin-top: 18px; font-size: clamp(25px, 3vw, 34px); letter-spacing: 0; }
-.composer-welcome p { max-width: 520px; font-size: 12px; }
 .composer-welcome-suggestions { gap: 6px; margin-top: 20px; }
 .composer-welcome-suggestions button { border-radius: 6px; background: transparent; }
 .composer-message { margin-bottom: 26px; }

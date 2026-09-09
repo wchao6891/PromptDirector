@@ -1193,6 +1193,7 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .platform-playback-fallback { align-items: stretch; }
 .media-playback-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .media-playback-actions a, .media-playback-actions button { min-height: 36px; font-size: 12px; }
+.media-playback-actions .button-secondary { color: var(--ink); background: var(--card); }
 .media-playback-status { width: 100%; margin: 0; color: var(--muted); font-size: 11px; text-align: left; }
 .media-playback-status.error { color: var(--danger); }
 .referenced-video-embed { gap: 8px; align-items: stretch; }
