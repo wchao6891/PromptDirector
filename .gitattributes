@@ -1,0 +1,8 @@
+# Runtime hashes and update packages must be identical on every checkout platform.
+* text=auto eol=lf
+*.zip binary
+*.png binary
+*.webp binary
+*.jpg binary
+*.mp4 binary
+*.pdf binary

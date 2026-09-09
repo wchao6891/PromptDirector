@@ -74,6 +74,8 @@ jobs:
     name: Windows packaged data and project interactions
     needs: source-contracts
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
     defaults:
       run:
         shell: bash
