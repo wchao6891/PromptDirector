@@ -886,10 +886,7 @@ function createWelcome() {
   image.alt = "";
   body.append(
     image,
-    rawTextEl("h1", "", currentLocale() === "en" ? "What do you want to create?" : "你想创作什么画面？"),
-    rawTextEl("p", "", currentLocale() === "en"
-      ? "Start with the default method, or add creative Skills and selected references when useful."
-      : "可以直接使用默认创作方法，也可以按需应用创作 Skill 或加入私人案例。")
+    rawTextEl("h1", "", currentLocale() === "en" ? "What do you want to create?" : "你想创作什么画面？")
   );
   const suggestions = el("div", "composer-welcome-suggestions");
   const values = composerSession.targetType === "video"

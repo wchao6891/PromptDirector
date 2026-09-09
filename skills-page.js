@@ -64,7 +64,7 @@ bindTransientMenus(document, ".skill-detail-more, .skill-project-picker");
 const CURATED_SKILL_PUBLISHER_STORAGE_KEY = "curatedSkillPublisher";
 
 const elements = Object.fromEntries([
-  "skill-search", "skill-import", "skill-create", "skill-context-back", "skill-zip-file", "skill-folder-files", "skill-library", "skill-summary", "skill-feedback", "skill-list", "skill-empty", "skill-empty-create",
+  "skill-search", "skill-import", "skill-create", "skill-context-back", "skill-zip-file", "skill-folder-files", "skill-library", "skill-summary", "skill-feedback", "skill-list", "skill-empty",
   "skill-detail", "skill-detail-title", "skill-detail-call-name", "skill-detail-feedback", "skill-detail-description", "skill-detail-version", "skill-detail-source", "skill-detail-updated", "skill-detail-markdown", "skill-detail-edit", "skill-detail-more", "skill-detail-refine", "skill-export", "skill-submit-curated",
   "skill-workspace", "skill-workspace-kicker", "skill-workspace-title", "skill-delete", "skill-builder", "skill-source-sidebar", "skill-source-step", "skill-target-step", "skill-selected-count", "skill-project-picker", "skill-project-label", "skill-project-filter", "skill-case-search", "skill-clear-selection", "skill-visible-select", "skill-selection-summary", "skill-case-scroll", "skill-case-grid", "skill-case-load-more",
   "skill-run-evidence-step", "skill-run-evidence-count", "skill-run-evidence-list",
@@ -107,7 +107,6 @@ initializeNavigation();
 function bindEvents() {
   elements.skillSearch.addEventListener("input", renderSkillList);
   elements.skillCreate.addEventListener("click", () => navigateTo("create"));
-  elements.skillEmptyCreate.addEventListener("click", () => navigateTo("create"));
   elements.skillContextBack.addEventListener("click", () => safely(navigateBack)());
   elements.skillDetailEdit.addEventListener("click", () => navigateTo("editor", activeSkillId));
   elements.skillDetailRefine.addEventListener("click", () => navigateTo("refine", activeSkillId));

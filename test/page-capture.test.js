@@ -911,6 +911,20 @@ test("generic JSON-LD provides author, identity, publication time, engagement an
     assert.deepEqual(candidate.sourceFacts.engagement, { likes: 91 });
     assert.equal(candidate.media[0].url, "https://cdn.example.com/original.webp");
     assert.equal(candidate.media[0].sourceKind, "structured");
+
+    Object.assign(structured, { "@type": "VideoObject", contentUrl: "https://cdn.example.com/work.m3u8", thumbnailUrl: "https://cdn.example.com/poster.jpg" });
+    delete structured.image;
+    const video = (await injected({ adapters: [], maxCandidates: 10, maxMedia: 10 })).candidates[0];
+    assert.equal(video.media.length, 1, "a video poster must not become a separate image case");
+    assert.equal(video.media[0].kind, "video");
+    assert.equal(video.media[0].streamUrl, structured.contentUrl);
+    assert.equal(video.pageType, "video");
+    const embeddedVideo = { ...structured };
+    Object.assign(structured, { "@type": "Article", video: embeddedVideo });
+    delete structured.contentUrl;
+    const article = (await injected({ adapters: [], maxCandidates: 10, maxMedia: 10 })).candidates[0];
+    assert.equal(article.pageType, "article", "an article containing a film retains article reading");
+    assert.equal(article.media[0].kind, "video");
   } finally {
     Object.assign(globalThis, original);
   }

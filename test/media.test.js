@@ -440,3 +440,14 @@ test("relinking an inert local source updates only verifiable file metadata", ()
     sourceTitle: "custom.zzz", relativePath: "../custom.zzz", byteSize: 20, sourceLastModified: 1
   }), /安全相对路径/u);
 });
+
+
+test("saved X embed records keep their identity and source while losing unsupported embed mode", () => {
+  const url = "https://x.com/director/status/123";
+  const asset = normalizeMediaAsset({ id: "saved:x-video", kind: "video", storageMode: "reference", sourceUrl: url, playbackCapability: "embedded",
+    reference: { url, provider: "x", playbackMode: "embed" } });
+  assert.equal(asset.id, "saved:x-video");
+  assert.equal(asset.sourceUrl, url);
+  assert.equal(asset.reference.playbackMode, "source");
+  assert.equal(asset.playbackCapability, "external");
+});

@@ -25,7 +25,7 @@
         <div class="skills-heading"><div><h1 data-i18n="创作 Skill 中心">创作 Skill 中心</h1><p id="skill-summary"></p></div><div class="skills-heading-actions"><a class="button-secondary" href="curated-skills.html" data-i18n="精选 Skill">精选 Skill</a><button id="skill-import" class="button-secondary" type="button" data-i18n="导入">导入</button><button id="skill-create" type="button" data-i18n="新建 Skill">新建 Skill</button></div></div>
         <p id="skill-feedback" class="skill-feedback" role="status"></p>
         <div id="skill-list" class="skill-grid"></div>
-        <div id="skill-empty" class="skill-empty" hidden><strong data-i18n="还没有创作 Skill">还没有创作 Skill</strong><p data-i18n="从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。">从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。</p><button id="skill-empty-create" type="button" data-i18n="创建第一份 Skill">创建第一份 Skill</button></div>
+        <div id="skill-empty" class="skill-empty" hidden><strong data-i18n="还没有创作 Skill">还没有创作 Skill</strong><p data-i18n="从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。">从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。</p></div>
       </section>
 
       <section id="skill-detail" class="skill-detail" hidden>
@@ -62,16 +62,17 @@
         <header class="skill-workspace-header"><div><p id="skill-workspace-kicker" class="skill-workspace-mode"></p><h1 id="skill-workspace-title" data-i18n="创建创作 Skill">创建创作 Skill</h1></div><button id="skill-delete" class="button-secondary danger-button" type="button" hidden data-i18n="删除">删除</button></header>
 
         <div id="skill-builder" class="skill-builder">
-          <aside id="skill-source-sidebar" class="skill-source-sidebar">
-            <div class="skill-section-heading"><div><small>01</small><strong data-i18n="选择来源案例">选择来源案例</strong></div><span id="skill-selected-count">0</span></div>
-            <div><span class="skill-field-label" data-i18n="按项目筛选">按项目筛选</span><details id="skill-project-picker" class="skill-project-picker"><summary><span id="skill-project-label" data-i18n="全部项目">全部项目</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-down"></use></svg></summary><div id="skill-project-filter" class="skill-project-filter" role="listbox" aria-label="按项目筛选" data-i18n-aria-label="按项目筛选"></div></details></div>
-            <label><span data-i18n="搜索案例">搜索案例</span><input id="skill-case-search" type="search" placeholder="搜索提示词或标题" data-i18n-placeholder="搜索提示词或标题" /></label>
-            <button id="skill-clear-selection" class="button-secondary" type="button" disabled data-i18n="清空全部案例">清空全部案例</button>
-          </aside>
 
           <div class="skill-builder-content">
             <section id="skill-source-step" class="skill-step">
               <div class="skill-section-heading"><div><small data-i18n="来源">来源</small><strong data-i18n="案例组合">案例组合</strong></div><button id="skill-visible-select" class="button-secondary skill-visible-select" type="button" data-i18n="全选当前结果">全选当前结果</button></div>
+
+          <aside id="skill-source-sidebar" class="skill-source-sidebar skill-filter-row">
+            <span id="skill-selected-count" hidden>0</span>
+            <div><details id="skill-project-picker" class="skill-project-picker"><summary><span id="skill-project-label" data-i18n="全部项目">全部项目</span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-down"></use></svg></summary><div id="skill-project-filter" class="skill-project-filter" role="listbox" aria-label="按项目筛选" data-i18n-aria-label="按项目筛选"></div></details></div>
+            <label><input aria-label="搜索案例" data-i18n-aria-label="搜索案例" id="skill-case-search" type="search" placeholder="搜索提示词或标题" data-i18n-placeholder="搜索提示词或标题" /></label>
+            <button class="icon-button" title="清空全部案例" aria-label="清空全部案例" data-i18n-title="清空全部案例" data-i18n-aria-label="清空全部案例" id="skill-clear-selection" type="button" disabled><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+          </aside>
               <div id="skill-selection-summary" class="skill-selection-summary"></div>
               <div id="skill-case-scroll" class="skill-case-scroll"><div id="skill-case-grid" class="skill-case-grid"></div><button id="skill-case-load-more" class="button-secondary skill-case-load-more" type="button" hidden data-i18n="加载更多案例">加载更多案例</button></div>
             </section>

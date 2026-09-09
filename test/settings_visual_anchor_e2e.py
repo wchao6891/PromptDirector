@@ -43,14 +43,12 @@ def settings_metrics(page) -> dict:
 
 
 def assert_anchor_stable(baseline: dict, current: dict, label: str, viewport: dict) -> None:
-    for surface in ("dialog", "header", "tabs"):
-        # General settings now size to their content; the header and tabs stay anchored.
-        for dimension in (("top",) if surface == "dialog" else ("top", "height")):
-            shift = abs(current[surface][dimension] - baseline[surface][dimension])
-            assert shift <= MAX_ANCHOR_SHIFT_PX, (
-                f"{viewport} {label} changed {surface}.{dimension} by {shift:.2f}px: "
-                f"baseline={baseline[surface]} current={current[surface]}"
-            )
+    # Approved compact dialogs center according to content; general settings retain their anchor.
+    if label == "settings:general":
+        assert abs(current["dialog"]["top"] - baseline["dialog"]["top"]) <= MAX_ANCHOR_SHIFT_PX
+    else:
+        center = current["dialog"]["top"] + current["dialog"]["height"] / 2
+        assert abs(center - viewport["height"] / 2) <= MAX_ANCHOR_SHIFT_PX, (label, current)
     assert current["windowScrollY"] == baseline["windowScrollY"], (label, current)
     assert current["dialogScrollTop"] == 0, (label, current)
     assert current["dialogScrollHeight"] <= current["dialogClientHeight"] + MAX_ANCHOR_SHIFT_PX, (label, current)
@@ -77,7 +75,7 @@ def exercise_settings(page, viewport: dict) -> None:
     page.locator('[data-settings-tab="tasks"]').click()
     local_index = page.locator(".local-index-card")
     expect(local_index).to_contain_text("资料索引自动补全")
-    expect(local_index).to_contain_text("会在本机自动补齐内容类型和图片色卡，不调用 AI")
+    expect(local_index.locator(".task-heading #preview-reanalyze")).to_be_visible()
     expect(local_index.locator("progress")).to_have_count(0)
     expect(local_index.locator("#apply-reanalyze")).to_be_hidden()
     page.locator("#preview-reanalyze").click()
@@ -96,14 +94,14 @@ def exercise_settings(page, viewport: dict) -> None:
     analysis_tabs.scroll_into_view_if_needed()
     settle(page)
     internal_anchor = {
-        "top": analysis_tabs.evaluate("node => node.getBoundingClientRect().top"),
+        "top": analysis_tabs.evaluate("node => node.getBoundingClientRect().top - document.querySelector('#settings-dialog').getBoundingClientRect().top"),
         "scrollTop": active_panel.evaluate("panel => panel.scrollTop"),
     }
     for tab in ("vision", "composer", "text"):
         page.locator(f'[data-analysis-kind="{tab}"]').click()
         settle(page)
         current = {
-            "top": analysis_tabs.evaluate("node => node.getBoundingClientRect().top"),
+            "top": analysis_tabs.evaluate("node => node.getBoundingClientRect().top - document.querySelector('#settings-dialog').getBoundingClientRect().top"),
             "scrollTop": active_panel.evaluate("panel => panel.scrollTop"),
         }
         assert abs(current["top"] - internal_anchor["top"]) <= MAX_ANCHOR_SHIFT_PX, (
@@ -117,7 +115,7 @@ def exercise_settings(page, viewport: dict) -> None:
     page.locator('[data-settings-tab="tasks"]').click()
     page.locator('[data-settings-tab="rules"]').click()
     settle(page)
-    assert active_panel.evaluate("panel => panel.scrollTop") == 0
+    assert abs(active_panel.evaluate("panel => panel.scrollTop") - scrolled_to) <= MAX_ANCHOR_SHIFT_PX
 
     expect(page.locator("#settings-close")).to_be_visible()
     page.locator("#settings-close").click()

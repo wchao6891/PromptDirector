@@ -45,13 +45,15 @@ def main() -> None:
         results = []
         for provider, label, url in FIXTURES:
             library.locator(f'.case-card[data-entry-id="reference:{provider}"]').click()
-            if provider == "youtube":
+            if provider in ["youtube", "x"]:
                 card = library.locator(".platform-playback-fallback")
                 expect(card).to_be_visible()
-                expect(card).to_contain_text("授权并在案例库播放")
+                expect(card.locator(".unavailable-video-stage")).to_be_visible()
+                expect(library.locator(".referenced-video-embed iframe")).to_have_count(0)
+                expect(card).to_contain_text("授权并在案例库播放" if provider == "youtube" else "暂未取得可在案例库播放的视频")
                 source = card.locator("a", has_text="打开来源")
                 expect(source).to_have_attribute("href", url)
-                results.append({"provider": provider, "state": "permission-required"})
+                results.append({"provider": provider, "state": "permission-required" if provider == "youtube" else "video-unavailable"})
             else:
                 frame = library.locator(".referenced-video-embed iframe")
                 expect(frame).to_be_visible()
@@ -60,8 +62,6 @@ def main() -> None:
                     assert source.startswith("https://player.bilibili.com/player.html?") and "bvid=BV1abc" in source, source
                 elif provider == "douyin":
                     assert source.startswith("https://open.douyin.com/player/video?vid=123"), source
-                else:
-                    assert source == "https://platform.twitter.com/embed/Tweet.html?id=123&dnt=true", source
                 expect(library.locator(".media-reference-fallback")).to_have_attribute("target", "_blank")
                 results.append({"provider": provider, "state": "official-embed"})
             library.locator("#detail-close").click()

@@ -1,0 +1,1 @@
+Synthetic 3-second blue H.264 video (160×90, 10 fps) with a 440 Hz AAC audio track, fragmented MP4 HLS. Generated with FFmpeg for playback tests; contains no platform media. Presentation starts at 0.2 seconds; complete playback ends at 3.2 seconds. Tests assert decoded audio and video, seeking, teardown and unavailable-source handling.

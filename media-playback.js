@@ -4,6 +4,7 @@ export const YOUTUBE_PLAYBACK_HOSTS = Object.freeze([
 ]);
 
 const YOUTUBE_PLAYBACK_RULE_ID = 61001;
+export const EMBED_PLAYER_RESPONSE_TIMEOUT_MS = 8000;
 
 export function buildYouTubePlaybackRule({ extensionId, homepageUrl }) {
   const clientIdentity = publicHttpUrl(homepageUrl);
@@ -58,6 +59,46 @@ export function youtubePlaybackError(codeValue) {
   return { status: "failed", blockReason: "播放器未能加载此视频" };
 }
 
+// TikTok's official player reports readiness, playback time and errors via postMessage.
+export function tiktokMediaController(frame, onStatus, eventTarget = globalThis.window) {
+  const origin = "https://www.tiktok.com";
+  let currentTimeMs = null;
+  const timeoutId = setTimeout(() => onStatus("播放器响应超时，可重试或打开来源", true), EMBED_PLAYER_RESPONSE_TIMEOUT_MS);
+  const onLoadError = () => {
+    clearTimeout(timeoutId);
+    onStatus("播放器未能加载此视频", true);
+  };
+  const onMessage = (event) => {
+    if (event.origin !== origin || event.source !== frame.contentWindow || event.data?.["x-tiktok-player"] !== true) return;
+    const { type, value } = event.data;
+    if (type === "onPlayerReady") {
+      clearTimeout(timeoutId);
+      onStatus("播放器已加载", false);
+    }
+    if (type === "onStateChange" && value === 1) onStatus("正在播放", false);
+    if (type === "onCurrentTime" && Number.isFinite(value?.currentTime)) currentTimeMs = Math.max(0, Math.round(value.currentTime * 1000));
+    if (type === "onPlayerError" || type === "onError") {
+      clearTimeout(timeoutId);
+      const reason = value?.errorCode === 1001 ? "视频不存在、已删除或设为私密" : "播放器未能加载此视频";
+      onStatus(reason, true);
+    }
+  };
+  eventTarget.addEventListener("message", onMessage);
+  frame.addEventListener("error", onLoadError);
+  return {
+    getCurrentTimeMs: async () => {
+      if (!Number.isFinite(currentTimeMs)) throw new Error("播放器尚未报告当前时间");
+      return currentTimeMs;
+    },
+    seekToMs: async (value) => frame.contentWindow?.postMessage({ type: "seekTo", value: Math.max(0, Number(value) || 0) / 1000, "x-tiktok-player": true }, origin),
+    destroy: () => {
+      clearTimeout(timeoutId);
+      frame.removeEventListener("error", onLoadError);
+      eventTarget.removeEventListener("message", onMessage);
+    }
+  };
+}
+
 function publicHttpUrl(value) {
   try {
     const url = new URL(String(value ?? ""));
@@ -67,4 +108,15 @@ function publicHttpUrl(value) {
   } catch {
     return "";
   }
+}
+
+export function localVideoController(video) {
+  return {
+    video,
+    getCurrentTimeMs: async () => Math.max(0, Math.round(video.currentTime * 1000)),
+    seekToMs: async (value) => {
+      video.currentTime = Math.max(0, Number(value) || 0) / 1000;
+      await video.play().catch(() => undefined);
+    }
+  };
 }

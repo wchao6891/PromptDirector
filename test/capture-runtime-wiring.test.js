@@ -55,7 +55,7 @@ test("captured posts retain real media facts when suggesting a case category", a
   const start = source.indexOf("async function commitPageCapture");
   const end = source.indexOf("async function", start + 20);
   const save = source.slice(start, end);
-  assert.match(save, /classifyContent\(\{ \.\.\.base, sourceFacts: candidate\.sourceFacts, mediaAssets \}/);
+  assert.match(save, /classifyContent\(\{ \.\.\.base, sourceFacts: candidate\.sourceFacts, mediaAssets, mediaPrompts \}/);
   assert.doesNotMatch(save, /classificationMediaAssets/);
 });
 

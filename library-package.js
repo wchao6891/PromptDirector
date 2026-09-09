@@ -776,6 +776,10 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       assetId: visualIdMap[note.assetId] ?? note.assetId,
       ...(note.frameAssetId ? { frameAssetId: visualIdMap[note.frameAssetId] ?? note.frameAssetId } : {})
     }));
+    entry.mediaPrompts = (entry.mediaPrompts ?? []).map((prompt) => ({
+      ...prompt,
+      assetId: visualIdMap[prompt.assetId] ?? prompt.assetId
+    }));
     entry.videoAnalyses = (entry.videoAnalyses ?? []).map((analysis) => ({
       ...analysis,
       ...(analysis.assetId ? { assetId: visualIdMap[analysis.assetId] ?? analysis.assetId } : {})

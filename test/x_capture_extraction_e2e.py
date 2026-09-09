@@ -49,6 +49,17 @@ def main():
             assert noise not in c['contentText'],(noise,c['contentText'])
         assert len(c['media'])==2 and all(m['kind']=='video' for m in c['media']),c['media']
         assert all(not m['url'] for m in c['media']),c['media'] # no invented video route
+        assert c['media'][0]['originalWorkUrl'] == URL, c['media']
+        assert c['media'][1]['quotedPostUrl'] == 'https://x.com/other/status/456', c['media']
+        default_ids = setup.evaluate("async c=>(await import('./page-capture.js')).pageCaptureDefaultMediaIds(c)", c)
+        assert default_ids == [c['media'][0]['id']], (default_ids, c['media'])
+        # Current X quote cards can expose only a clickable container, with no public source URL.
+        page.locator('[role="link"][tabindex="0"] a[href*="/status/"]').evaluate('(link) => link.removeAttribute("href")')
+        unresolved = page.evaluate('async options => ('+scanner['fn']+')(options)', {'adapters':scanner['adapters']})['candidates'][0]
+        assert unresolved['media'][1]['isQuoted'] and not unresolved['media'][1].get('quotedPostUrl'), unresolved['media']
+        default_ids = setup.evaluate("async c=>(await import('./page-capture.js')).pageCaptureDefaultMediaIds(c)", unresolved)
+        assert default_ids == [unresolved['media'][0]['id']], (default_ids, unresolved['media'])
+
         assert len(c['supplements'])==1 and c['supplements'][0]['partial'],c['supplements']
         normalized=setup.evaluate("""async snapshot => {
           const {normalizePageCaptureBatch, applyPageCaptureSelections} = await import(chrome.runtime.getURL('page-capture.js'));
@@ -100,9 +111,9 @@ def main():
         # Group additions are independently selectable and undoable in the production sidebar.
         setup.evaluate("candidate=>window.captureSnapshot={candidates:[candidate]}",grouped)
         setup.locator('#start-page-capture').click();setup.locator('.page-capture-confirm').click()
-        expect(setup.locator('.page-capture-media-group')).to_contain_text('引用帖 · 4 张图')
+        expect(setup.locator('.page-capture-media-group').filter(has_text="引用帖 · 4 张图")).to_have_count(1)
         baseline=setup.locator('.page-capture-thumbnail').count()
-        setup.get_by_role('button',name='加入这组',exact=True).click()
+        setup.locator('.page-capture-media-group').filter(has_text='引用帖 · 4 张图').get_by_role('button',name='加入这组',exact=True).click()
         expect(setup.locator('.page-capture-thumbnail')).to_have_count(baseline+4)
         setup.locator('#page-capture-undo-region').click()
         expect(setup.locator('.page-capture-thumbnail')).to_have_count(baseline)

@@ -151,6 +151,18 @@ export function collectPageCaptureSitePayload(options = {}) {
   const maxNodes = Number.isSafeInteger(Number(options.maxCandidates)) && Number(options.maxCandidates) > 0 ? Number(options.maxCandidates) : 0;
   const maxTextCharacters = Number.isSafeInteger(Number(options.maxTextCharacters)) && Number(options.maxTextCharacters) > 0 ? Number(options.maxTextCharacters) : 0;
   const host = clean(globalThis.location?.hostname).toLocaleLowerCase("en-US");
+  if ((host === "artstation.com" || host.endsWith(".artstation.com"))
+    && /^\/projects\/[^/]+\/?$/u.test(globalThis.location?.pathname || "")) {
+    const description = globalThis.document?.querySelector?.(".project-description");
+    if (description && globalThis.document?.querySelector?.(".project-assets-image,.asset-responsive.video-clip")) {
+      return {
+        adapter: "artstation", canonicalUrl: globalThis.location.href,
+        title: clean(globalThis.document.querySelector("h1")?.textContent),
+        description: String(description.innerText || description.textContent || "").slice(0, maxTextCharacters),
+        author: clean(globalThis.document.querySelector("header a")?.textContent)
+      };
+    }
+  }
   if ((host === "liblib.art" || host.endsWith(".liblib.art") || host === "liblib.ai" || host.endsWith(".liblib.ai"))
     && clean(globalThis.location?.pathname).startsWith("/imageinfo/")) {
     try {
@@ -229,11 +241,28 @@ export function collectPageCaptureSitePayload(options = {}) {
     const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/iu;
     const detailId = path.match(uuidPattern)?.[0]?.toLocaleLowerCase("en-US") || "";
     if (detailId) {
+      const preview = globalThis.document?.querySelector?.("article figure img");
+      const styleReferences = [...(globalThis.document?.querySelectorAll?.('article button[aria-label^="Copy style reference image"]') || [])]
+        .slice(0, Math.max(0, maxMedia - 1)).flatMap(button => {
+          const style = globalThis.getComputedStyle?.(button)?.backgroundImage || button.style?.backgroundImage || "";
+          const observed = String(style).match(/url\(["']?([^"')]+)["']?\)/u)?.[1];
+          if (!observed) return [];
+          try {
+            const previewUrl = new URL(observed, globalThis.location.href);
+            const original = previewUrl.hostname === host && previewUrl.pathname === "/api/img"
+              ? previewUrl.searchParams.get("i") : previewUrl.href;
+            const url = new URL(original);
+            if (url.protocol !== "https:" || url.hostname !== "app-uploads.krea.ai") return [];
+            return [{ url: url.href, previewUrl: previewUrl.href, label: clean(button.getAttribute("aria-label")).replace(/^Copy /u, "") }];
+          } catch { return []; }
+        });
       return {
         adapter: "krea",
         pageKind: "detail",
         canonicalUrl: clean(globalThis.location?.href),
         prompt: String(globalThis.document?.querySelector?.("article h1")?.textContent || "").slice(0, maxTextCharacters).trim(),
+        imagePreviewUrl: clean(preview?.currentSrc || preview?.src),
+        styleReferences,
         jsonLd,
         status: jsonLd.length ? "complete" : "partial"
       };
@@ -617,6 +646,24 @@ export function collectPageCaptureSitePayload(options = {}) {
 }
 
 export function normalizePageCaptureSitePayload(value, canonicalUrlValue = "") {
+  if (value?.adapter === "artstation") {
+    const canonicalUrl = safeHttpUrl(canonicalUrlValue || value.canonicalUrl);
+    if (!canonicalUrl) return null;
+    const url = new URL(canonicalUrl);
+    if (!(url.hostname === "artstation.com" || url.hostname.endsWith(".artstation.com"))
+      || !/^\/projects\/[^/]+\/?$/u.test(url.pathname)) return null;
+    const contentText = cleanMultiline(value.description);
+    const title = clean(value.title);
+    if (!title || !contentText) return null;
+    return {
+      adapter: "artstation", pageKind: "detail", pageType: "artwork", canonicalUrl,
+      title, contentText, media: [],
+      sourceFacts: {
+        provider: "artstation", pageType: "artwork", itemId: url.pathname.split("/")[2],
+        author: clean(value.author), description: contentText, extractionMethod: "structured"
+      }
+    };
+  }
   if (value?.adapter === "liblibai") return normalizeStructuredFeedMedia(normalizeLiblibPayload(value, canonicalUrlValue));
   if (value?.adapter === "krea") return normalizeStructuredFeedMedia(normalizeKreaPayload(value, canonicalUrlValue));
   if (value?.adapter === "higgsfield") return normalizeStructuredFeedMedia(normalizeHiggsfieldPayload(value, canonicalUrlValue));
@@ -726,6 +773,8 @@ function normalizeKreaPayload(value, canonicalUrlValue) {
     title: jsonLd.name,
     prompt: value?.prompt,
     imageUrl: jsonLd.contentUrl || jsonLd.url || jsonLd.thumbnailUrl,
+    imagePreviewUrl: value?.imagePreviewUrl,
+    styleReferences: value?.styleReferences,
     publishedAt: jsonLd.datePublished,
     width: jsonLd.width,
     height: jsonLd.height
@@ -743,15 +792,29 @@ function normalizeKreaItem(value) {
   const width = positiveInteger(value?.width);
   const height = positiveInteger(value?.height);
   const prompt = cleanMultiline(value?.prompt);
+  const previewUrl = safeTrustedMediaUrl("krea", value?.imagePreviewUrl);
   const media = url ? [{
-    id: `krea:${itemId}:1`, kind: "image", url, width, height,
+    id: `krea:${itemId}:1`, kind: "image", url, width, height, originalPrompt: prompt,
     sourceKind: "site-original", captureMethod: "source",
-    variants: [{ url, sourceKind: "site-original", width, height }]
+    variants: [{ url, sourceKind: "site-original", width, height },
+      ...(previewUrl && previewUrl !== url ? [{ url: previewUrl, sourceKind: "current" }] : [])]
   }] : [];
+  for (const [index, reference] of (Array.isArray(value?.styleReferences) ? value.styleReferences : []).entries()) {
+    const referenceUrl = safeTrustedMediaUrl("krea", reference.url);
+    if (!referenceUrl || media.some(item => item.url === referenceUrl)) continue;
+    const referencePreviewUrl = safeTrustedMediaUrl("krea", reference.previewUrl);
+    media.push({
+      id: `krea:${itemId}:reference:${index + 1}`, kind: "image", url: referenceUrl,
+      alt: clean(reference.label), sourceKind: "site-original", captureMethod: "source",
+      variants: [{ url: referenceUrl, sourceKind: "site-original" },
+        ...(referencePreviewUrl && referencePreviewUrl !== referenceUrl ? [{ url: referencePreviewUrl, sourceKind: "current" }] : [])]
+    });
+  }
   const complete = Boolean(prompt && media.length);
   return {
     id: `krea:${itemId}`,
     adapter: "krea",
+    pageKind: "detail",
     pageType: "artwork",
     canonicalUrl,
     title: clean(value?.title) || (prompt ? prompt.slice(0, 160) : `Krea ${itemId.slice(0, 8)}`),
@@ -760,6 +823,7 @@ function normalizeKreaItem(value) {
     completeness: complete ? "complete" : "partial",
     extraction: { scope: "document", method: "structured", textBlockCount: prompt ? 1 : 0 },
     sourceFacts: {
+      originalPromptAvailable: Boolean(prompt),
       provider: "krea", pageType: "artwork", itemId,
       publishedAt: validIso(value?.publishedAt),
       dimensions: width && height ? `${width}×${height}` : "",
@@ -1022,6 +1086,7 @@ function normalizeLiblibPayload(value, canonicalUrlValue) {
     return [{
       id: `liblibai:${itemId}:${clean(image?.uuid || image?.id) || index + 1}`,
       kind: "image",
+      originalPrompt: cleanMultiline(image?.generateInfo?.prompt),
       url,
       width,
       height,
@@ -1030,7 +1095,7 @@ function normalizeLiblibPayload(value, canonicalUrlValue) {
       variants
     }];
   });
-  const promptText = cleanMultiline(images.map((image) => image?.generateInfo?.prompt).find(clean));
+  const promptText = [...new Set(media.map(image => image.originalPrompt).filter(Boolean))].join("\n\n");
   const model = [...new Set(images.flatMap((image) => Array.isArray(image?.models) ? image.models : []).map((entry) => (
     [clean(entry?.modelName), clean(entry?.versionName)].filter(Boolean).join(" ")
   )).filter(Boolean))].join(" · ");
@@ -1051,7 +1116,7 @@ function normalizeLiblibPayload(value, canonicalUrlValue) {
     completeness: complete ? "complete" : "partial",
     extraction: { scope: "document", method: "structured", textBlockCount: promptText ? 1 : 0 },
     sourceFacts: {
-      provider: "liblibai", pageType: "artwork", itemId, author, handle,
+      provider: "liblibai", pageType: "artwork", itemId, author, handle, originalPromptAvailable: Boolean(promptText),
       publishedAt: validIso(data.createTime), model,
       dimensions: media[0]?.width && media[0]?.height ? `${media[0].width}×${media[0].height}` : "",
       engagement, extractionMethod: "structured",
@@ -1137,6 +1202,7 @@ function normalizeJimengItem(item, modelNamesValue = {}) {
     return [{
       id: `jimeng:${workId}:${index + 1}`,
       kind: "image",
+      originalPrompt: prompt,
       url,
       width,
       height,
@@ -1162,6 +1228,7 @@ function normalizeJimengItem(item, modelNamesValue = {}) {
     completeness: complete ? "complete" : "partial",
     extraction: { scope: "document", method: "structured", textBlockCount: prompt ? 1 : 0 },
     sourceFacts: {
+      originalPromptAvailable: Boolean(prompt),
       provider: "jimeng",
       pageType: "artwork",
       itemId: workId,

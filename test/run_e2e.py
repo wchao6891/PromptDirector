@@ -10,6 +10,7 @@ from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
 SCRIPTS = [
+    "frontend_compact_surfaces_e2e.py",
     "capture_and_cross_page_e2e.py",
     "library_core_e2e.py",
     "library_navigation_e2e.py",
@@ -56,8 +57,12 @@ SCRIPTS = [
     "page_capture_e2e.py",
     "page_capture_sidebar_e2e.py",
     "capture_additions_e2e.py",
+    "capture_partial_save_e2e.py",
     "x_capture_extraction_e2e.py",
+    "x_video_playback_e2e.py",
     "higgsfield_capture_e2e.py",
+    "artstation_capture_e2e.py",
+    "krea_capture_e2e.py",
     "libtv_capture_e2e.py",
     "jimeng_capture_e2e.py",
     "ai_provider_registry_e2e.py",

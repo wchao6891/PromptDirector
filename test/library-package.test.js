@@ -50,6 +50,25 @@ function catalog() {
   return createFacetNode(value, { id: "tag:epic", facetId: "facet:mood", parentId: "tag:dramatic", name: "史诗" });
 }
 
+test("webpage prompt provenance survives a portable package and media identity collisions", () => {
+  const data = packageData([{ ...entry("remote"), hasScreenshot: false, screenshotPath: undefined,
+    mediaAssets: [{ id: "shared-image", kind: "image", storageMode: "managed", sourceUrl: "https://example.com/remote.png", mimeType: "image/png", assetPath: "images/remote.png" }],
+    mediaPrompts: [{ assetId: "shared-image", source: "webpage", text: "Original source prompt", textRevision: 1 }]
+  }], catalog());
+  const parsed = parseLibraryPackage(data, new Map([["images/remote.png", new Blob(["fixture image"], { type: "image/png" })]]));
+  assert.equal(parsed.entries[0].mediaPrompts[0].source, "webpage");
+  const current = { entries: [{ ...entry("local"), hasScreenshot: false, screenshotPath: undefined,
+    mediaAssets: [{ id: "shared-image", kind: "image", storageMode: "reference", sourceUrl: "https://example.com/local.png" }] }],
+    taxonomy: createDefaultTaxonomy(), facetCatalog: catalog(), settings: {}, classificationRules: [], organizerState: { collections: [] } };
+  const merged = mergeLibraryPackage(current, data);
+  const restored = merged.state.entries.find(item => item.title === "案例 remote");
+  assert.ok(restored);
+  assert.notEqual(restored.mediaAssets[0].id, "shared-image");
+  assert.equal(restored.mediaPrompts[0].assetId, restored.mediaAssets[0].id);
+  assert.equal(restored.mediaPrompts[0].source, "webpage");
+  assert.equal(restored.mediaPrompts[0].text, "Original source prompt");
+});
+
 test("parseLibraryPackage validates the portable library format and referenced screenshots", () => {
   const data = packageData([entry("one")], catalog());
   data.entries[0].customLabels = ["喜欢", " 喜欢 ", "待复刻"];

@@ -313,7 +313,9 @@ import {
 } from "./page-capture-site-adapters.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
 import { downloadPageCaptureVideo } from "./page-capture-video.js";
-import { planPageCaptureRepair, mergePageCaptureRepair } from "./page-capture-repair.js";
+import { resolveXVideoSources } from "./x-video-capture.js";
+import { PAGE_CAPTURE_VIDEO_FRAME_RULES, resolvePageCaptureVideoFrames } from "./page-capture-frames.js";
+import { planPageCaptureRepair, mergePageCaptureRepair, capturedMediaPrompts } from "./page-capture-repair.js";
 import { collectPageCaptureDownloads } from "./page-capture-downloads.js";
 import {
   discardPageSessionMedia,
@@ -347,7 +349,7 @@ import {
   VIDEO_ANALYSIS_REQUEST_TIMEOUT_MS,
   VIDEO_RECONSTRUCTION_CONTRACT_VERSION
 } from "./video-analysis.js";
-import { detectMediaReferenceProvider } from "./media-reference-resolver.js";
+import { detectMediaReferenceProvider, officialMediaEmbedUrl } from "./media-reference-resolver.js";
 import {
   createCompoundCase,
   normalizeCompoundCases,
@@ -1313,6 +1315,7 @@ async function collectPageCaptureTab(tab, options) {
       maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
       editedRegion: options.editedRegion || null,
       downloads,
+      videoFrameRules: PAGE_CAPTURE_VIDEO_FRAME_RULES,
       siteData
     }]
   });
@@ -1321,6 +1324,8 @@ async function collectPageCaptureTab(tab, options) {
     siteData = await readPageCaptureSiteData(tab, { installObserver: false }) || siteData;
     snapshot = { ...snapshot, candidates: siteData.candidates, siteStatus: siteData.completeness };
   }
+  snapshot = await resolvePageCaptureVideoFrames(snapshot, tab.id, chrome.scripting);
+  snapshot = await resolveXVideoSources(snapshot, tab, chrome, { cancelled: () => Boolean(activePageCapture?.cancelled) });
   return addVisiblePageCaptureFallbacks(snapshot, tab);
 }
 
@@ -1774,7 +1779,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
       const repair = duplicate ? await planPageCaptureRepair(duplicate, candidate, async id => Boolean(await getMediaBlob(id))) : null;
       const refreshedClassification = duplicate ? classifyContent({ ...duplicate, sourceFacts: candidate.sourceFacts }, state.classificationRules, state.taxonomy) : null;
       const classificationChanged = duplicate && JSON.stringify(duplicate.classification?.pathIds) !== JSON.stringify(refreshedClassification.pathIds);
-      if (duplicate && !repair.pending.length && !repair.obsoleteReferences.size && duplicate.sourceFacts?.pageType === candidate.pageType && !classificationChanged) {
+      if (duplicate && !repair.pending.length && !repair.obsoleteReferences.size && !repair.promptsChanged && duplicate.sourceFacts?.pageType === candidate.pageType && !classificationChanged) {
         results.push({ candidateId: candidate.id, status: "duplicate", entryId: duplicate.id, title: duplicate.title });
         continue;
       }
@@ -1839,9 +1844,11 @@ async function commitPageCapture(batchValue, metadata = {}) {
           continue;
         }
         if (media.kind === "video") {
-          const referenceUrl = media.url || candidate.canonicalUrl;
+          const referenceUrl = officialMediaEmbedUrl(media.url) ? media.url
+            : candidate.media.filter(item => item.kind === "video").length === 1 && officialMediaEmbedUrl(candidate.canonicalUrl)
+              ? candidate.canonicalUrl : media.originalWorkUrl || media.url || candidate.canonicalUrl;
           const provider = detectMediaReferenceProvider(referenceUrl);
-          const playbackMode = ["youtube", "vimeo", "bilibili", "douyin", "x"].includes(provider) ? "embed" : "source";
+          const playbackMode = officialMediaEmbedUrl(referenceUrl, provider) ? "embed" : "source";
           const videoAsset = {
             id: repair?.matched.get(media.id)?.id || crypto.randomUUID(),
             kind: "video",
@@ -1854,7 +1861,10 @@ async function commitPageCapture(batchValue, metadata = {}) {
             height: media.height,
             capturedAt: new Date().toISOString(),
             playbackCapability: playbackMode === "embed" ? "embedded" : "external",
-            reference: { url: referenceUrl, provider, playbackMode },
+            reference: { url: referenceUrl, provider, playbackMode,
+              ...(media.streamUrl ? { streamUrl: media.streamUrl } : {}),
+              ...(/^https?:/iu.test(media.url) && ["site-original", "video-element"].includes(media.sourceKind)
+                ? { playbackUrl: media.url } : {}) },
             reviewStatus: "verified"
           };
           try {
@@ -1982,8 +1992,10 @@ async function commitPageCapture(batchValue, metadata = {}) {
           warnings.push(`${media.alt || media.url}：${userMessage(error)}`);
         }
       }
+      const captureFacts = { ...candidate.sourceFacts, captureWarnings: [...new Set(warnings)],
+        status: warnings.length ? "partial" : candidate.sourceFacts.status };
       if (duplicate) {
-        const repaired = mergePageCaptureRepair(duplicate, candidate, repair, mediaAssets, articleAssetIds);
+        const repaired = mergePageCaptureRepair(duplicate, { ...candidate, sourceFacts: captureFacts }, repair, mediaAssets, articleAssetIds);
         const entry = normalizeEntryMedia({ ...repaired,
           classification: classifyContent(repaired, state.classificationRules, state.taxonomy)
         });
@@ -2002,18 +2014,20 @@ async function commitPageCapture(batchValue, metadata = {}) {
         results.push({ candidateId: candidate.id, status: "failed", title: candidate.title, warnings: [...warnings, "没有可保存的正文或媒体"] });
         continue;
       }
+      const mediaPrompts = capturedMediaPrompts(candidate, articleAssetIds);
       const entry = normalizeEntryMedia({
         ...base,
         schemaVersion: SCHEMA_VERSION,
+        mediaPrompts,
         articleDocument: finalizeArticleDocumentAssets(candidate.articleDocument, articleAssetIds),
-        sourceFacts: candidate.sourceFacts,
+        sourceFacts: captureFacts,
         sourcePages: [{ url: candidate.canonicalUrl, title: candidate.title }],
         mediaAssets,
         primaryMediaId: (candidate.pageType === "video"
           ? mediaAssets.find((asset) => asset.kind === "video")
           : mediaAssets.find((asset) => asset.kind === "image" && asset.usage !== "poster"))?.id
           || mediaAssets.find((asset) => asset.usage !== "poster")?.id || "",
-        classification: classifyContent({ ...base, sourceFacts: candidate.sourceFacts, mediaAssets }, state.classificationRules, state.taxonomy),
+        classification: classifyContent({ ...base, sourceFacts: candidate.sourceFacts, mediaAssets, mediaPrompts }, state.classificationRules, state.taxonomy),
         customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
         rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
       });
@@ -2037,12 +2051,6 @@ async function commitPageCapture(batchValue, metadata = {}) {
     const postCommitWarnings = [];
     try { await notifySaved(entries.length); }
     catch (error) { postCommitWarnings.push(`保存成功，但状态提示更新失败：${userMessage(error)}`); }
-    const newImageEntries = results.filter((item) => ["saved", "partial"].includes(item.status)).map((item) => item.entryId)
-      .filter((entryId) => entries.find((entry) => entry.id === entryId)?.mediaAssets?.some((asset) => asset.kind === "image"));
-    if (newImageEntries.length) {
-      try { await queueAutomaticVisionAnalysis(newImageEntries); }
-      catch (error) { postCommitWarnings.push(`案例已保存，但自动画面分析没有加入队列：${userMessage(error)}`); }
-    }
     const savedCount = results.filter((item) => ["saved", "partial"].includes(item.status)).length;
     const duplicateCount = results.filter((item) => item.status === "duplicate").length;
     return {
@@ -2229,7 +2237,6 @@ async function addUploadedVisual(entryId, visualValue) {
   }));
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  await queueAutomaticVisionAnalysis([updated.id]);
   return { ok: true, message: `图片已加入案例 · 共 ${updated.visuals.length} 张`, entry: updated };
 }
 
@@ -2352,7 +2359,6 @@ async function addUploadedMedia(entryId, assetValue, posterValue = null) {
   updated = touchEntry(updated);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  if (assetValue?.kind === "image") await queueAutomaticVisionAnalysis([updated.id]);
   const contentCount = updated.mediaAssets.filter((item) => item.usage !== "poster").length;
   return { ok: true, message: `资料已加入案例 · 共 ${contentCount} 项`, entry: updated };
 }
@@ -2562,7 +2568,6 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
     ...(created ? { [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id) } : {})
   });
   await notifySaved(entries.length);
-  if (draft.visuals.length) await queueAutomaticVisionAnalysis([entry.id]);
   return { ok: true, message: target ? "内容已加入明确选择的案例" : "多段文字和截图已保存为新案例", entry, draft: nextDraft };
 }
 
@@ -2610,10 +2615,6 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound, pl
     ...captureCommitState(draft, nextDraft)
   });
   await notifySaved(entries.length);
-  const affectedEntryIds = entries
-    .filter((entry) => entryMediaAssets(entry).some((asset) => parts.some((part) => part.visuals.some((visual) => visual.id === asset.id))))
-    .map((entry) => entry.id);
-  if (affectedEntryIds.length) await queueAutomaticVisionAnalysis(affectedEntryIds);
   return {
     ok: true,
     message: `内容已加入组合案例 · 共 ${compoundCase.memberEntryIds.length} 个部分`,

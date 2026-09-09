@@ -7,10 +7,10 @@ import {
 import { entryHasMedia, normalizeEntryMedia } from "./media.js";
 import { entryHasVisual } from "./visuals.js";
 
-export const CLASSIFIER_VERSION = 4;
+export const CLASSIFIER_VERSION = 5;
 
 const WEIGHT = Object.freeze({ weak: 1, supporting: 2, format: 3, strong: 4, modelBody: 5, decisive: 6 });
-const THRESHOLD = Object.freeze({ tutorial: 6, tutorialTie: 8, videoPrompt: 4, imagePrompt: 5, imageCaseText: 360 });
+const THRESHOLD = Object.freeze({ tutorial: 6, tutorialTie: 8, imageCaseText: 360 });
 
 const SIGNALS = Object.freeze({
   tutorialWrapper: /(?:教程|攻略|教学|如何|方法|步骤|第一步|第二步|然后|最后|参数说明|注意事项|\b(?:tutorial|guide|how to|step-by-step)\b)/i,
@@ -40,14 +40,20 @@ export function classifyContent(entry = {}, rules = [], taxonomy = createDefault
   }
 
   const facts = entry.sourceFacts;
+  if (facts?.pageType === "article" && ["structured", "readability"].includes(facts.extractionMethod)) {
+    const tutorial = scoreTutorial(String(entry.text || ""), String(entry.title || ""), String(entry.url || "")) >= THRESHOLD.tutorial;
+    return classificationForRole(taxonomy, tutorial ? CONTENT_ROLES.tutorial : CONTENT_ROLES.reference, "完整文章按正文阅读");
+  }
   if (facts?.extractionMethod === "structured" && ["video", "artwork"].includes(facts.pageType)) {
     const video = facts.pageType === "video";
     const kind = video ? "video" : "image";
     if (entryHasMedia(entry, kind)) {
-      const hasText = Boolean(String(entry.text || "").trim());
+      const hasPrompt = entry.mediaPrompts?.some(item => item.source !== "ai-suggestion" && String(item.text || "").trim())
+        || facts.originalPromptAvailable === true
+        || (facts.originalPromptAvailable !== false && scorePromptShape(String(entry.text || ""), "") >= WEIGHT.supporting);
       return classificationForRole(taxonomy, video
-        ? hasText ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.videoCase
-        : hasText ? CONTENT_ROLES.promptImage : CONTENT_ROLES.imageCase, "网页明确声明的作品类型与原始内容");
+        ? hasPrompt ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.videoCase
+        : hasPrompt ? CONTENT_ROLES.promptImage : CONTENT_ROLES.imageCase, "作品类型及原始提示词证据");
     }
   }
 
@@ -66,21 +72,28 @@ export function classifyContent(entry = {}, rules = [], taxonomy = createDefault
   const tutorialScore = scoreTutorial(body, title, url);
   const videoScore = scoreMedium(body, title, url, "video");
   const imageScore = scoreMedium(body, title, url, "image");
-  const medium = chooseMedium(videoScore, imageScore, SIGNALS.videoTimeline.test(body));
+  const medium = chooseMedium(videoScore, imageScore, SIGNALS.videoTimeline.test(body))
+    || (entryHasMedia(entry, "video") ? "video" : entryHasMedia(entry, "image") ? "image" : null);
 
   if (tutorialScore >= THRESHOLD.tutorial &&
     (tutorialScore > promptScore || (tutorialScore >= THRESHOLD.tutorialTie && tutorialScore === promptScore))) {
     return classificationForRole(taxonomy, CONTENT_ROLES.tutorial, "存在可迁移的教学或风格元信息");
   }
 
-  if (medium === "video" && (promptScore >= WEIGHT.supporting || videoScore >= THRESHOLD.videoPrompt)) {
+  if (facts?.originalPromptAvailable !== false && medium === "video" && promptScore >= WEIGHT.supporting) {
     return classificationForRole(taxonomy, CONTENT_ROLES.promptVideo, "具体视频生成指令");
   }
-  if (medium === "image" && (promptScore >= WEIGHT.supporting || imageScore >= THRESHOLD.imagePrompt)) {
+  if (facts?.originalPromptAvailable !== false && medium === "image" && promptScore >= WEIGHT.supporting) {
     return classificationForRole(taxonomy, CONTENT_ROLES.promptImage, "具体图片生成指令");
   }
   if (entryHasMedia(entry, "document") || entry.sourceKind === "quick_note") {
     return classificationForRole(taxonomy, CONTENT_ROLES.reference, "本地文档或创作笔记");
+  }
+  if (entryHasMedia(entry, "video")) {
+    return classificationForRole(taxonomy, CONTENT_ROLES.videoCase, "已采集视频，未发现对应生成指令");
+  }
+  if (entryHasMedia(entry, "image")) {
+    return classificationForRole(taxonomy, CONTENT_ROLES.imageCase, "已采集图片，未发现对应生成指令");
   }
   if (entryHasVisual(entry) && body.trim().length <= THRESHOLD.imageCaseText) {
     return classificationForRole(taxonomy, CONTENT_ROLES.imageCase, "短文字配图默认作为可编辑图片案例");
