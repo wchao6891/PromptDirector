@@ -37,7 +37,7 @@ Capture does not call AI. Videos are saved locally when possible; supported stan
 | **Keep your materials together** | Add local images, videos, PDFs, Markdown, TXT, HTML and timestamped video notes. |
 | **Share and preserve your work** | Export selected cases or a project subtree as a sharing package. Full folder backups support recovery on another computer; encrypted folder sync supports recovery across your devices. |
 
-For further creative work, you can turn references into reusable Skills and combine them in the Composer to produce editable prompts. Capturing, organizing and browsing your library do not require an AI service.
+The Composer can chat, find cases on request, read selected material, create editable prompts and draft reusable Skills or case tags for your review. It can also check the curated catalog for available versions without downloading packages. Search results stay in the conversation until you choose references; only selected or explicitly requested images are sent to a model. Capturing, organizing and browsing your library do not require an AI service.
 
 ## Start with curated references
 

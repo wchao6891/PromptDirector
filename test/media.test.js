@@ -16,7 +16,7 @@ import {
   setPrimaryMedia,
   updateLocalAssetReferenceMetadata
 } from "../extension/media.js";
-import { normalizeEntryVisuals, reorderEntryVisuals } from "../extension/visuals.js";
+import { normalizeEntryVisuals, primaryVisionDescription, reorderEntryVisuals } from "../extension/visuals.js";
 
 test("new visual analysis remains readable through reconstruction prompts without a legacy description", () => {
   const entry = normalizeEntryMedia({
@@ -450,4 +450,13 @@ test("saved X embed records keep their identity and source while losing unsuppor
   assert.equal(asset.sourceUrl, url);
   assert.equal(asset.reference.playbackMode, "source");
   assert.equal(asset.playbackCapability, "external");
+});
+
+
+test("an explicitly cleared image prompt does not revive a legacy description on reuse", () => {
+  const entry = normalizeEntryMedia({ mediaAssets: [{ id: "image:cleared", kind: "image", usage: "content",
+    visionAnalysis: { reconstructionPrompt: "", description: "旧分析文本", userEdited: true, quality: "complete", tags: [] } }] });
+  assert.deepEqual(mediaDescriptions(entry), []);
+  assert.equal(primaryVisionDescription(entry), "");
+  assert.equal(entry.mediaAssets[0].visionAnalysis.description, "旧分析文本");
 });

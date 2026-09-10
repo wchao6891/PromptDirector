@@ -1,3 +1,5 @@
+import { applyLibraryToolEvent, settleLibraryToolEvents } from "./composer-library-tools.js";
+import { createLocalComposerLibraryTools } from "./composer-library-host.js";
 import {
   appendDiagnosticEvent,
   completeComposerAssemblySnapshot,
@@ -7,7 +9,8 @@ import {
 import {
   ComposerServiceError,
   executeComposerTurnWithService,
-  selectedComposerService
+  selectedComposerService,
+  composerLibraryToolService
 } from "./composer-service.js";
 import { applyComposerServiceResult } from "./composer-turn-core.js";
 import { normalizeAiSettings } from "./deepseek.js";
@@ -81,8 +84,10 @@ export async function runCreativeJob(job, context = {}) {
     await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
     let phaseQueue = Promise.resolve();
     let providerMayHaveAccepted = job.providerMayHaveAccepted === true || Boolean(job.remoteVideo);
+    let pendingImageIds = preparedImages.map(image => image.visualId);
     const markProviderRequestStarted = async () => {
-      if (providerMayHaveAccepted) return;
+      session = createComposerSession({ ...session, libraryTools: { ...session.libraryTools, requestCount: session.libraryTools.requestCount + 1, imageIds: [...new Set([...session.libraryTools.imageIds, ...pendingImageIds])] } });
+      pendingImageIds = [];
       providerMayHaveAccepted = true;
       if (session.activeTurn) session = createComposerSession({ ...session, activeTurn: updateComposerActiveTurn(session.activeTurn, {
         status: "waiting", phase: "waiting", providerMayHaveAccepted: true
@@ -103,6 +108,16 @@ export async function runCreativeJob(job, context = {}) {
         });
       }
     };
+    const toolRuntime = createLocalComposerLibraryTools({
+      session, vision: composerLibraryToolService(session, settings.ai, settings.vision).vision,
+      onEvent: async event => {
+        signal?.throwIfAborted();
+        if (event.status === "completed" && event.imageIds) pendingImageIds.push(...event.imageIds);
+        session = createComposerSession(applyLibraryToolEvent(session, event));
+        await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
+      },
+      onRequest: async ({ usage, requestCount }) => { await checkpoints.drain(); session = createComposerSession({ ...session, libraryTools: { ...session.libraryTools, usage, usageRequestCount: requestCount } }); }
+    });
     const result = await executeComposerTurnWithService({
       session: executionSession,
       userMessage: "",
@@ -112,6 +127,7 @@ export async function runCreativeJob(job, context = {}) {
       imageEdit
     }, settings, preparedImages, {
       signal,
+      toolRuntime,
       stream: videoDialogue,
       preparedVideos,
       onDelta: videoDialogue ? (_delta, content) => {
@@ -153,7 +169,7 @@ export async function runCreativeJob(job, context = {}) {
     if (!["image", "video"].includes(result.kind)) {
       session = createComposerSession({
         ...session,
-        assemblySnapshot: completeComposerAssemblySnapshot(session.assemblySnapshot, { ...result, actualStages })
+        assemblySnapshot: completeComposerAssemblySnapshot(session.assemblySnapshot, { ...result, actualStages, libraryTools: session.libraryTools, retrievedSources: session.retrievedSources })
       });
       return { session, visuals: [], generation: null };
     }
@@ -205,7 +221,7 @@ export async function runCreativeJob(job, context = {}) {
     await context.progress({ phase: "persisting", session, actualStages: [...actualStages] });
     session = createComposerSession({
       ...session,
-      assemblySnapshot: completeComposerAssemblySnapshot(session.assemblySnapshot, { ...result, actualStages })
+      assemblySnapshot: completeComposerAssemblySnapshot(session.assemblySnapshot, { ...result, actualStages, libraryTools: session.libraryTools, retrievedSources: session.retrievedSources })
     });
     return {
       session,
@@ -226,6 +242,8 @@ export async function runCreativeJob(job, context = {}) {
   } catch (error) {
     await checkpoints.drain().catch(() => undefined);
     await Promise.allSettled(savedIds.flatMap((id) => [deleteScreenshotBlob(id), deleteMediaBlob(id)]));
+    session = createComposerSession({ ...session, libraryTools: settleLibraryToolEvents(session.libraryTools, job.userMessageId, error.message) });
+    await context.progress({ phase: "generation", session, actualStages: [...actualStages] }).catch(() => undefined);
     error.actualStages = [...actualStages];
     throw error;
   }

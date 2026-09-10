@@ -8,7 +8,7 @@ import {
 import {
   buildProvenanceMarkdown,
   exportStoredSkillPackage,
-  parseSkillArchive,
+  parseSkillFile,
   parseSkillFiles
 } from "./creative-skill-package.js";
 import {
@@ -116,7 +116,7 @@ function bindEvents() {
   elements.skillImportClose.addEventListener("click", () => elements.skillImportDialog.close());
   elements.skillImportZip.addEventListener("click", () => elements.skillZipFile.click());
   elements.skillImportFolder.addEventListener("click", () => elements.skillFolderFiles.click());
-  elements.skillZipFile.addEventListener("change", () => safely(importZip)());
+  elements.skillZipFile.addEventListener("change", () => safely(importFile)());
   elements.skillFolderFiles.addEventListener("change", () => safely(importFolder)());
   elements.skillSubmissionClose.addEventListener("click", () => elements.skillSubmissionDialog.close());
   elements.skillSubmissionRefresh.addEventListener("click", () => runCuratedSubmissionAction(refreshCuratedSubmission));
@@ -1264,11 +1264,11 @@ async function runCuratedSubmissionAction(action) {
   }
 }
 
-async function importZip() {
+async function importFile() {
   const file = elements.skillZipFile.files?.[0];
   elements.skillZipFile.value = "";
   if (!file) return;
-  const parsed = await parseSkillArchive(file);
+  const parsed = await parseSkillFile(file);
   await importParsedSkill(parsed, file.name);
 }
 

@@ -44,7 +44,6 @@
         <footer class="composer-input-area">
           <div id="composer-aliases" class="composer-aliases composer-input-aliases" aria-label="插入案例编号" data-i18n-aria-label="插入案例编号"></div>
           <div id="composer-applied-skills" class="composer-applied-skills" aria-label="已应用 Skill" hidden data-i18n-aria-label="已应用 Skill"></div>
-          <div id="composer-retrieval-sources" class="composer-retrieval-sources" aria-label="本轮检索来源" hidden data-i18n-aria-label="本轮检索来源"></div>
           <div class="composer-input-box">
             <div id="composer-temp-reference-row" class="composer-temp-reference-row" hidden>
               <div id="composer-temp-references" class="composer-temp-references" aria-label="临时附件" data-i18n-aria-label="临时附件"></div>
@@ -52,11 +51,12 @@
             </div>
             <textarea id="composer-instruction" rows="2" placeholder="生成提示词、分析资料、提炼方法，或直接讨论…" data-i18n-placeholder="生成提示词、分析资料、提炼方法，或直接讨论…"></textarea>
             <div id="composer-skill-menu" class="composer-skill-menu" role="listbox" aria-label="选择创作 Skill" hidden data-i18n-aria-label="选择创作 Skill"></div>
+            <div id="composer-image-input-status" class="composer-image-input-status" role="status" hidden><span id="composer-image-input-message"></span><button id="composer-image-input-model" class="button-secondary" type="button" data-i18n="切换模型">切换模型</button></div>
             <div class="composer-input-footer">
               <div class="composer-input-tools">
                 <button id="composer-attachment-local" class="button-secondary icon-button composer-attachment-local" type="button" aria-label="添加本机文件" data-i18n-aria-label="添加本机文件" title="添加本机文件" data-i18n-title="添加本机文件"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-paperclip"></use></svg></button>
                 <input id="composer-attachment-files" class="sr-only" type="file" multiple />
-                <button id="composer-library-search" class="button-secondary icon-button composer-library-search" type="button" aria-pressed="false" aria-label="本轮检索本地资料" data-i18n-aria-label="本轮检索本地资料" title="本轮检索本地资料" data-i18n-title="本轮检索本地资料"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-search"></use></svg></button>
+                <button id="composer-library-search" class="button-secondary icon-button composer-library-search" type="button" aria-pressed="true" aria-label="案例库：按需；仅在你要求查询或参考时使用，点击关闭" data-i18n-aria-label="案例库：按需；仅在你要求查询或参考时使用，点击关闭" title="案例库：按需；仅在你要求查询或参考时使用，点击关闭" data-i18n-title="案例库：按需；仅在你要求查询或参考时使用，点击关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-search"></use></svg></button>
                 <fieldset class="composer-type-switch" aria-label="生成类型" data-i18n-aria-label="生成类型">
                   <label><input type="radio" name="composer-type" value="image" checked /><span data-i18n="图片">图片</span></label>
                   <label><input type="radio" name="composer-type" value="video" /><span data-i18n="视频">视频</span></label>
@@ -149,20 +149,6 @@
     <dialog id="composer-assembly-dialog" class="composer-assembly-dialog" aria-labelledby="composer-assembly-title">
       <header><div><strong id="composer-assembly-title" data-i18n="本次装配">本次装配</strong><p data-i18n="这里显示本轮实际采用的 Agent、任务方法和资料。">这里显示本轮实际采用的 Agent、任务方法和资料。</p></div><button id="composer-assembly-close" class="icon-button" type="button" aria-label="关闭本次装配" data-i18n-aria-label="关闭本次装配" title="关闭本次装配" data-i18n-title="关闭本次装配"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
       <div id="composer-assembly-content" class="composer-assembly-content"></div>
-    </dialog>
-    <dialog id="composer-image-blocker" class="composer-image-blocker" aria-labelledby="composer-image-blocker-title">
-      <form method="dialog">
-        <header>
-          <strong id="composer-image-blocker-title" data-i18n="当前模型无法读取图片">当前模型无法读取图片</strong>
-          <button id="composer-image-blocker-cancel" class="icon-button" type="submit" value="cancel" aria-label="取消本轮" title="取消本轮" data-i18n-aria-label="取消本轮" data-i18n-title="取消本轮"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
-        </header>
-        <p id="composer-image-blocker-description" data-i18n="本轮包含尚未分析的临时图片。请选择视觉创作服务，或明确调用当前图片分析服务后继续。">本轮包含尚未分析的临时图片。请选择视觉创作服务，或明确调用当前图片分析服务后继续。</p>
-        <div class="composer-image-blocker-actions">
-          <button id="composer-image-blocker-choose-service" type="button" data-i18n="选择视觉创作服务">选择视觉创作服务</button>
-          <button id="composer-image-blocker-analyze" class="button-secondary" type="button" data-i18n="调用图片分析并继续">调用图片分析并继续</button>
-          <button class="button-secondary" type="submit" value="cancel" data-i18n="取消本轮">取消本轮</button>
-        </div>
-      </form>
     </dialog>
     <script type="module" src="composer-page.js"></script>
   </body>

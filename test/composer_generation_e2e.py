@@ -7,6 +7,7 @@ from threading import Event, Thread
 
 from playwright.sync_api import expect
 
+from composer_e2e_support import composer_request_payload
 from e2e_support import ai_configuration_fixture, base_entry, extension_session
 
 
@@ -109,6 +110,8 @@ def main() -> None:
     retrieved_case["mediaAssets"] = [{"id": "retrieval-color-image", "kind": "image", "usage": "content", "storageMode": "managed", "mimeType": "image/png", "width": 1, "height": 1}]
     retrieved_case["primaryMediaId"] = "retrieval-color-image"
     retrieved_guide = base_entry("retrieval-guide", "内部教程标题", "雾夜角色布光教程：先确定轮廓光，再控制环境雾。", "content:tutorial")
+    text_scene = base_entry("text-scene", "文字场景资料", entry["text"], "content:text")
+    text_character = base_entry("text-character", "文字角色资料", jimeng_character["text"], "content:text")
     with extension_session("prompt-director-composer-") as session:
         setup = session.open_page("collector.html")
         session.seed_storage(
@@ -116,7 +119,7 @@ def main() -> None:
             {
                 "schemaVersion": 24,
                 "uiPreferences": {"locale": "zh-CN"},
-                "entries": [entry, jimeng_character, retrieved_case, retrieved_guide],
+                "entries": [entry, jimeng_character, retrieved_case, retrieved_guide, text_scene, text_character],
                 **ai_configuration_fixture(
                     providers={
                         "deepseek": {
@@ -176,10 +179,13 @@ def main() -> None:
         composer = session.open_page("composer.html")
         expect(composer.locator("html")).to_have_attribute("lang", "zh-CN")
         composer.locator("#composer-reference-open").click()
-        composer.locator(".composer-case-option", has_text="精选场景案例").locator("input").check()
-        composer.locator(".composer-case-option", has_text="即梦角色").locator("input").check()
+        composer.locator(".composer-case-option", has_text="文字场景资料").locator("input").check()
+        composer.locator(".composer-case-option", has_text="文字角色资料").locator("input").check()
         composer.locator("#composer-reference-apply").click()
         expect(composer.locator("#composer-reference-count")).to_have_text("2")
+        # This retry test isolates manually selected textual sources; retrieval is tested below.
+        composer.locator("#composer-library-search").click()
+        expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "false")
 
         requests: list[dict] = []
         fail_first = {"value": True}
@@ -192,19 +198,31 @@ def main() -> None:
                 route.abort("connectionfailed")
                 return
             if payload.get("stream"):
-                execution_payload = json.loads(payload["messages"][-1]["content"])
+                execution_payload = composer_request_payload(payload)
                 execution_route = execution_payload.get("route", "compose")
                 user_text = json.dumps(execution_payload.get("messages", []), ensure_ascii=False)
                 latest_user_text = next(
                     (item.get("content", "") for item in reversed(execution_payload.get("messages", [])) if item.get("role") == "user"),
                     "",
                 )
+                if "用私人资料补充雾夜角色" in latest_user_text:
+                    tool_results = [item for item in payload["messages"] if item["role"] == "tool"]
+                    calls = []
+                    if not tool_results:
+                        query = "雾夜角色" + (" " + latest_user_text.split(" ", 1)[1] if "color:" in latest_user_text else "")
+                        calls = [{"index": 0, "id": "find", "type": "function", "function": {"name": "search_cases", "arguments": json.dumps({"query": query})}}]
+                    elif len(tool_results) == 1:
+                        found = json.loads(tool_results[0]["content"])["candidates"]
+                        calls = [{"index": index, "id": "read-" + item["caseId"], "type": "function", "function": {"name": "read_case_text", "arguments": json.dumps({"caseId": item["caseId"], "part": "body", "offset": 0, "length": 200})}} for index, item in enumerate(found)]
+                    if calls:
+                        route.fulfill(status=200, content_type="text/event-stream", body="data: " + json.dumps({"model": "deepseek-v4-flash", "choices": [{"delta": {"tool_calls": calls}, "finish_reason": "tool_calls"}]}) + "\n\ndata: [DONE]\n\n")
+                        return
                 if execution_route == "auto":
                     resolved_route = "analyze_materials" if "分析资料" in user_text else "compose"
                 else:
                     resolved_route = execution_route
-                if "是否检索本地资料" in latest_user_text:
-                    streamed_text = "是否检索本地资料补充雾夜角色细节？你可以回复：检索，或不检索直接生成。"
+                if "角色应该是什么气质" in latest_user_text:
+                    streamed_text = "角色应该是什么气质？你可以回复：冷静克制或热情张扬。"
                 elif "协议降级测试" in latest_user_text:
                     streamed_text = "自动模式降级为普通回答。"
                 elif resolved_route == "analyze_materials":
@@ -218,7 +236,7 @@ def main() -> None:
                 else:
                     streamed_text = "东方庭院，柔和逆光。"
                 if execution_route == "auto" and "协议降级测试" not in latest_user_text:
-                    status = "needs_clarification" if "是否检索本地资料" in latest_user_text else "ready"
+                    status = "needs_clarification" if "角色应该是什么气质" in latest_user_text else "ready"
                     streamed_text = json.dumps({"route": resolved_route, "status": status}, ensure_ascii=False) + "\n" + streamed_text
                 route.fulfill(
                     status=200,
@@ -241,16 +259,16 @@ def main() -> None:
                 "analyze_materials" if "分析资料" in user_text else "compose"
             )
             assert isinstance(references, list)
-            if "是否检索本地资料" in latest_user_text:
+            if "角色应该是什么气质" in latest_user_text:
                 planner_result = {
                     "route": planned_route,
                     "status": "needs_clarification",
                     "suggestedTitle": "",
                     "instruction": "",
                     "question": {
-                        "text": "是否检索本地资料补充雾夜角色细节？",
-                        "recommendedAnswer": "检索本地资料",
-                        "options": ["检索本地资料", "不检索，直接生成"],
+                        "text": "角色应该是什么气质？",
+                        "recommendedAnswer": "冷静克制",
+                        "options": ["冷静克制", "热情张扬"],
                     },
                     "librarySearch": None,
                 }
@@ -300,13 +318,13 @@ def main() -> None:
         assert "fixture.invalid" not in sent
         assert "柔和逆光，低饱和" in sent
         assert "黑色短发角色，银灰机能服" in sent
-        execution_payload = json.loads(requests[-1]["messages"][-1]["content"])
+        execution_payload = composer_request_payload(requests[-1])
         assert len(execution_payload["references"]) == 2
         assert "dimensionUses" not in json.dumps(requests[-1], ensure_ascii=False)
         composer.locator("#composer-options summary").click()
         composer.locator("#composer-assembly-open").click()
         expect(composer.locator(".composer-assembly-layer")).to_have_count(7)
-        expect(composer.locator("#composer-assembly-content")).to_contain_text("精选场景案例")
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("文字场景资料")
         composer.locator("#composer-assembly-close").click()
 
         composer.locator("#composer-new").click()
@@ -393,50 +411,49 @@ def main() -> None:
         composer.locator("#composer-instruction").fill("生成庭院人物行走视频")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_contain_text("镜头跟随")
-        video_execution = json.loads(requests[-1]["messages"][-1]["content"])
+        video_execution = composer_request_payload(requests[-1])
         assert video_execution["instruction"] == "生成庭院人物行走视频"
 
         composer.locator("#composer-new").click()
         composer.locator(".composer-type-switch label", has_text="图片").click()
         select_composer_setting(composer, "#composer-route", "auto")
-        composer.locator("#composer-instruction").fill("是否检索本地资料")
+        composer.locator("#composer-instruction").fill("角色应该是什么气质")
         question_requests_before = len(requests)
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.question")).to_have_count(1)
-        expect(composer.locator(".composer-message.question")).to_contain_text("是否检索本地资料")
+        expect(composer.locator(".composer-message.question")).to_contain_text("角色应该是什么气质")
         expect(composer.locator(".composer-question-options button")).to_have_count(0)
-        assert composer.locator(".composer-message.user", has_text="是否检索本地资料").count() == 1
+        assert composer.locator(".composer-message.user", has_text="角色应该是什么气质").count() == 1
         assert len(requests) == question_requests_before + 1
-        composer.locator("#composer-instruction").fill("不检索，直接生成")
+        composer.locator("#composer-instruction").fill("冷静克制，直接生成")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
 
         composer.locator("#composer-new").click()
         retrieval_requests_before = len(requests)
-        composer.locator("#composer-library-search").click()
         expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "true")
         composer.locator("#composer-instruction").fill("用私人资料补充雾夜角色")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
-        assert len(requests) == retrieval_requests_before + 1
-        retrieval_payload = json.loads(requests[-1]["messages"][-1]["content"])
-        assert len(retrieval_payload["retrievedSources"]) == 2, retrieval_payload
-        assert "雾夜角色穿银色披风" in json.dumps(retrieval_payload, ensure_ascii=False)
+        assert len(requests) == retrieval_requests_before + 3
+        retrieval_payload = composer_request_payload(requests[retrieval_requests_before])
+        assert not retrieval_payload["retrievedSources"], retrieval_payload
+        assert "雾夜角色穿银色披风" in json.dumps(requests[-1], ensure_ascii=False), requests[-1]
         retrieval_session = completed_session(composer)
-        assert retrieval_session["retrievalSnapshot"]["status"] == "completed", retrieval_session
-        assert retrieval_session["retrievalSnapshot"]["sourceCount"] == 2, retrieval_session
+        assert len(retrieval_session["retrievedSources"]) == 2, retrieval_session
+        assert retrieval_session["libraryTools"]["requestCount"] == 3, retrieval_session
         assert retrieval_session["assemblySnapshot"]["status"] == "completed", retrieval_session
         assert retrieval_session["assemblySnapshot"]["userRequest"] == "用私人资料补充雾夜角色", retrieval_session
         assert retrieval_session["assemblySnapshot"]["actual"]["status"] == "completed", retrieval_session
         assert retrieval_session["assemblySnapshot"]["actual"]["model"] == "deepseek-v4-flash", retrieval_session
-        expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "false")
+        expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "true")
         composer.locator("#composer-options summary").click()
         composer.locator("#composer-assembly-open").click()
         expect(composer.locator(".composer-assembly-layer")).to_have_count(7)
         expect(composer.locator("#composer-assembly-content")).to_contain_text("本轮用户请求")
         expect(composer.locator("#composer-assembly-content")).to_contain_text("用私人资料补充雾夜角色")
-        expect(composer.locator("#composer-assembly-content")).to_contain_text("采用 2 条来源")
-        expect(composer.locator("#composer-assembly-content")).to_contain_text("预计 1 次模型请求")
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("2 条已读来源")
+        expect(composer.locator("#composer-assembly-content")).to_contain_text("实际模型请求 3 次")
         expect(composer.locator("#composer-assembly-content")).to_contain_text("实际终态：completed")
         composer.locator("#composer-assembly-close").click()
 
@@ -447,16 +464,15 @@ def main() -> None:
         library.close()
         for color, expected_count in [("123", 1), ("abcdef", 0)]:
             composer.locator("#composer-new").click()
-            composer.locator("#composer-library-search").click()
             composer.locator("#composer-instruction").fill(f"用私人资料补充雾夜角色 color:{color}")
             composer.locator("#composer-action").click()
             expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("东方庭院，柔和逆光。")
-            color_payload = json.loads(requests[-1]["messages"][-1]["content"])
+            color_payload = completed_session(composer)
             assert len(color_payload["retrievedSources"]) == expected_count, color_payload
             if expected_count:
                 assert "雾夜角色穿银色披风" in json.dumps(color_payload["retrievedSources"], ensure_ascii=False)
             color_session = completed_session(composer)
-            assert color_session["retrievalSnapshot"]["sourceCount"] == expected_count, color_session
+            assert len(color_session["libraryTools"]["candidates"]) == expected_count, color_session
 
         composer.locator("#composer-new").click()
         composer.locator("#composer-instruction").fill("协议降级测试")
@@ -476,7 +492,7 @@ def main() -> None:
                 route.continue_()
                 return
             openai_requests.append(payload)
-            if payload.get("tools"):
+            if any(tool.get("type") == "image_generation" for tool in payload.get("tools", [])):
                 route.fulfill(
                     status=200,
                     content_type="application/json",
@@ -526,7 +542,7 @@ def main() -> None:
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_contain_text("三人电影级长焦构图")
         assert len(openai_requests) == 1
-        visual_parts = openai_requests[0]["input"][0]["content"]
+        visual_parts = openai_requests[0]["input"][-1]["content"]
         assert len([part for part in visual_parts if part.get("type") == "input_image"]) == 2
         labels = [part.get("text") for part in visual_parts if part.get("type") == "input_text"]
         assert "@参考1/图片1" in labels
@@ -546,7 +562,8 @@ def main() -> None:
                       consent: true,
                       models: {
                         creativePlanning: 'local-vision-test'
-                      }
+                      },
+                      discoveredModels: [{id: 'local-vision-test', name: 'local-vision-test', status: 'available', confidence: 'declared', tasks: ['creativePlanning'], inputModalities: ['text', 'image'], outputModalities: ['text']}]
                     },
                     'custom-media': {
                       endpoint: `${origin}/v1/responses`,
@@ -686,7 +703,7 @@ def main() -> None:
         local_execution = json.loads(local_requests[0]["body"])
         assert local_execution["model"] == "local-vision-test", local_execution["model"]
         assert len([
-            part for part in local_execution["input"][0]["content"]
+            part for part in local_execution["input"][-1]["content"]
             if part.get("type") == "input_image"
         ]) == 2
         assert local_requests[1]["content_type"].startswith("multipart/form-data; boundary=")

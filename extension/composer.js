@@ -1,6 +1,6 @@
+import { normalizeLibraryToolState } from "./composer-library-tools.js";
 import { CONTENT_ROLES, contentRoleForEntry } from "./taxonomy.js";
 import { normalizeAppliedSkillSnapshots } from "./creative-skills.js";
-import { primaryVisionDescription } from "./visuals.js";
 import { currentVideoReconstruction, entryMediaAssets } from "./media.js";
 import { TEMP_REFERENCE_SOURCE_TYPES } from "./temp-references.js";
 import { normalizeLocalRelativePath } from "./local-media.js";
@@ -10,6 +10,7 @@ import {
   referenceHasUsableLegacyDescription
 } from "./reference-readiness.js";
 import { detailPromptSources } from "./prompt-sources.js";
+import { composerAssetAnalysisText, composerSourceText, formatReferenceTime } from "./composer-source-text.js";
 import { AI_PROVIDER_PRESETS } from "./ai-provider-presets.js";
 import { createComposerActiveTurn } from "./composer-active-turn.js";
 import {
@@ -30,14 +31,14 @@ import {
 } from "./composer-agent.js";
 
 export const COMPOSER_METHOD_VERSION = COMPOSER_AGENT_VERSION;
-export const COMPOSER_AI_MODELS = Object.freeze(["deepseek-v4-flash", "deepseek-v4-pro"]);
+export const COMPOSER_AI_MODELS = Object.freeze(["deepseek-flash", "deepseek-v4-pro"]);
 export const COMPOSER_SERVICE_IDS = Object.freeze([
   ...AI_PROVIDER_PRESETS
     .filter((preset) => preset.capabilities.some((taskId) => ["creativePlanning", "imageGeneration", "videoGeneration"].includes(taskId)))
     .map((preset) => preset.id),
   "compatible"
 ]);
-export const DEFAULT_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "deepseek", model: "deepseek-v4-flash", thinking: false });
+export const DEFAULT_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "deepseek", model: "deepseek-flash", thinking: false });
 export const UNASSIGNED_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "unassigned", model: "", thinking: false });
 export const COMPOSER_INPUT_MAX_CHARACTERS = 750_000;
 const COMPOSER_REQUEST_MAX_CHARACTERS = 775_000;
@@ -112,19 +113,18 @@ export function resetComposerTaskMethod(settingsValue, taskKey) {
   return normalizeComposerSettings({ ...settings, ...resetAgentTaskMethod(settings, taskKey) });
 }
 
-export function isComposerEligibleEntry(entry, targetType = "") {
+export function isComposerEligibleEntry(entry, targetType = "", options = {}) {
+  if (!entry) return false;
   if (Array.isArray(entry?.memberEntries)) {
-    return Boolean(referenceTextForEntry(entry, targetType) || imageRefsForEntry(entry).length);
+    return Boolean(composerSourceText(entry, options.documentTextByEntryId) || imageRefsForEntry(entry).length);
   }
   if (targetType === "video" && entryMediaAssets(entry).some((asset) =>
     asset.kind === "video" && asset.usage !== "poster"
   )) return true;
-  const contentRole = contentRoleForEntry(entry);
-  if (![CONTENT_ROLES.promptImage, CONTENT_ROLES.promptVideo, CONTENT_ROLES.imageCase, CONTENT_ROLES.reference].includes(contentRole)) return false;
-  return Boolean(String(entry?.text ?? "").trim() || imageRefsForEntry(entry).length);
+  return Boolean(composerSourceText(entry, options.documentTextByEntryId) || imageRefsForEntry(entry).length);
 }
 
-export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", targetType = "") {
+export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", targetType = "", options = {}) {
   const byId = new Map((Array.isArray(entries) ? entries : []).map((entry) => [entry.id, entry]));
   const snapshots = [];
   const selections = (Array.isArray(entryIds) ? entryIds : []).flatMap((selectionValue) => {
@@ -139,9 +139,9 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
     const selection = normalizeReferenceSelection(selectionValue);
     const entryId = selection.entryId;
     const entry = byId.get(entryId);
-    if (!isComposerEligibleEntry(entry, targetType)) continue;
+    if (!isComposerEligibleEntry(entry, targetType, options)) continue;
     if (Array.isArray(entry.memberEntries)) {
-      const referenceText = referenceTextForEntry(entry, targetType);
+      const referenceText = composerSourceText(entry, options.documentTextByEntryId);
       const originalText = originalReferenceTextForEntry(entry, targetType);
       snapshots.push({
         referenceId: referenceSnapshotId(entry.id, ""),
@@ -161,6 +161,16 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
     const selectedAssets = selectedReferenceAssets(entry, selection.assetIds, targetType);
     if (selection.assetIds.length && selectedAssets.length !== selection.assetIds.length) {
       throw new Error("选择的参考素材已经失效，请重新选择");
+    }
+    if (!selectedAssets.length) {
+      snapshots.push({
+        referenceId: referenceSnapshotId(entry.id, ""), entryId: entry.id, assetId: "",
+        alias: locale === "en" ? `@Reference${snapshots.length + 1}` : `@参考${snapshots.length + 1}`,
+        title: String(entry.title ?? "").trim(), referenceKind: "reference",
+        referenceText: composerSourceText(entry, options.documentTextByEntryId),
+        originalText: String(entry.text ?? "").trim(), scope: "case", imageRefs: [], assets: []
+      });
+      continue;
     }
     if (selectedAssets.length === 1 && selectedAssets[0].kind === "video") {
       const asset = selectedAssets[0];
@@ -205,9 +215,10 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
     const baseText = referenceKind === "prompt_vision"
       ? formatPromptAndVisualFacts(originalPrompt, visualFacts)
       : referenceKind === "vision"
-        ? visualFacts.map((fact, index) => `[图片${index + 1}可见事实]\n${fact}`).join("\n\n") || primaryVisionDescription(entry)
+        ? visualFacts.map((fact, index) => `[图片${index + 1}可见事实]\n${fact}`).join("\n\n")
         : originalPrompt;
-    const referenceText = String(baseText ?? "").trim();
+    const referenceText = [...new Set([baseText, options.documentTextByEntryId?.get?.(entry.id)]
+      .map(value => String(value ?? "").trim()).filter(Boolean))].join("\n\n");
     snapshots.push({
       referenceId: referenceSnapshotId(entry.id, selectedAssets.length === 1 ? selectedAssets[0].id : ""),
       entryId: entry.id,
@@ -259,10 +270,7 @@ function imageVisualFacts(entry, assetIds = []) {
   const selected = new Set(Array.isArray(assetIds) ? assetIds : []);
   return entryMediaAssets(entry)
     .filter((asset) => asset.kind === "image" && asset.usage !== "poster" && (!selected.size || selected.has(asset.id)))
-    .map((asset) => [
-      String(asset.visionAnalysis?.invalidated ? "" : asset.visionAnalysis?.description ?? "").trim(),
-      detailPromptSources(entry, asset).ai
-    ].filter(Boolean).join("\n重建提示词："))
+    .map((asset) => composerAssetAnalysisText(entry, asset))
     .filter(Boolean);
 }
 
@@ -425,50 +433,6 @@ function formatPromptAndVisualFacts(prompt, facts) {
   ].join("\n\n");
 }
 
-function referenceTextForEntry(entry, targetType) {
-  if (!Array.isArray(entry?.memberEntries)) return "";
-  const type = targetType === "video" ? "video" : targetType === "image" ? "image" : "";
-  const values = [];
-  for (const member of entry.memberEntries) {
-    const contentRole = contentRoleForEntry(member);
-    if ((!type || type === "image") && contentRole === CONTENT_ROLES.promptImage && String(member.text ?? "").trim()) {
-      values.push(String(member.text).trim());
-    }
-    if ((!type || type === "image") && contentRole === CONTENT_ROLES.imageCase && primaryVisionDescription(member)) {
-      values.push(primaryVisionDescription(member));
-    }
-    if ((!type || type === "video") && contentRole === CONTENT_ROLES.promptVideo && String(member.text ?? "").trim()) {
-      values.push(String(member.text).trim());
-    }
-    if ((!type || type === "video") && videoNoteReferenceText(member)) values.push(videoNoteReferenceText(member));
-  }
-  return values.join("\n\n");
-}
-
-function videoNoteReferenceText(entry) {
-  const videoIds = new Set((entry?.mediaAssets ?? entry?.visuals ?? [])
-    .filter((asset) => asset?.kind === "video" || String(asset?.mimeType ?? "").startsWith("video/"))
-    .map((asset) => asset.id));
-  const notes = (Array.isArray(entry?.timeNotes) ? entry.timeNotes : []).filter((note) => videoIds.has(note.assetId));
-  if (!notes.length) return "";
-  const assets = new Map((entry?.mediaAssets ?? entry?.visuals ?? []).map((asset) => [asset.id, asset]));
-  return notes.map((note) => {
-    const range = note.endMs > note.startMs
-      ? `${formatReferenceTime(note.startMs)}-${formatReferenceTime(note.endMs)}`
-      : formatReferenceTime(note.startMs);
-    const frameDescription = String(assets.get(note.frameAssetId)?.visionAnalysis?.description ?? "").trim();
-    return `[${range}] ${String(note.text ?? "").trim()}${frameDescription ? `\n关键帧描述：${frameDescription}` : ""}`;
-  }).filter((value) => !/\]\s*$/.test(value)).join("\n");
-}
-
-function formatReferenceTime(milliseconds) {
-  const total = Math.max(0, Math.floor(Number(milliseconds) || 0));
-  const minutes = Math.floor(total / 60_000);
-  const seconds = Math.floor(total % 60_000 / 1000);
-  const remainder = total % 1000;
-  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(remainder).padStart(3, "0")}`;
-}
-
 export function createComposerSession(input = {}) {
   const now = new Date().toISOString();
   const targetType = input.targetType === "video" ? "video" : "image";
@@ -495,6 +459,8 @@ export function createComposerSession(input = {}) {
       ? requestedReferenceMode
       : "conditioned",
     productionReviewEnabled: input.productionReviewEnabled !== false,
+    libraryRetrievalEnabled: input.libraryRetrievalEnabled !== false,
+    libraryTools: normalizeLibraryToolState(input.libraryTools),
     referenceSnapshots: snapshots,
     appliedSkills: normalizeAppliedSkillSnapshots(input.appliedSkills),
     messages: normalizeMessages(input.messages),
@@ -529,6 +495,8 @@ export function completeComposerAssemblySnapshot(snapshotValue, result = {}) {
   return normalizeComposerAssemblySnapshot({
     ...snapshot,
     status: "completed",
+    libraryTools: result.libraryTools ?? snapshot.libraryTools,
+    retrievedSources: result.retrievedSources ?? snapshot.retrievedSources,
     actual: {
       status: "completed",
       route: result.route,
@@ -615,6 +583,7 @@ function normalizeComposerAssemblySnapshot(value) {
         imageCount: Math.max(0, Math.floor(Number(item?.imageCount) || 0))
       }];
     }),
+    libraryTools: normalizeLibraryToolState(value.libraryTools),
     retrieval: normalizeRetrievalSnapshot(value.retrieval),
     retrievedSources: normalizeRetrievedSources(value.retrievedSources),
     media: {
@@ -760,7 +729,7 @@ export function plannerRequestPayload(sessionValue, userMessage, settingsValue) 
   const settings = normalizeComposerSettings(settingsValue);
   const incoming = String(userMessage ?? "").trim();
   const latestUserText = incoming || [...session.messages].reverse().find((item) => item.role === "user")?.content || "";
-  const locale = resolveOutputLocale(session.outputLanguage, latestUserText);
+  const locale = resolveOutputLocale(session.outputLanguage, latestUserText, session.messages);
   const messages = incoming
     ? [...session.messages, { role: "user", type: "request", content: incoming }]
     : session.messages;
@@ -772,9 +741,9 @@ export function plannerRequestPayload(sessionValue, userMessage, settingsValue) 
     productionReviewEnabled: session.productionReviewEnabled,
     agentVersion: settings.agentVersion,
     methodVersion: settings.methodVersion,
-    taskMethod: taskMethodFor(
+    taskMethod: session.routeMode === "auto" ? "" : taskMethodFor(
       settings,
-      session.routeMode === "auto" ? "compose" : session.routeMode,
+      session.routeMode,
       session.targetType,
       locale
     ),
@@ -794,9 +763,15 @@ export function plannerRequestPayload(sessionValue, userMessage, settingsValue) 
       ...(referenceSources.length ? { sources: referenceSources.map(({ kind, label }) => ({ kind, label })) } : {}),
       imageCount: imageRefs.length
     })),
+    libraryCandidates: session.libraryTools.candidates,
+    toolHistory: session.libraryTools.events.filter(event => event.status !== 'running').map(event => ({
+      name:event.name, status:event.status, label:event.label, userMessageId:event.userMessageId,
+      ...(event.search ? {search:event.search} : {}),
+      ...(event.draft ? {draft:{kind:event.draft.kind,saved:Boolean(event.draft.savedId),savedId:event.draft.savedId||''}} : {})
+    })),
     retrievedSources: session.retrievedSources.map(({ alias, role, referenceKind, text }) => ({ alias, role, referenceKind, text })),
-    messages: messages.filter((item) => item.type !== "prompt").map(({ role, type, content }) => ({ role, type, content })),
-    previousPrompt: session.promptVersions.at(-1)?.text ?? ""
+    messages: messages.map(({ role, type, content }) => ({ role, type, content })),
+    previousPrompt: session.routeMode === "compose" ? session.promptVersions.at(-1)?.text ?? "" : ""
   };
 }
 
@@ -827,9 +802,15 @@ export function assertComposerRequestBudget(messages) {
   return { characters, maxCharacters: COMPOSER_REQUEST_MAX_CHARACTERS };
 }
 
-export function resolveOutputLocale(value, latestText = "") {
+export function resolveOutputLocale(value, latestText = "", messages = []) {
   if (value === "zh-CN" || value === "en") return value;
-  return /[\u3400-\u9fff]/.test(String(latestText ?? "")) ? "zh-CN" : "en";
+  const userTexts = [latestText, ...messages.filter(message => message.role === "user").map(message => message.content).reverse()];
+  for (const text of userTexts) {
+    if (/^[a-z]$/i.test(String(text ?? "").trim())) continue;
+    if (/[\u3400-\u9fff]/.test(String(text ?? ""))) return "zh-CN";
+    if (/[a-z]/i.test(String(text ?? ""))) return "en";
+  }
+  return "zh-CN";
 }
 
 export function createInstructionSnapshot(settingsValue, route, targetType, outputLanguage, routeSource = "auto", instruction = "") {

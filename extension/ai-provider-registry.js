@@ -266,10 +266,11 @@ function provider(id, value = {}) {
     task.id,
     clean(value?.models?.[task.id])
   ]));
-  const discoveredModels = normalizeDiscoveredModels(value?.discoveredModels).map((model) => ({
-    ...model,
-    tasks: preset ? model.tasks.filter((taskId) => preset.capabilities.includes(taskId)) : model.tasks
-  }));
+  const discoveredModels = normalizeDiscoveredModels(value?.discoveredModels).map((model) => {
+    const current = id === "deepseek" ? getAiModelCapability(id, model.id) : null;
+    const resolved = current ? { ...model, ...current, status: model.status, confidence: "declared" } : model;
+    return { ...resolved, tasks: preset ? resolved.tasks.filter((taskId) => preset.capabilities.includes(taskId)) : resolved.tasks };
+  });
   const capabilities = [...(preset?.capabilities ?? [])];
   return {
     id,

@@ -1,3 +1,4 @@
+import { normalizeLibraryToolState } from './composer-library-tools.js';
 export const COMPOSER_DIAGNOSTIC_VERSION = 2;
 
 export function composerOutputChecks(sessionValue = {}, promptVersionValue = null) {
@@ -64,6 +65,7 @@ export function buildComposerDiagnostic(sessionValue = {}) {
       promptVersions,
       currentInstruction: String(session.currentInstruction ?? ""),
       retrievedSources: session.retrievedSources ?? [],
+      libraryTools: normalizeLibraryToolState(session.libraryTools),
       diagnosticEvents: session.diagnosticEvents ?? [],
       lastFailure: session.lastFailure ?? null,
       updatedAt: session.updatedAt ?? ""

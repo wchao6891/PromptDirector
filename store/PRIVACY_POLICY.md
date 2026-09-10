@@ -1,6 +1,6 @@
 # 提示词导演隐私政策
 
-生效日期：2026 年 8 月 16 日
+生效日期：2026 年 9 月 10 日
 
 提示词导演是一个本地优先的 Chrome 扩展，用于收藏、整理、检索、备份和分享个人创作资料。扩展不提供开发者服务器，不创建账号，不收集使用统计，不投放广告，也不出售用户数据。
 
@@ -30,9 +30,10 @@
 
 - AI 功能默认不因安装而自动执行。发送授权是所有真实外部请求的前置条件；已保存 API Key、已选模型或单次付费确认都不能替代发送授权。
 - 对新增的付费媒体分析或生成，扩展还会要求单次付费确认。该确认只授权当前操作，且与发送授权相互独立；两者不能互相替代。
-- 发送时，扩展只发送完成当前任务所必需、且由用户明确选择或提交的内容。根据任务，这可能包括文字提示词、用户创作要求、本次选择的参考图片或视频、画面描述、生成参数或当前会话中用户可见的消息。
+- 发送时，扩展只发送完成当前任务所必需、且由用户明确选择、提交或按其查询和参考意图读取的内容。根据任务，这可能包括文字提示词、用户创作要求、本次选择的参考图片或视频、画面描述、生成参数或当前会话中用户可见的消息。
 - 图片创作默认可以使用用户选择的原图。若每项参考已有案例提示词或有效画面分析文字，用户可改为“全程只用案例/分析文字”；该模式不会读取、分析或发送图片，图片载荷为零。
-- 扩展不会自动发送整库、全部案例、未选择案例、API Key，或为了失败恢复而静默改用另一家付费服务、重新发起付费请求。
+- 创作台仅在用户要求查询或参考案例库时调用本地工具。搜索返回候选片段，参考创作时按需读取文字并展示来源；普通创作不自动查库。用户可以关闭当前会话的资料库检索，关闭状态在刷新后保留。检索不会自动发送案例图片、视频或原始文档文件。
+- 扩展不会发送整库或全部案例，不会将 API Key 作为创作内容发送，也不会为了失败恢复而静默改用另一家付费服务、重新发起付费请求。
 - 图片和视频仅会在用户对相应任务明确选择或提交，并完成上述所需确认后，直接通过 HTTPS 发送给所选第三方 AI 服务或自定义兼容接口。开发者不会接收或中转这些内容。
 - 第三方 AI 服务和自定义兼容接口对收到数据的处理，受用户与该服务商之间适用的隐私政策、服务条款和账户设置约束。用户应在启用前审阅这些规则。
 
@@ -71,7 +72,7 @@
 
 # PromptDirector Privacy Policy
 
-Effective date: August 16, 2026
+Effective date: September 10, 2026
 
 PromptDirector is a local-first Chrome extension for collecting, organizing, searching, backing up, and sharing personal creative references. It has no developer-operated data server or user account system, does not collect analytics, does not show ads, and does not sell user data.
 
@@ -85,7 +86,7 @@ Cases, media, tags, settings, Creative Skills, and API keys are stored in the br
 
 PromptDirector supports seven separately assigned AI tasks: text tagging, Skill extraction, creative planning, image analysis, video analysis, image generation, and video generation. No external AI request runs merely because the extension is installed. A real request requires the configured service, model, required site permission, and the user's sending consent. Paid media analysis or generation also requires a separate confirmation for the current action.
 
-Only content selected or submitted for the current operation is sent directly over HTTPS to the AI provider or compatible endpoint chosen by the user. PromptDirector does not silently send the full library, unselected cases, API keys, or retry a paid action through another provider. In text-only creation mode, images are neither read nor transmitted. The developer does not receive or proxy AI request content; each provider handles received data under its own terms and privacy policy.
+Content selected, submitted, or read in response to the user’s request to search or reference their library is sent directly over HTTPS to the AI provider or compatible endpoint chosen by the user. Composer invokes local case tools only when the user asks to search or reference the library. Search returns brief candidate excerpts; requested reference work reads relevant text and shows sources. Ordinary creation does not automatically search. Explicitly specified images are sent directly without a separate visual-analysis call. Retrieval can be disabled for the conversation; that choice survives a page reload. Retrieval does not automatically send case images, videos, or original document files. PromptDirector does not send the full library or API keys as creative content, or silently retry a paid action through another provider. In text-only creation mode, images are neither read nor transmitted. The developer does not receive or proxy AI request content; each provider handles received data under its own terms and privacy policy.
 
 ## Sharing, retention, and deletion
 

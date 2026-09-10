@@ -59,3 +59,16 @@ test("per-image manual text outranks shared text but adopted AI is never relabel
   assert.equal(detailPromptSources(entry, asset).ai, "逐图");
   assert.equal(detailPromptSources(entry, asset).aiSource, "media-prompt");
 });
+
+test("clearing adopted AI also clears its underlying text without removing analysis evidence or original media", () => {
+  const asset = { id: "image", kind: "image", usage: "content", visionAnalysis: { version: 2, quality: "complete", reconstructionPrompt: "底层AI", tags: [{ g: "style.render", t: "电影感" }], imageFingerprint: "fixture" } };
+  const original = { text: "原文", mediaAssets: [asset], mediaPrompts: [{ assetId: asset.id, source: "ai-suggestion", text: "采用AI" }] };
+  const cleared = setEntryMediaPrompt(original, asset.id, "", "ai-suggestion", { preserveOtherSource: true });
+  const reopened = setEntryMediaPrompt(cleared, asset.id, "保留独立原文", "manual", { preserveOtherSource: true });
+  assert.equal(detailPromptSources(reopened, reopened.mediaAssets[0]).ai, "");
+  assert.equal(reopened.text, "原文");
+  assert.equal(reopened.mediaAssets[0].visionAnalysis.userEdited, true);
+  assert.deepEqual(reopened.mediaAssets[0].visionAnalysis.tags, asset.visionAnalysis.tags);
+  assert.equal(reopened.mediaAssets[0].visionAnalysis.imageFingerprint, "fixture");
+  assert.equal(original.mediaAssets[0].visionAnalysis.reconstructionPrompt, "底层AI");
+});

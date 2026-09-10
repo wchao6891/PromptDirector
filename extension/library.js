@@ -298,7 +298,7 @@ let facetCatalog = { facets: [], nodes: [] };
 let settings = {};
 let organizerState = { collections: [] };
 let importJobsState = { items: [] };
-let aiSettings = { configured: false, consent: false, analysisModel: "deepseek-v4-flash" };
+let aiSettings = { configured: false, consent: false, analysisModel: "deepseek-flash" };
 let visionSettings = normalizeVisionSettings();
 let aiServiceProfiles = { gemini: { configured: false, model: "" }, xai: { configured: false, textModel: "", imageModel: "", videoModel: "" } };
 const ruleEditorDrafts = new Map();
@@ -3927,6 +3927,7 @@ async function openLibraryPackageBatch(packageItems, ordinaryItems = []) {
     capacityError: "",
     submitError: "",
     plannedBytes: 0,
+    planStage: "",
     revision: 0,
     submitting: false,
     controller: new AbortController()
@@ -4003,6 +4004,7 @@ async function refreshLibraryPackageBatchPlan(batch = pendingLibraryPackageBatch
   batch.capacityError = "";
   batch.submitError = "";
   batch.plannedBytes = 0;
+  batch.planStage = ready.length ? "planning" : "";
   renderLibraryPackageBatch();
   if (!ready.length) return;
   try {
@@ -4014,16 +4016,21 @@ async function refreshLibraryPackageBatchPlan(batch = pendingLibraryPackageBatch
     });
     if (!response?.ok) throw new Error(response?.message || "无法检查案例包");
     if (pendingLibraryPackageBatch !== batch || revision !== batch.revision) return;
-    batch.preview = response;
-    batch.plannedBytes = plannedLibraryPackageBatchBytes(response.resourceWrites, ready);
+    const plannedBytes = plannedLibraryPackageBatchBytes(response.resourceWrites, ready);
+    batch.planStage = "capacity";
+    renderLibraryPackageBatch();
     const estimate = typeof navigator.storage?.estimate === "function"
       ? await navigator.storage.estimate()
       : {};
-    assertStorageCapacity(estimate, batch.plannedBytes);
+    if (pendingLibraryPackageBatch !== batch || revision !== batch.revision) return;
+    assertStorageCapacity(estimate, plannedBytes);
+    batch.preview = response;
+    batch.plannedBytes = plannedBytes;
   } catch (error) {
     if (pendingLibraryPackageBatch !== batch || revision !== batch.revision) return;
     batch.capacityError = error?.message || "无法检查案例包";
   }
+  batch.planStage = "";
   renderLibraryPackageBatch();
 }
 
@@ -4063,12 +4070,13 @@ function renderLibraryPackageBatch() {
   const invalid = batch.items.filter((item) => item.status === "error").length;
   const unresolved = batch.preview?.unresolvedConflicts?.length ?? 0;
   const canContinueOrdinaryOnly = !batch.items.length && batch.ordinaryItems.length;
-  elements.libraryPackageImportConfirm.disabled = batch.submitting || checking || invalid > 0 || Boolean(batch.capacityError) || unresolved > 0 || (!batch.preview?.canApply && !canContinueOrdinaryOnly);
+  elements.libraryPackageImportConfirm.disabled = batch.submitting || checking || Boolean(batch.planStage) || invalid > 0 || Boolean(batch.capacityError) || unresolved > 0 || (!batch.preview?.canApply && !canContinueOrdinaryOnly);
   elements.libraryPackageImportConfirm.textContent = t(batch.submitting ? "正在导入…" : "导入");
   let message = "";
   let isError = false;
   if (batch.submitting) message = t("正在写入…");
   else if (checking) message = t("正在检查…");
+  else if (batch.planStage) message = t(batch.planStage === "capacity" ? "正在检查可用空间…" : "正在核对案例…");
   else if (invalid) { message = t("{count} 个包需处理", { count: invalid }); isError = true; }
   else if (batch.capacityError) { message = batch.capacityError; isError = true; }
   else if (unresolved) message = t("{count} 项冲突待选择", { count: unresolved });
@@ -4104,6 +4112,7 @@ function createLibraryPackageBatchRow(batch, item, sourceIndex) {
   const status = el("div", `library-package-import-status${item.status === "error" ? " error" : ""}`);
   if (item.status === "checking") status.textContent = item.progress || t("检查中");
   else if (item.status === "error") status.textContent = translateUiMessage(item.error);
+  else if (batch.capacityError) status.textContent = t("检查失败");
   else if (conflicts.some((conflict) => conflict.unresolved)) status.textContent = t("待选择");
   else if (importReport) {
     const summary = translateUiMessage(importReport.summary);
@@ -4111,7 +4120,7 @@ function createLibraryPackageBatchRow(batch, item, sourceIndex) {
     status.append(rawTextEl("strong", "", summary));
     if (details.length) status.append(rawTextEl("small", "", details.join("；")));
     status.title = [summary, ...details].join("。 ");
-  } else status.textContent = t("可导入");
+  } else status.textContent = t(batch.planStage === "capacity" ? "正在检查可用空间…" : "正在核对案例…");
   const actions = el("div", "library-package-import-actions");
   if (item.status === "error") {
     const retry = iconActionButton("refresh-cw", "重试", () => retryLibraryPackageItem(batch, item));
@@ -4190,7 +4199,7 @@ async function retryLibraryPackageItem(batch, item) {
 
 async function applyLibraryPackageBatch() {
   const batch = pendingLibraryPackageBatch;
-  if (!batch || batch.submitting) return;
+  if (!batch || batch.submitting || batch.planStage || batch.items.some(item => item.status !== "ready")) return;
   const ready = batch.items.filter((item) => item.status === "ready" && item.inspection);
   if (!ready.length) {
     const ordinaryItems = batch.ordinaryItems;
@@ -5823,6 +5832,8 @@ function refreshActiveDetailAssetSections(entry) {
   const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId || "";
   if (currentEditor && currentEditor.dataset.assetId !== activeAssetId) {
     replaceDetailSection(currentEditor, createEntryEditor(entry, { inline: true }));
+  } else {
+    currentEditor?.updateEntry?.(entry);
   }
   const prompt = createPromptSection(entry);
   const currentPrompt = body.querySelector(":scope > .prompt-section");
@@ -8588,18 +8599,45 @@ function createEntryEditor(entry, options = {}) {
     });
     body.append(textEl("h4", "", "内容类型"), classification);
   }
-  const grouped = groupEntryAssignments(entry, facetCatalog, "confirmed");
   const selected = el("div", "selected-edit-tags");
-  for (const facet of facetCatalog.facets.filter((item) => item.status === "active").sort((a, b) => a.order - b.order)) {
-    for (const item of grouped.get(facet.id) ?? []) {
-      const remove = rawTextEl("button", "", `${facetNodeDisplayPath(item.nodeId)} ×`);
-      remove.style.setProperty("--facet-color", facet.color);
-      remove.title = facetDisplayName(facet);
-      remove.addEventListener("click", () => perform(remove, { type: "SET_ENTRY_FACET", entryId: entry.id, facetId: facet.id, nodeId: item.nodeId, selected: false }));
-      selected.append(remove);
+  const selectedHeading = textEl("h4", "", "创作标签");
+  const updateTag = async (button, message) => {
+    const focusedRemoval = selected.contains(document.activeElement) ? document.activeElement : null;
+    const response = await perform(button, message);
+    if (response?.entry) {
+      section.updateEntry(response.entry);
+      if (focusedRemoval && !focusedRemoval.isConnected && document.activeElement === document.body) {
+        (selected.querySelector("button") || body.querySelector('.entry-tag-add select'))?.focus({ preventScroll: true });
+      }
     }
-  }
-  if (selected.childElementCount) body.append(textEl("h4", "", "已有 AI 标签"), selected);
+  };
+  const renderSelectedTags = () => {
+    const grouped = groupEntryAssignments(entry, facetCatalog, "confirmed");
+    const existing = new Map([...selected.children].map(button => [button.dataset.nodeId, button]));
+    const buttons = [];
+    for (const facet of facetCatalog.facets.filter(item => item.status === "active").sort((a, b) => a.order - b.order)) {
+      for (const item of grouped.get(facet.id) ?? []) {
+        let remove = existing.get(item.nodeId);
+        if (!remove) {
+          remove = rawTextEl("button", "", `${facetNodeDisplayPath(item.nodeId)} ×`);
+          remove.dataset.nodeId = item.nodeId;
+          remove.style.setProperty("--facet-color", facet.color);
+          remove.title = facetDisplayName(facet);
+          remove.addEventListener("click", () => updateTag(remove, { type: "SET_ENTRY_FACET", entryId: entry.id, facetId: facet.id, nodeId: item.nodeId, selected: false }));
+        }
+        buttons.push(remove);
+      }
+    }
+    for (const button of [...selected.children]) if (!buttons.includes(button)) button.remove();
+    for (const button of buttons) if (button.parentElement !== selected) selected.append(button);
+    selected.hidden = selectedHeading.hidden = buttons.length === 0;
+  };
+  section.updateEntry = updated => {
+    entry = updated;
+    renderSelectedTags();
+  };
+  renderSelectedTags();
+  body.append(selectedHeading, selected);
   const activeFacets = facetCatalog.facets.filter((item) => item.status === "active").sort((a, b) => a.order - b.order);
   if (activeFacets.length) {
     const addRow = el("div", "entry-tag-add");
@@ -8620,9 +8658,9 @@ function createEntryEditor(entry, options = {}) {
       add.disabled = true;
     });
     tagSelect.addEventListener("change", () => { add.disabled = !tagSelect.value; });
-    add.addEventListener("click", () => perform(add, { type: "SET_ENTRY_FACET", entryId: entry.id, facetId: facetSelect.value, nodeId: tagSelect.value, selected: true }));
+    add.addEventListener("click", () => updateTag(add, { type: "SET_ENTRY_FACET", entryId: entry.id, facetId: facetSelect.value, nodeId: tagSelect.value, selected: true }));
     addRow.append(facetSelect, tagSelect, add);
-    body.append(textEl("h4", "", "添加 AI 标签"), addRow);
+    body.append(textEl("h4", "", "添加标签"), addRow);
   }
   body.append(textEl("h4", "", "媒体与来源"), createMediaActions(entry));
   const analysisCandidates = reusableAnalysisItems(entry.analysisCandidates);

@@ -40,8 +40,8 @@ test("DeepSeek discovery applies exact official V4 capabilities and keeps unknow
   assert.equal(calls[0].url, "https://api.deepseek.com/models");
   assert.equal(result.models.length, 4);
   assert.equal(result.models[0].confidence, "declared");
-  assert.deepEqual(result.models[0].tasks, ["textTags", "skillExtraction", "creativePlanning"]);
-  assert.deepEqual(result.models[0].inputModalities, ["text"]);
+  assert.deepEqual(result.models[0].tasks, ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"]);
+  assert.deepEqual(result.models[0].inputModalities, ["text", "image"]);
   assert.deepEqual(result.models[1].tasks, ["textTags", "skillExtraction", "creativePlanning"]);
   assert.deepEqual(result.models[2].tasks, ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"]);
   assert.equal(result.models[2].inputModalities.includes("image"), true);

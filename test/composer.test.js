@@ -44,6 +44,12 @@ import { CONTENT_IDS } from "../extension/taxonomy.js";
 
 const aiSettings = { apiKey: "secret", consent: true };
 
+test("library retrieval starts enabled but preserves a user's disabled conversation after reload", () => {
+  assert.equal(createComposerSession().libraryRetrievalEnabled, true);
+  const session = createComposerSession({ libraryRetrievalEnabled: false });
+  assert.equal(createComposerSession(JSON.parse(JSON.stringify(session))).libraryRetrievalEnabled, false);
+});
+
 test("composer agent keeps one editable method per task without a harness contract", () => {
   const defaults = normalizeComposerSettings();
   assert.equal(defaults.methodVersion, COMPOSER_METHOD_VERSION);
@@ -250,7 +256,7 @@ test("composer failure state remains retryable", () => {
   assert.equal(clearComposerFailure(failed).lastFailure, null);
 });
 
-test("manual reference snapshots exclude tutorials and keep target-compatible compound content", () => {
+test("manual reference snapshots include tutorials and all knowledge in a selected compound case", () => {
   const entries = [
     { id: "tutorial", text: "how to", classification: { pathIds: [CONTENT_IDS.tutorial] } },
     { id: "prompt", title: "Prompt", text: "warm rim light", classification: { pathIds: [CONTENT_IDS.promptImage] } },
@@ -265,9 +271,20 @@ test("manual reference snapshots exclude tutorials and keep target-compatible co
     }
   ];
   const image = createReferenceSnapshots(entries, entries.map((item) => item.id), "zh-CN", "image");
-  assert.deepEqual(image.map((item) => item.entryId), ["prompt", "image", "compound"]);
+  assert.deepEqual(image.map((item) => item.entryId), ["tutorial", "prompt", "image", "compound"]);
   assert.match(image.at(-1).referenceText, /cinematic key visual/);
-  assert.doesNotMatch(image.at(-1).referenceText, /private tutorial|camera pushes forward/);
+  assert.match(image.at(-1).referenceText, /private tutorial/);
+  assert.match(image.at(-1).referenceText, /camera pushes forward/);
+});
+
+test("manual document references contain the extracted text and remain ordinary reference knowledge", () => {
+  const entry = { id: "document", title: "布光手册", mediaAssets: [{ id: "pdf", kind: "document", mimeType: "application/pdf", storageMode: "managed" }] };
+  const snapshots = createReferenceSnapshots([entry], [entry.id], "zh-CN", "image", {
+    documentTextByEntryId: new Map([[entry.id, "侧逆光勾勒主体轮廓。"]])
+  });
+  assert.equal(snapshots.length, 1);
+  assert.match(snapshots[0].referenceText, /侧逆光勾勒主体轮廓/);
+  assert.deepEqual(snapshots[0].imageRefs, []);
 });
 
 test("image prompt references carry the original prompt and every saved visual fact", () => {
@@ -622,7 +639,7 @@ test("lightweight planning lets a featured case keep the scene while a Jimeng re
 
   assert.match(generated.finalPrompt, /自拍片场中的短发女性/);
   assert.equal(requests.length, 2);
-  const executionPayload = JSON.parse(requests[1].messages.at(-1).content);
+  const executionPayload = JSON.parse(requests[1].messages.at(-1).content[0].text);
   assert.deepEqual(executionPayload.references.map((item) => item.alias), ["@参考1", "@参考2"]);
   assert.equal(executionPayload.instruction, planned.instruction);
   assert.equal(JSON.stringify(executionPayload).includes("dimensionUses"), false);
@@ -660,7 +677,7 @@ test("planner returns an explicit local search request without performing a thir
     instruction: "结合手选参考与本地检索资料生成夜景画面。",
     librarySearch: { query: "霓虹 夜景", contentRoles: ["case", "guide", "invalid"] }
   }) });
-  assert.deepEqual(result.librarySearch, { query: "霓虹 夜景", contentRoles: ["case", "guide"] });
+  assert.equal(result.librarySearch, undefined);
 });
 
 test("automatic routing accepts analysis while a manual route cannot be rewritten", async () => {

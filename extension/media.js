@@ -95,7 +95,8 @@ export function normalizeMediaAsset(value = {}) {
     ...(kind === "video" && storageMode === "reference" && reference.url ? { reference } : {}),
     ...(localAssetReference ?? {}),
     ...(value.palette?.colors?.length ? { palette: structuredClone(value.palette) } : {}),
-    ...(String(value.visionAnalysis?.reconstructionPrompt ?? value.visionAnalysis?.description ?? "").trim()
+    ...((String(value.visionAnalysis?.reconstructionPrompt ?? value.visionAnalysis?.description ?? "").trim()
+      || (value.visionAnalysis?.userEdited === true && value.visionAnalysis.reconstructionPrompt === ""))
       ? { visionAnalysis: structuredClone(value.visionAnalysis) }
       : {}),
     reviewStatus: value.reviewStatus === "verified" ? "verified" : "unverified"
@@ -321,6 +322,9 @@ export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source 
   const asset = entry.mediaAssets.find((item) => item.id === assetId && ["image", "video"].includes(item.kind) && item.usage !== "poster");
   if (!asset) throw new Error("没有找到对应的内容媒体");
   const text = cleanMultiline(textValue);
+  if (!text && source === "ai-suggestion" && asset.kind === "image" && asset.visionAnalysis) {
+    asset.visionAnalysis = { ...asset.visionAnalysis, reconstructionPrompt: "", userEdited: true };
+  }
   entry.mediaPrompts = entry.mediaPrompts.filter((item) => item.assetId !== assetId || (preserveOtherSource && item.source !== source));
   if (text) entry.mediaPrompts.push({
     assetId,
@@ -389,7 +393,7 @@ export function mediaDescriptions(entryValue = {}) {
   return entryMediaAssets(entryValue)
     .map((asset) => asset.visionAnalysis?.invalidated || asset.visionAnalysis?.quality === "partial"
       ? ""
-      : clean(asset.visionAnalysis?.reconstructionPrompt || asset.visionAnalysis?.description))
+      : clean(asset.visionAnalysis?.reconstructionPrompt ?? asset.visionAnalysis?.description))
     .filter(Boolean);
 }
 
