@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 
 SOURCE_EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
@@ -135,7 +135,7 @@ def launch_context(
             f"--load-extension={extension_dir}",
         ],
     )
-    worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
+    worker = wait_for_extension_worker(context)
     bootstrap = context.new_page()
     bootstrap_errors: list[str] = []
     record_page_errors(bootstrap, bootstrap_errors)
@@ -148,6 +148,35 @@ def launch_context(
     if os.environ.get("PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK") == "1":
         context.route("https://**/*", lambda route: route.abort("blockedbyclient"))
     return context
+
+
+def wait_for_extension_worker(context: BrowserContext):
+    try:
+        return context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
+    except PlaywrightTimeoutError:
+        # Playwright can miss an already-running MV3 target at browser startup:
+        # https://github.com/microsoft/playwright/issues/39075
+        # Recover only that observed debugger-attachment race in this isolated
+        # profile. A missing worker or a second startup failure still fails.
+        page = context.new_page()
+        cdp = context.new_cdp_session(page)
+        try:
+            targets = cdp.send("Target.getTargets")["targetInfos"]
+            workers = [target for target in targets if target["type"] == "service_worker"
+                       and target["url"].startswith("chrome-extension://")]
+            if len(workers) != 1:
+                raise
+            extension_id = workers[0]["url"].split("/")[2]
+            print("[E2E] Reattaching to an existing extension worker missed at startup.")
+            cdp.send("ServiceWorker.enable")
+            cdp.send("ServiceWorker.stopAllWorkers")
+            page.goto(f"chrome-extension://{extension_id}/collector.html", wait_until="domcontentloaded")
+            state = page.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
+            assert state.get("ok") is True, "Restarted extension worker did not initialize"
+            return context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
+        finally:
+            cdp.detach()
+            page.close()
 
 
 def record_page_errors(page: Page, errors: list[str]) -> None:
