@@ -40,7 +40,12 @@ def main() -> None:
                     "deepseek": {
                         "apiKey": "deepseek-e2e-key",
                         "consent": True,
-                        "models": {"creativePlanning": "deepseek-v4-flash"},
+                        "models": {"creativePlanning": "text-only-fixture"},
+                        "discoveredModels": [{
+                            "id": "text-only-fixture", "name": "Text-only fixture",
+                            "tasks": ["creativePlanning"], "inputModalities": ["text"],
+                            "outputModalities": ["text"], "confidence": "declared", "source": "test fixture",
+                        }],
                     },
                     "openai": {
                         "apiKey": "openai-e2e-key",
@@ -49,7 +54,7 @@ def main() -> None:
                     },
                 },
                 assignments={
-                    "creativePlanning": {"providerId": "deepseek", "model": "deepseek-v4-flash"},
+                    "creativePlanning": {"providerId": "deepseek", "model": "text-only-fixture"},
                     "imageAnalysis": {"providerId": "openai", "model": "gpt-5-mini"},
                 },
             ),
@@ -110,7 +115,7 @@ def main() -> None:
                     status=200,
                     content_type="text/event-stream",
                     body=(
-                        f'data: {json.dumps({"model": "deepseek-v4-flash", "choices": [{"delta": {"content": json.dumps({"route": "compose", "status": "ready"}) + chr(10) + visible_text}, "finish_reason": "stop"}]})}\n\n'
+                        f'data: {json.dumps({"model": "text-only-fixture", "choices": [{"delta": {"content": json.dumps({"route": "compose", "status": "ready"}) + chr(10) + visible_text}, "finish_reason": "stop"}]})}\n\n'
                         "data: [DONE]\n\n"
                     ),
                 )
@@ -119,7 +124,7 @@ def main() -> None:
                 status=200,
                 content_type="application/json",
                 body=json.dumps({
-                    "model": "deepseek-v4-flash",
+                    "model": "text-only-fixture",
                     "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
                         "route": "compose",
                         "status": "ready",

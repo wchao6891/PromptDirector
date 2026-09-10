@@ -65,8 +65,7 @@ def main():
         assert_centered(page)
         image = page.locator('.composer-library-candidate img').first
         expect(image).to_be_visible()
-        expect(image).to_have_js_property('complete', True)
-        assert image.evaluate('node => node.naturalWidth') > 0
+        page.wait_for_function("() => { const image = document.querySelector('.composer-library-candidate img'); return image?.complete && image.naturalWidth > 0; }")
         expect(page.locator('.composer-library-candidate').nth(1)).to_contain_text('文字资料')
         assert page.locator('.composer-library-candidate-open').first.get_attribute('href').endswith('case=candidate-0')
         expect(page.locator('.composer-input-area .composer-library-candidate')).to_have_count(0)
