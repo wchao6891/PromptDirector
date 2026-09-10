@@ -12,7 +12,7 @@ import {
   normalizeSyncSettings,
   syncErrorDetails,
   syncStateHasContent
-} from "../sync-model.js";
+} from "../extension/sync-model.js";
 
 test("sync metadata keeps a durable local pending flag separate from changed media ids", () => {
   const value = normalizeSyncMeta({

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 test("project menu separates archiving only the project from archiving it with its cases", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   assert.match(library, /"仅删除项目"/);
   assert.match(library, /"删除项目及案例"/);
   const handlerStart = library.indexOf("async function deleteProjectCollectionWithEntries");
@@ -17,7 +17,7 @@ test("project menu separates archiving only the project from archiving it with i
 });
 
 test("project and case deletion is serialized and archives all selected content without deleting blobs", async () => {
-  const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   assert.match(background, /case "DELETE_COLLECTION_WITH_ENTRIES":\s*return enqueue\(async \(\) => deleteCollectionWithEntries\(message\)\)/);
   const handlerStart = background.indexOf("async function deleteCollectionWithEntries");
   const handlerEnd = background.indexOf("async function moveEntryBatchToTrash", handlerStart);

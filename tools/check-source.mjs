@@ -4,7 +4,7 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const sourceDirectories = [projectRoot, join(projectRoot, "tools")];
+const sourceDirectories = [join(projectRoot, "extension"), join(projectRoot, "tools")];
 const sourceFiles = [];
 
 for (const directory of sourceDirectories) {

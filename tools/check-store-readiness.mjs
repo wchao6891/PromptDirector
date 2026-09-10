@@ -6,10 +6,10 @@ import { validateChromeStoreManifest } from "./chrome-store-manifest.mjs";
 import { extensionIdFromPublicKey } from "./release-identity.mjs";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const manifest = await json("manifest.json");
+const manifest = await json("extension/manifest.json");
 const locales = Object.fromEntries(await Promise.all(["zh_CN", "en"].map(async (locale) => [
   locale,
-  await json(`_locales/${locale}/messages.json`)
+  await json(`extension/_locales/${locale}/messages.json`)
 ])));
 validateChromeStoreManifest({ manifest, locales });
 const extensionId = extensionIdFromPublicKey(manifest);
@@ -44,7 +44,7 @@ for (const phrase of ["Remote code", "Limited Use", "npm run package:release", e
 }
 
 for (const [path, expectedWidth, expectedHeight] of [
-  ["assets/icons/icon-128.png", 128, 128],
+  ["extension/assets/icons/icon-128.png", 128, 128],
   ["store/small-promo-440x280.png", 440, 280],
   ["store/screenshots/01-library-1280x800.png", 1280, 800],
   ["store/screenshots/02-skills-1280x800.png", 1280, 800],

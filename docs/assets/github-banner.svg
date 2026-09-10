@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+  <title id="title">PromptDirector</title>
+  <desc id="desc">Capture, collect, organize. References from Higgsfield, Jimeng and X come together in a personal visual library. Concept diagram.</desc>
+  <rect width="1280" height="360" rx="24" fill="#101416"/>
+  <circle cx="1170" cy="40" r="225" fill="#1d2520"/>
+  <path d="M810 360 1150 0" stroke="#2c3730" stroke-width="1"/>
+  <g transform="translate(56 56) scale(.56)">
+    <rect x="4" y="4" width="120" height="120" rx="22" fill="#D1FE17"/>
+    <path d="M30 25h48c19 0 32 12 32 30 0 14-7 25-20 31L70 69c9-2 14-7 14-14 0-8-6-13-16-13H25l5-17Z" fill="#0F1113"/>
+    <path d="m29 63 25 20-9 26H18l11-46Z" fill="#0F1113"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="148" y="104" fill="#f6f8f2" font-size="43" font-weight="700" letter-spacing="-1.5">PromptDirector</text>
+    <text x="60" y="186" fill="#f6f8f2" font-size="36" font-weight="600">Your own visual library.</text>
+    <text x="62" y="225" fill="#a8b4ac" font-size="19">Images. Videos. Prompts. Sources.</text>
+    <text x="62" y="306" fill="#D1FE17" font-size="13" font-weight="700" letter-spacing="3">CAPTURE · COLLECT · ORGANIZE</text>
+    <g fill="#19211d" stroke="#435144">
+      <rect x="703" y="56" width="150" height="48" rx="24"/>
+      <rect x="879" y="56" width="144" height="48" rx="24"/>
+      <rect x="1049" y="56" width="158" height="48" rx="24"/>
+    </g>
+    <g fill="#ecf0e9" font-size="18" text-anchor="middle">
+      <text x="778" y="87">Higgsfield</text><text x="951" y="87">Jimeng</text><text x="1128" y="87">X / Twitter</text>
+    </g>
+    <g fill="none" stroke="#697b54" stroke-width="2">
+      <path d="M778 115v25q0 14 14 14h322q14 0 14-14v-25M951 115v68"/>
+      <path d="m945 177 6 6 6-6"/>
+    </g>
+    <rect x="720" y="200" width="470" height="110" rx="18" fill="#D1FE17"/>
+    <g stroke="#26300f" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="748" y="229" width="52" height="52" rx="8"/>
+      <path d="m754 269 12-14 9 8 9-12 10 18"/>
+      <circle cx="764" cy="243" r="3"/>
+    </g>
+    <text x="820" y="249" fill="#151d0b" font-size="24" font-weight="700">Keep the work + the context</text>
+    <text x="820" y="278" fill="#384617" font-size="16">Ready to find. Ready to reuse.</text>
+  </g>
+</svg>

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { contactSheetPlan, selectedSkillContentImages } from "../skill-contact-sheet.js";
-import { anonymousSkillSources, buildSkillExtractionRequest } from "../creative-skill-service.js";
+import { contactSheetPlan, selectedSkillContentImages } from "../extension/skill-contact-sheet.js";
+import { anonymousSkillSources, buildSkillExtractionRequest } from "../extension/creative-skill-service.js";
 
 test("skill visual selection includes every content image and excludes posters", () => {
   const images = selectedSkillContentImages([{ id: "a", mediaAssets: [

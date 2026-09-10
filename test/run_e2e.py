@@ -73,6 +73,7 @@ SCRIPTS = [
     "krea_capture_e2e.py",
     "libtv_capture_e2e.py",
     "jimeng_capture_e2e.py",
+    "jimeng_redesign_e2e.py",
     "ai_provider_registry_e2e.py",
     "ai_multimodel_routing_regression_e2e.py",
     "zhipu_glm_analysis_e2e.py",

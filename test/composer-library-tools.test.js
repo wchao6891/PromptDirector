@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createComposerSession } from '../composer.js';
-import { createComposerLibraryTools, resolveUserImageScope, applyLibraryToolEvent } from '../composer-library-tools.js';
-import { buildSearchIndex } from '../search-index.js';
+import { createComposerSession } from '../extension/composer.js';
+import { createComposerLibraryTools, resolveUserImageScope, applyLibraryToolEvent } from '../extension/composer-library-tools.js';
+import { buildSearchIndex } from '../extension/search-index.js';
 
 const entry = (id, text = '') => ({ id, title: `案例${id}`, text, customLabels: ['雨夜'], savedAt: '2026-09-10', mediaAssets: [{ id: `${id}-image`, kind: 'image', usage: 'content', storageMode: 'managed', mimeType: 'image/png' }] });
 function setup({ entries = [entry('a', '雨夜。' + '正文'.repeat(1000)), entry('b', '晴天')], instruction = '找雨夜案例', session: custom } = {}) {

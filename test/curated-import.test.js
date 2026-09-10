@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { prepareCuratedPackageVersion } from "../curated-catalog.js";
-import { mergeCuratedLibraryPackage } from "../curated-import.js";
-import { createDefaultFacetCatalog } from "../facets.js";
-import { CONTENT_IDS, createDefaultTaxonomy } from "../taxonomy.js";
+import { prepareCuratedPackageVersion } from "../extension/curated-catalog.js";
+import { mergeCuratedLibraryPackage } from "../extension/curated-import.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { CONTENT_IDS, createDefaultTaxonomy } from "../extension/taxonomy.js";
 
 function item(version) {
   return {

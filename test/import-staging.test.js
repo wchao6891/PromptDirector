@@ -8,8 +8,8 @@ import {
   normalizeImportStagingState,
   removeStagedAsset,
   stagedAssetMediaRecord
-} from "../import-staging.js";
-import { normalizeMediaAsset } from "../media.js";
+} from "../extension/import-staging.js";
+import { normalizeMediaAsset } from "../extension/media.js";
 
 test("import staging persists only resumable metadata and safe relative paths", () => {
   const result = addStagedAsset({}, {

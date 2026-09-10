@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { salvageMissingLibraryAssets } from "../library-asset-salvage.js";
+import { salvageMissingLibraryAssets } from "../extension/library-asset-salvage.js";
 
 test("missing media is isolated across durable library owners while healthy content stays recoverable", () => {
   const state = {

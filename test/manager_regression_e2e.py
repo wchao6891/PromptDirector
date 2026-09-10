@@ -9,7 +9,7 @@ from playwright.sync_api import expect, sync_playwright
 from e2e_support import launch_context
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1]
+EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
 NODE_COUNT = int(os.environ.get("MANAGER_NODE_COUNT", "275"))
 
 

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 
-const root = new URL("../", import.meta.url);
+const root = new URL("../extension/", import.meta.url);
 
 test("extension runtime keeps strict CSP and contains no dynamic JavaScript execution", async () => {
   const manifest = JSON.parse(await readFile(new URL("manifest.json", root), "utf8"));

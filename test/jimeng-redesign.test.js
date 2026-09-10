@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { collectPageCaptureSitePayload, normalizePageCaptureSitePayload, isTrustedPageCaptureMediaUrl } from "../page-capture-site-adapters.js";
+import { collectPageCaptureSitePayload, normalizePageCaptureSitePayload, isTrustedPageCaptureMediaUrl } from "../extension/page-capture-site-adapters.js";
 
 const options = { maxCandidates: 100, maxMedia: 24, maxTextCharacters: 100000 };
 const workId = "7490123456789012345";
@@ -117,7 +117,7 @@ test("direct short-film detail reads exact player data without requiring a backg
 });
 
 test("batch scan scrolls the actual inner list and restores the user's reading position", async () => {
-  const { collectPageCaptureSnapshot, PAGE_CAPTURE_ADAPTERS } = await import("../page-capture.js");
+  const { collectPageCaptureSnapshot, PAGE_CAPTURE_ADAPTERS } = await import("../extension/page-capture.js");
   const original = Object.fromEntries(["window", "document", "location", "chrome", "Readability", "getComputedStyle", "requestAnimationFrame"].map(key => [key, globalThis[key]]));
   const positions = [];
   const body = { innerText: "探索", scrollHeight: 800, querySelector: () => null, querySelectorAll: () => [] };

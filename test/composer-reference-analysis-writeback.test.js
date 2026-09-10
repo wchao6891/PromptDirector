@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
-import { createComposerSession, normalizeComposerSessions } from "../composer.js";
-import { unreadReferenceImageAssets } from "../temp-references.js";
+import { createComposerSession, normalizeComposerSessions } from "../extension/composer.js";
+import { unreadReferenceImageAssets } from "../extension/temp-references.js";
 
-const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
+const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 const actionSource = background.slice(background.indexOf("async function analyzeTempReferencesAction"), background.indexOf("async function getTempReferenceVisionBlob"));
 
 function harness(beforeCommit = () => {}) {

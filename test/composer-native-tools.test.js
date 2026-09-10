@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { executeComposerTurnWithService, composerServiceCatalog } from '../composer-service.js';
-import { createComposerSession, normalizeComposerSettings } from '../composer.js';
-import { createComposerLibraryTools } from '../composer-library-tools.js';
-import { buildSearchIndex } from '../search-index.js';
+import { executeComposerTurnWithService, composerServiceCatalog } from '../extension/composer-service.js';
+import { createComposerSession, normalizeComposerSettings } from '../extension/composer.js';
+import { createComposerLibraryTools } from '../extension/composer-library-tools.js';
+import { buildSearchIndex } from '../extension/search-index.js';
 
 function textResponse(protocol, step, model) {
   const output = step === 0 ? [{ type: 'function_call', call_id: 'read', name: 'search_cases', arguments: '{"query":"雨夜"}' }]

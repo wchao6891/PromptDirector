@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { extensionArchiveName } from "./release-identity.mjs";
 import { verifyDataCompatibility } from "./check-data-compatibility.mjs";
-import { compareExtensionVersions } from "../extension-update.js";
+import { compareExtensionVersions } from "../extension/extension-update.js";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const python = process.env.PYTHON || "python3";
@@ -14,7 +14,7 @@ const temporaryRoot = await mkdtemp(join(tmpdir(), "promptdirector-release-upgra
 
 try {
   const report = await verifyDataCompatibility();
-  const manifest = JSON.parse(await readFile(join(projectRoot, "manifest.json"), "utf8"));
+  const manifest = JSON.parse(await readFile(join(projectRoot, "extension", "manifest.json"), "utf8"));
   let baselineTag = report.releaseBaseline.tag;
   if (compareExtensionVersions(baselineTag.replace(/^v/u, ""), manifest.version) >= 0) {
     baselineTag = execFileSync("git", ["tag", "--merged", "HEAD", "--sort=-version:refname", "--list", "v[0-9]*"], { cwd: projectRoot, encoding: "utf8" })
@@ -47,7 +47,7 @@ try {
       ...process.env,
       PROMPTDIRECTOR_NODE: process.execPath,
       PROMPTDIRECTOR_CURRENT_ARCHIVE: currentArchive,
-      PROMPTDIRECTOR_PREVIOUS_EXTENSION_DIR: previousDirectory,
+      PROMPTDIRECTOR_PREVIOUS_EXTENSION_DIR: await sourceExtensionDirectory(previousDirectory),
       PROMPTDIRECTOR_CURRENT_EXTENSION_DIR: currentDirectory,
       PROMPTDIRECTOR_PREVIOUS_RELEASE_TAG: baselineTag
     }
@@ -55,7 +55,7 @@ try {
   const nativePreviousDirectory = join(temporaryRoot, "native-previous-release");
   await mkdir(nativePreviousDirectory);
   execFileSync(python, ["-m", "zipfile", "-e", previousArchive, nativePreviousDirectory], { stdio: "inherit" });
-  execFileSync(python, [join(projectRoot, "test", "local_upgrade_native_e2e.py"), nativePreviousDirectory, currentArchive], {
+  execFileSync(python, [join(projectRoot, "test", "local_upgrade_native_e2e.py"), await sourceExtensionDirectory(nativePreviousDirectory), currentArchive], {
     cwd: projectRoot,
     stdio: "inherit",
     env: process.env
@@ -66,4 +66,12 @@ try {
   process.exitCode = 1;
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
+}
+
+async function sourceExtensionDirectory(directory) {
+  const nested = join(directory, "extension");
+  try { await access(join(nested, "manifest.json")); return nested; }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  await access(join(directory, "manifest.json"));
+  return directory;
 }

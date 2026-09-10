@@ -5,7 +5,7 @@ import {
   MICU_COMPATIBLE_PROVIDER_PRESET,
   compatibleImageSizesFor,
   compatibleProviderPresetForEndpoint
-} from "../compatible-provider-presets.js";
+} from "../extension/compatible-provider-presets.js";
 
 test("Micu preset is the shared source for settings endpoints and model-specific sizes", () => {
   const preset = MICU_COMPATIBLE_PROVIDER_PRESET;

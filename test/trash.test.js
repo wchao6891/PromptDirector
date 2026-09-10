@@ -13,7 +13,7 @@ import {
   normalizeTrashState,
   restoreTrashItems,
   takeTrashItems
-} from "../trash.js";
+} from "../extension/trash.js";
 
 test("trash state normalizes serializable items and valid deletion times", () => {
   assert.deepEqual(createDefaultTrashState(), { version: TRASH_VERSION, items: [] });

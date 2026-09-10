@@ -1,15 +1,16 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createZipBlob } from "../zip.js";
+import { createZipBlob } from "../extension/zip.js";
 import { validateChromeStoreManifest } from "./chrome-store-manifest.mjs";
 import { verifyPdfjsRuntime } from "./pdfjs-runtime.mjs";
 import { chromeStoreUploadManifest, extensionArchiveName } from "./release-identity.mjs";
 import { packageRuntimeFiles } from "./extension-package-variants.mjs";
-import { isExtensionProgramPath } from "../local-extension-upgrade.js";
+import { isExtensionProgramPath } from "../extension/local-extension-upgrade.js";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const sourceManifest = JSON.parse(await readFile(join(projectRoot, "manifest.json"), "utf8"));
+const extensionRoot = join(projectRoot, "extension");
+const sourceManifest = JSON.parse(await readFile(join(projectRoot, "extension", "manifest.json"), "utf8"));
 const release = process.argv.includes("--release");
 const manifest = release ? chromeStoreUploadManifest(sourceManifest) : sourceManifest;
 const runtimeExtensions = new Set([".css", ".html", ".js"]);
@@ -17,49 +18,49 @@ const files = [];
 
 await verifyPdfjsRuntime({ projectRoot });
 
-for (const name of await readdir(projectRoot)) {
+for (const name of await readdir(extensionRoot)) {
   if (name === "manifest.json") {
     files.push({ name, data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`) });
   } else if (runtimeExtensions.has(extname(name))) {
-    files.push(await packageFile(join(projectRoot, name)));
+    files.push(await packageFile(join(extensionRoot, name)));
   }
 }
 
 for (const name of ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]) {
-  files.push(await packageFile(join(projectRoot, name)));
+  files.push({ name, data: await readFile(join(projectRoot, name)) });
 }
 
-for (const name of await readdir(join(projectRoot, "assets", "icons"))) {
+for (const name of await readdir(join(projectRoot, "extension", "assets", "icons"))) {
   if (name === "icon-source.svg" || /^icon-(?:16|32|48|128)\.png$/.test(name)) {
-    files.push(await packageFile(join(projectRoot, "assets", "icons", name)));
+    files.push(await packageFile(join(projectRoot, "extension", "assets", "icons", name)));
   }
 }
 
-files.push(await packageFile(join(projectRoot, "assets", "ui-icons.svg")));
+files.push(await packageFile(join(projectRoot, "extension", "assets", "ui-icons.svg")));
 
-for (const path of await runtimeFiles(join(projectRoot, "vendor", "pdfjs"))) {
+for (const path of await runtimeFiles(join(projectRoot, "extension", "vendor", "pdfjs"))) {
   files.push(await packageFile(path));
 }
 
-for (const path of await runtimeFiles(join(projectRoot, "vendor", "document-ingestion"))) {
+for (const path of await runtimeFiles(join(projectRoot, "extension", "vendor", "document-ingestion"))) {
   files.push(await packageFile(path));
 }
 
-for (const path of await runtimeFiles(join(projectRoot, "vendor", "noble-hashes"))) {
+for (const path of await runtimeFiles(join(projectRoot, "extension", "vendor", "noble-hashes"))) {
   files.push(await packageFile(path));
 }
 
-for (const locale of await readdir(join(projectRoot, "_locales"), { withFileTypes: true })) {
+for (const locale of await readdir(join(projectRoot, "extension", "_locales"), { withFileTypes: true })) {
   if (locale.isDirectory()) {
-    files.push(await packageFile(join(projectRoot, "_locales", locale.name, "messages.json")));
+    files.push(await packageFile(join(projectRoot, "extension", "_locales", locale.name, "messages.json")));
   }
 }
 
-const locales = Object.fromEntries(await Promise.all((await readdir(join(projectRoot, "_locales"), { withFileTypes: true }))
+const locales = Object.fromEntries(await Promise.all((await readdir(join(projectRoot, "extension", "_locales"), { withFileTypes: true }))
   .filter((locale) => locale.isDirectory())
   .map(async (locale) => [
     locale.name,
-    JSON.parse(await readFile(join(projectRoot, "_locales", locale.name, "messages.json"), "utf8"))
+    JSON.parse(await readFile(join(projectRoot, "extension", "_locales", locale.name, "messages.json"), "utf8"))
   ])));
 validateChromeStoreManifest({ manifest, locales });
 validateManifest(manifest, files.map((file) => file.name));
@@ -75,7 +76,7 @@ process.stdout.write(`${outputPath}\n${runtimeFilesForDistribution.length} ä¸ªè¿
 
 async function packageFile(path) {
   return {
-    name: relative(projectRoot, path).replaceAll("\\", "/"),
+    name: relative(extensionRoot, path).replaceAll("\\", "/"),
     data: await readFile(path)
   };
 }

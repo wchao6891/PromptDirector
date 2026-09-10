@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runVideoAnalysisJob } from "../video-analysis-runner.js";
-import { AnalysisResponseError } from "../analysis-response.js";
-import { analyzeVideoWithChatCompletions } from "../video-analysis.js";
+import { runVideoAnalysisJob } from "../extension/video-analysis-runner.js";
+import { AnalysisResponseError } from "../extension/analysis-response.js";
+import { analyzeVideoWithChatCompletions } from "../extension/video-analysis.js";
 
 function job(overrides = {}) {
   return {

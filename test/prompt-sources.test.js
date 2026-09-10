@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detailPromptSources } from "../prompt-sources.js";
-import { setEntryMediaPrompt } from "../media.js";
+import { detailPromptSources } from "../extension/prompt-sources.js";
+import { setEntryMediaPrompt } from "../extension/media.js";
 
 test("article body never becomes an image prompt; actual per-media prompts remain available", () => {
   const asset = { id: "image", kind: "image" };

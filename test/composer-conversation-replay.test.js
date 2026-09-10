@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createComposerSession, plannerRequestPayload } from '../composer.js';
-import { executeComposerTurnWithService } from '../composer-service.js';
+import { createComposerSession, plannerRequestPayload } from '../extension/composer.js';
+import { executeComposerTurnWithService } from '../extension/composer-service.js';
 
 test('letter choices inherit Chinese just like numeric replies',()=>{
  for(const content of ['A','B','C']) {

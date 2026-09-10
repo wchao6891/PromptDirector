@@ -10,11 +10,11 @@ import {
   renderSharePreviewHtml,
   renderSharePreviewMasonryJs,
   renderSharePreviewRuntimeJs
-} from "../share-preview.js";
-import { createDefaultFacetCatalog } from "../facets.js";
-import { CONTENT_IDS, createDefaultTaxonomy } from "../taxonomy.js";
+} from "../extension/share-preview.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { CONTENT_IDS, createDefaultTaxonomy } from "../extension/taxonomy.js";
 
-const iconSprite = readFileSync(new URL("../assets/ui-icons.svg", import.meta.url), "utf8");
+const iconSprite = readFileSync(new URL("../extension/assets/ui-icons.svg", import.meta.url), "utf8");
 const previewOptions = Object.freeze({
   iconSprite,
   installUrl: "https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm",
@@ -173,7 +173,7 @@ test("share preview shows reconstruction prompts without a redundant visual-desc
 });
 
 test("share preview adapts the current stable masonry implementation for offline classic scripts", () => {
-  const source = readFileSync(new URL("../stable-masonry.js", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../extension/stable-masonry.js", import.meta.url), "utf8");
   const runtime = renderSharePreviewMasonryJs(source);
   assert.match(runtime, /globalThis\.createStableMasonry = function createStableMasonry/);
   assert.match(runtime, /\.case-card:not\(\[hidden\]\)/);

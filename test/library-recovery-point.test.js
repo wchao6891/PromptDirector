@@ -6,7 +6,7 @@ import {
   normalizeLibraryReplacementRecoveryPoint,
   obsoleteRecoveryAssetIds,
   swapLibraryReplacementRecoveryPoint
-} from "../library-recovery-point.js";
+} from "../extension/library-recovery-point.js";
 
 test("a replacement recovery point snapshots managed state and retained media without sharing references", () => {
   const current = managedState("local");

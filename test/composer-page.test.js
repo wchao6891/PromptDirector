@@ -4,10 +4,10 @@ import { readFile } from "node:fs/promises";
 
 test("composer combines cases and Skills in one reference workspace while keeping assembly separate", async () => {
   const [composerHtml, skillsHtml, libraryHtml, libraryJs] = await Promise.all([
-    readFile(new URL("../composer.html", import.meta.url), "utf8"),
-    readFile(new URL("../skills.html", import.meta.url), "utf8"),
-    readFile(new URL("../library.html", import.meta.url), "utf8"),
-    readFile(new URL("../library.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/composer.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.js", import.meta.url), "utf8")
   ]);
 
   assert.match(composerHtml, /id="composer-timeline"/);
@@ -54,8 +54,8 @@ test("composer combines cases and Skills in one reference workspace while keepin
 
 test("composer model menu renders every connected task candidate without static provider fallback", async () => {
   const [composerJs, composerCss] = await Promise.all([
-    readFile(new URL("../composer-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8")
   ]);
   const renderer = composerJs.slice(
     composerJs.indexOf("function renderGenerationModelChoices"),
@@ -74,10 +74,10 @@ test("composer model menu renders every connected task candidate without static 
 
 test("composer reference selection is visual while Skill management stays on its own page", async () => {
   const [composerJs, composerCss, skillsJs, i18nJs] = await Promise.all([
-    readFile(new URL("../composer-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.css", import.meta.url), "utf8"),
-    readFile(new URL("../skills-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../i18n.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/i18n.js", import.meta.url), "utf8")
   ]);
   assert.match(composerJs, /getScreenshotBlob/);
   assert.match(composerJs, /renderMarkdownDocument/);
@@ -159,8 +159,8 @@ test("composer reference selection is visual while Skill management stays on its
 
 test("composer temporary references share one attachment entry and block text-only sends before the draft is consumed", async () => {
   const [composerHtml, composerJs] = await Promise.all([
-    readFile(new URL("../composer.html", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/composer.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8")
   ]);
 
   assert.match(composerHtml, /id="composer-attachment-files"[^>]*multiple/);
@@ -185,7 +185,7 @@ test("composer temporary references share one attachment entry and block text-on
 });
 
 test("composer sends a manual text task from the direct execution phase", async () => {
-  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const composerJs = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
   const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
 
   assert.match(composerJs, /resolveComposerTurnPolicy/);
@@ -195,7 +195,7 @@ test("composer sends a manual text task from the direct execution phase", async 
 });
 
 test("composer sends an automatic text task through the prepared one-response route", async () => {
-  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const composerJs = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
   const runTurn = composerJs.slice(composerJs.indexOf("async function runComposerTurn"), composerJs.indexOf("async function rebuildComposerSearchIndex"));
 
   assert.match(runTurn, /operation\.executionRoute/);
@@ -203,7 +203,7 @@ test("composer sends an automatic text task through the prepared one-response ro
 });
 
 test("composer checkpoints an active text turn and recovers it without automatic resend", async () => {
-  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const composerJs = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
   const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
   const execution = composerJs.slice(composerJs.indexOf("async function runAgentExecution"), composerJs.indexOf("async function persistComposerFailure"));
   const initialization = composerJs.slice(composerJs.indexOf("async function initializeComposer"), composerJs.indexOf("async function createNewSession"));
@@ -216,7 +216,7 @@ test("composer checkpoints an active text turn and recovers it without automatic
 });
 
 test("composer starts an explicit media task from its prepared generation phase", async () => {
-  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const composerJs = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
   const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
 
   assert.match(sendTurn, /startPersistentCreativeJob\(\{ session: working, userMessageId, startPhase: prepared\.startPhase, imageEdit: null \}\)/);
@@ -224,7 +224,7 @@ test("composer starts an explicit media task from its prepared generation phase"
 });
 
 test("composer internal Skill and settings navigation stays in the current tab", async () => {
-  const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const composerJs = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
   const openSkill = composerJs.slice(composerJs.indexOf("async function openSkillCenter"), composerJs.indexOf("function openAssemblyDialog"));
   assert.match(openSkill, /location\.assign\(url\.href\)/);
   assert.match(openSkill, /url\.searchParams\.set\("session", composerSession\.id\)/);
@@ -236,9 +236,9 @@ test("composer internal Skill and settings navigation stays in the current tab",
 
 test("composer keeps one stable creation toolbar and separates result action levels", async () => {
   const [composerHtml, composerJs, composerCss] = await Promise.all([
-    readFile(new URL("../composer.html", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/composer.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8")
   ]);
   const footer = composerHtml.slice(
     composerHtml.indexOf('<div class="composer-input-footer">'),

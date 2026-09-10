@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const [library, html, css, background, composerHtml, composerCss, i18n] = await Promise.all([
-  readFile(new URL("../library.js", import.meta.url), "utf8"),
-  readFile(new URL("../library.html", import.meta.url), "utf8"),
-  readFile(new URL("../library.css", import.meta.url), "utf8"),
-  readFile(new URL("../background.js", import.meta.url), "utf8"),
-  readFile(new URL("../composer.html", import.meta.url), "utf8"),
-  readFile(new URL("../composer-page.css", import.meta.url), "utf8"),
-  readFile(new URL("../i18n.js", import.meta.url), "utf8")
+  readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/library.html", import.meta.url), "utf8"),
+  readFile(new URL("../extension/library.css", import.meta.url), "utf8"),
+  readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/composer.html", import.meta.url), "utf8"),
+  readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8"),
+  readFile(new URL("../extension/i18n.js", import.meta.url), "utf8")
 ]);
 
 test("project visibility uses the clicked control and updates the wall without a redundant reload", () => {

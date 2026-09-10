@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectLibTvPublicPayload, normalizeLibTvPublicPayload } from '../libtv-capture.js';
-import { normalizePageCaptureBatch } from '../page-capture.js';
+import { collectLibTvPublicPayload, normalizeLibTvPublicPayload } from '../extension/libtv-capture.js';
+import { normalizePageCaptureBatch } from '../extension/page-capture.js';
 
 test('LibTV public video is a video case, never a description disguised as its prompt', () => {
   const payload = normalizeLibTvPublicPayload({ canonicalUrl: 'https://www.liblib.tv/', items: [

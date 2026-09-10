@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile(new URL("../video-hover-preview.js", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/video-hover-preview.js", import.meta.url), "utf8");
 
 test("video hover preview loads one local blob only after pointer entry", () => {
   const beforeStart = source.slice(0, source.indexOf("const start"));

@@ -5,7 +5,7 @@ import {
   composerAutoResponseProtocolFacts,
   createComposerAutoResponseProjector,
   parseComposerAutoResponse
-} from "../composer-auto-response.js";
+} from "../extension/composer-auto-response.js";
 
 test("a valid automatic response exposes only the user-visible body", () => {
   assert.deepEqual(parseComposerAutoResponse(

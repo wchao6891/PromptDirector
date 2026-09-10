@@ -32,15 +32,15 @@ import {
   updateComposerAgentInstruction,
   updateComposerTaskMethod,
   validateGeneratedPrompt
-} from "../composer.js";
+} from "../extension/composer.js";
 import {
   DeepSeekApiError,
   deepSeekErrorDetails,
   executeAgentTurn,
   planComposerTurn,
   readDeepSeekSse
-} from "../deepseek.js";
-import { CONTENT_IDS } from "../taxonomy.js";
+} from "../extension/deepseek.js";
+import { CONTENT_IDS } from "../extension/taxonomy.js";
 
 const aiSettings = { apiKey: "secret", consent: true };
 

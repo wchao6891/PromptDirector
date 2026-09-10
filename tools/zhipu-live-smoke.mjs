@@ -2,22 +2,22 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { createAiProviderModule } from "../ai-provider-module.js";
-import { getAiProviderPreset } from "../ai-provider-presets.js";
-import { analyzeTextDetailedWithDeepSeek } from "../deepseek.js";
-import { createDefaultFacetCatalog } from "../facets.js";
+import { createAiProviderModule } from "../extension/ai-provider-module.js";
+import { getAiProviderPreset } from "../extension/ai-provider-presets.js";
+import { analyzeTextDetailedWithDeepSeek } from "../extension/deepseek.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
 import {
   aiConfigurationFromStorage,
   projectAiRuntime,
   resolveTextTaskSettings,
   resolveVideoAnalysisTask,
   resolveVisionTaskSettings
-} from "../ai-runtime.js";
-import { createComposerSession, normalizeComposerSettings } from "../composer.js";
-import { executeComposerTurnWithService, planComposerTurnWithService } from "../composer-service.js";
-import { extractCreativeSkillDraft } from "../creative-skill-service.js";
-import { analyzeVideoWithChatCompletions } from "../video-analysis.js";
-import { analyzeImageWithVision, createVisionRequestBudget } from "../vision.js";
+} from "../extension/ai-runtime.js";
+import { createComposerSession, normalizeComposerSettings } from "../extension/composer.js";
+import { executeComposerTurnWithService, planComposerTurnWithService } from "../extension/composer-service.js";
+import { extractCreativeSkillDraft } from "../extension/creative-skill-service.js";
+import { analyzeVideoWithChatCompletions } from "../extension/video-analysis.js";
+import { analyzeImageWithVision, createVisionRequestBudget } from "../extension/vision.js";
 
 const MODEL = String(process.env.PROMPTDIRECTOR_ZHIPU_MODEL ?? "glm-5.3-flash").trim();
 const ALL_TASKS = ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis", "videoAnalysis"];

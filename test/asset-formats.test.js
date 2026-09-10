@@ -11,7 +11,7 @@ import {
   importContainerKindForFile,
   isReportedMimeCompatible,
   resolvePortableAssetFormat
-} from "../asset-formats.js";
+} from "../extension/asset-formats.js";
 
 test("asset format registry is the unique source for supported kinds extensions and picker values", () => {
   assert.deepEqual(SUPPORTED_ASSET_KINDS, ["image", "video", "audio", "document", "attachment"]);

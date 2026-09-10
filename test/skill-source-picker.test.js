@@ -8,7 +8,7 @@ import {
   filterSkillSourceEntries,
   pageSkillSourceEntries,
   skillSourceSelectionSummary
-} from "../skill-source-picker.js";
+} from "../extension/skill-source-picker.js";
 
 function entry(id, kinds = ["image"], text = "") {
   const mediaAssets = kinds.map((kind, index) => ({

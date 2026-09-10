@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createStableMasonry } from "../stable-masonry.js";
+import { createStableMasonry } from "../extension/stable-masonry.js";
 
 test("card resize defers ancestor height writes until after ResizeObserver delivery", () => {
   const originals = {

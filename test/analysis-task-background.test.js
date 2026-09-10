@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
+const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 
 test("background exposes the persisted Composer analysis task protocol and retires the direct paid entry point", () => {
   for (const type of [

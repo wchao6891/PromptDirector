@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createComposerWorkspaceTools } from '../composer-workspace-tools.js';
-import { createComposerSession } from '../composer.js';
-import { createCreativeSkill } from '../creative-skills.js';
-import { saveComposerToolDraft } from '../composer-tool-drafts.js';
+import { createComposerWorkspaceTools } from '../extension/composer-workspace-tools.js';
+import { createComposerSession } from '../extension/composer.js';
+import { createCreativeSkill } from '../extension/creative-skills.js';
+import { saveComposerToolDraft } from '../extension/composer-tool-drafts.js';
 const session = createComposerSession({id:'chat', libraryRetrievalEnabled:false, messages:[{id:'u',role:'user',content:'提炼成 Skill'}]});
 const skill = createCreativeSkill({}, {callName:'布光',description:'布光方法',skillMarkdown:'先判断主光方向。'}).skill;
 const state = {entries:[{id:'case',title:'人像',customLabels:['已有']}], creativeSkills:{items:[skill]}};
@@ -48,14 +48,14 @@ test('invalid arguments and unavailable curated network report failure without i
 });
 
 test('search pagination and reviewed receipts remain available when the user says more or asks if saved',async()=>{
- const {plannerRequestPayload}=await import('../composer.js');
+ const {plannerRequestPayload}=await import('../extension/composer.js');
  const current=createComposerSession({...session,libraryTools:{events:[{callId:'s',userMessageId:'u',name:'search_cases',status:'completed',search:{query:'人像',offset:0,total:100,nextOffset:24}},{callId:'d',userMessageId:'u',name:'draft_skill',status:'completed',draft:{kind:'skill',callName:'方法',description:'说明',skillMarkdown:'方法',savedId:'saved-skill'}}]}});
  const payload=plannerRequestPayload(current,'还有更多吗');
  assert.equal(payload.toolHistory[0].search.nextOffset,24);
  assert.equal(payload.toolHistory[1].draft.saved,true);
 });
 test('stale conversation checkpoints preserve the saved receipt and cannot create a second Skill',async()=>{
- const {preserveSavedToolDrafts}=await import('../composer-tool-drafts.js');
+ const {preserveSavedToolDrafts}=await import('../extension/composer-tool-drafts.js');
  const draft={kind:'skill',callName:'方法',description:'说明',skillMarkdown:'方法'};
  const current=createComposerSession({...session,libraryTools:{events:[{callId:'d',userMessageId:'u',status:'completed',draft}]}});
  const previous=structuredClone(current);previous.libraryTools.events[0].draft.savedId='actual-saved-id';
@@ -72,7 +72,7 @@ test('cancelled actions and deleted cases do not persist drafts or labels',async
  assert.throws(()=>saveComposerToolDraft({...state,composerSessions:[current]}, {sessionId:current.id,callId:'d',userMessageId:'u',draft:{tags:['标签']}}),/已删除/);
 });
 test('diagnostics include real tool results and draft receipts without exporting credentials',async()=>{
- const {buildComposerDiagnostic}=await import('../composer-diagnostics.js');
+ const {buildComposerDiagnostic}=await import('../extension/composer-diagnostics.js');
  const diagnostic=buildComposerDiagnostic({...session,apiKey:'secret',libraryTools:{events:[{callId:'search',userMessageId:'u',name:'search_cases',status:'error',label:'查询失败'}]}});
  assert.equal(diagnostic.session.libraryTools.events[0].status,'error');
  assert.ok(!JSON.stringify(diagnostic).includes('secret'));

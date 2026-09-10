@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const css = await readFile(new URL("../library.css", import.meta.url), "utf8");
-const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
-const tagEditor = await readFile(new URL("../tag-editor.js", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
+const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
+const tagEditor = await readFile(new URL("../extension/tag-editor.js", import.meta.url), "utf8");
 
 const quickOrganizer = source.slice(
   source.indexOf("function createDetailQuickOrganization"),

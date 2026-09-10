@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const cssUrl = new URL("../library.css", import.meta.url);
+const cssUrl = new URL("../extension/library.css", import.meta.url);
 
 function rule(source, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -70,7 +70,7 @@ test("vision batch choices and compatible capability groups stay compact", async
 
 test("single case details use one scroll surface with a full-width discovery wall", async () => {
   const source = await readFile(cssUrl, "utf8");
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const drawer = rule(source, ".detail-drawer");
   const content = rule(source, ".detail-content");
   const primary = rule(source, ".detail-primary");
@@ -100,8 +100,8 @@ test("single case details use one scroll surface with a full-width discovery wal
 
 test("single case navigation is positioned inside the primary case area", async () => {
   const source = await readFile(cssUrl, "utf8");
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const stage = rule(source, ".detail-visual-stage");
   const navigation = rule(source, ".detail-navigation");
 
@@ -117,7 +117,7 @@ test("single case navigation is positioned inside the primary case area", async 
 
 test("document navigation moves into the top toolbar and long documents use a real scroll surface", async () => {
   const source = await readFile(cssUrl, "utf8");
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const toolbarNavigation = rule(source, ".drawer-toolbar.has-document-navigation .detail-navigation");
   const documentStage = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-stage");
   const documentItem = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-item");
@@ -136,7 +136,7 @@ test("document navigation moves into the top toolbar and long documents use a re
 });
 
 test("text-only posts retain their reader while structured articles show only genuinely unplaced media separately", async () => {
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const styles = await readFile(cssUrl, "utf8");
   const detail = script.slice(script.indexOf("async function renderDetail"), script.indexOf("function createLocalDiscovery"));
   assert.match(detail, /const capturedPost = usesPostReader\(entry\)/);
@@ -152,7 +152,7 @@ test("text-only posts retain their reader while structured articles show only ge
 });
 
 test("media switching preserves the detail scroll anchor and locks image stage height", async () => {
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const gallery = script.slice(script.indexOf("async function createDetailMediaGallery"), script.indexOf("function refreshActiveDetailAssetSections"));
   assert.match(gallery, /lockedImageStageHeight/);
   assert.match(gallery, /captureDetailScrollAnchor/);
@@ -170,8 +170,8 @@ test("compound details retain their existing split layout", async () => {
 
 test("case detail shell and transparent media stage follow the active UI theme", async () => {
   const source = await readFile(cssUrl, "utf8");
-  const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const drawer = rule(source, ".detail-drawer");
   const body = rule(source, ".detail-body");
   assert.match(foundation, /--viewer-bg:\s*var\(--ui-browser\)/);
@@ -191,8 +191,8 @@ test("case detail shell and transparent media stage follow the active UI theme",
 
 test("case detail supports one remembered right sidebar and forces narrow screens back to fullscreen", async () => {
   const source = await readFile(cssUrl, "utf8");
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const sidebar = rule(source, ".detail-drawer.detail-sidebar-mode");
   const resizer = rule(source, ".detail-sidebar-mode > .detail-resizer");
   const narrow = source.slice(source.indexOf("@media (max-width: 640px)"));
@@ -211,7 +211,7 @@ test("case detail supports one remembered right sidebar and forces narrow screen
 });
 
 test("case and media switches invalidate old detail DOM before asynchronous rendering", async () => {
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const openDetail = script.slice(script.indexOf("async function openDetail"), script.indexOf("async function closeDetail"));
   const closeDetail = script.slice(script.indexOf("async function closeDetail"), script.indexOf("function moveDetail"));
   const invalidation = script.slice(script.indexOf("function invalidateDetailContent"), script.indexOf("function createLocalDiscovery"));
@@ -229,7 +229,7 @@ test("case and media switches invalidate old detail DOM before asynchronous rend
 });
 
 test("case details open the source beside metadata without starting a capture workflow", async () => {
-  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const metadata = source.slice(source.indexOf("function createDetailMetadata"), source.indexOf("function createFullAnalysis"));
   const detail = source.slice(source.indexOf("async function renderDetail"), source.indexOf("function createLocalDiscovery"));
   assert.doesNotMatch(source, /PREPARE_SCREENSHOT_RECAPTURE|重新框选截图|继续跨页采集|START_CAPTURE_FOR_CASE|回来源继续采集/);
@@ -241,7 +241,7 @@ test("case details open the source beside metadata without starting a capture wo
 });
 
 test("detail editing and core prompt actions stay beside the content they change", async () => {
-  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const styles = await readFile(cssUrl, "utf8");
   const header = source.slice(source.indexOf("function createDetailHeader"), source.indexOf("function createComposerAction"));
   const prompt = source.slice(source.indexOf("function createPromptSection"), source.indexOf("function createEntryEditor"));
@@ -260,7 +260,7 @@ test("detail editing and core prompt actions stay beside the content they change
 });
 
 test("video detail exposes one reverse-prompt action and no history or per-run prompt controls", async () => {
-  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const workspace = source.slice(
     source.indexOf("function createVideoAnalysisWorkspace"),
     source.indexOf("function createVideoAnalysisTaskStatus")

@@ -41,7 +41,7 @@ test("privacy policy discloses that composer text-only mode reads and sends zero
 test("privacy policy accurately declares local-first handling and manifest permissions", async () => {
   const [policy, manifestSource] = await Promise.all([
     privacyPolicy(),
-    readFile(new URL("manifest.json", root), "utf8")
+    readFile(new URL("extension/manifest.json", root), "utf8")
   ]);
   const manifest = JSON.parse(manifestSource);
   assert.match(policy, /本地优先/);

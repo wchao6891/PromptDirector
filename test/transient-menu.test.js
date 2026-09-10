@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile(new URL("../transient-menu.js", import.meta.url), "utf8");
-const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const composer = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
-const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/transient-menu.js", import.meta.url), "utf8");
+const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const composer = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
+const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
 
 test("transient menus share outside-click, action, peer-open, and Escape dismissal", () => {
   assert.match(source, /addEventListener\("pointerdown", onPointerDown, true\)/);

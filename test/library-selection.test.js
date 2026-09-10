@@ -10,7 +10,7 @@ import {
   selectAllFilteredLogicalCases,
   setLibraryCaseSelection,
   toggleLibraryCaseSelection
-} from "../library-selection.js";
+} from "../extension/library-selection.js";
 
 test("select all uses every filtered logical result rather than the rendered page", () => {
   const filteredLogicalCaseIds = Array.from({ length: 73 }, (_, index) => `case:${index + 1}`);

@@ -12,7 +12,7 @@ import {
   prepareCuratedPackageVersion,
   validateCuratedPackageContents,
   validateCuratedPackageIndex
-} from "../curated-catalog.js";
+} from "../extension/curated-catalog.js";
 
 function catalogItem(overrides = {}) {
   return {

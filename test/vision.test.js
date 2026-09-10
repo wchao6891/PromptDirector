@@ -13,9 +13,9 @@ import {
   permissionPatternsForVisionSettings,
   probeCompatibleModels,
   publicVisionSettings
-} from "../vision.js";
-import { createDefaultFacetCatalog } from "../facets.js";
-import { VISUAL_ANALYSIS_DIMENSIONS } from "../visual-analysis.js";
+} from "../extension/vision.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { VISUAL_ANALYSIS_DIMENSIONS } from "../extension/visual-analysis.js";
 
 function sampleCatalog() {
   const catalog = createDefaultFacetCatalog();

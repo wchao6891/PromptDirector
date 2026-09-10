@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createDefaultFacetCatalog } from "../facets.js";
-import { mergeLibraryPackage, parseCompleteFolderBackup, parseLibraryPackage } from "../library-package.js";
-import { SCHEMA_VERSION, createDefaultTaxonomy } from "../taxonomy.js";
-import { restoreTrashItems } from "../trash.js";
-import { createComposerSession } from "../composer.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { mergeLibraryPackage, parseCompleteFolderBackup, parseLibraryPackage } from "../extension/library-package.js";
+import { SCHEMA_VERSION, createDefaultTaxonomy } from "../extension/taxonomy.js";
+import { restoreTrashItems } from "../extension/trash.js";
+import { createComposerSession } from "../extension/composer.js";
 
 test("salvage mode drops one missing media file without blocking recoverable cases", () => {
   const source = packageValue([

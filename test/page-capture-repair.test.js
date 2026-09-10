@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planPageCaptureRepair, mergePageCaptureRepair } from '../page-capture-repair.js';
+import { planPageCaptureRepair, mergePageCaptureRepair } from '../extension/page-capture-repair.js';
 
 const candidate = { pageType:'video', canonicalUrl:'https://example.com/publication/one', sourceFacts:{pageType:'video',extractionMethod:'structured'},media:[{id:'captured-video',kind:'video',url:'https://cdn.example.com/one.mp4'}] };
 const reference = {id:'old',kind:'video',storageMode:'reference',sourceUrl:candidate.canonicalUrl,reference:{url:candidate.canonicalUrl}};

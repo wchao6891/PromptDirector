@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composerSourceText } from "../composer-source-text.js";
-import { createReferenceSnapshots } from "../composer.js";
-import { CONTENT_IDS } from "../taxonomy.js";
+import { composerSourceText } from "../extension/composer-source-text.js";
+import { createReferenceSnapshots } from "../extension/composer.js";
+import { CONTENT_IDS } from "../extension/taxonomy.js";
 
 test("case retrieval and selected images respect edited or cleared AI prompts without reviving their historical copy", () => {
   for (const [prompt, expected] of [[undefined, "旧描述"], ["新的用户提示词", "新的用户提示词"], ["", ""]]) {

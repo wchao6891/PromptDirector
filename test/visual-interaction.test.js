@@ -8,8 +8,8 @@ function rule(source, selector) {
 }
 
 test("the current project uses the product accent while other library selections stay restrained", async () => {
-  const source = await readFile(new URL("../library.css", import.meta.url), "utf8");
-  const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
+  const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
 
   assert.match(foundation, /--selection:\s*color-mix\(in srgb, var\(--ui-text\) 6%, var\(--ui-surface\)\)/);
   assert.match(foundation, /--selection-indicator:\s*var\(--ui-accent-emphasis\)/);
@@ -39,7 +39,7 @@ test("the current project uses the product accent while other library selections
 });
 
 test("Skill cards keep emphasis in titles and mute paths, body copy, and idle borders", async () => {
-  const skills = await readFile(new URL("../skills-page.css", import.meta.url), "utf8");
+  const skills = await readFile(new URL("../extension/skills-page.css", import.meta.url), "utf8");
 
   assert.match(rule(skills, ".skill-card"), /border:\s*1px solid var\(--ui-card-border\)/);
   assert.match(rule(skills, ".skill-card"), /font-weight:\s*400/);
@@ -54,8 +54,8 @@ test("Skill cards keep emphasis in titles and mute paths, body copy, and idle bo
 
 test("composer and Skill selections avoid oversized green outer rings", async () => {
   const [composer, skills] = await Promise.all([
-    readFile(new URL("../composer-page.css", import.meta.url), "utf8"),
-    readFile(new URL("../skills-page.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills-page.css", import.meta.url), "utf8")
   ]);
 
   assert.match(rule(composer, ".composer-input-box:focus-within"), /box-shadow:\s*inset 0 0 0 1px var\(--focus-ring\)/);
@@ -69,9 +69,9 @@ test("composer and Skill selections avoid oversized green outer rings", async ()
 
 test("composer session delete menu reuses the compact shared danger action", async () => {
   const [foundation, composer, runtime] = await Promise.all([
-    readFile(new URL("../ui-foundation.css", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.css", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8")
   ]);
   assert.match(runtime, /composer-session-delete quiet-danger/);
   assert.match(rule(composer, ".composer-session-menu-panel"), /min-width:\s*84px/);
@@ -83,7 +83,7 @@ test("composer session delete menu reuses the compact shared danger action", asy
 });
 
 test("collector highlights use the shared restrained interaction language", async () => {
-  const source = await readFile(new URL("../collector.css", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/collector.css", import.meta.url), "utf8");
   const targetBannerSource = source.slice(source.lastIndexOf("\n.target-banner {"));
 
   assert.match(rule(targetBannerSource, ".target-banner"), /box-shadow:\s*inset 2px 0 var\(--selection-indicator\)/);
@@ -95,10 +95,10 @@ test("collector highlights use the shared restrained interaction language", asyn
 
 test("capture notifications use the shared neutral toast instead of legacy green text", async () => {
   const [foundation, collector, collectorHtml, libraryHtml] = await Promise.all([
-    readFile(new URL("../ui-foundation.css", import.meta.url), "utf8"),
-    readFile(new URL("../collector.css", import.meta.url), "utf8"),
-    readFile(new URL("../collector.html", import.meta.url), "utf8"),
-    readFile(new URL("../library.html", import.meta.url), "utf8")
+    readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/collector.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.html", import.meta.url), "utf8")
   ]);
   const toast = rule(foundation, ".ui-feedback-toast");
 
@@ -115,7 +115,7 @@ test("capture notifications use the shared neutral toast instead of legacy green
 });
 
 test("smart visual picker uses a fine neutral edge with a small branded check", async () => {
-  const source = await readFile(new URL("../capture-region.css", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/capture-region.css", import.meta.url), "utf8");
   const candidate = rule(source, "#__prompt_case_visual_picker__ .prompt-case-visual-candidate");
   const hovered = rule(source, "#__prompt_case_visual_picker__ .prompt-case-visual-candidate:hover");
   const selected = rule(source, "#__prompt_case_visual_picker__ .prompt-case-visual-candidate.is-selected");
@@ -130,7 +130,7 @@ test("smart visual picker uses a fine neutral edge with a small branded check", 
 });
 
 test("smart visual picker shields video controls and defers dynamic remeasurement until the click completes", async () => {
-  const source = await readFile(new URL("../capture-region.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/capture-region.js", import.meta.url), "utf8");
   assert.match(source, /document\.addEventListener\(type, stopUnderlyingPageEvent, \{ capture: true, passive: false \}\)/);
   assert.match(source, /if \(activeCandidateInteraction\) \{[\s\S]*pendingCandidateRefresh = true/);
   assert.match(source, /button\.addEventListener\("pointerdown"/);

@@ -5,7 +5,7 @@ import { Resvg } from "@resvg/resvg-js";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const checkOnly = process.argv.includes("--check");
-const iconSource = await readFile(join(projectRoot, "assets/icons/icon-source.svg"));
+const iconSource = await readFile(join(projectRoot, "extension/assets/icons/icon-source.svg"));
 const promoSource = await readFile(join(projectRoot, "store/brand/prompt-director-promo-source.svg"));
 
 const outputs = [

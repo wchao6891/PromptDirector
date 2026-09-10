@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { fetchCuratedPackage, readResponseBlobWithProgress } from "../curated-download.js";
+import { fetchCuratedPackage, readResponseBlobWithProgress } from "../extension/curated-download.js";
 
 const DOWNLOAD_URL =
   "https://github.com/wchao6891/PromptDirector-Curated/releases/download/example-1.0.0/example.zip";

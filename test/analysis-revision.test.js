@@ -7,7 +7,7 @@ import {
   markEntryTextChanged,
   updateEntryText,
   textAnalysisReason
-} from "../analysis-revision.js";
+} from "../extension/analysis-revision.js";
 
 test("legacy completed analysis is treated as unchanged without hashing the whole library", () => {
   const entries = Array.from({ length: 6500 }, (_, index) => ({

@@ -2,17 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const libraryHtml = await readFile(new URL("../library.html", import.meta.url), "utf8");
-const composerHtml = await readFile(new URL("../composer.html", import.meta.url), "utf8");
-const collectorHtml = await readFile(new URL("../collector.html", import.meta.url), "utf8");
-const collector = await readFile(new URL("../collector.js", import.meta.url), "utf8");
-const i18n = await readFile(new URL("../i18n.js", import.meta.url), "utf8");
-const styles = await readFile(new URL("../library.css", import.meta.url), "utf8");
-const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
-const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
-const markdown = await readFile(new URL("../lib.js", import.meta.url), "utf8");
-const preview = await readFile(new URL("../share-preview.js", import.meta.url), "utf8");
+const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const libraryHtml = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
+const composerHtml = await readFile(new URL("../extension/composer.html", import.meta.url), "utf8");
+const collectorHtml = await readFile(new URL("../extension/collector.html", import.meta.url), "utf8");
+const collector = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
+const i18n = await readFile(new URL("../extension/i18n.js", import.meta.url), "utf8");
+const styles = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
+const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
+const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
+const markdown = await readFile(new URL("../extension/lib.js", import.meta.url), "utf8");
+const preview = await readFile(new URL("../extension/share-preview.js", import.meta.url), "utf8");
 
 test("library clipboard actions show feedback on the clicked button", () => {
   const clipboardCalls = [...library.matchAll(/navigator\.clipboard\.writeText/g)];

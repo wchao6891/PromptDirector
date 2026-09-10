@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import {
   commitMetadataThenDeleteImages,
   replaceImagesWithRollback
-} from "../image-transaction.js";
+} from "../extension/image-transaction.js";
 
 test("metadata failure never deletes referenced images", async () => {
   const deleted = [];
@@ -100,7 +100,7 @@ async function* replacements(values) {
 }
 
 test("case deletion retains blobs in trash while creative-output deletion still uses metadata-first cleanup", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const caseStart = source.indexOf("async function deleteEntry(entryId)");
   const caseBlock = source.slice(caseStart, source.indexOf("async function deleteCollectionWithEntries", caseStart));
   assert.match(caseBlock, /moveEntryBatchToTrash/);
@@ -113,7 +113,7 @@ test("case deletion retains blobs in trash while creative-output deletion still 
 });
 
 test("external Skill deletion commits metadata before cleaning package files", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf("async function deleteCreativeSkillAction(skillId)");
   const block = source.slice(start, source.indexOf("async function getComposerSession", start));
   assert.ok(block.indexOf("await commitLocalChanges") < block.indexOf("await deleteMediaBlobs"));
@@ -121,7 +121,7 @@ test("external Skill deletion commits metadata before cleaning package files", a
 });
 
 test("page capture never deletes committed media when a post-commit action fails", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf("async function commitPageCapture(");
   const block = source.slice(start, source.indexOf("async function startCaptureForCase", start));
   assert.match(block, /metadataCommitted = true/);
@@ -130,14 +130,14 @@ test("page capture never deletes committed media when a post-commit action fails
 });
 
 test("temporary composer assets are tracked before derived data can fail", async () => {
-  const source = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
   const start = source.indexOf("async function addTempReferences");
   const block = source.slice(start, source.indexOf("async function removeTempReference", start));
   assert.ok(block.indexOf("savedAssetIds.push(assetId)") < block.indexOf("await saveDerivedMedia"));
 });
 
 test("creative video posters roll back only before their metadata commit", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf("async function saveCreativeOutputToLibrary");
   const block = source.slice(start, source.indexOf("async function updateCreativeSignal", start));
   assert.match(block, /posterAssetId = posterId/);

@@ -6,7 +6,7 @@ import {
   decryptVaultValue,
   encryptVaultValue,
   unlockVaultHeader
-} from "../sync-crypto.js";
+} from "../extension/sync-crypto.js";
 
 test("vault encryption round-trips structured data with a different IV for every file", async () => {
   const { header, key } = await createVaultHeader("correct horse battery staple");

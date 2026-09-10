@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readPageCaptureVideoFrame, resolvePageCaptureVideoFrames } from "../page-capture-frames.js";
-import { normalizePageCaptureCandidate } from "../page-capture.js";
+import { readPageCaptureVideoFrame, resolvePageCaptureVideoFrames } from "../extension/page-capture-frames.js";
+import { normalizePageCaptureCandidate } from "../extension/page-capture.js";
 
 const frameUrl = "https://www.artstation.com/api/v2/animation/video_clips/fixture/embed.html?s=fixture";
 const videoUrl = "https://cdn.artstation.com/p/video_sources/fixture.mp4";

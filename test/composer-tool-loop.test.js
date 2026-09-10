@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runComposerToolLoop, readToolResponse } from '../composer-tool-loop.js';
+import { runComposerToolLoop, readToolResponse } from '../extension/composer-tool-loop.js';
 const spec = { name: 'search_cases', description: 'search', parameters: { type: 'object', properties: { query: { type: 'string' } } } };
 const chat = (message, extra = {}) => new Response(JSON.stringify({ choices: [{ message, finish_reason: message.tool_calls?.length ? 'tool_calls' : 'stop' }], ...extra }), { headers: { 'content-type': 'application/json' } });
 const call = (id, args) => ({ id, type: 'function', function: { name: 'search_cases', arguments: JSON.stringify(args) } });

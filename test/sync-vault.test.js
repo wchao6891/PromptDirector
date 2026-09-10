@@ -7,8 +7,8 @@ import {
   readSyncObject,
   writeSyncObject,
   writeSyncSnapshot
-} from "../sync-vault.js";
-import { createRevisionSnapshot } from "../sync-model.js";
+} from "../extension/sync-vault.js";
+import { createRevisionSnapshot } from "../extension/sync-model.js";
 
 test("vault stores immutable per-device states and encrypted deduplicated image objects", async () => {
   const root = new MemoryDirectory("root");

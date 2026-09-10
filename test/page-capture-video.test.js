@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { downloadPageCaptureVideo, isPageCaptureVideoFileUrl } from "../page-capture-video.js";
+import { downloadPageCaptureVideo, isPageCaptureVideoFileUrl } from "../extension/page-capture-video.js";
 
 const video = await readFile(new URL('./fixtures/zhipu-local-video-smoke.mp4', import.meta.url));
 test('a source declared by the page video element is verified by bytes even without a filename extension', async () => {

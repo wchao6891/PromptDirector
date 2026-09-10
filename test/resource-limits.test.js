@@ -5,7 +5,7 @@ import {
   ASSET_IMPORT_FAILURE_CODES,
   assetImportError,
   importFailureDetails
-} from "../resource-limits.js";
+} from "../extension/resource-limits.js";
 
 test("asset import failures expose a serializable reason for the UI and background job", () => {
   const error = assetImportError(

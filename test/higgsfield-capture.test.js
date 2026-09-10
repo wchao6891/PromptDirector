@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { collectPageCaptureSitePayload, normalizePageCaptureSitePayload } from "../page-capture-site-adapters.js";
+import { collectPageCaptureSitePayload, normalizePageCaptureSitePayload } from "../extension/page-capture-site-adapters.js";
 
 // Reduced regression fixtures mirror the public page schemas observed on 2026-09-05.
 // Text/IDs are test data, not snapshots or live-site acceptance evidence.
@@ -63,7 +63,7 @@ test("detail pages never substitute a recommended project's structured data", ()
 });
 
 test("recognized articles preserve every chapter and short conclusion through repeated normalization", async () => {
-  const { normalizePageCaptureCandidate } = await import('../page-capture.js');
+  const { normalizePageCaptureCandidate } = await import('../extension/page-capture.js');
   const chapters = Array.from({length: 12}, (_, index) => [
     {kind: 'heading', text: `Chapter ${index + 1}`, sourceOrder: index * 2},
     {kind: 'paragraph', text: `Short observation ${index + 1}.`, sourceOrder: index * 2 + 1}
@@ -74,7 +74,7 @@ test("recognized articles preserve every chapter and short conclusion through re
 });
 
 test("pending embedded media remains visible to the save path after batch normalization", async () => {
-  const { normalizePageCaptureBatch, applyPageCaptureSelections } = await import('../page-capture.js');
+  const { normalizePageCaptureBatch, applyPageCaptureSelections } = await import('../extension/page-capture.js');
   const candidate = {id:'pending-test', canonicalUrl:projectUrl,title:'Test article',contentText:'Test text',pageType:'article',media:[{id:'image',kind:'image',url:imageUrls[0],placement:'inline'}],extraction:{pendingMediaCount:1},completeness:'partial'};
   const batch = normalizePageCaptureBatch({candidates:[candidate],selections:[{candidateId:candidate.id,includeText:true,selectedMediaIds:['image'],mediaDecision:'confirmed'}]});
   assert.equal(applyPageCaptureSelections(batch)[0].extraction.pendingMediaCount,1);

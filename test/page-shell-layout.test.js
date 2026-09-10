@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const libraryCss = await readFile(new URL("../library.css", import.meta.url), "utf8");
-const skillsCss = await readFile(new URL("../skills-page.css", import.meta.url), "utf8");
+const libraryCss = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
+const skillsCss = await readFile(new URL("../extension/skills-page.css", import.meta.url), "utf8");
 
 function rule(source, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

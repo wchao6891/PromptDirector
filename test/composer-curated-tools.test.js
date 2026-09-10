@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readComposerCuratedCatalog } from '../composer-curated-tools.js';
-import { CURATED_CATALOG_URL } from '../curated-config.js';
+import { readComposerCuratedCatalog } from '../extension/composer-curated-tools.js';
+import { CURATED_CATALOG_URL } from '../extension/curated-config.js';
 const base='https://wchao6891.github.io/PromptDirector-Curated';
 const theme={id:'portraits',title:'人像',type:'image_prompt',packageId:'portraits',packageVersion:'2.0.0',authorId:'fixture',author:'测试作者',license:'CC BY 4.0',rightsStatus:'verified_authorized',rightsReviewUrl:`${base}/review.json`,updatedAt:'2026-09-10T00:00:00Z',coverUrl:`${base}/cover.webp`,previewUrl:`${base}/preview.json`,downloadUrl:'https://github.com/wchao6891/PromptDirector-Curated/releases/download/fixture/portraits.zip',sha256:'a'.repeat(64),archiveBytes:1024,caseCount:25,imageCount:25,videoCount:0,order:1};
 const catalog={format:'prompt-director-curated',version:2,updatedAt:'2026-09-10T00:00:00Z',themes:[theme]};

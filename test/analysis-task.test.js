@@ -13,7 +13,7 @@ import {
   stopAnalysisTask,
   startAnalysisAttempt,
   updateAnalysisTaskProgress
-} from "../analysis-tasks.js";
+} from "../extension/analysis-tasks.js";
 
 test("a restored failed attempt retains protocol facts and request counts without raw payload or secrets", () => {
   let task = startAnalysisAttempt(createAnalysisTask({ id: "task:receipt" }), { attemptId: "attempt:receipt" });

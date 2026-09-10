@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { FACET_UNDO_LIMIT, appendFacetUndo, facetUndoCount, normalizeFacetUndoHistory, undoFacetHistory } from "../facet-history.js";
-import { applyFacetChange, createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, previewFacetChange } from "../facets.js";
+import { FACET_UNDO_LIMIT, appendFacetUndo, facetUndoCount, normalizeFacetUndoHistory, undoFacetHistory } from "../extension/facet-history.js";
+import { applyFacetChange, createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, previewFacetChange } from "../extension/facets.js";
 
 test("consecutive dimension archives can be undone one step at a time", () => {
   let catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "情绪" });

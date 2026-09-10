@@ -15,8 +15,8 @@ import {
   removeEntryMedia,
   setPrimaryMedia,
   updateLocalAssetReferenceMetadata
-} from "../media.js";
-import { normalizeEntryVisuals, primaryVisionDescription, reorderEntryVisuals } from "../visuals.js";
+} from "../extension/media.js";
+import { normalizeEntryVisuals, primaryVisionDescription, reorderEntryVisuals } from "../extension/visuals.js";
 
 test("new visual analysis remains readable through reconstruction prompts without a legacy description", () => {
   const entry = normalizeEntryMedia({

@@ -23,7 +23,7 @@ import {
   moveEntriesBetweenCollections,
   setCollectionVisibility,
   setEntriesCollection
-} from "../organizer.js";
+} from "../extension/organizer.js";
 
 test("organizer normalizes duplicate and missing entry references", () => {
   const value = normalizeOrganizerState({

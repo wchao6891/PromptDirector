@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createManualSyncController } from "../manual-sync.js";
-import { createRevisionSnapshot } from "../sync-model.js";
+import { createManualSyncController } from "../extension/manual-sync.js";
+import { createRevisionSnapshot } from "../extension/sync-model.js";
 
 test("a second unchanged manual sync performs zero media snapshot and metadata writes", async () => {
   const fixture = await createFixture();

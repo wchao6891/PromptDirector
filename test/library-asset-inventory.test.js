@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   libraryStoredAssetIds,
   libraryStoredAssets
-} from "../library-asset-inventory.js";
+} from "../extension/library-asset-inventory.js";
 
 test("one library asset inventory covers every durable synced resource without duplicating shared ids", () => {
   const shared = { id: "asset:shared", storageMode: "managed" };

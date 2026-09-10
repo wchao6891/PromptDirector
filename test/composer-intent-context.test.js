@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { plannerRequestPayload } from '../composer.js';
-import { getAiModelCapability } from '../ai-model-capabilities.js';
-import { composerServiceCatalog } from '../composer-service.js';
-import { normalizeAiProviderRegistry } from '../ai-provider-registry.js';
+import { plannerRequestPayload } from '../extension/composer.js';
+import { getAiModelCapability } from '../extension/ai-model-capabilities.js';
+import { composerServiceCatalog } from '../extension/composer-service.js';
+import { normalizeAiProviderRegistry } from '../extension/ai-provider-registry.js';
 
 const history = [
   {role:'user', type:'request', content:'先找人像案例给我选'},
@@ -38,8 +38,8 @@ test('saved text-only Flash catalog cannot override the current official vision 
 });
 
 test('Flash sends the selected original once, honors thinking, and needs no separate analysis',async()=>{
-  const {executeComposerTurnWithService}=await import('../composer-service.js');
-  const {createComposerSession}=await import('../composer.js');
+  const {executeComposerTurnWithService}=await import('../extension/composer-service.js');
+  const {createComposerSession}=await import('../extension/composer.js');
   for(const thinking of [false,true]) {
     const requests=[];
     const session=createComposerSession({aiProfile:{serviceId:'deepseek',model:'deepseek-flash',thinking},

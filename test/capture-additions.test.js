@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems } from '../capture-additions.js';
-import { normalizePageCaptureCandidate, normalizePageCaptureBatch, applyPageCaptureSelections, pageCaptureDefaultMediaIds } from '../page-capture.js';
+import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems } from '../extension/capture-additions.js';
+import { normalizePageCaptureCandidate, normalizePageCaptureBatch, applyPageCaptureSelections, pageCaptureDefaultMediaIds } from '../extension/page-capture.js';
 const candidate = () => normalizePageCaptureCandidate({id:'main',title:'main',canonicalUrl:'https://x.com/user/status/1',contentText:'Original',
   textBlocks:[{id:'body',kind:'paragraph',relevance:'explicit-creative',text:'Original'}],articleDocument:{blocks:[{id:'body',kind:'paragraph',relevance:'explicit-creative',text:'Original'}]},
   media:[{id:'one',url:'https://pbs.twimg.com/media/image?format=jpg&name=small',kind:'image',placement:'inline'},
@@ -56,7 +56,7 @@ test('adding a webpage preserves headings and quotes without repeating original 
 
 
 test("saved capture outcomes consume partial and duplicate cases but preserve unsaved candidates", async () => {
-  const { savedPageCaptureCandidateIds } = await import("../capture-additions.js");
+  const { savedPageCaptureCandidateIds } = await import("../extension/capture-additions.js");
   const candidates = ["saved", "partial", "duplicate", "failed"].map(id => ({ id }));
   const results = candidates.map(({ id }) => ({ candidateId: id, status: id, ...(id !== "failed" ? { entryId: `entry:${id}` } : {}) }));
   assert.deepEqual([...savedPageCaptureCandidateIds({}, candidates, results)], ["saved", "partial", "duplicate"]);

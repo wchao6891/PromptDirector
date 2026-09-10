@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { readImageDimensions } from "../image-metadata.js";
+import { readImageDimensions } from "../extension/image-metadata.js";
 
 test("image dimensions are read from headers before browser decoding", async () => {
   const png = new Uint8Array(24);

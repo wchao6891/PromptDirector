@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { reconcileLibrarySemanticIdentity } from "../library-semantic-identity.js";
+import { reconcileLibrarySemanticIdentity } from "../extension/library-semantic-identity.js";
 
 test("complete semantic duplicates converge to one stable case and keep every project relationship", () => {
   const first = semanticEntry("case:a", "asset:a", "a".repeat(64));

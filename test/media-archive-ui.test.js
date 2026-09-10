@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const js = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
-const css = await readFile(new URL("../library.css", import.meta.url), "utf8");
+const js = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
+const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
 
 test("modern file and folder pickers preserve handles and relative paths before falling back", () => {
   assert.match(js, /showOpenFilePicker\(\{ multiple: true \}\)/);

@@ -10,7 +10,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_pla
 from e2e_support import launch_context
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1]
+EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
 
 
 def main() -> None:

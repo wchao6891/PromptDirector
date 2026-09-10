@@ -13,7 +13,7 @@ import {
   normalizeComposerAgentSettings,
   taskMethodFor,
   updateAgentTaskMethod
-} from "../composer-agent.js";
+} from "../extension/composer-agent.js";
 
 test("light agent compiles routing, button questions, and local search without a dimension contract", () => {
   const settings = normalizeComposerAgentSettings();

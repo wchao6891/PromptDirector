@@ -8,7 +8,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, 
 from e2e_support import launch_context, seed_extension_storage
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1]
+EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
 INITIAL_BATCH_SIZE = 24
 
 

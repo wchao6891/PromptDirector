@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applyLibraryImportWithReceipt } from "../library-import-client.js";
+import { applyLibraryImportWithReceipt } from "../extension/library-import-client.js";
 const message = { operationId: "fixture-operation", planToken: "fixture-plan" };
 const result = { ok: true, recoveryPointCreatedAt: "fixture-date" };
 const receipt = { ...message, status: "completed", result };
