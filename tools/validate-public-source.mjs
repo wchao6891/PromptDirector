@@ -33,7 +33,7 @@ if (presentPrivateFiles.length) {
 }
 
 const markdownFiles = await collectMarkdown(projectRoot);
-const localPathPattern = /\/Users\/(?!<[^>]+>)[^/\s`]+\/|\/private\/tmp\//;
+const localPathPattern = /\/Users\/(?!<[^>]+>)[^/\s`]+\/|\/private\/tmp\/|\/(?:private\/)?var\/folders\//;
 const leakedPaths = [];
 for (const file of markdownFiles) {
   const text = await readFile(file, "utf8");
