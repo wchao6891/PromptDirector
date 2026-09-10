@@ -76,7 +76,7 @@ function stableObject(value) {
 }
 
 function requestCharacters(body) {
-  return JSON.stringify(body, (key, value) => ["image_url", "file_data"].includes(key) ? "[image]" : value).length;
+  return JSON.stringify(body, (key, value) => ["image_url", "video_url", "file_data"].includes(key) ? "[media]" : value).length;
 }
 
 function addUsage(target, usage, protocol) {

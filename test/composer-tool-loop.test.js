@@ -80,3 +80,20 @@ test('same batch duplicate reads reuse local work but each call receives its own
   assert.equal(executes, 1);
   assert.deepEqual(requests[1].messages.filter(item => item.role === 'tool').map(item => item.tool_call_id), ['one', 'two']);
 });
+
+test('native video bytes stay intact without consuming the text budget; retrieved text still counts', async () => {
+  const maxCharacters = 2048;
+  const video = 'A'.repeat(maxCharacters * 2);
+  const input = { model: 'video-fixture', messages: [{ role: 'user', content: [
+    { type: 'text', text: '参考原视频' }, { type: 'video_url', video_url: { url: video } }
+  ] }] };
+  let requests = 0;
+  await assert.rejects(runComposerToolLoop({ body: input, protocol: 'chat_completions', maxCharacters,
+    request: async current => {
+      requests++;
+      assert.equal(current.messages[0].content[1].video_url.url, video);
+      return chat({ role: 'assistant', tool_calls: [call('read', { query: '资料' })] });
+    }, runtime: { specs: [spec], execute: async () => ({ data: { text: '字'.repeat(maxCharacters) } }) }
+  }), /请求容量/);
+  assert.equal(requests, 1, 'the original video must reach the provider before an oversized text result is rejected');
+});

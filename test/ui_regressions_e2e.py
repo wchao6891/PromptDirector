@@ -160,13 +160,18 @@ def main() -> None:
               const controls = [...footer.querySelectorAll('.composer-input-tools > *, .composer-input-actions > *')]
                 .filter(node => !node.hidden && getComputedStyle(node).display !== 'none')
                 .map(node => node.getBoundingClientRect());
+              const groups = ['.composer-input-tools', '.composer-input-actions'].map(selector => footer.querySelector(selector).getBoundingClientRect());
+              const gap = parseFloat(getComputedStyle(footer).rowGap) || 0;
               return {
                 height: rect.height,
+                compact: rect.height <= groups.reduce((sum, item) => sum + item.height, gap) + 1,
+                groupsOverlap: groups[0].left < groups[1].right && groups[0].right > groups[1].left && groups[0].top < groups[1].bottom && groups[0].bottom > groups[1].top,
                 overflow: controls.some(item => item.left < rect.left - 1 || item.right > rect.right + 1)
               };
             }"""
         )
-        assert footer_geometry["height"] < 48, footer_geometry
+        assert footer_geometry["compact"] is True, footer_geometry
+        assert footer_geometry["groupsOverlap"] is False, footer_geometry
         assert footer_geometry["overflow"] is False, footer_geometry
         composer.screenshot(path=str(screenshots / "promptdirector-composer-mobile.png"), full_page=True)
 
