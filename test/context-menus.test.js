@@ -8,7 +8,7 @@ import {
   handleContextMenuCapture,
   syncContextMenus,
   waitForStablePageLayout
-} from "../context-menus.js";
+} from "../extension/context-menus.js";
 
 test("context menus expose one PromptDirector action for each right-click context", async () => {
   const created = [];
@@ -157,7 +157,7 @@ test("non-text selection never opens the side panel as a text capture", () => {
 });
 
 test("background startup only uses Chromium context-menu events", async () => {
-  const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   assert.doesNotMatch(background, /contextMenus\.onShown/);
   assert.match(background, /contextMenus\.onClicked\.addListener/);
 });

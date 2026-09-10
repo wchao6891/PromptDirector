@@ -51,7 +51,7 @@ test("native missing-file and damaged-snapshot failures keep actionable status c
 });
 
 function source() {
-  return readFile(new URL("../background.js", import.meta.url), "utf8");
+  return readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 }
 
 function messageBranch(sourceValue, type, nextType) {

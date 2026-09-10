@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourcePath = join(projectRoot, "node_modules", "lucide-static", "icon-nodes.json");
-const outputPath = join(projectRoot, "assets", "ui-icons.svg");
+const outputPath = join(projectRoot, "extension", "assets", "ui-icons.svg");
 const iconNames = [
   "arrow-down", "arrow-left", "arrow-up", "check", "chevron-down", "chevron-left", "chevron-right", "circle-check-big", "clipboard", "copy",
   "download", "ellipsis", "external-link", "file-text", "folder", "image", "library",
@@ -27,7 +27,7 @@ const sprite = [
   ""
 ].join("\n");
 
-await mkdir(join(projectRoot, "assets"), { recursive: true });
+await mkdir(join(projectRoot, "extension", "assets"), { recursive: true });
 await writeFile(outputPath, sprite);
 process.stdout.write(`${outputPath}\n${iconNames.length} 个本地图标\n`);
 

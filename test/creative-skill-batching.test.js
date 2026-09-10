@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { estimateSkillTokens, skillExtractionWorkload } from "../creative-skill-service.js";
+import { estimateSkillTokens, skillExtractionWorkload } from "../extension/creative-skill-service.js";
 
 test("Skill extraction partitions all source text without sampling or truncation", () => {
   const sources = [

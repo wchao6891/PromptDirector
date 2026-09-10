@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { analyzeTextDetailedWithDeepSeek } from "../deepseek.js";
-import { createFixedFacetCatalog } from "../tag-taxonomy.js";
+import { analyzeTextDetailedWithDeepSeek } from "../extension/deepseek.js";
+import { createFixedFacetCatalog } from "../extension/tag-taxonomy.js";
 
 test("detail text analysis sends the canonical primary-image prompt to DeepSeek", async () => {
   const requests = [];

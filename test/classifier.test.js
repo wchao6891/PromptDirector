@@ -7,8 +7,8 @@ import {
   classifyImportedMedia,
   classifyImageCase,
   confirmClassification
-} from "../classifier.js";
-import { CONTENT_IDS, CONTENT_ROLES, createContentType, createDefaultTaxonomy, removeContentType } from "../taxonomy.js";
+} from "../extension/classifier.js";
+import { CONTENT_IDS, CONTENT_ROLES, createContentType, createDefaultTaxonomy, removeContentType } from "../extension/taxonomy.js";
 
 test("declared creative works use their medium even when prompt text resembles an article or a broad site rule", () => {
   const entry = { url: "https://example.com/work", title: "Workflow", text: "First use the attached image. Then follow these steps, because identity consistency matters.",

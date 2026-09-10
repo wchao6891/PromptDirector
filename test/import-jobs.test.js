@@ -8,7 +8,7 @@ import {
   retryImportJob,
   normalizeImportJobsState,
   undoImportJob
-} from "../import-jobs.js";
+} from "../extension/import-jobs.js";
 
 test("browser restart requeues only unfinished local import items", () => {
   const state = normalizeImportJobsState({

@@ -11,7 +11,7 @@ import {
   githubLatestReleaseUrl,
   parseExtensionVersion,
   releaseVersionFromUrl
-} from "../extension-update.js";
+} from "../extension/extension-update.js";
 
 // Installation metadata is explicit in the test adapter; production uses getSelf().
 function createExtensionUpdateLifecycle(options) {
@@ -249,7 +249,7 @@ test("successful store installation clears the applied reminder and records the 
 });
 
 test("background wires update events and the public message protocol", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   assert.match(source, /chrome\.runtime\.onUpdateAvailable\.addListener/u);
   assert.match(source, /chrome\.runtime\.onStartup\.addListener/u);
   for (const type of [

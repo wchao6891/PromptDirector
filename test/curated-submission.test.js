@@ -7,7 +7,7 @@ import {
   sanitizeCuratedSubmissionEntry,
   submissionManifest,
   submissionPartManifest
-} from "../curated-submission.js";
+} from "../extension/curated-submission.js";
 
 test("精选投稿只保留公开案例字段和必要媒体", () => {
   const prepared = prepareCuratedSubmissionState(fixtureState(), { entryIds: ["case-1"] });

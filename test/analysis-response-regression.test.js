@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { analyzeTextDetailedWithDeepSeek } from "../deepseek.js";
-import { analyzeImageWithVision } from "../vision.js";
-import { analyzeVideoWithChatCompletions } from "../video-analysis.js";
-import { createDefaultFacetCatalog } from "../facets.js";
-import { runScheduledAnalysisWithRetries } from "../analysis-scheduler.js";
-import { inspectAnalysisResponse, fetchAnalysisJson } from "../analysis-response.js";
-import { normalizeEntryMedia } from "../media.js";
+import { analyzeTextDetailedWithDeepSeek } from "../extension/deepseek.js";
+import { analyzeImageWithVision } from "../extension/vision.js";
+import { analyzeVideoWithChatCompletions } from "../extension/video-analysis.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { runScheduledAnalysisWithRetries } from "../extension/analysis-scheduler.js";
+import { inspectAnalysisResponse, fetchAnalysisJson } from "../extension/analysis-response.js";
+import { normalizeEntryMedia } from "../extension/media.js";
 
 const catalog = createDefaultFacetCatalog();
 test("unknown video cost remains unknown through save and normalization", () => {

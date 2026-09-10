@@ -4,13 +4,13 @@ import { readFile } from "node:fs/promises";
 
 async function sources() {
   const [curatedHtml, curatedSkillsHtml, skillsHtml, curatedCss, skillsCss, foundation, libraryCss] = await Promise.all([
-    readFile(new URL("../curated.html", import.meta.url), "utf8"),
-    readFile(new URL("../curated-skills.html", import.meta.url), "utf8"),
-    readFile(new URL("../skills.html", import.meta.url), "utf8"),
-    readFile(new URL("../curated.css", import.meta.url), "utf8"),
-    readFile(new URL("../skills-page.css", import.meta.url), "utf8"),
-    readFile(new URL("../ui-foundation.css", import.meta.url), "utf8"),
-    readFile(new URL("../library.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/curated.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/curated-skills.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/curated.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills-page.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.css", import.meta.url), "utf8")
   ]);
   return { curatedHtml, curatedSkillsHtml, skillsHtml, curatedCss, skillsCss, foundation, libraryCss };
 }

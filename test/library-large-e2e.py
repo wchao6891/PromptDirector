@@ -7,7 +7,7 @@ from pathlib import Path
 from playwright.sync_api import expect, sync_playwright
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1]
+EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
 ENTRY_COUNT = 6_000
 
 

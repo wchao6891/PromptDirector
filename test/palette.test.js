@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extractPalette, PALETTE_VERSION } from "../palette.js";
+import { extractPalette, PALETTE_VERSION } from "../extension/palette.js";
 
 test("screenshot pixels produce compact HEX swatches without inventing semantic tags", () => {
   const colors = [

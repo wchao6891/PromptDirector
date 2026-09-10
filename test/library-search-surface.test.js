@@ -4,9 +4,9 @@ import { readFile } from "node:fs/promises";
 
 test("the library exposes one search surface instead of a second sidebar tag search", async () => {
   const [html, script, styles] = await Promise.all([
-    readFile(new URL("../library.html", import.meta.url), "utf8"),
-    readFile(new URL("../library.js", import.meta.url), "utf8"),
-    readFile(new URL("../library.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/library.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.css", import.meta.url), "utf8")
   ]);
 
   assert.equal((html.match(/id="search-input"/g) ?? []).length, 1);

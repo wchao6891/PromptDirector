@@ -8,8 +8,8 @@ import {
   findExactMediaDuplicate,
   normalizeLocalRelativePath,
   prepareLocalMedia
-} from "../local-media.js";
-import { PORTABLE_LIBRARY_LIMITS, formatBytes } from "../resource-limits.js";
+} from "../extension/local-media.js";
+import { PORTABLE_LIBRARY_LIMITS, formatBytes } from "../extension/resource-limits.js";
 
 test("local media detection keeps only supported formats and safe relative paths", () => {
   assert.deepEqual(detectLocalMediaFile(new File(["image"], "frame.gif", { type: "image/gif" })), {

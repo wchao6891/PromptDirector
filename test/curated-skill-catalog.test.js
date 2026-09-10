@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createZipBlob } from "../zip.js";
+import { createZipBlob } from "../extension/zip.js";
 import {
   normalizeCuratedSkillCatalog,
   validateCuratedSkillPackage,
   verifyCuratedSkillPackageBlob
-} from "../curated-skill-catalog.js";
-import { sha256Hex } from "../sync-crypto.js";
+} from "../extension/curated-skill-catalog.js";
+import { sha256Hex } from "../extension/sync-crypto.js";
 
 async function fixture() {
   const skill = new Blob(["---\nname: composition-method\ndescription: Compose clearly.\n---\n\n# Method\n\nUse depth.\n"]);

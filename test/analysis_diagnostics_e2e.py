@@ -9,7 +9,7 @@ from e2e_support import base_entry, extension_session
 
 
 def main() -> None:
-    extension_version = json.loads((Path(__file__).resolve().parents[1] / "manifest.json").read_text())["version"]
+    extension_version = json.loads((Path(__file__).resolve().parents[1] / "extension" / "manifest.json").read_text())["version"]
     entry = base_entry(
         "diagnostic-analysis",
         "诊断分析",

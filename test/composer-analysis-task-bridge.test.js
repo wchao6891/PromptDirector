@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createComposerAnalysisTaskBridge } from "../composer-analysis-task-bridge.js";
+import { createComposerAnalysisTaskBridge } from "../extension/composer-analysis-task-bridge.js";
 
 test("closing while task creation is pending detaches the consumer and rejects late automatic continuation", async () => {
   const messages = [];

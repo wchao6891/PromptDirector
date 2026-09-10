@@ -9,9 +9,9 @@ import {
   normalizeDerivedMetadata,
   validatePortableAssetBlob,
   validateMediaBlob
-} from "../media-store.js";
+} from "../extension/media-store.js";
 
-const source = await readFile(new URL("../media-store.js", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/media-store.js", import.meta.url), "utf8");
 
 test("media storage accepts images videos audio documents and inert creator sources", () => {
   assert.doesNotThrow(() => validateMediaBlob(new Blob(["frame"], { type: "image/webp" })));

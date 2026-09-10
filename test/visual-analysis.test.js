@@ -9,8 +9,8 @@ import {
   normalizeVisualAnalysisV2,
   normalizeVisualModelResponse,
   prepareVisualSetSummary
-} from "../visual-analysis.js";
-import { createDefaultFacetCatalog } from "../facets.js";
+} from "../extension/visual-analysis.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
 
 function completeAnalysis(overrides = {}) {
   return {

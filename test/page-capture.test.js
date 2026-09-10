@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hasEnglishTranslation } from "../i18n.js";
-import { normalizeMediaAsset } from "../media.js";
+import { hasEnglishTranslation } from "../extension/i18n.js";
+import { normalizeMediaAsset } from "../extension/media.js";
 import {
   PAGE_CAPTURE_ADAPTERS,
   applyPageCaptureSelections,
@@ -21,7 +21,7 @@ import {
   pageCapturePermissionOrigins,
   pageCaptureStructureMatches,
   resolvePageCaptureImage
-} from "../page-capture.js";
+} from "../extension/page-capture.js";
 
 test("only media proven inside the article is proposed by default", () => {
   const candidate = normalizePageCaptureCandidate({

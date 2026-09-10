@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createDefaultFacetCatalog } from "../facets.js";
-import { prepareLibraryPackageDraft } from "../library-package-migrations.js";
-import { SCHEMA_VERSION, createDefaultTaxonomy } from "../taxonomy.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { prepareLibraryPackageDraft } from "../extension/library-package-migrations.js";
+import { SCHEMA_VERSION, createDefaultTaxonomy } from "../extension/taxonomy.js";
 
 test("dangling AI assignments are discarded while the case and durable visual analysis survive", () => {
   const result = prepareLibraryPackageDraft(packageValue(5, [entry("case:analysis", {

@@ -7,7 +7,7 @@ import {
   createScreenshotSaveUndo,
   normalizeLastSaveUndo,
   restoreScreenshotSaveEntry
-} from "../save-history.js";
+} from "../extension/save-history.js";
 
 test("entry save undo targets the exact created entry", () => {
   assert.deepEqual(createEntrySaveUndo("entry:new"), {

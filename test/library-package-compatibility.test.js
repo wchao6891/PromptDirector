@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import { CURRENT_LIBRARY_PACKAGE_VERSION } from "../library-package-format.js";
-import { prepareLibraryPackageDraft } from "../library-package-migrations.js";
-import { mergeLibraryPackage, parseLibraryPackage } from "../library-package.js";
-import { SCHEMA_VERSION } from "../taxonomy.js";
+import { CURRENT_LIBRARY_PACKAGE_VERSION } from "../extension/library-package-format.js";
+import { prepareLibraryPackageDraft } from "../extension/library-package-migrations.js";
+import { mergeLibraryPackage, parseLibraryPackage } from "../extension/library-package.js";
+import { SCHEMA_VERSION } from "../extension/taxonomy.js";
 
 const fixtureRoot = new URL("./fixtures/compat/", import.meta.url);
 

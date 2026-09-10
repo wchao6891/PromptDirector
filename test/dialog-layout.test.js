@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 test("fieldless confirmations do not render an empty body or permanent status band", async () => {
-  const source = await readFile(new URL("../ui-dialogs.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/ui-dialogs.js", import.meta.url), "utf8");
   assert.match(source, /if \(controls\.size \|\| body\.childElementCount\) form\.append\(body\)/);
   assert.match(source, /typeof options\.renderBody === "function"/);
   assert.match(source, /const ensureStatus = \(\) =>/);
@@ -12,8 +12,8 @@ test("fieldless confirmations do not render an empty body or permanent status ba
 
 test("AI settings use full-width task and service views instead of a cramped split pane", async () => {
   const [html, css] = await Promise.all([
-    readFile(new URL("../library.html", import.meta.url), "utf8"),
-    readFile(new URL("../library.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/library.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.css", import.meta.url), "utf8")
   ]);
 
   assert.match(html, /data-ai-routing-tab="tasks"[^>]*aria-selected="true"/);
@@ -26,7 +26,7 @@ test("AI settings use full-width task and service views instead of a cramped spl
 });
 
 test("AI configuration dialogs keep dirty credentials open until the user explicitly confirms discard", async () => {
-  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const providerDialog = source.slice(
     source.indexOf("async function openAiProviderDialog"),
     source.indexOf("function providerCategoryLabel")
@@ -42,7 +42,7 @@ test("AI configuration dialogs keep dirty credentials open until the user explic
 });
 
 test("connected service summaries omit internal verification chatter", async () => {
-  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const summary = source.slice(
     source.indexOf("function providerCatalogLabel"),
     source.indexOf("async function openAiTaskAssignmentDialog")
@@ -52,7 +52,7 @@ test("connected service summaries omit internal verification chatter", async () 
 });
 
 test("every model catalog refresh applies the complete AI configuration response", async () => {
-  const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const refreshOne = source.slice(
     source.indexOf("async function refreshAiProviderModels"),
     source.indexOf("async function refreshAiModelCatalogsForSession")
@@ -69,8 +69,8 @@ test("every model catalog refresh applies the complete AI configuration response
 
 test("video detail sizes from media dimensions and separates native controls from app actions", async () => {
   const [source, css] = await Promise.all([
-    readFile(new URL("../library.js", import.meta.url), "utf8"),
-    readFile(new URL("../library.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.css", import.meta.url), "utf8")
   ]);
   assert.match(source, /localVideo\.videoWidth/);
   assert.match(css, /is-video-detail\.is-immersive \{ height: auto/);

@@ -8,7 +8,7 @@ import {
   moveProjectLogicalCase,
   sortLibraryCases,
   sortProjects
-} from "../library-view.js";
+} from "../extension/library-view.js";
 
 test("recently added sorting uses the local join time and only views old savedAt as a fallback", () => {
   const cases = [

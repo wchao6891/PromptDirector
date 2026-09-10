@@ -8,7 +8,7 @@ import {
   failLibraryImportTransaction,
   normalizeLibraryImportTransactionsState,
   succeedLibraryImportTransaction
-} from "../library-import-transaction.js";
+} from "../extension/library-import-transaction.js";
 
 test("plan tokens ignore sync status, undo, and job noise but still react to live library changes", () => {
   const source = makeImportSource();

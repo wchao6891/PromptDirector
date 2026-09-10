@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   normalizeAiServiceProfiles,
   publicAiServiceProfiles
-} from "../ai-service-profiles.js";
+} from "../extension/ai-service-profiles.js";
 
 test("runtime service profiles are normalized without inventing defaults", () => {
   assert.deepEqual(normalizeAiServiceProfiles(), {

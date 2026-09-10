@@ -7,7 +7,7 @@ import {
   officialMediaEmbedUrl,
   parseOpenGraphMetadata,
   resolveMediaReference
-} from "../media-reference-resolver.js";
+} from "../extension/media-reference-resolver.js";
 
 test("common social video URLs are recognized and tracking parameters are removed", () => {
   const fixtures = [

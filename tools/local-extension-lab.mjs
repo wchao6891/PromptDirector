@@ -5,7 +5,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { extensionArchiveName, extensionIdFromPublicKey } from "./release-identity.mjs";
-import { readZipBlob } from "../zip.js";
+import { readZipBlob } from "../extension/zip.js";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 export const REQUIRED_MODEL_CHAIN_SCRIPTS = [
@@ -147,7 +147,7 @@ export function buildLabReceipt({
 
 async function main() {
   const startedAt = new Date().toISOString();
-  const manifest = JSON.parse(await readFile(join(projectRoot, "manifest.json"), "utf8"));
+  const manifest = JSON.parse(await readFile(join(projectRoot, "extension", "manifest.json"), "utf8"));
   const archiveName = extensionArchiveName(manifest);
   const archivePath = join(projectRoot, "dist", archiveName);
   const archiveBytes = await readFile(archivePath);

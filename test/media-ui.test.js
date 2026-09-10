@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
-const css = await readFile(new URL("../library.css", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
+const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
 
 test("gallery cards keep static covers and opt into bounded local hover playback", () => {
   const card = source.slice(source.indexOf("function createCaseCard"), source.indexOf("function renderProjectFilters"));
@@ -66,7 +66,7 @@ test("PDF uses the local document viewer rather than a blob iframe", () => {
 });
 
 test("the PDF display layer disables dynamic expression evaluation", async () => {
-  const documentViewer = await readFile(new URL("../document-viewer.js", import.meta.url), "utf8");
+  const documentViewer = await readFile(new URL("../extension/document-viewer.js", import.meta.url), "utf8");
   assert.match(documentViewer, /isEvalSupported:\s*false/);
 });
 
@@ -77,7 +77,7 @@ test("notes and text documents render readable card excerpts instead of no-media
 });
 
 test("Markdown uses a safe local reading renderer instead of a preformatted text dump", async () => {
-  const renderer = await readFile(new URL("../markdown-renderer.js", import.meta.url), "utf8");
+  const renderer = await readFile(new URL("../extension/markdown-renderer.js", import.meta.url), "utf8");
   const viewer = source.slice(source.indexOf("async function createMediaViewer"), source.indexOf("async function loadRemoteMarkdownImage"));
   const markdownBranch = viewer.slice(viewer.indexOf('asset.mimeType === "text/markdown"'), viewer.indexOf("  } else {", viewer.indexOf('asset.mimeType === "text/markdown"')));
   assert.match(viewer, /renderMarkdownDocument/);

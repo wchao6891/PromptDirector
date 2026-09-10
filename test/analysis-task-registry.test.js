@@ -7,12 +7,12 @@ import {
   normalizeAnalysisTaskRegistry,
   recoverInterruptedAnalysisTasks,
   replaceAnalysisTask
-} from "../analysis-task-registry.js";
+} from "../extension/analysis-task-registry.js";
 import {
   createAnalysisTask,
   startAnalysisAttempt,
   updateAnalysisTaskProgress
-} from "../analysis-tasks.js";
+} from "../extension/analysis-tasks.js";
 
 test("video task progress records the paid request boundary and survives normalization", () => {
   const task = createAnalysisTask({ id: "task:video", now: "2026-09-03T10:00:00.000Z" });

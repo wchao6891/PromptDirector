@@ -8,7 +8,7 @@ import {
   maskAlphaAt,
   scalePointerToImage,
   undoMaskStroke
-} from "../composer-image-workspace.js";
+} from "../extension/composer-image-workspace.js";
 
 test("mask coordinates follow the displayed image while transparent pixels mean edit", () => {
   const point = scalePointerToImage({

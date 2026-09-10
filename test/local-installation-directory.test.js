@@ -4,9 +4,9 @@ import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { directory, served } from './helpers/local-upgrade-directory.mjs';
-import { extensionIdForKey } from '../local-extension-upgrade.js';
-import { resolveLocalInstallationDirectory } from '../local-installation-directory.js';
-const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url)));
+import { extensionIdForKey } from '../extension/local-extension-upgrade.js';
+import { resolveLocalInstallationDirectory } from '../extension/local-installation-directory.js';
+const manifest = JSON.parse(await readFile(new URL('../extension/manifest.json', import.meta.url)));
 const id = await extensionIdForKey(manifest.key);
 const runtime = { id, getManifest:()=>manifest, getURL:path=>`chrome-extension://${id}/${path}` };
 async function fixture(t) {

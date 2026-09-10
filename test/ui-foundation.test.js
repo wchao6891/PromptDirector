@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
-const sprite = await readFile(new URL("../assets/ui-icons.svg", import.meta.url), "utf8");
+const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
+const sprite = await readFile(new URL("../extension/assets/ui-icons.svg", import.meta.url), "utf8");
 
 function relativeLuminance(hex) {
   const channels = hex.match(/[a-f\d]{2}/gi).map((value) => parseInt(value, 16) / 255);
@@ -85,7 +85,7 @@ test("light fields use one neutral edge with a soft branded halo while dark focu
 
 test("page styles keep domain layout without redefining shared theme roles", async () => {
   for (const pageStyle of ["library.css", "curated.css", "collector.css", "skills-page.css", "composer-page.css"]) {
-    const source = await readFile(new URL(`../${pageStyle}`, import.meta.url), "utf8");
+    const source = await readFile(new URL(`../extension/${pageStyle}`, import.meta.url), "utf8");
     assert.doesNotMatch(source, /--paper:\s*#/i, `${pageStyle} 不应重新定义页面主题色`);
     assert.doesNotMatch(source, /--accent:\s*#/i, `${pageStyle} 不应重新定义品牌色`);
     assert.doesNotMatch(source, /(?:^|\n)button\s*\{/i, `${pageStyle} 不应重新定义通用按钮`);
@@ -94,7 +94,7 @@ test("page styles keep domain layout without redefining shared theme roles", asy
 
 test("brand green is reserved for fills and indicators instead of light-theme copy", async () => {
   for (const sourceFile of ["ui-foundation.css", "library.css", "curated.css", "collector.css", "skills-page.css", "composer-page.css", "share-preview.js"]) {
-    const source = await readFile(new URL(`../${sourceFile}`, import.meta.url), "utf8");
+    const source = await readFile(new URL(`../extension/${sourceFile}`, import.meta.url), "utf8");
     assert.doesNotMatch(source, /(?:^|[;{])\s*color:\s*var\(--(?:ui-)?accent-emphasis\)/m, `${sourceFile} 不应把品牌荧光绿直接用于文字`);
   }
 });

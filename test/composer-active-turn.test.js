@@ -6,8 +6,8 @@ import {
   createLatestCheckpointWriter,
   recoverInterruptedComposerTurn,
   updateComposerActiveTurn
-} from "../composer-active-turn.js";
-import { createComposerSession } from "../composer.js";
+} from "../extension/composer-active-turn.js";
+import { createComposerSession } from "../extension/composer.js";
 
 test("an active text turn persists only recoverable request facts and partial text", () => {
   const activeTurn = createComposerActiveTurn({

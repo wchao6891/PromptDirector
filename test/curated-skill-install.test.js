@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { installCuratedSkillTransaction, planCuratedSkillInstall } from "../curated-skill-install.js";
+import { installCuratedSkillTransaction, planCuratedSkillInstall } from "../extension/curated-skill-install.js";
 
 const item = { id: "composition@1.0.0", skillId: "composition", version: "1.0.0", sha256: "a".repeat(64) };
 const parsed = {

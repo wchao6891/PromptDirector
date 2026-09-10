@@ -2,12 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { createZipBlob, openZipBlob, readZipBlob } from "../zip.js";
-import { renderLibraryJson } from "../lib.js";
-import { parseLibraryPackage } from "../library-package.js";
-import { sha256Blob } from "../blob-digest.js";
-import { resolveZip64Extra, zipSafeInteger } from "../zip64.js";
-import { verifiedDocumentBlob } from "../bounded-media.js";
+import { createZipBlob, openZipBlob, readZipBlob } from "../extension/zip.js";
+import { renderLibraryJson } from "../extension/lib.js";
+import { parseLibraryPackage } from "../extension/library-package.js";
+import { sha256Blob } from "../extension/blob-digest.js";
+import { resolveZip64Extra, zipSafeInteger } from "../extension/zip64.js";
+import { verifiedDocumentBlob } from "../extension/bounded-media.js";
 
 test("more than 5000 cases and projects survive default transfer parsing", () => {
   const entries = Array.from({ length: 5001 }, (_, index) => ({

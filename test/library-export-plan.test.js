@@ -8,7 +8,7 @@ import {
   inspectFolderBackupEnvelope,
   verifyFolderBackupCompletion,
   verifyFolderRescueCompletion
-} from "../library-export-plan.js";
+} from "../extension/library-export-plan.js";
 
 test("folder completion is written from actual files and rejects later byte changes", async () => {
   const files = new Map([

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeEntryMedia, removeEntryMedia, setEntryMediaPrompt } from "../media.js";
+import { normalizeEntryMedia, removeEntryMedia, setEntryMediaPrompt } from "../extension/media.js";
 
 const entry = {
   id: "case-1",

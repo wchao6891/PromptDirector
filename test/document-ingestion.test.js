@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ingestLocalDocument } from "../document-ingestion.js";
-import { detectLocalMediaFile, prepareLocalMedia } from "../local-media.js";
+import { ingestLocalDocument } from "../extension/document-ingestion.js";
+import { detectLocalMediaFile, prepareLocalMedia } from "../extension/local-media.js";
 
 const parseHtml = (source) => ({ body: source, querySelectorAll: () => [] });
 const toMarkdown = (source) => String(source)

@@ -8,7 +8,7 @@ import {
   normalizeCompoundCases,
   splitCompoundCase,
   updateCompoundCase
-} from "../compound-cases.js";
+} from "../extension/compound-cases.js";
 
 const entries = [
   entry("one", "分镜提示词", "content:prompt:image", "visual-one"),

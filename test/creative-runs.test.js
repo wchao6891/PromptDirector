@@ -15,7 +15,7 @@ import {
   recordCreativeSignal,
   removeCreativeOutput,
   updateCreativeJudgment
-} from "../creative-runs.js";
+} from "../extension/creative-runs.js";
 
 const promptVersion = {
   id: "prompt:v1",

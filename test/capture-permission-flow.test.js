@@ -20,10 +20,10 @@ import {
   requestCapturePermissionBundle,
   RESTRICTED_PAGE_MESSAGE,
   resolveActivePage
-} from "../capture-permissions.js";
-import { runCaptureTransaction } from "../capture-workspace.js";
+} from "../extension/capture-permissions.js";
+import { runCaptureTransaction } from "../extension/capture-workspace.js";
 
-const projectRoot = new URL("../", import.meta.url);
+const projectRoot = new URL("../extension/", import.meta.url);
 
 test("explicit clipboard extraction uses one optional permission with a recoverable grant", async () => {
   const manifest = JSON.parse(await readFile(new URL("manifest.json", projectRoot), "utf8"));

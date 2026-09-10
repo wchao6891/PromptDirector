@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 test("data safety lives inside general settings without a top-level entry", async () => {
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const topbar = html.slice(html.indexOf('<header class="topbar">'), html.indexOf("</header>"));
 
   assert.doesNotMatch(topbar, /id="open-data-safety"|备份与同步/);
@@ -13,7 +13,7 @@ test("data safety lives inside general settings without a top-level entry", asyn
 });
 
 test("whole-library portable ZIP backup is removed while selected-case sharing remains", async () => {
-  const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   assert.doesNotMatch(background, /case "CREATE_PORTABLE_BACKUP"/);
   assert.match(background, /case "EXPORT_ARCHIVE"/);
   const exporter = background.slice(background.indexOf("async function exportArchive"), background.indexOf("async function exportProjectArchive"));
@@ -22,7 +22,7 @@ test("whole-library portable ZIP backup is removed while selected-case sharing r
 });
 
 test("connecting a sync folder immediately states that it only verifies access", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const actionBody = library.slice(
     library.indexOf("async function runDataSafetyAction"),
     library.indexOf("function showDataSafetyFeedback")
@@ -37,7 +37,7 @@ test("connecting a sync folder immediately states that it only verifies access",
 });
 
 test("a missing sync location shows a localized recovery action instead of the browser error", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const renderBody = library.slice(
     library.indexOf("async function renderDataSafetyStatus"),
     library.indexOf("async function chooseSyncFolder")
@@ -55,7 +55,7 @@ test("a missing sync location shows a localized recovery action instead of the b
 });
 
 test("share-package import is separate from the two backup actions while sync stays collapsed", async () => {
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const panel = html.slice(
     html.indexOf('<section id="data-safety-dialog"'),
     html.indexOf('<footer class="settings-about"')
@@ -79,10 +79,10 @@ test("share-package import is separate from the two backup actions while sync st
 });
 
 test("share-package batch import preserves local configuration and accepts historical package versions", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
-  const parser = await readFile(new URL("../library-package.js", import.meta.url), "utf8");
-  const migrations = await readFile(new URL("../library-package-migrations.js", import.meta.url), "utf8");
-  const format = await readFile(new URL("../library-package-format.js", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+  const parser = await readFile(new URL("../extension/library-package.js", import.meta.url), "utf8");
+  const migrations = await readFile(new URL("../extension/library-package-migrations.js", import.meta.url), "utf8");
+  const format = await readFile(new URL("../extension/library-package-format.js", import.meta.url), "utf8");
   const action = library.slice(
     library.indexOf("async function importSharedLibraryPackage"),
     library.indexOf("function backupMediaPaths")
@@ -98,8 +98,8 @@ test("share-package batch import preserves local configuration and accepts histo
 });
 
 test("multi-ZIP import uses one wide preflight with blocking failures and one batch apply", async () => {
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const dialog = html.slice(
     html.indexOf('id="library-package-import-dialog"'),
     html.indexOf('id="drawer-backdrop"')
@@ -133,7 +133,7 @@ test("multi-ZIP import uses one wide preflight with blocking failures and one ba
 });
 
 test("data safety cannot be dismissed accidentally while a storage operation is running", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const bindings = library.slice(
     library.indexOf("elements.settingsClose.addEventListener"),
     library.indexOf("elements.connectSyncFolder.addEventListener")
@@ -145,7 +145,7 @@ test("data safety cannot be dismissed accidentally while a storage operation is 
 });
 
 test("folder backup self-check covers project and media trash snapshots plus their relationships", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const roundtrip = library.slice(
     library.indexOf("function assertFolderBackupRoundtrip"),
     library.indexOf("async function localAssetReferenceBackupBlob")
@@ -156,8 +156,8 @@ test("folder backup self-check covers project and media trash snapshots plus the
 });
 
 test("folder restore exposes safe merge and exact replace with aggregate capacity and a reversible recovery point", async () => {
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const restore = library.slice(
     library.indexOf("async function restoreCompleteFolderBackup"),
     library.indexOf("async function importSharedLibraryPackage")

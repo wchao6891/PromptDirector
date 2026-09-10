@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   filesWithoutInvalidLibraryImages,
   findInvalidImportedImageIds
-} from "../library-import-media.js";
+} from "../extension/library-import-media.js";
 
 test("shared ZIP validation reports every undecodable image instead of stopping at the first one", async () => {
   const good = new Blob(["good"], { type: "image/webp" });

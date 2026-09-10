@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { usesArticleReader, usesPostReader, mediaFormatLabel } from "../case-presentation.js";
+import { usesArticleReader, usesPostReader, mediaFormatLabel } from "../extension/case-presentation.js";
 
 test("creative classifications open existing case details regardless of webpage origin", () => {
   const articleDocument = { blocks: [{ kind: "paragraph", text: "Original prompt" }] };

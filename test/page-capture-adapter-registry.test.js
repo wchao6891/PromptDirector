@@ -5,7 +5,7 @@ import {
   PAGE_CAPTURE_ADAPTERS,
   pageCaptureSupportMatrix,
   resolvePageCaptureAdapter
-} from "../page-capture-adapter-registry.js";
+} from "../extension/page-capture-adapter-registry.js";
 
 test("the capture registry covers the requested public-site families without duplicate adapters", () => {
   const fixtures = new Map([

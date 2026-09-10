@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseStructuredObject } from "../structured-output.js";
+import { parseStructuredObject } from "../extension/structured-output.js";
 
 test("structured output accepts fenced JSON, surrounding prose, a trailing comma, and double encoding", () => {
   assert.deepEqual(parseStructuredObject("\uFEFF```json\n{\"tags\":[{\"g\":\"style.render\",}],}\n```"), {

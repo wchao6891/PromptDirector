@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
+const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 
 test("cross-page draft parts save as one case unless the user targeted an existing compound", () => {
   const commit = sourceBlock("async function commitCaptureDraft", "async function commitCaptureIntoCompound");

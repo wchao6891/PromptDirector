@@ -29,11 +29,11 @@ import {
   normalizeAnalysisBatchJob,
   reconcileVisionBatchResults,
   recoverInterruptedAnalysisBatch
-} from "../analysis-batch.js";
-import { ANALYSIS_PROMPT_VERSION } from "../deepseek.js";
-import { createFixedFacetCatalog } from "../tag-taxonomy.js";
+} from "../extension/analysis-batch.js";
+import { ANALYSIS_PROMPT_VERSION } from "../extension/deepseek.js";
+import { createFixedFacetCatalog } from "../extension/tag-taxonomy.js";
 
-const backgroundSource = await readFile(new URL("../background.js", import.meta.url), "utf8");
+const backgroundSource = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 
 test("analysis-file import wires the legacy baseline helper into the background runtime", () => {
   const importEnd = backgroundSource.indexOf('} from "./analysis-batch.js";');

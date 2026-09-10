@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const [manifest, foundation, sharePreview] = await Promise.all([
-  readFile(new URL("../manifest.json", import.meta.url), "utf8"),
-  readFile(new URL("../ui-foundation.css", import.meta.url), "utf8"),
-  readFile(new URL("../share-preview.js", import.meta.url), "utf8")
+  readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
+  readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8"),
+  readFile(new URL("../extension/share-preview.js", import.meta.url), "utf8")
 ]);
 
 test("Chrome 134 customizable selects use the shared PromptDirector surface", () => {

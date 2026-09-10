@@ -9,7 +9,7 @@ import {
   createLibraryReturnRestore,
   parseLibraryReturnSnapshot,
   serializeLibraryReturnSnapshot
-} from "../navigation-state.js";
+} from "../extension/navigation-state.js";
 
 function normalizeRoute(route) {
   const view = ["list", "detail", "editor", "refine", "create"].includes(route?.view) ? route.view : "list";

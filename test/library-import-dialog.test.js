@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildLibraryImportReport } from "../library-import-dialog.js";
+import { buildLibraryImportReport } from "../extension/library-import-dialog.js";
 
 test("import report separates created, identical, repaired, and skipped results", () => {
   const report = buildLibraryImportReport({

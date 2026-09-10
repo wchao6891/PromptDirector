@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeAiPreferences } from "../ai-runtime.js";
-import { videoAnalysisPrompt } from "../video-analysis.js";
+import { normalizeAiPreferences } from "../extension/ai-runtime.js";
+import { videoAnalysisPrompt } from "../extension/video-analysis.js";
 
 test("video methods expose full audiovisual coverage while preserving custom rules", () => {
   const defaults = normalizeAiPreferences({ version: 2 });

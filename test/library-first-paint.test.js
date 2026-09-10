@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const [html, source, styles] = await Promise.all([
-  readFile(new URL("../library.html", import.meta.url), "utf8"),
-  readFile(new URL("../library.js", import.meta.url), "utf8"),
-  readFile(new URL("../library.css", import.meta.url), "utf8")
+  readFile(new URL("../extension/library.html", import.meta.url), "utf8"),
+  readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/library.css", import.meta.url), "utf8")
 ]);
 
 test("first paint shows one stable loading shell without fake library counts", () => {

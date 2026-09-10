@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { projectComboboxOptions, projectComboboxPlacement } from "../project-combobox.js";
+import { projectComboboxOptions, projectComboboxPlacement } from "../extension/project-combobox.js";
 
 test("project combobox exposes existing projects while preserving their real names", () => {
   assert.deepEqual(projectComboboxOptions([

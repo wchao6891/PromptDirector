@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { classifyContent } from "../classifier.js";
-import { CONTENT_IDS } from "../taxonomy.js";
-import { usesArticleReader } from "../case-presentation.js";
-import { normalizePageCaptureCandidate, resolvePageCapturePageType, applyPageCaptureSelections, collectPageCaptureSnapshot } from "../page-capture.js";
-import { normalizePageCaptureSitePayload } from "../page-capture-site-adapters.js";
-import { capturedMediaPrompts, planPageCaptureRepair, mergePageCaptureRepair } from "../page-capture-repair.js";
-import { normalizeEntryMedia, setEntryMediaPrompt } from "../media.js";
-import { detailPromptSources } from "../prompt-sources.js";
+import { classifyContent } from "../extension/classifier.js";
+import { CONTENT_IDS } from "../extension/taxonomy.js";
+import { usesArticleReader } from "../extension/case-presentation.js";
+import { normalizePageCaptureCandidate, resolvePageCapturePageType, applyPageCaptureSelections, collectPageCaptureSnapshot } from "../extension/page-capture.js";
+import { normalizePageCaptureSitePayload } from "../extension/page-capture-site-adapters.js";
+import { capturedMediaPrompts, planPageCaptureRepair, mergePageCaptureRepair } from "../extension/page-capture-repair.js";
+import { normalizeEntryMedia, setEntryMediaPrompt } from "../extension/media.js";
+import { detailPromptSources } from "../extension/prompt-sources.js";
 
 test("structured work descriptions are not original generation prompts", () => {
   for (const [kind, pageType, expected] of [["image", "artwork", CONTENT_IDS.imageCase], ["video", "video", CONTENT_IDS.videoCase]]) {
@@ -135,7 +135,7 @@ test("recapture fills missing per-image prompts without downloading saved media 
 });
 
 test("capture save and additions cannot enqueue paid analysis as an automatic side effect", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   for (const name of ["commitPageCapture", "commitCaptureDraft", "commitCaptureIntoCompound", "addUploadedVisual", "addUploadedMedia"]) {
     const start = source.indexOf(`async function ${name}(`);
     assert.ok(start >= 0);

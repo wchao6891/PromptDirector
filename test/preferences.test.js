@@ -6,7 +6,7 @@ import {
   normalizeSidebarWidth,
   normalizeUiPreferences,
   resolveLocale
-} from "../preferences.js";
+} from "../extension/preferences.js";
 
 test("UI preferences accept only supported locale theme and motion values", () => {
   assert.deepEqual(normalizeUiPreferences({ locale: "fr", theme: "neon", motion: "spin" }), {

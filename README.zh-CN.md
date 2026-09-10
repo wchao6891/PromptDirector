@@ -83,28 +83,12 @@
 
 </details>
 
-<details>
-<summary>开发与验证</summary>
 
-
-需要 Node.js 22.13 或更高版本。
-
-```sh
-npm install
-npm run verify
-```
-
-`npm run verify` 是完整验证门槛，构建与验证不会自动发布 GitHub Release 或上传商店：先完成源码、资源、历史数据兼容与单元测试，再把固定 ID 本地包加载到隔离的 Chrome for Testing 中跑完整浏览器 E2E；全部通过后生成商店包，并用上一正式版资料执行同一 Chrome Profile 的最终包升级演练。任一阶段失败都不会通过门禁。只需快速检查源码时可运行 `npm run verify:source`，只检查历史数据合同可运行 `npm run check:compat`。`npm run test:local-extension` 是打包后自动化主验收；`npm run package` 生成保留固定身份的本地安装包；`npm run package:release` 生成移除 `key` 的 Chrome Web Store 上传包。两者共用案例、媒体和创作功能。商店包移除本地程序安装器，只保留 Chrome 更新；固定身份本地包保留原位升级。正式身份缺失时命令会明确失败，避免用户资料被错误扩展 ID 隔离。
-
-已发布数据的长期支持规则、权威夹具和升级门禁见[数据兼容说明](docs/DATA_COMPATIBILITY.md)。当前浏览器兼容边界和已确认但延期的增强记录在[已知限制](docs/KNOWN_LIMITATIONS.md)。
-
-
-</details>
 
 ## 参与与许可
 
 欢迎提交问题、改善交互、完善采集适配、补充测试与文档。[反馈问题](https://github.com/wchao6891/PromptDirector/issues)时，请说明页面类型、用户可见的问题和复现步骤；提供示例前移除 API Key、私人资料和未获授权的素材。提交代码前请运行 `npm run verify`。
 
-界面改动先阅读[当前设计与验收原则](design-qa.md#当前设计与验收原则)，以用户已确认的页面效果为基线，同时验证视觉和原有操作流程。
+参与开发请阅读[开发指南](docs/DEVELOPMENT.md)和[界面规范](docs/DESIGN.md)。
 
 代码采用 [Apache License 2.0](LICENSE)。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。代码许可不授予第三方案例素材的使用权。

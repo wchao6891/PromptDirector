@@ -106,7 +106,7 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, pathlib, subprocess, sys, zipfile
-          version = json.loads(pathlib.Path('manifest.json').read_text())['version']
+          version = json.loads(pathlib.Path('extension/manifest.json').read_text())['version']
           destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'PromptDirector'
           with zipfile.ZipFile(f'dist/PromptDirector-{version}-FIXED-ID-DEV.zip') as archive:
               archive.extractall(destination)

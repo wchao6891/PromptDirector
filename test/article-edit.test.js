@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { updateArticleText } from "../article-edit.js";
-import { articleDocumentText, normalizeArticleDocument } from "../article-document.js";
+import { updateArticleText } from "../extension/article-edit.js";
+import { articleDocumentText, normalizeArticleDocument } from "../extension/article-document.js";
 
 const entry = () => {
   const articleDocument = normalizeArticleDocument({ blocks: [

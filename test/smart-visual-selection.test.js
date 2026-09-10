@@ -6,7 +6,7 @@ import {
   createSmartVisualSelectionSession,
   shouldClearSmartVisualSelection,
   updateSmartVisualSelectionSession
-} from "../smart-visual-selection.js";
+} from "../extension/smart-visual-selection.js";
 
 test("smart visual selection keeps cross-context identity geometry and selections explicit", () => {
   const started = createSmartVisualSelectionSession({

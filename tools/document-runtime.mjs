@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const targetRoot = join(projectRoot, "vendor", "document-ingestion");
+const targetRoot = join(projectRoot, "extension", "vendor", "document-ingestion");
 const checkOnly = process.argv.includes("--check");
 const rtfDist = join(projectRoot, "node_modules", "@jonahschulte", "rtf-toolkit", "dist");
 const sources = [

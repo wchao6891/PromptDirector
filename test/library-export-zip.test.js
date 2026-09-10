@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createVerifiedLibraryZip } from "../library-export-zip.js";
-import { renderLibraryJson } from "../lib.js";
-import { parseLibraryPackage } from "../library-package.js";
-import { createArchiveUrl } from "../offscreen.js";
-import { readZipBlob, createZipBlob } from "../zip.js";
-import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
+import { createVerifiedLibraryZip } from "../extension/library-export-zip.js";
+import { renderLibraryJson } from "../extension/lib.js";
+import { parseLibraryPackage } from "../extension/library-package.js";
+import { createArchiveUrl } from "../extension/offscreen.js";
+import { readZipBlob, createZipBlob } from "../extension/zip.js";
+import { PORTABLE_LIBRARY_LIMITS } from "../extension/resource-limits.js";
 
 test("downloaded Skill archives survive case export and import unchanged as inert attachments", async () => {
   const skill = await createZipBlob([{ name: "fixture/SKILL.md", data: "# Fixture\nOriginal skill bytes." }]);

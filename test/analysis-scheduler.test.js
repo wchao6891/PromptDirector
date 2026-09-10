@@ -6,7 +6,7 @@ import {
   createAnalysisScheduler,
   runScheduledAnalysisWithRetries,
   scheduleAnalysis
-} from "../analysis-scheduler.js";
+} from "../extension/analysis-scheduler.js";
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 

@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AI_MODEL_CAPABILITIES, getAiModelCapability } from "../ai-model-capabilities.js";
-import { createAiProviderModule } from "../ai-provider-module.js";
-import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
+import { AI_MODEL_CAPABILITIES, getAiModelCapability } from "../extension/ai-model-capabilities.js";
+import { createAiProviderModule } from "../extension/ai-provider-module.js";
+import { PORTABLE_LIBRARY_LIMITS } from "../extension/resource-limits.js";
 
 const MP4 = Uint8Array.from([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]);
 

@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
 
-import { createZipBlob, openZipBlob, readZipBlob } from "../zip.js";
-import { PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
+import { createZipBlob, openZipBlob, readZipBlob } from "../extension/zip.js";
+import { PORTABLE_LIBRARY_LIMITS } from "../extension/resource-limits.js";
 
 test("ZIP roundtrip preserves original image bytes above the document limit", async () => {
   assert.equal(PORTABLE_LIBRARY_LIMITS.maxImageBytes, 32 * 1024 * 1024);

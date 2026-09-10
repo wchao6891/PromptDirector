@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { analysisTaxonomyPrompt } from "../deepseek.js";
-import { previewFacetChange } from "../facets.js";
+import { analysisTaxonomyPrompt } from "../extension/deepseek.js";
+import { previewFacetChange } from "../extension/facets.js";
 import {
   ANALYSIS_TAG_MAX,
   FIXED_TAG_TREE,
@@ -12,7 +12,7 @@ import {
   createFixedFacetCatalog,
   detailNavigation,
   validateAnalysisTagResponse
-} from "../tag-taxonomy.js";
+} from "../extension/tag-taxonomy.js";
 
 test("fixed tag tree always contains ten facets and a protected other group in each facet", () => {
   const catalog = createFixedFacetCatalog();

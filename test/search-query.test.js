@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterEntries } from "../library-model.js";
-import { parseSearchQuery } from "../search-query.js";
-import { buildSearchIndex, searchIndexedEntries } from "../search-index.js";
+import { filterEntries } from "../extension/library-model.js";
+import { parseSearchQuery } from "../extension/search-query.js";
+import { buildSearchIndex, searchIndexedEntries } from "../extension/search-index.js";
 
 const catalog = {
   facets: [{ id: "style", name: "风格", color: "#000", status: "active", order: 0 }],

@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const bootstrap = await readFile(new URL("../theme-bootstrap.js", import.meta.url), "utf8");
-const uiRuntime = await readFile(new URL("../i18n.js", import.meta.url), "utf8");
+const bootstrap = await readFile(new URL("../extension/theme-bootstrap.js", import.meta.url), "utf8");
+const uiRuntime = await readFile(new URL("../extension/i18n.js", import.meta.url), "utf8");
 
 const pages = [
   "library.html",
@@ -37,7 +37,7 @@ test("ui initialization replaces provisional first-paint colors with live semant
 
 test("every first-party shell loads bootstrap, shared foundation, then page styles", async () => {
   for (const page of pages) {
-    const html = await readFile(new URL(`../${page}`, import.meta.url), "utf8");
+    const html = await readFile(new URL(`../extension/${page}`, import.meta.url), "utf8");
     const bootstrapIndex = html.indexOf('<script src="theme-bootstrap.js"></script>');
     const foundationIndex = html.indexOf('<link rel="stylesheet" href="ui-foundation.css" />');
     const stylesheetIndex = html.indexOf('<link rel="stylesheet"', foundationIndex + 1);

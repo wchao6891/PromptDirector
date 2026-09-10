@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
-const css = await readFile(new URL("../library.css", import.meta.url), "utf8");
-const js = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const tagEditor = await readFile(new URL("../tag-editor.js", import.meta.url), "utf8");
+const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
+const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
+const js = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const tagEditor = await readFile(new URL("../extension/tag-editor.js", import.meta.url), "utf8");
 
 function rule(source, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

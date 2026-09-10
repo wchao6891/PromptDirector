@@ -12,8 +12,8 @@ import {
   normalizeImageGenerationRequest,
   normalizeVideoGenerationRequest,
   planComposerTurnWithService
-} from "../composer-service.js";
-import { createComposerSession, normalizeComposerSettings } from "../composer.js";
+} from "../extension/composer-service.js";
+import { createComposerSession, normalizeComposerSettings } from "../extension/composer.js";
 
 const settings = normalizeComposerSettings();
 

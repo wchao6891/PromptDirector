@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createComposerSession, normalizeComposerSettings } from "../composer.js";
-import { applyComposerServiceResult, prepareComposerTurnStart } from "../composer-turn-core.js";
-import { resolveComposerTurnPolicy } from "../composer-turn-policy.js";
+import { createComposerSession, normalizeComposerSettings } from "../extension/composer.js";
+import { applyComposerServiceResult, prepareComposerTurnStart } from "../extension/composer-turn-core.js";
+import { resolveComposerTurnPolicy } from "../extension/composer-turn-policy.js";
 
 test("a manual text task starts streaming execution with the saved user request", () => {
   const session = createComposerSession({

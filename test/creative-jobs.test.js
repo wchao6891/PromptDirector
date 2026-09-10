@@ -10,12 +10,12 @@ import {
   retryCreativeJob,
   settleCreativeJobStop,
   updateCreativeJob
-} from "../creative-jobs.js";
+} from "../extension/creative-jobs.js";
 
 const [background, offscreen, runner] = await Promise.all([
-  readFile(new URL("../background.js", import.meta.url), "utf8"),
-  readFile(new URL("../offscreen.js", import.meta.url), "utf8"),
-  readFile(new URL("../creative-job-runner.js", import.meta.url), "utf8")
+  readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/offscreen.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/creative-job-runner.js", import.meta.url), "utf8")
 ]);
 
 function request(overrides = {}) {

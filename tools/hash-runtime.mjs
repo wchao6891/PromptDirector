@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const source = new URL("../node_modules/@noble/hashes/", import.meta.url);
-const target = new URL("../vendor/noble-hashes/", import.meta.url);
+const target = new URL("../extension/vendor/noble-hashes/", import.meta.url);
 const check = process.argv.includes("--check");
 const files = ["sha2.js", "_md.js", "_u64.js", "utils.js", "LICENSE"];
 if (!check) await mkdir(target, { recursive: true });

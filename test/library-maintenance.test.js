@@ -12,7 +12,7 @@ import {
   pauseLibraryMaintenance,
   resumeLibraryMaintenance,
   retryLibraryMaintenanceFailures
-} from "../library-maintenance.js";
+} from "../extension/library-maintenance.js";
 
 test("full-library maintenance stores compact cursors and reports monotonic progress", () => {
   let job = createLibraryMaintenanceJob({

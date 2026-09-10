@@ -12,8 +12,8 @@ import {
   removeDraftFragment,
   reorderDraftFragments,
   setDraftPrimaryVisual
-} from "../capture-draft.js";
-import { normalizeEntryVisuals, primaryVisual } from "../visuals.js";
+} from "../extension/capture-draft.js";
+import { normalizeEntryVisuals, primaryVisual } from "../extension/visuals.js";
 
 test("a capture draft combines ordered highlights across pages without duplicating the same selection", () => {
   let draft = createCaptureDraft();

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createDefaultFacetCatalog } from "../facets.js";
-import { createDefaultTaxonomy, SCHEMA_VERSION } from "../taxonomy.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { createDefaultTaxonomy, SCHEMA_VERSION } from "../extension/taxonomy.js";
 import {
   LIBRARY_TRANSFER_MODES,
   LIBRARY_TRANSFER_SOURCES,
@@ -10,7 +10,7 @@ import {
   libraryTransferWriteBytes,
   planLibraryTransfer,
   planLibraryTransferBatch
-} from "../library-transfer.js";
+} from "../extension/library-transfer.js";
 
 test("ZIP and complete-folder adapters produce one canonical inspected transfer", async () => {
   const source = portablePackage([portableEntry("case:one", "image:one")]);

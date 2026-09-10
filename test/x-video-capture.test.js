@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { installXVideoObserver, applyXVideoSources, resolveXVideoSources } from '../x-video-capture.js';
+import { installXVideoObserver, applyXVideoSources, resolveXVideoSources } from '../extension/x-video-capture.js';
 
 const variant = (name, bitrate = 1) => ({url:`https://video.twimg.com/${name}.mp4`,content_type:'video/mp4',bitrate});
 const post = (id, name) => ({rest_id:id,legacy:{extended_entities:{media:[{id_str:`media-${id}`,media_url_https:`https://pbs.twimg.com/${name}.jpg`,video_info:{variants:[variant(name),variant(`${name}-hd`,10)]}}]}}});

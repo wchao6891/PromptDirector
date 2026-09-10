@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { migrateLibraryState } from "../migration.js";
+import { migrateLibraryState } from "../extension/migration.js";
 import {
   CONTENT_IDS,
   CONTENT_ROLES,
@@ -16,11 +16,11 @@ import {
   removeContentTypeWithTransfer,
   renameContentType,
   updateContentType
-} from "../taxonomy.js";
+} from "../extension/taxonomy.js";
 import {
   applyFacetChange, createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, createFacetNode,
   normalizeFacetCatalog, previewFacetChange, undoFacetChange
-} from "../facets.js";
+} from "../extension/facets.js";
 
 test("new libraries include first-class image, video, and document material types", () => {
   const taxonomy = createDefaultTaxonomy();

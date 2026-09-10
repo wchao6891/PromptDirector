@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createSimilarityIndex, rankSimilarEntries } from "../local-similarity.js";
-import { createEmptyFacetCatalog, createFacet, createFacetNode } from "../facets.js";
+import { createSimilarityIndex, rankSimilarEntries } from "../extension/local-similarity.js";
+import { createEmptyFacetCatalog, createFacet, createFacetNode } from "../extension/facets.js";
 
 function catalog() {
   let value = createFacet(createEmptyFacetCatalog(), { id: "facet:style", name: "视觉风格" });

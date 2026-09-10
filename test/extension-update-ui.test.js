@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { load } from "cheerio";
-const root = new URL("../", import.meta.url);
+const root = new URL("../extension/", import.meta.url);
 const [html, source, local] = await Promise.all(["library.html", "library.js", "local-extension-upgrade-ui.js"].map(path => readFile(new URL(path, root), "utf8")));
 const $ = load(html);
 

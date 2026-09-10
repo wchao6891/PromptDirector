@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from playwright.sync_api import expect
 
-from e2e_support import SOURCE_EXTENSION_DIR, ai_configuration_fixture, extension_session, wait_for_async_condition
+from e2e_support import ai_configuration_fixture, extension_session, wait_for_async_condition
 from zhipu_glm_analysis_e2e import extension_with_local_provider_permission
 
 
@@ -87,7 +88,7 @@ def run_route(provider_id, model, temporary):
         }''', {'providerId': provider_id, 'model': model, 'temporary': temporary})
         page = run.open_page('composer.html?session=video-dialogue', wait_until='networkidle')
         if temporary:
-            page.locator('#composer-attachment-files').set_input_files(str(SOURCE_EXTENSION_DIR / 'test/fixtures/zhipu-local-video-smoke.mp4'))
+            page.locator('#composer-attachment-files').set_input_files(str(Path(__file__).parent / 'fixtures/zhipu-local-video-smoke.mp4'))
         try:
             expect(page.locator('.composer-temp-reference-card' if temporary else '.composer-input-reference-card')).to_have_count(1)
         except AssertionError:
