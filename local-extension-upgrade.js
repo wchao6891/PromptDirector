@@ -65,23 +65,46 @@ async function fileAt(root, path, create = false) {
 }
 
 async function readFile(root, path) {
-  try { return await (await fileAt(root, path)).handle.getFile(); }
+  try { return await readProgramSnapshot((await fileAt(root, path)).handle, path); }
   catch (error) { if (error.name === "NotFoundError") return null; throw error; }
 }
 
+async function readProgramSnapshot(handle, path) {
+  // Chrome invalidates disk-backed Files when the underlying file changes.
+  // Refresh once on a stale read; consume bytes before any program writes.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const file = await handle.getFile();
+      return new Blob([await file.arrayBuffer()], { type: file.type });
+    } catch (error) {
+      const stale = ["InvalidStateError", "NotReadableError"].includes(error.name);
+      if (stale && attempt === 0) continue;
+      const reason = stale ? "磁盘文件状态变化或暂时无法读取，请稍后重试" : error.message;
+      throw Object.assign(new Error(`无法读取程序文件 ${path}：${reason}`, { cause: error }), { name: error.name });
+    }
+  }
+}
+
 async function writeFile(root, path, blob) {
+  const expectedHash = await blobDigest(blob);
   const { handle } = await fileAt(root, path, true);
-  const writer = await handle.createWritable();
-  try { await writer.write(blob); await writer.close(); }
-  catch (error) { await writer.abort().catch(() => undefined); throw error; }
-  const written = await handle.getFile();
-  if (await blobDigest(written) !== await blobDigest(blob)) throw new Error(`程序文件写入校验失败：${path}`);
+  let writer;
+  try {
+    writer = await handle.createWritable();
+    await writer.write(blob);
+    await writer.close();
+  } catch (error) {
+    if (writer) await writer.abort().catch(() => undefined);
+    throw new Error(`无法写入程序文件 ${path}：${error.message}`, { cause: error });
+  }
+  const written = await readProgramSnapshot(handle, path);
+  if (await blobDigest(written) !== expectedHash) throw new Error(`程序文件写入校验失败：${path}`);
 }
 
 async function* programFiles(root, prefix = "") {
   for await (const [name, handle] of root.entries()) {
     const path = prefix + name;
-    if (handle.kind === "file" && isExtensionProgramPath(path)) yield [path, await handle.getFile()];
+    if (handle.kind === "file" && isExtensionProgramPath(path)) yield [path, await readProgramSnapshot(handle, path)];
     if (handle.kind === "directory" && ["assets", "assets/icons", "_locales", "vendor", "vendor/pdfjs", "vendor/document-ingestion", "vendor/noble-hashes"].some(base => path === base || path.startsWith(base + "/"))) {
       yield* programFiles(handle, path + "/");
     }
@@ -136,7 +159,7 @@ export async function installLocalUpgrade(root, prepared, { runtime, fetchFn = f
     throw new Error("安装目录中有未清理的升级恢复副本，请先恢复或完成上次升级");
   } catch (error) { if (error.name !== "NotFoundError") throw error; }
   const recovery = await root.getDirectoryHandle(RECOVERY_DIRECTORY, { create: true });
-  const oldFiles = new Map();
+  const oldFiles = new Set();
   const written = [];
   let recorded = false;
   const record = { root, previousVersion: prepared.previousVersion, targetVersion: prepared.manifest.version, hashes: prepared.hashes };
@@ -145,7 +168,7 @@ export async function installLocalUpgrade(root, prepared, { runtime, fetchFn = f
     await saveRecord({ ...record, phase: "preparing" });
     recorded = true;
     for await (const [path, blob] of programFiles(root)) {
-      oldFiles.set(path, blob);
+      oldFiles.add(path);
       await writeFile(recovery, path, blob);
       oldHashes[path] = await blobDigest(blob);
       onProgress({ phase: "preparing", completed: oldFiles.size });
@@ -165,8 +188,7 @@ export async function installLocalUpgrade(root, prepared, { runtime, fetchFn = f
   } catch (error) {
     try {
       for (const path of written.reverse()) {
-        const old = oldFiles.get(path);
-        if (old) await writeFile(root, path, await readFile(recovery, path));
+        if (oldFiles.has(path)) await writeFile(root, path, await readFile(recovery, path));
         else {
           try {
             const { directory, name } = await fileAt(root, path);

@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   composerImageEditCapabilities,
   composerImageAvailability,
+  composerImageInputAvailability,
+  selectedComposerService,
   composerGenerationRequiresPromptAssembly,
   composerServiceCapabilities,
   composerServiceCatalog,
@@ -877,9 +879,9 @@ test("GLM Composer sends local video as raw Base64 in the same single multimodal
   assert.equal(request.model, "glm-5.3-flash");
 });
 
-test("DeepSeek refuses a pure-image reference instead of silently composing without seeing it", async () => {
+test("DeepSeek Pro refuses a pure-image reference instead of silently composing without seeing it", async () => {
   const session = createComposerSession({
-    aiProfile: { serviceId: "deepseek", model: "deepseek-v4-flash" },
+    aiProfile: { serviceId: "deepseek", model: "deepseek-v4-pro" },
     referenceSnapshots: [{ entryId: "pure-image", alias: "@参考1", imageRefs: [{ visualId: "one" }] }]
   });
   await assert.rejects(() => executeComposerTurnWithService({
@@ -888,7 +890,7 @@ test("DeepSeek refuses a pure-image reference instead of silently composing with
     composerSettings: settings,
     route: "compose",
     instruction: "按参考图生成"
-  }, { ai: { apiKey: "deepseek-secret", consent: true }, vision: {} }, [], { fetchImpl: async () => { throw new Error("不应调用"); } }), /只有原图.*DeepSeek 无法读取/);
+  }, { ai: { apiKey: "deepseek-secret", consent: true }, vision: {} }, [], { fetchImpl: async () => { throw new Error("不应调用"); } }), /DeepSeek.*无法读取参考原图.*切换支持看图的模型/);
 });
 
 test("OpenAI create-image mode sends original images through the Responses image tool", async () => {
@@ -1842,4 +1844,24 @@ test("a JSON response to a streaming request cannot disguise explicit incomplete
     return true;
   });
   assert.equal(calls, 1);
+});
+
+
+test("known image input remains available when a different model is assigned to image analysis", () => {
+  const profile = { id: "zhipu", apiKey: "fixture", consent: true,
+    capabilities: ["creativePlanning", "imageAnalysis"],
+    models: { creativePlanning: "glm-4.6v", imageAnalysis: "glm-5.3-flash" }, discoveredModels: [] };
+  const selected = selectedComposerService({ serviceId: "zhipu", model: "glm-4.6v" }, {}, { providerProfiles: { zhipu: profile } });
+  assert.equal(selected.vision, true);
+  const discovered = { ...profile, models: { creativePlanning: "account-visual-model" }, discoveredModels: [{
+    id: "account-visual-model", tasks: ["creativePlanning"], inputModalities: ["text", "image"]
+  }] };
+  assert.equal(selectedComposerService({serviceId: "zhipu", model: "account-visual-model"}, {}, {providerProfiles: {zhipu: discovered}}).vision, true);
+});
+
+test("a saved description cannot silently substitute for selected original images", () => {
+  const session = createComposerSession({referenceSnapshots: [{entryId: "image", alias: "@参考1", referenceKind: "vision", referenceText: "Saved description", imageRefs: [{visualId: "original"}]}]});
+  assert.deepEqual(composerImageInputAvailability(session, {vision: false}), {available: false, imageCount: 1});
+  assert.deepEqual(composerImageInputAvailability(session, {vision: true}), {available: true, imageCount: 1});
+  assert.deepEqual(composerImageInputAvailability({...session, imageReferenceMode: "text_only"}, {vision: false}), {available: true, imageCount: 0});
 });

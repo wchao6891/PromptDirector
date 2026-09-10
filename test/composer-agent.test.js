@@ -25,7 +25,7 @@ test("light agent compiles routing, button questions, and local search without a
   for (const route of ["compose", "analyze_materials", "chat"]) assert.match(planning, new RegExp(`${route}:`));
   assert.doesNotMatch(planning, /extract_project_method/);
   assert.match(planning, /two to three|二到三个/);
-  assert.match(planning, /librarySearch/);
+  assert.match(planning, /案例库查询由执行阶段的可用工具完成/);
   assert.doesNotMatch(planning, /dimensionUses|conflicts|preserveMode|productionReview/);
 
   const execution = compileAgentExecutionPrompt({ settings, route: "compose", targetType: "image", outputLanguage: "en", productionReviewEnabled: true });

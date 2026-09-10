@@ -1,3 +1,4 @@
+import { createToolDraftCard } from './composer-tool-draft-ui.js';
 import {
   appendComposerMessage,
   appendDiagnosticEvent,
@@ -41,8 +42,10 @@ import {
   composerGenerationRequiresPromptAssembly,
   composerImageEditCapabilities,
   composerImageAvailability,
+  composerImageInputAvailability,
   composerServiceCapabilities,
   composerServiceCatalog,
+  composerLibraryToolService,
   composerServiceErrorDetails,
   composerVideoAvailability,
   executeComposerTurnWithService,
@@ -53,7 +56,6 @@ import {
 import { applyComposerServiceResult, planComposerSession, prepareComposerTurnStart } from "./composer-turn-core.js";
 import { sessionHasVideoReferences } from "./composer-video-references.js";
 import { createComposerImageWorkspace } from "./composer-image-workspace.js";
-import { createComposerAnalysisTaskBridge } from "./composer-analysis-task-bridge.js";
 import { composerAssemblyLayers } from "./composer-agent.js";
 import {
   createComposerActiveTurn,
@@ -62,7 +64,8 @@ import {
   updateComposerActiveTurn
 } from "./composer-active-turn.js";
 import { resolveComposerTurnPolicy } from "./composer-turn-policy.js";
-import { retrieveComposerSources } from "./composer-retrieval.js";
+import { applyLibraryToolEvent, settleLibraryToolEvents } from "./composer-library-tools.js";
+import { createLocalComposerLibraryTools } from "./composer-library-host.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { readImageDimensions } from "./image-metadata.js";
 import { deleteMediaBlobs, getAllDerivedMetadata, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
@@ -72,12 +75,10 @@ import { extractPdfSearchText } from "./document-viewer.js";
 import {
   composerPasteFiles,
   createTempReference,
-  imageTempReferenceBlock,
   namePastedTempReferenceFile,
   TEMP_REFERENCE_FILE_ACCEPT,
   TEMP_REFERENCE_SOURCE_TYPES,
   tempReferenceAssetIds,
-  unreadReferenceImageAssets,
   validateTempReferenceFile
 } from "./temp-references.js";
 import { primaryVisual, primaryVisionDescription } from "./visuals.js";
@@ -106,13 +107,13 @@ bindTransientMenus(document, ".composer-options, .composer-session-menu");
 const elements = Object.fromEntries([
   "composer-shell", "composer-nav", "composer-nav-open", "composer-nav-close", "composer-new", "composer-session-list",
   "composer-title", "composer-save-state", "composer-platform", "composer-output-language", "composer-route", "composer-production-review", "composer-reference-open", "composer-reference-count",
-  "composer-applied-skills", "composer-skill-menu", "composer-assembly-open", "composer-timeline", "composer-aliases", "composer-retrieval-sources", "composer-instruction", "composer-action", "composer-feedback", "composer-send-note",
+  "composer-applied-skills", "composer-skill-menu", "composer-assembly-open", "composer-timeline", "composer-aliases", "composer-instruction", "composer-action", "composer-feedback", "composer-send-note",
   "composer-attachment-files", "composer-attachment-local", "composer-library-search", "composer-temp-reference-row", "composer-temp-references", "composer-temp-reference-save-all",
   "composer-model-trigger", "composer-model-label", "composer-model-menu", "composer-model-dynamic", "composer-model-flash", "composer-model-pro", "composer-model-openai", "composer-model-openai-label", "composer-model-compatible", "composer-model-compatible-label", "composer-model-xai", "composer-model-xai-label", "composer-thinking", "composer-create-image", "composer-create-media-label", "composer-create-image-note", "composer-generation-settings", "composer-generation-settings-title", "composer-image-size-field", "composer-image-size", "composer-image-quality-field", "composer-image-quality", "composer-image-reference-mode-field", "composer-image-reference-mode", "composer-video-duration-field", "composer-video-duration", "composer-generation-parameter-note",
   "composer-diagnostic-export", "composer-reference-workspace", "composer-reference-close", "composer-reference-cancel", "composer-reference-tab-cases", "composer-reference-tab-skills", "composer-project-list", "composer-projects-panel", "composer-case-picker", "composer-reference-footer", "composer-workspace-title", "composer-workspace-description",
   "composer-case-selection-count", "composer-reference-search", "composer-reference-project-filter", "composer-case-list", "composer-selection-strip",
   "composer-reference-clear", "composer-reference-apply", "composer-reference-feedback", "composer-assembly-dialog", "composer-assembly-close", "composer-assembly-content",
-  "composer-image-blocker", "composer-image-blocker-description", "composer-image-blocker-choose-service", "composer-image-blocker-analyze", "composer-image-blocker-cancel"
+  "composer-image-input-status", "composer-image-input-message", "composer-image-input-model"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
 let entries = [];
@@ -133,9 +134,7 @@ let lastCreativeJob = null;
 let creativeExperimentSettings = { enabled: false, autoAnalyze: false };
 let composerSearchIndex = [];
 let composerDocumentTextByEntryId = new Map();
-let reuseRetrievedSourcesNextTurn = false;
-let libraryRetrievalEnabled = false;
-let prerequisiteAnalysisRequestsNextTurn = 0;
+let libraryRetrievalEnabled = true;
 let creativeStateRefreshRevision = 0;
 let composerInitializationComplete = false;
 let creativeStateRefreshPending = false;
@@ -152,13 +151,11 @@ const imageWorkspace = createComposerImageWorkspace({
 });
 let composerSession = null;
 let activeOperation = null;
-const composerAnalysisTaskBridge = createComposerAnalysisTaskBridge({
-  sendMessage: (message) => chrome.runtime.sendMessage(message)
-});
 let referenceDraftSelections = new Map();
 let referenceDraftOrder = [];
 let referenceDraftSourceSelections = new Map();
 let referencePreviewAssetIds = new Map();
+let referenceFocusedEntryId = "";
 let workspaceMode = "references";
 let feedbackTimer = 0;
 const COMPOSER_TITLE_MAX_CHARACTERS = 36;
@@ -191,7 +188,7 @@ function bindEvents() {
   elements.composerNew.addEventListener("click", safely(() => createNewSession()));
   elements.composerAction.addEventListener("click", safely(handleComposerAction));
   elements.composerModelTrigger.addEventListener("click", toggleComposerModelMenu);
-  elements.composerModelFlash.addEventListener("click", safely(() => updateComposerAiProfile({ serviceId: "deepseek", model: "deepseek-v4-flash" })));
+  elements.composerModelFlash.addEventListener("click", safely(() => updateComposerAiProfile({ serviceId: "deepseek", model: "deepseek-flash" })));
   elements.composerModelPro.addEventListener("click", safely(() => updateComposerAiProfile({ serviceId: "deepseek", model: "deepseek-v4-pro" })));
   elements.composerModelOpenai.addEventListener("click", safely(() => updateComposerAiProfile({ serviceId: "openai", model: composerVisionSettings.openai.model, thinking: false })));
   elements.composerModelCompatible.addEventListener("click", safely(() => updateComposerAiProfile({ serviceId: "compatible", model: composerVisionSettings.compatible.model, thinking: false })));
@@ -204,7 +201,7 @@ function bindEvents() {
   elements.composerVideoDuration.addEventListener("change", safely(updateImageGenerationParameters));
   elements.composerDiagnosticExport.addEventListener("click", safely(exportComposerDiagnostic));
   elements.composerAttachmentLocal.addEventListener("click", () => elements.composerAttachmentFiles.click());
-  elements.composerLibrarySearch.addEventListener("click", toggleLibraryRetrieval);
+  elements.composerLibrarySearch.addEventListener("click", safely(toggleLibraryRetrieval));
   elements.composerAttachmentFiles.addEventListener("change", safely(async () => {
     const files = Array.from(elements.composerAttachmentFiles.files ?? []);
     elements.composerAttachmentFiles.value = "";
@@ -255,20 +252,17 @@ function bindEvents() {
   elements.composerReferenceTabSkills.addEventListener("click", () => setReferenceWorkspaceMode("skills"));
   elements.composerAssemblyOpen.addEventListener("click", openAssemblyDialog);
   elements.composerAssemblyClose.addEventListener("click", () => elements.composerAssemblyDialog.close());
-  elements.composerImageBlockerChooseService.addEventListener("click", () => {
-    elements.composerImageBlocker.close();
+  elements.composerImageInputModel.addEventListener("click", (event) => {
+    event.stopPropagation();
     openComposerModelMenu();
   });
-  elements.composerImageBlockerAnalyze.addEventListener("click", safely(handleBlockedReferenceAnalysisAction));
-  elements.composerImageBlocker.addEventListener("close", safely(detachBlockedReferenceAnalysis));
   elements.composerReferenceClose.addEventListener("click", closeReferenceWorkspace);
   elements.composerReferenceCancel.addEventListener("click", closeReferenceWorkspace);
-  elements.composerReferenceSearch.addEventListener("input", renderCasePicker);
+  elements.composerReferenceSearch.addEventListener("input", () => { referenceFocusedEntryId = ""; renderCasePicker(); });
   document.addEventListener("visibilitychange", () => {
     document.body.classList.toggle("composer-page-paused", document.hidden);
-    if (!document.hidden && composerAnalysisTaskBridge.snapshot().attached) safely(refreshBlockedReferenceAnalysis)();
   });
-  elements.composerReferenceProjectFilter.addEventListener("change", renderCasePicker);
+  elements.composerReferenceProjectFilter.addEventListener("change", () => { referenceFocusedEntryId = ""; renderCasePicker(); });
   elements.composerReferenceClear.addEventListener("click", () => {
     referenceDraftSelections.clear();
     referenceDraftOrder = [];
@@ -285,12 +279,7 @@ function bindEvents() {
     if (event.key === "Escape") closeComposerModelMenu();
   });
   addEventListener("beforeunload", () => {
-    composerAnalysisTaskBridge.detach().catch(() => undefined);
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
-  });
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type !== "ANALYSIS_TASK_UPDATED") return;
-    safely(() => acceptBlockedReferenceAnalysisUpdate(message))();
   });
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
@@ -430,9 +419,6 @@ async function initializeComposer() {
 
 async function createNewSession(referenceIds = [], focus = true) {
   const targetType = selectedTargetType();
-  reuseRetrievedSourcesNextTurn = false;
-  libraryRetrievalEnabled = false;
-  prerequisiteAnalysisRequestsNextTurn = 0;
   composerSession = createComposerSession({
     title: targetType === "video" ? t("未命名视频提示词") : t("未命名图片提示词"),
     targetType,
@@ -445,7 +431,7 @@ async function createNewSession(referenceIds = [], focus = true) {
       composerSettings.lastAiProfile
     ),
     productionReviewEnabled: composerSettings.productionReviewEnabled,
-    referenceSnapshots: createReferenceSnapshots(entries, referenceIds, currentLocale(), targetType)
+    referenceSnapshots: createReferenceSnapshots(entries, referenceIds, currentLocale(), targetType, { documentTextByEntryId: composerDocumentTextByEntryId })
   });
   if (isMeaningfulComposerSession(composerSession)) {
     composerSession = await saveSession(composerSession);
@@ -457,6 +443,7 @@ async function createNewSession(referenceIds = [], focus = true) {
 
 function renderComposer() {
   if (!composerSession) return;
+  libraryRetrievalEnabled = composerSession.libraryRetrievalEnabled !== false;
   document.querySelectorAll('input[name="composer-type"]').forEach((input) => {
     input.checked = input.value === composerSession.targetType;
   });
@@ -473,7 +460,6 @@ function renderComposer() {
   elements.composerAliases.hidden = libraryReferences.length === 0;
   renderTempReferences();
   renderLibraryRetrievalToggle();
-  renderRetrievedSources();
   renderAppliedSkills();
   renderSessions();
   renderTimeline();
@@ -490,17 +476,19 @@ function renderTempReferences() {
   elements.composerTempReferences.replaceChildren(...references.map(tempReferenceCard));
 }
 
-function toggleLibraryRetrieval() {
-  if (activeOperation) return;
-  libraryRetrievalEnabled = !libraryRetrievalEnabled;
-  renderLibraryRetrievalToggle();
-  renderSendState();
+async function toggleLibraryRetrieval() {
+  if (activeOperation || !composerSession) return;
+  composerSession = await saveSession(createComposerSession({
+    ...composerSession, libraryRetrievalEnabled: !libraryRetrievalEnabled
+  }));
+  renderComposer();
 }
 
 function renderLibraryRetrievalToggle() {
   elements.composerLibrarySearch.setAttribute("aria-pressed", String(libraryRetrievalEnabled));
   elements.composerLibrarySearch.classList.toggle("selected", libraryRetrievalEnabled);
-  const label = t(libraryRetrievalEnabled ? "本轮发送时将检索本地资料" : "本轮检索本地资料");
+  const service = composerLibraryToolService(composerSession, composerAiSettings, composerVisionSettings);
+  const label = t(libraryRetrievalEnabled ? (service.nativeTools ? "案例库：按需；仅在你要求查询或参考时使用，点击关闭" : "当前模型未声明工具能力，可通过选择案例手动查询；点击关闭案例库") : "案例库：关闭，点击开启");
   elements.composerLibrarySearch.title = label;
   elements.composerLibrarySearch.setAttribute("aria-label", label);
 }
@@ -771,6 +759,8 @@ async function selectSlashSkill(skill) {
 }
 
 function renderSessions() {
+  const openMenus = new Set([...elements.composerSessionList.querySelectorAll(".composer-session-menu[open]")]
+    .map(menu => menu.closest(".composer-session-item")?.dataset.sessionId));
   const summaries = new Map(sessionSummaries.map((summary) => [summary.id, summary]));
   const current = sessionSummaryFromCurrent();
   if (current) summaries.set(current.id, current);
@@ -788,13 +778,13 @@ function renderSessions() {
     section.dataset.sessionGroup = group.id;
     section.append(rawTextEl("h3", "composer-session-group-label", t(group.label)));
     const list = el("div", "composer-session-group-list");
-    list.append(...group.items.map(renderSessionRow));
+    list.append(...group.items.map(summary => renderSessionRow(summary, openMenus.has(summary.id))));
     section.append(list);
     return section;
   }));
 }
 
-function renderSessionRow(summary) {
+function renderSessionRow(summary, menuOpen = false) {
     const row = el("div", "composer-session-item");
     row.dataset.sessionId = summary.id;
     row.setAttribute("aria-current", String(summary.id === composerSession?.id));
@@ -806,6 +796,7 @@ function renderSessionRow(summary) {
     if (running) load.append(rawTextEl("small", "composer-session-running", operationLabel(activeOperation.phase)));
     load.addEventListener("click", safely(() => loadComposerSession(summary.id)));
     const menu = el("details", "composer-session-menu");
+    menu.open = menuOpen;
     const trigger = rawTextEl("summary", "", "…");
     trigger.setAttribute("aria-label", t("更多操作：{title}", { title: summary.title }));
     const panel = el("div", "composer-session-menu-panel");
@@ -838,14 +829,50 @@ function sessionDateGroup(value, now = new Date()) {
 function renderTimeline() {
   if (!composerSession) return;
   const session = displayedComposerSession();
+  const candidateScrollPositions = new Map([...elements.composerTimeline.querySelectorAll(".composer-library-candidate-list")]
+    .map((list) => [list.dataset.searchKey, list.scrollLeft]));
+  for (const image of elements.composerTimeline.querySelectorAll(".composer-library-candidate img")) imageObserver.unobserve(image);
+  const latestSearch = session.libraryTools.events.findLast(event => event.name === "search_cases" && event.status === "completed");
   const inner = el("div", "composer-chat-inner");
   const operation = currentComposerOperation();
   const streamingText = currentStreamingText() || (!operation ? session.activeTurn?.partialText || "" : "");
   if (!session.messages.length && !streamingText && !operation && !session.lastFailure) inner.append(createWelcome());
   let promptIndex = 0;
+  let pendingUserMessageId = "";
   for (const message of session.messages) {
     const version = message.type === "prompt" ? session.promptVersions[promptIndex++] : null;
     inner.append(createMessage(message, version, false, session));
+    if (message.role === "user") {
+      pendingUserMessageId = message.id;
+      const events = session.libraryTools.events.filter(event => event.userMessageId === message.id);
+      if (events.length) {
+        const record = el("div", "composer-tool-events");
+        record.setAttribute("role", "status");
+        record.append(...events.map(event => {
+          const line = rawTextEl("p", `composer-tool-event ${event.status}`, event.label);
+          if (event.name === "read_case_text" && event.status === "completed" && event.caseId) {
+            const link = rawTextEl("a", "composer-retrieved-source", event.label);
+            link.href = `library.html?case=${encodeURIComponent(event.caseId)}`;
+            link.target = "_blank";
+            line.replaceChildren(link);
+          }
+          return line;
+        }));
+        inner.append(record);
+
+      }
+    }
+    if (message.role === "assistant" && pendingUserMessageId) {
+      appendToolCards(pendingUserMessageId);
+      pendingUserMessageId = "";
+    }
+  }
+  if (pendingUserMessageId) appendToolCards(pendingUserMessageId);
+  if (!operation && session.libraryTools.requestCount) {
+    const stats = session.libraryTools;
+    const usage = stats.usage && stats.usageRequestCount === stats.requestCount
+      ? `输入 ${stats.usage.promptTokens} / 输出 ${stats.usage.completionTokens} tokens` : "用量未知";
+    inner.append(rawTextEl("p", "composer-tool-events composer-tool-summary", `本轮 ${stats.requestCount} 次模型请求 · ${stats.imageIds.length} 张图片 · ${usage}`));
   }
   if (streamingText) {
     const route = operation?.session?.currentRoute || session.activeTurn?.route || "";
@@ -858,7 +885,31 @@ function renderTimeline() {
   if (!operation && session.lastFailure) {
     inner.append(createFailureMessage(session.lastFailure));
   }
+  function appendToolCards(userMessageId) {
+    const events = session.libraryTools.events.filter(event => event.userMessageId === userMessageId);
+    for (const event of events) {
+      if (event.draft && event.status === "completed") inner.append(createToolDraftCard(event, {
+        sessionId: session.id, busy: Boolean(operation), onSaved: saved => {
+          if (composerSession?.id === saved.id) { composerSession = createComposerSession(saved); renderTimeline(); }
+        }
+      }));
+      if (event.name !== "search_cases" || event.status !== "completed") continue;
+      const candidates = event.candidates ?? (event === latestSearch ? session.libraryTools.candidates : []);
+      if (!candidates.length) continue;
+      const results = el("section", "composer-library-results");
+      results.setAttribute("aria-label", "查询候选");
+      const list = el("div", "composer-library-candidate-list");
+      list.dataset.searchKey = JSON.stringify([event.userMessageId, event.callId]);
+      list.append(...candidates.map(createLibraryCandidate));
+      results.append(rawTextEl("small", "composer-retrieval-heading", `查询候选 · ${candidates.length} 个`), list);
+      inner.append(results);
+    }
+  }
+
   elements.composerTimeline.replaceChildren(inner);
+  for (const list of inner.querySelectorAll(".composer-library-candidate-list")) {
+    list.scrollLeft = candidateScrollPositions.get(list.dataset.searchKey) || 0;
+  }
   releaseUnusedCreativeOutputUrls();
   requestAnimationFrame(() => { elements.composerTimeline.scrollTop = elements.composerTimeline.scrollHeight; });
 }
@@ -886,12 +937,10 @@ function createWelcome() {
   image.alt = "";
   body.append(
     image,
-    rawTextEl("h1", "", currentLocale() === "en" ? "What do you want to create?" : "你想创作什么画面？")
+    rawTextEl("h1", "", currentLocale() === "en" ? "What would you like to do?" : "今天想做些什么？")
   );
   const suggestions = el("div", "composer-welcome-suggestions");
-  const values = composerSession.targetType === "video"
-    ? ["写一个15秒情绪递进的电影感视频提示词", "把一个画面发展成连续一镜到底"]
-    : ["写一个具有明确叙事瞬间的电影感画面", "把普通人物照片重构成有导演感的场景"];
+  const values = ["找几个案例给我挑选", "把这段方法提炼成 Skill", "看看精选案例库有什么更新", "聊聊我的创作想法"];
   for (const value of values) {
     const button = rawTextEl("button", "", t(value));
     button.type = "button";
@@ -1011,7 +1060,7 @@ async function sendComposerTurn() {
     const service = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
     if (!service.videoInput) return composerFeedback(`${service.label} 的所选模型未声明视频输入能力，请切换视频模型`, true);
   }
-  if (showImageTempReferenceBlock()) return;
+  if (!renderImageInputStatus().available) return;
   const answeringQuestion = composerSession.messages.at(-1)?.type === "question";
   const wasEmpty = composerSession.messages.length === 0 && composerSession.promptVersions.length === 0;
   let working = appendComposerMessage(clearComposerFailure(composerSession), {
@@ -1021,38 +1070,11 @@ async function sendComposerTurn() {
     route: composerSession.routeMode === "auto" ? "" : composerSession.routeMode,
     routeSource: composerSession.routeMode === "auto" ? "auto" : "manual"
   });
-  const reuseExistingRetrievedSources = reuseRetrievedSourcesNextTurn;
   working = createComposerSession({
-    ...working,
-    currentInstruction: "",
-    retrievedSources: reuseExistingRetrievedSources ? working.retrievedSources : [],
-    retrievalSnapshot: reuseExistingRetrievedSources ? working.retrievalSnapshot : null,
-    currentRoute: "",
-    currentRouteSource: ""
+    ...working, currentInstruction: "", currentRoute: "", currentRouteSource: "",
+    retrievedSources: [], retrievalSnapshot: null,
+    libraryTools: { ...working.libraryTools, requestCount: 0, usage: null, imageIds: [] }
   });
-  reuseRetrievedSourcesNextTurn = false;
-  if (libraryRetrievalEnabled) {
-    const contentRoles = ["case", "guide"];
-    const retrievedSources = retrieveSourcesForTurn(working, { query: instruction, contentRoles });
-    working = appendDiagnosticEvent(createComposerSession({
-      ...working,
-      retrievedSources,
-      retrievalSnapshot: {
-        query: instruction,
-        contentRoles,
-        status: retrievedSources.length ? "completed" : "empty",
-        sourceCount: retrievedSources.length,
-        requestedAt: new Date().toISOString()
-      }
-    }), {
-      phase: "retrieval",
-      status: retrievedSources.length ? "completed" : "empty",
-      detail: retrievedSources.length
-        ? `本轮明确授权检索，采用 ${retrievedSources.length} 条来源`
-        : "本轮明确授权检索，没有找到匹配来源"
-    });
-    libraryRetrievalEnabled = false;
-  }
   const userMessageId = working.messages.at(-1).id;
   if (wasEmpty) working.title = conversationTitle(instruction);
   elements.composerInstruction.value = "";
@@ -1064,11 +1086,9 @@ async function sendComposerTurn() {
       turnId,
       userMessageId,
       userRequest: instruction,
-      policy: turnPolicy,
-      prerequisiteAnalysisRequests: prerequisiteAnalysisRequestsNextTurn
+      policy: turnPolicy
     })
   });
-  prerequisiteAnalysisRequestsNextTurn = 0;
   const prepared = prepareComposerTurnStart(working, turnPolicy);
   working = prepared.session;
   if (["create_image", "create_video"].includes(working.outputMode) || sessionHasVideoReferences(working)) {
@@ -1147,178 +1167,13 @@ async function sendComposerTurn() {
   }
 }
 
-function showImageTempReferenceBlock() {
-  const service = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
-  const block = imageTempReferenceBlock(composerSession.referenceSnapshots, service);
-  if (!block.blocked) return false;
-  const serviceLabel = currentImageAnalysisServiceLabel();
-  elements.composerImageBlockerDescription.textContent = t("本轮有 {count} 张尚未分析的参考图片，但 {service} 只能读取文字。可切换到视觉创作服务；也可调用当前图片分析服务（{analysisService}），预计发起 {count} 次额外请求，费用由服务商按你的账号计费。", { count: block.imageCount, service: service.shortLabel, analysisService: serviceLabel });
-  renderImageBlockerTaskState();
-  elements.composerImageBlocker.showModal();
-  return true;
-}
-
-function currentImageAnalysisServiceLabel() {
-  const assignment = composerAiTaskAssignments?.imageAnalysis ?? {};
-  const profiles = composerVisionSettings.providerProfiles ?? {};
-  const providerId = String(assignment.providerId ?? "").trim();
-  const profile = providerId ? profiles[providerId] ?? null : null;
-  const assignedModel = String(assignment.model ?? "").trim();
-  if (providerId) {
-    const providerLabel = profile?.label
-      || (providerId === "openai" ? "OpenAI" : providerId === "custom-media" ? "兼容图片服务" : providerId);
-    const model = assignedModel
-      || String(profile?.models?.imageAnalysis ?? "").trim()
-      || (providerId === "openai" ? String(composerVisionSettings.openai?.model ?? "").trim() : "")
-      || (providerId === "custom-media" ? String(composerVisionSettings.compatible?.model ?? "").trim() : "");
-    return model ? `${providerLabel} · ${model}` : `${providerLabel} · 未配置模型`;
-  }
-  const fallbackProvider = composerVisionSettings.activeProvider === "openai"
-    ? { label: "OpenAI", model: composerVisionSettings.openai?.model }
-    : { label: "兼容图片服务", model: composerVisionSettings.compatible?.model };
-  const fallbackModel = String(fallbackProvider.model ?? "").trim();
-  return fallbackModel
-    ? `${fallbackProvider.label} · ${fallbackModel}`
-    : `${fallbackProvider.label} · 未配置模型`;
-}
-
-async function handleBlockedReferenceAnalysisAction() {
-  const task = composerAnalysisTaskBridge.snapshot();
-  if (task.attached && analysisTaskIsActive(task.status)) return stopBlockedReferenceAnalysis();
-  if (task.canRetry) return retryBlockedReferenceAnalysis();
-  return startBlockedReferenceAnalysis();
-}
-
-async function startBlockedReferenceAnalysis() {
-  if (!composerSession) return;
-  const references = composerSession.referenceSnapshots.filter((reference) =>
-    unreadReferenceImageAssets(reference).length
-  );
-  if (!references.length) {
-    elements.composerImageBlocker.close();
-    return sendComposerTurn();
-  }
-  const imageCount = references.reduce((total, reference) => total + unreadReferenceImageAssets(reference).length, 0);
-  elements.composerImageBlockerDescription.textContent = t("正在创建图片分析任务，共 {count} 张。关闭此窗口只会取消本页自动继续，不会停止后台任务。", { count: imageCount });
-  const starting = composerAnalysisTaskBridge.start({
-    sessionId: composerSession.id,
-    tempReferenceIds: references.map((reference) => reference.entryId),
-    outputLocale: composerAnalysisOutputLocale()
-  });
-  renderImageBlockerTaskState();
-  try {
-    await handleBlockedReferenceAnalysisState(await starting);
-  } catch (error) {
-    await composerAnalysisTaskBridge.detach().catch(() => undefined);
-    renderImageBlockerTaskState();
-    elements.composerImageBlockerDescription.textContent = `${error.message || "无法创建图片分析任务"}。本轮输入和附件均已保留，未自动重试。`;
-  }
-}
-
-async function stopBlockedReferenceAnalysis() {
-  const previous = composerAnalysisTaskBridge.snapshot();
-  elements.composerImageBlockerDescription.textContent = t("正在请求停止图片分析。关闭窗口仍只会断开本页，不代表停止成功。");
-  renderImageBlockerTaskState({ ...previous, status: "stop-requested" });
-  try {
-    const stopped = await composerAnalysisTaskBridge.stop();
-    renderImageBlockerTaskState(stopped);
-    elements.composerImageBlockerDescription.textContent = previous.status === "queued"
-      ? t("任务已在发出服务请求前停止，本轮不会自动发送。")
-      : t("已请求停止任务。本轮不会自动发送；若服务商此前已接收请求，仍可能产生费用。可关闭窗口，或明确确认后重新分析。");
-  } catch (error) {
-    renderImageBlockerTaskState();
-    elements.composerImageBlockerDescription.textContent = `${error.message || "停止请求未确认"}。任务执行状态未知，本轮不会自动发送，也不会自动重试。`;
-  }
-}
-
-async function retryBlockedReferenceAnalysis() {
-  const confirmed = await confirmAppAction({
-    title: t("重新发起图片分析？"),
-    description: t("上一轮请求可能已经被服务商接收。重新分析会创建新的执行尝试，并可能再次计费；旧尝试的结果不会写回本轮。"),
-    confirmLabel: t("确认重新分析")
-  });
-  if (!confirmed) return;
-  elements.composerImageBlockerDescription.textContent = t("正在创建新的图片分析尝试。完成前不会发送本轮消息。");
-  const retrying = composerAnalysisTaskBridge.retry({ confirmed: true });
-  renderImageBlockerTaskState();
-  try {
-    await handleBlockedReferenceAnalysisState(await retrying);
-  } catch (error) {
-    await composerAnalysisTaskBridge.detach().catch(() => undefined);
-    renderImageBlockerTaskState();
-    elements.composerImageBlockerDescription.textContent = `${error.message || "无法重新创建图片分析任务"}。本轮输入和附件均已保留，未自动重试。`;
-  }
-}
-
-async function detachBlockedReferenceAnalysis() {
-  await composerAnalysisTaskBridge.detach();
-}
-
-async function refreshBlockedReferenceAnalysis() {
-  if (!composerAnalysisTaskBridge.snapshot().attached) return;
-  await handleBlockedReferenceAnalysisState(await composerAnalysisTaskBridge.refresh());
-}
-
-async function acceptBlockedReferenceAnalysisUpdate(message) {
-  if (!composerAnalysisTaskBridge.snapshot().attached) return;
-  if (!composerAnalysisTaskBridge.acceptUpdate(message)) return;
-  await handleBlockedReferenceAnalysisState(composerAnalysisTaskBridge.snapshot());
-}
-
-async function handleBlockedReferenceAnalysisState(task) {
-  if (!task.attached) return;
-  renderImageBlockerTaskState(task);
-  if (task.status === "completed") {
-    const result = composerAnalysisTaskBridge.consumeCompletion();
-    if (!result) return;
-    prerequisiteAnalysisRequestsNextTurn = Math.max(0, Math.floor(Number(result.prerequisiteAnalysisRequests) || 0));
-    applyTempReferenceResponse(result, "临时图片分析失败");
-    renderComposer();
-    elements.composerImageBlocker.close();
-    composerFeedback(t("图片分析已完成，正在继续本轮创作"));
-    await sendComposerTurn();
-    return;
-  }
-  if (task.executionState === "execution_state_unknown") {
-    elements.composerImageBlockerDescription.textContent = t("浏览器后台曾中断，上一轮是否执行完成无法确认。系统不会自动重试或发送本轮；如要重试，请明确确认，新的尝试可能再次计费。");
-    return;
-  }
-  if (task.status === "failed") {
-    elements.composerImageBlockerDescription.textContent = t("图片分析未完成。本轮输入和附件均已保留，系统不会自动重试或发送；可确认后重新分析。");
-    return;
-  }
-  if (task.status === "stopped") {
-    elements.composerImageBlockerDescription.textContent = t("图片分析已停止，本轮不会自动发送。可关闭窗口，或明确确认后重新分析。");
-    return;
-  }
-  if (task.status === "queued") {
-    elements.composerImageBlockerDescription.textContent = t("图片分析正在等待执行，尚未开始服务请求。关闭窗口只会取消本页自动继续；点击“停止分析”才会请求停止任务。");
-    return;
-  }
-  if (["running", "stop-requested"].includes(task.status)) {
-    elements.composerImageBlockerDescription.textContent = task.status === "stop-requested"
-      ? t("正在请求停止图片分析。本轮不会自动发送。")
-      : t("图片分析正在执行。关闭窗口只会取消本页自动继续；点击“停止分析”才会请求停止任务。服务商已接收的请求仍可能计费。");
-  }
-}
-
-function renderImageBlockerTaskState(task = composerAnalysisTaskBridge.snapshot()) {
-  const active = task.attached && analysisTaskIsActive(task.status);
-  elements.composerImageBlockerChooseService.disabled = active;
-  elements.composerImageBlockerAnalyze.disabled = task.status === "stop-requested";
-  elements.composerImageBlockerAnalyze.textContent = active
-    ? t("停止分析")
-    : task.canRetry ? t("重新分析") : t("调用图片分析并继续");
-}
-
-function analysisTaskIsActive(status) {
-  return ["starting", "queued", "running", "stop-requested"].includes(status);
-}
-
-function composerAnalysisOutputLocale() {
-  return elements.composerOutputLanguage.value === "en"
-    ? "en"
-    : elements.composerOutputLanguage.value === "zh-CN" ? "zh-CN" : currentLocale() === "en" ? "en" : "zh-CN";
+function renderImageInputStatus() {
+  const profile = composerSession.imageReferenceMode === "prompt_only" ? composerSession.aiProfile : activeComposerProfile();
+  const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings);
+  const state = composerImageInputAvailability(composerSession, service);
+  elements.composerImageInputStatus.hidden = state.available;
+  elements.composerImageInputMessage.textContent = state.available ? "" : t("当前模型无法读取参考原图，请切换支持看图的模型。");
+  return state;
 }
 
 async function retryComposerTurn() {
@@ -1433,26 +1288,6 @@ async function runComposerTurn(operation, startPhase = "planning") {
   }
 }
 
-function retrieveSourcesForTurn(session, search) {
-  const baseSession = createComposerSession({ ...session, retrievedSources: [] });
-  const remainingCharacters = Math.max(
-    0,
-    COMPOSER_INPUT_MAX_CHARACTERS - composerInputUsage(baseSession, "", composerSettings).characters
-  );
-  return retrieveComposerSources({
-    query: search.query,
-    contentRoles: search.contentRoles,
-    targetType: session.targetType,
-    characterBudget: remainingCharacters,
-    entries,
-    collections: organizerState.collections,
-    facetCatalog,
-    excludedEntryIds: session.referenceSnapshots.map((item) => item.entryId),
-    searchIndex: composerSearchIndex,
-    documentTextByEntryId: composerDocumentTextByEntryId
-  });
-}
-
 async function rebuildComposerSearchIndex() {
   const state = await createComposerSearchState(entries);
   composerDocumentTextByEntryId = state.documentTextByEntryId;
@@ -1497,6 +1332,22 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
   const preparedImages = operation.session.imageReferenceMode === "text_only"
     ? []
     : await prepareSelectedReferenceImages(operation.session);
+  let pendingImageIds = preparedImages.map(image => image.visualId);
+  const toolRuntime = createLocalComposerLibraryTools({
+    session: operation.session,
+    vision: composerLibraryToolService(operation.session, settingsValue.ai, settingsValue.vision).vision,
+    onEvent: async event => {
+      operation.controller.signal.throwIfAborted();
+      if (event.status === "completed" && event.imageIds) pendingImageIds.push(...event.imageIds);
+      operation.session = createComposerSession(applyLibraryToolEvent(operation.session, event));
+      operation.session = await saveSession(operation.session);
+      if (composerSession?.id === operation.sessionId) { composerSession = operation.session; renderTimeline(); renderSendState(); }
+    },
+    onRequest: async ({ usage, requestCount }) => {
+      await operation.checkpointWriter?.drain();
+      operation.session = createComposerSession({ ...operation.session, libraryTools: { ...operation.session.libraryTools, usage, usageRequestCount: requestCount } });
+    }
+  });
   const result = await executeComposerTurnWithService({
       session: operation.session,
       userMessage: "",
@@ -1506,9 +1357,12 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
       imageEdit: operation.imageEdit
     }, settingsValue, preparedImages, {
       signal: operation.controller.signal,
+      toolRuntime,
       onRequestStart: async () => {
+        operation.session = createComposerSession({ ...operation.session, libraryTools: { ...operation.session.libraryTools, requestCount: operation.session.libraryTools.requestCount + 1, imageIds: [...new Set([...operation.session.libraryTools.imageIds, ...pendingImageIds])] } });
+        pendingImageIds = [];
         recordComposerActualStage(operation, "requesting_model");
-        if (operation.session.activeTurn?.providerMayHaveAccepted) return;
+
         operation.session = createComposerSession({
           ...operation.session,
           activeTurn: updateComposerActiveTurn(operation.session.activeTurn, {
@@ -1558,6 +1412,8 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
     ...applyComposerServiceResult(operation.session, result, composerSettings, route, instruction),
     assemblySnapshot: completeComposerAssemblySnapshot(operation.session.assemblySnapshot, {
       ...result,
+      libraryTools: operation.session.libraryTools,
+      retrievedSources: operation.session.retrievedSources,
       actualStages: operation.actualStages
     }),
     activeTurn: null
@@ -1601,6 +1457,7 @@ async function persistComposerFailure(operation, error) {
   });
   working = createComposerSession({
     ...working,
+    libraryTools: settleLibraryToolEvents(working.libraryTools, operation.userMessageId, details.message),
     assemblySnapshot: failComposerAssemblySnapshot(working.assemblySnapshot, details),
     activeTurn: updateComposerActiveTurn(working.activeTurn, {
       status: details.kind === "stopped" ? "stopped" : "failed",
@@ -1765,7 +1622,7 @@ function renderComposerAiProfile() {
     : reasoningAvailable && profile.thinking ? `${name} · ${t("思考")}` : name;
   elements.composerModelLabel.title = translateUiMessage(service.label).replace("未选择模型", t("未选择模型"));
   const selected = (serviceId, model) => profile.serviceId === serviceId && (!model || profile.model === model);
-  elements.composerModelFlash.setAttribute("aria-checked", String(selected("deepseek", "deepseek-v4-flash")));
+  elements.composerModelFlash.setAttribute("aria-checked", String(selected("deepseek", "deepseek-flash")));
   elements.composerModelPro.setAttribute("aria-checked", String(selected("deepseek", "deepseek-v4-pro")));
   elements.composerModelOpenai.setAttribute("aria-checked", String(selected("openai")));
   elements.composerModelCompatible.setAttribute("aria-checked", String(selected("compatible")));
@@ -2092,9 +1949,6 @@ async function loadComposerSession(sessionId) {
   const response = await chrome.runtime.sendMessage({ type: "GET_COMPOSER_SESSION", sessionId });
   if (!response?.ok) return composerFeedback(response?.message || t("没有找到这份创作草稿"), true);
   composerSession = response.session;
-  reuseRetrievedSourcesNextTurn = false;
-  libraryRetrievalEnabled = false;
-  prerequisiteAnalysisRequestsNextTurn = 0;
   replaceComposerSessionUrl(sessionId);
   elements.composerShell.classList.remove("nav-open");
   closeReferenceWorkspace();
@@ -2159,7 +2013,14 @@ function replaceComposerSessionUrl(sessionId) {
   history.replaceState(null, "", `composer.html?session=${encodeURIComponent(sessionId)}`);
 }
 
-function openReferenceWorkspace() {
+function openReferenceWorkspace({ entryId = "" } = {}) {
+  if (referenceFocusedEntryId && !entryId) elements.composerReferenceSearch.value = "";
+  referenceFocusedEntryId = entryId;
+  if (entryId) {
+    elements.composerReferenceSearch.value = entries.find((entry) => entry.id === entryId)?.title || "";
+    elements.composerReferenceProjectFilter.value = "";
+    initialProjectFilterId = "";
+  }
   clearComposerFeedback();
   referenceDraftSelections = new Map();
   referenceDraftOrder = [];
@@ -2280,11 +2141,11 @@ function renderCasePicker() {
   const projectIds = projectId
     ? new Set(collectionEntryIds(organizerState, projectId, { subtree: true }))
     : null;
-  const targetType = composerSession?.targetType === "video" ? "video" : "image";
-  const eligible = entries.filter((entry) => isComposerEligibleEntry(entry, targetType)).filter((entry) => {
+  const eligible = entries.filter((entry) => {
+    if (referenceFocusedEntryId) return entry.id === referenceFocusedEntryId;
     if (projectIds && !(entry.memberEntryIds ? entry.memberEntryIds.some((id) => projectIds.has(id)) : projectIds.has(entry.id))) return false;
     if (!query) return true;
-    return `${entry.title ?? ""}\n${entry.text ?? ""}\n${primaryVisionDescription(entry)}`.toLocaleLowerCase().includes(query);
+    return `${entry.title ?? ""}\n${entry.text ?? ""}\n${primaryVisionDescription(entry)}\n${composerDocumentTextByEntryId.get(entry.id) || ""}`.toLocaleLowerCase().includes(query);
   });
   if (!eligible.length) {
     elements.composerCaseList.replaceChildren(rawTextEl("p", "composer-reference-empty", t("没有匹配的可用案例。")));
@@ -2295,6 +2156,7 @@ function renderCasePicker() {
 
 function createCaseOption(entry) {
   const option = el("article", "composer-case-option");
+  const selectable = isComposerEligibleEntry(entry, composerSession?.targetType, { documentTextByEntryId: composerDocumentTextByEntryId });
   option.dataset.entryId = entry.id;
   const referenceAssets = selectableReferenceAssets(entry, composerSession?.targetType);
   const primaryAsset = referenceAssets.find((asset) => asset.id === entry.primaryMediaId) ?? referenceAssets[0];
@@ -2304,12 +2166,12 @@ function createCaseOption(entry) {
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.className = "composer-case-preview-checkbox";
+  checkbox.disabled = !selectable;
   checkbox.setAttribute("aria-label", `选择当前预览素材：${entry.title || t("未命名案例")}`);
-  checkbox.checked = Boolean(previewAsset && referenceDraftSelections.get(entry.id)?.has(previewAsset.id));
+  checkbox.checked = previewAsset ? referenceDraftSelections.get(entry.id)?.has(previewAsset.id) === true : referenceDraftSelections.has(entry.id);
   checkbox.addEventListener("change", () => {
     const assetId = referencePreviewAssetIds.get(entry.id);
-    if (!assetId) return;
-    setDraftAssetSelected(entry.id, assetId, checkbox.checked);
+    setDraftAssetSelected(entry.id, assetId || "", checkbox.checked);
     const asset = referenceAssets.find((item) => item.id === assetId);
     if (asset?.kind === "video") renderCasePicker();
     else syncCaseOptionSelection(option, entry);
@@ -2318,12 +2180,12 @@ function createCaseOption(entry) {
   const visual = el("div", "composer-case-visual");
   const selectPreview = el("button", "composer-case-select-preview");
   selectPreview.type = "button";
+  selectPreview.disabled = !selectable;
   selectPreview.setAttribute("aria-label", "选择或取消当前预览素材");
   selectPreview.addEventListener("click", () => {
     const assetId = referencePreviewAssetIds.get(entry.id);
-    if (!assetId) return;
-    const selected = referenceDraftSelections.get(entry.id)?.has(assetId) === true;
-    setDraftAssetSelected(entry.id, assetId, !selected);
+    const selected = assetId ? referenceDraftSelections.get(entry.id)?.has(assetId) === true : referenceDraftSelections.has(entry.id);
+    setDraftAssetSelected(entry.id, assetId || "", !selected);
     const asset = referenceAssets.find((item) => item.id === assetId);
     if (asset?.kind === "video") renderCasePicker();
     else syncCaseOptionSelection(option, entry);
@@ -2331,6 +2193,7 @@ function createCaseOption(entry) {
   });
   const inspect = textEl("button", "composer-case-inspect", previewAsset?.kind === "video" ? "查看封面" : "查看原图");
   inspect.type = "button";
+  inspect.hidden = !previewAsset;
   inspect.disabled = previewAsset?.kind === "video" && !posterAssetForVideo(entry, previewAsset);
   inspect.addEventListener("click", () => openReferenceAssetPreview(entry, referencePreviewAssetIds.get(entry.id)));
   visual.append(selectPreview, inspect);
@@ -2340,10 +2203,11 @@ function createCaseOption(entry) {
   const contentRole = contentRoleForEntry(entry);
   const type = contentRole === CONTENT_ROLES.promptVideo
     ? t("视频提示词")
-    : contentRole === CONTENT_ROLES.imageCase ? t("画面描述") : t("图片提示词");
-  const preview = entry.text || primaryVisionDescription(entry);
+    : contentRole === CONTENT_ROLES.imageCase ? t("画面描述") : contentRole === CONTENT_ROLES.promptImage ? t("图片提示词") : t("文字资料");
+  const preview = entry.text || composerDocumentTextByEntryId.get(entry.id) || primaryVisionDescription(entry);
   copy.append(rawTextEl("strong", "", entry.title || t("未命名案例")), rawTextEl("small", "", type), rawTextEl("p", "", excerpt(preview, 240)));
   option.append(copy);
+  if (!selectable) copy.append(rawTextEl("small", "", t("暂无可读取的正文或当前支持的素材")));
   if (referenceAssets.length > 1) {
     const assetPicker = el("div", "composer-case-assets");
     assetPicker.setAttribute("aria-label", `${entry.title || t("未命名案例")}的素材`);
@@ -2428,7 +2292,14 @@ function composerVideoSourceOptions(entry, asset) {
 }
 
 function setDraftAssetSelected(entryId, assetId, selected) {
-  if (!entryId || !assetId) return;
+  if (!entryId) return;
+  if (!assetId) {
+    if (selected) {
+      referenceDraftSelections.set(entryId, new Set());
+      addDraftOrder(entryId);
+    } else removeDraftEntry(entryId);
+    return;
+  }
   const selection = referenceDraftSelections.get(entryId) ?? new Set();
   if (selected) {
     selection.add(assetId);
@@ -2451,7 +2322,7 @@ function renderCasePreviewImage(option, entry, assetId) {
   const surface = option.querySelector(".composer-case-select-preview");
   if (!surface) return;
   const asset = selectableReferenceAssets(entry, composerSession?.targetType).find((item) => item.id === assetId);
-  if (!asset) return surface.replaceChildren(rawTextEl("span", "", t("这条案例没有截图")));
+  if (!asset) return surface.replaceChildren(rawTextEl("span", "", t("文字资料")));
   const displayAsset = asset.kind === "video" ? posterAssetForVideo(entry, asset) : asset;
   if (!displayAsset) return surface.replaceChildren(rawTextEl("span", "", t("视频")));
   const image = document.createElement("img");
@@ -2469,9 +2340,9 @@ function renderCasePreviewImage(option, entry, assetId) {
 function syncCaseOptionSelection(option, entry) {
   const selected = referenceDraftSelections.get(entry.id) ?? new Set();
   const previewAssetId = referencePreviewAssetIds.get(entry.id) || "";
-  option.dataset.selected = String(selected.size > 0);
+  option.dataset.selected = String(referenceDraftSelections.has(entry.id));
   const previewCheckbox = option.querySelector(".composer-case-preview-checkbox");
-  if (previewCheckbox) previewCheckbox.checked = selected.has(previewAssetId);
+  if (previewCheckbox) previewCheckbox.checked = previewAssetId ? selected.has(previewAssetId) : referenceDraftSelections.has(entry.id);
   for (const input of option.querySelectorAll(".composer-case-asset input[type='checkbox']")) {
     input.checked = selected.has(input.closest(".composer-case-asset")?.dataset.assetId || "");
   }
@@ -2554,10 +2425,11 @@ async function hydrateCaseImage(image) {
   const visualId = image.dataset.visualId;
   if (!visualId || image.src) return;
   try {
-    const blob = await getScreenshotBlob(visualId);
+    const derived = image.dataset.thumbnailKey ? await getDerivedMedia(visualId) : null;
+    const blob = derived?.thumbnail instanceof Blob ? derived.thumbnail : await getScreenshotBlob(visualId);
     if (!blob || !image.isConnected) return;
     const url = URL.createObjectURL(blob);
-    thumbnailUrls.set(visualId, url);
+    thumbnailUrls.set(image.dataset.thumbnailKey || visualId, url);
     image.src = url;
   } catch {
     image.closest(".composer-case-select-preview")?.replaceChildren(rawTextEl("span", "", t("截图读取失败")));
@@ -2664,7 +2536,7 @@ async function applySelectedReferences() {
               .filter((analysis) => referenceDraftSourceSelections.get(item.key)?.has(`analysis:${String(analysis?.id ?? "")}`))
               .map((analysis) => String(analysis.id))
           : []
-      })), currentLocale(), composerSession.targetType),
+      })), currentLocale(), composerSession.targetType, { documentTextByEntryId: composerDocumentTextByEntryId }),
       ...temporaryReferences
     ],
     currentInstruction: "",
@@ -2810,7 +2682,7 @@ function openAssemblyDialog() {
   const snapshot = draftRequest ? null : composerSession.assemblySnapshot;
   const latestUserRequest = [...composerSession.messages].reverse().find((item) => item.role === "user")?.content || "";
   const userRequest = draftRequest || snapshot?.userRequest || latestUserRequest;
-  const includeRetrievedSources = !draftRequest || reuseRetrievedSourcesNextTurn;
+  const includeRetrievedSources = !draftRequest;
   const selectedReferences = snapshot
     ? snapshot.references.map((item) => `${item.alias} ${item.title}\n${item.referenceText}`)
     : composerSession.referenceSnapshots.map((item) => `${item.alias} ${item.title}\n${item.referenceText}`);
@@ -2820,8 +2692,6 @@ function openAssemblyDialog() {
       ? composerSession.retrievedSources.map((item) => `${item.alias} [${item.role}] ${item.title}\n${item.text}`)
     : [];
   const snapshotSkills = snapshot?.skills.map((skill) => `${skill.order}. /${skill.callName} · ${skill.version}\n${skill.instructions}`).join("\n\n");
-  const draftService = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
-  const draftPrerequisiteAnalysis = imageTempReferenceBlock(composerSession.referenceSnapshots, draftService);
   const mediaSummary = snapshot ? [
     `手选图片 ${snapshot.media.selectedImageCount} 张；预计发送 ${snapshot.media.expectedSentImageCount} 张`,
     snapshot.media.baseImageIncluded ? `编辑底图已发送${snapshot.media.maskIncluded ? "；局部遮罩已发送" : ""}` : "",
@@ -2838,12 +2708,12 @@ function openAssemblyDialog() {
     userRequest,
     skills: snapshotSkills || payload.skills.map((skill) => `${skill.order}. /${skill.callName}\n${skill.instructions}`).join("\n\n"),
     references: [...selectedReferences, ...retrievedReferences].join("\n\n"),
-    retrieval: snapshot ? composerRetrievalSummary({ retrievalSnapshot: snapshot.retrieval }) : composerRetrievalSummary(composerSession, Boolean(draftRequest)),
+    retrieval: composerRetrievalSummary(snapshot ?? composerSession),
+    libraryTools: snapshot?.libraryTools ?? composerSession.libraryTools,
     serviceLabel: snapshot?.serviceLabel,
     model: snapshot?.model,
-    expectedModelCalls: snapshot?.expectedModelCalls ?? composerTurnPolicyFor(composerSession).expectedModelCalls,
-    prerequisiteAnalysisRequests: snapshot?.prerequisiteAnalysisRequests
-      ?? (draftPrerequisiteAnalysis.blocked ? draftPrerequisiteAnalysis.imageCount : 0),
+    expectedModelCalls: libraryRetrievalEnabled ? undefined : snapshot?.expectedModelCalls ?? composerTurnPolicyFor(composerSession).expectedModelCalls,
+    prerequisiteAnalysisRequests: snapshot?.prerequisiteAnalysisRequests ?? 0,
     mediaSummary,
     actual: snapshot?.actual
   });
@@ -2867,24 +2737,18 @@ function openAssemblyDialog() {
       elements.composerInstruction.focus();
       renderSendState();
     });
-    if (layer.id === "retrieval" && draftRequest && !reuseRetrievedSourcesNextTurn) return assemblyLayer(t(layer.title), layer.content, t(libraryRetrievalEnabled ? "关闭" : "启用"), () => {
+    if (layer.id === "retrieval" && draftRequest) return assemblyLayer(t(layer.title), layer.content, t(libraryRetrievalEnabled ? "关闭" : "启用"), () => {
       elements.composerAssemblyDialog.close();
-      toggleLibraryRetrieval();
+      safely(toggleLibraryRetrieval)();
     });
     return assemblyLayer(t(layer.title), layer.content);
   }));
   elements.composerAssemblyDialog.showModal();
 }
 
-function composerRetrievalSummary(session, hasDraftRequest = false) {
-  if (libraryRetrievalEnabled && hasDraftRequest) return "已授权；发送本轮时检索案例与教程";
-  if (hasDraftRequest && !reuseRetrievedSourcesNextTurn) return "未授权，不检索资料库";
-  const snapshot = session?.retrievalSnapshot;
-  if (!snapshot) return "未授权，不检索资料库";
-  const result = snapshot.status === "completed"
-    ? `采用 ${snapshot.sourceCount} 条来源`
-    : "没有匹配来源";
-  return `已授权 · 查询：${snapshot.query} · ${result}`;
+function composerRetrievalSummary(session) {
+  if (!libraryRetrievalEnabled) return "案例库：关闭";
+  return `案例库：按需 · ${session?.libraryTools?.candidates.length || 0} 个候选 · ${session?.retrievedSources?.length || 0} 条已读来源；仅在你要求查询或参考时调用`;
 }
 
 function assemblyLayer(title, content, actionLabel, action) {
@@ -3450,16 +3314,11 @@ function renderSendState() {
   const descriptions = composerSession.referenceSnapshots.filter((item) => item.referenceKind === "vision").length;
   const images = composerSession.referenceSnapshots.reduce((sum, item) => sum + item.imageRefs.length, 0);
   const usage = composerInputUsage(composerSession, elements.composerInstruction.value, composerSettings);
-  const callCount = composerTurnPolicyFor(composerSession).expectedModelCalls;
-  const planningService = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
-  const prerequisiteAnalysis = imageTempReferenceBlock(composerSession.referenceSnapshots, planningService);
-  const prerequisiteAnalysisCount = prerequisiteAnalysis.blocked ? prerequisiteAnalysis.imageCount : 0;
-  const requestLabel = composerSession.outputMode === "create_video" ? "异步视频任务" : `${callCount} 次创作请求`;
-  const prerequisiteLabel = prerequisiteAnalysisCount ? ` · 发送前另需 ${prerequisiteAnalysisCount} 次图片分析` : "";
-  const retrievalLabel = libraryRetrievalEnabled ? " · 本轮检索已开启" : "";
-  elements.composerSendNote.textContent = currentLocale() === "en"
-    ? `${prompts} prompt originals · ${images} selected images · ${descriptions} visual descriptions · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} characters${libraryRetrievalEnabled ? " · local retrieval enabled" : ""} · ${composerSession.outputMode === "create_video" ? "asynchronous video task" : `${callCount} creation requests`}${prerequisiteAnalysisCount ? ` · ${prerequisiteAnalysisCount} image-analysis requests required before sending` : ""}`
-    : `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel}${prerequisiteLabel}`;
+  renderImageInputStatus();
+  const toolState = composerSession.libraryTools;
+  const requestLabel = toolState.requestCount ? `本轮已请求 ${toolState.requestCount} 次 · ${toolState.usage && toolState.usageRequestCount === toolState.requestCount ? `输入 ${toolState.usage.promptTokens} / 输出 ${toolState.usage.completionTokens} tokens` : "用量未知"}` : "按任务执行";
+  const retrievalLabel = !libraryRetrievalEnabled ? " · 案例库：关闭" : composerLibraryToolService(composerSession, composerAiSettings, composerVisionSettings).nativeTools ? " · 案例库：按需" : " · 案例库：手动选择";
+  elements.composerSendNote.textContent = `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel} · 本轮已附 ${toolState.imageIds.length} 张图片`;
   elements.composerSendNote.classList.toggle("error", usage.overLimit);
   const currentRun = activeOperation?.kind === "compose" && activeOperation.sessionId === composerSession.id;
   if (currentRun) {
@@ -3522,7 +3381,8 @@ function routeOperationLabel(route) {
 }
 
 function referenceAliasButton(reference) {
-  const button = el("button", "button-secondary composer-input-reference-card");
+  const card = el("article", "button-secondary composer-input-reference-card");
+  const button = el("button", "composer-input-reference-main");
   button.type = "button";
   const entry = entries.find((item) => item.id === reference.entryId);
   const mediaEntry = entry ? normalizeEntryMedia(entry) : null;
@@ -3548,36 +3408,62 @@ function referenceAliasButton(reference) {
   button.append(visual, copy);
   button.title = `${reference.alias} · ${reference.title || t("未命名案例")}`;
   button.addEventListener("click", () => insertComposerAlias(reference.alias));
-  return button;
+  const remove = el("button", "icon-button composer-input-reference-remove");
+  remove.type = "button";
+  remove.title = t("取消参考");
+  remove.setAttribute("aria-label", `取消参考：${reference.title || reference.alias}`);
+  remove.disabled = Boolean(activeOperation);
+  remove.append(createUiIcon("x"));
+  remove.addEventListener("click", () => safely(async () => {
+    if (!composerSession || activeOperation) return;
+    composerSession = await saveSession(createComposerSession({
+      ...composerSession,
+      referenceSnapshots: composerSession.referenceSnapshots.filter(item => item.referenceId !== reference.referenceId),
+      retrievedSources: composerSession.retrievedSources.filter(item => item.entryId !== reference.entryId),
+      currentInstruction: "", currentRoute: "", currentRouteSource: ""
+    }));
+    renderComposer();
+  })());
+  card.append(button, remove);
+  return card;
 }
 
-function renderRetrievedSources() {
-  const sources = composerSession?.retrievedSources ?? [];
-  elements.composerRetrievalSources.hidden = sources.length === 0;
-  const sourceItems = sources.map((source) => {
-    const item = el("span", "composer-retrieved-source");
-    item.append(rawTextEl("small", "", retrievedSourceRole(source.role)), rawTextEl("strong", "", source.title || source.alias));
-    const remove = rawTextEl("button", "icon-button", "×");
-    remove.type = "button";
-    remove.disabled = Boolean(activeOperation);
-    remove.setAttribute("aria-label", translateUiMessage(`移除检索来源：${source.title || source.alias}`));
-    remove.addEventListener("click", () => safely(() => removeRetrievedSource(source.entryId))());
-    item.append(remove);
-    return item;
-  });
-  elements.composerRetrievalSources.replaceChildren(...sourceItems);
-}
-
-async function removeRetrievedSource(entryId) {
-  if (!composerSession || activeOperation) return;
-  composerSession = createComposerSession({
-    ...composerSession,
-    retrievedSources: composerSession.retrievedSources.filter((item) => item.entryId !== entryId)
-  });
-  composerSession = await saveSession(composerSession);
-  reuseRetrievedSourcesNextTurn = true;
-  renderComposer();
-  composerFeedback(t("已移除本轮检索来源"));
+function createLibraryCandidate(candidate, index) {
+  const item = el("article", "composer-library-candidate");
+  item.dataset.entryId = candidate.caseId;
+  const open = el("a", "composer-library-candidate-open");
+  open.href = `library.html?case=${encodeURIComponent(candidate.caseId)}`;
+  open.target = "_blank";
+  open.title = [candidate.title, candidate.excerpt].filter(Boolean).join("\n");
+  open.setAttribute("aria-label", `查看案例：${candidate.title}`);
+  const entry = entries.find((entry) => entry.id === candidate.caseId);
+  const media = entry ? primaryMediaAsset(entry) : null;
+  const visualAsset = media?.kind === "video" ? posterAssetForVideo(entry, media) : entry ? primaryVisual(entry) : null;
+  const visual = el("span", "composer-library-candidate-visual");
+  visual.setAttribute("aria-hidden", "true");
+  visual.append(createUiIcon(visualAsset ? "image" : media?.kind === "video" ? "video" : "file-text"),
+    rawTextEl("span", "", t(visualAsset ? "图片" : media?.kind === "video" ? "视频" : "文字资料")));
+  if (visualAsset) {
+    const image = document.createElement("img");
+    image.alt = "";
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.dataset.visualId = visualAsset.id;
+    image.dataset.thumbnailKey = `preview:${visualAsset.id}`;
+    image.addEventListener("error", () => image.remove(), { once: true });
+    const cached = thumbnailUrls.get(image.dataset.thumbnailKey);
+    if (cached) image.src = cached;
+    else imageObserver.observe(image);
+    visual.append(image);
+  }
+  open.append(visual, rawTextEl("span", "composer-library-candidate-title", `${index + 1}. ${candidate.title || t("未命名案例")}`));
+  const selected = composerSession.referenceSnapshots.some(reference => reference.entryId === candidate.caseId);
+  const select = textEl("button", "button-secondary composer-library-candidate-select", selected ? "调整参考" : "选作参考");
+  select.type = "button";
+  select.disabled = !entry || Boolean(activeOperation) || !isComposerEligibleEntry(entry, composerSession.targetType, { documentTextByEntryId: composerDocumentTextByEntryId });
+  select.addEventListener("click", () => openReferenceWorkspace({ entryId: candidate.caseId }));
+  item.append(open, select);
+  return item;
 }
 
 function createRetrievedSourceSnapshot(sourcesValue) {

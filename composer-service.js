@@ -1,10 +1,14 @@
+import { applyComposerConversation } from './composer-conversation.js';
+import { runComposerToolLoop } from "./composer-tool-loop.js";
 import {
+  DEEPSEEK_ENDPOINT,
   deepSeekErrorDetails,
   executeAgentTurn as executeDeepSeekTurn,
   normalizeAiSettings,
   planComposerTurn as planDeepSeekTurn
 } from "./deepseek.js";
 import {
+  COMPOSER_INPUT_MAX_CHARACTERS,
   assertComposerInputBudget,
   assertComposerRequestBudget,
   normalizeComposerAiProfile,
@@ -85,17 +89,17 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
   const vision = normalizeVisionSettings(visionSettingsValue);
   const compatibleLabel = serviceLabelForEndpoint(vision.compatible.endpoint);
   const xai = normalizeXaiComposerSettings(visionSettingsValue?.xai);
-  const deepseekProfile = visionSettingsValue?.providerProfiles?.deepseek;
+  const deepseekProfile = { ...visionSettingsValue?.providerProfiles?.deepseek, id: "deepseek" };
   const deepseekModels = [...new Set([
-    "deepseek-v4-flash", "deepseek-v4-pro", deepseekProfile?.models?.creativePlanning
+    "deepseek-flash", "deepseek-v4-pro", deepseekProfile?.models?.creativePlanning
   ].map((value) => String(value ?? "").trim()).filter(Boolean))];
   const catalog = [
     ...deepseekModels.map((model) => ({
       serviceId: "deepseek",
       model,
-      label: model === "deepseek-v4-flash" ? "DeepSeek Flash"
+      label: model === "deepseek-flash" ? "DeepSeek Flash"
         : model === "deepseek-v4-pro" ? "DeepSeek Pro" : `DeepSeek · ${model}`,
-      shortLabel: model === "deepseek-v4-flash" ? "Flash" : model === "deepseek-v4-pro" ? "Pro" : "DeepSeek",
+      shortLabel: model === "deepseek-flash" ? "Flash" : model === "deepseek-v4-pro" ? "Pro" : "DeepSeek",
       configured: Boolean(ai.apiKey && ai.consent),
       vision: providerModelSupports(deepseekProfile, model, "imageAnalysis"),
       planning: model === deepseekProfile?.models?.creativePlanning || providerModelSupports(deepseekProfile, model, "creativePlanning"),
@@ -190,8 +194,31 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
     const provider = visionSettingsValue?.providerProfiles?.[providerId];
     const capability = getAiModelCapability(providerId, item.model)
       ?? (provider?.discoveredModels ?? []).find((model) => model.id === item.model);
-    return { ...item, videoInput: (capability?.inputModalities ?? []).includes("video") };
+    const modalities = capability?.inputModalities ?? [];
+    const visionInput = modalities.length ? modalities.includes("image")
+      : capability?.tasks?.includes("imageAnalysis") || item.vision;
+    return { ...item, vision: Boolean(visionInput), videoInput: modalities.includes("video"),
+      nativeTools: capability?.supportedParameters?.includes("tools") || ["deepseek", "openai", "zhipu"].includes(providerId) };
   });
+}
+
+export function composerLibraryToolService(session, aiSettings, visionSettings) {
+  const generation = normalizeComposerAiProfile(session?.generationAiProfile);
+  const directImage = session?.outputMode === "create_image" && !composerGenerationRequiresPromptAssembly(generation, visionSettings, session);
+  const ownVideoPlanner = session?.outputMode === "create_video" && ["openai", "xai"].includes(generation.serviceId);
+  const service = selectedComposerService(directImage || ownVideoPlanner ? generation : session?.aiProfile, aiSettings, visionSettings);
+  if (directImage) {
+    const supportsLocalFunctions = generation.serviceId === "openai"
+      || (generation.serviceId === "compatible" && normalizeVisionSettings(visionSettings).compatible.imageGeneration.protocol === "responses_tool");
+    return { ...service, nativeTools: service.nativeTools && supportsLocalFunctions };
+  }
+  return service;
+}
+
+export function composerImageInputAvailability(session, service) {
+  const imageCount = session?.imageReferenceMode === "text_only" ? 0
+    : (session?.referenceSnapshots ?? []).reduce((count, reference) => count + (reference.imageRefs?.length ?? 0), 0);
+  return { available: imageCount === 0 || service?.vision === true, imageCount };
 }
 
 export function composerServiceCapabilities(profileValue, visionSettingsValue = {}) {
@@ -548,15 +575,44 @@ export async function executeComposerTurnWithService(input, settingsValue, prepa
     if (!selected.videoInput) throw new ComposerServiceError(`${selected.label} 的所选模型未声明视频输入能力，请切换视频模型`, 422, { retryable: false });
   }
   const planningProfile = normalizeComposerAiProfile(input.session?.aiProfile);
+  const toolService = composerLibraryToolService(input.session, settingsValue.ai, settingsValue.vision);
+  if (!toolService.nativeTools || !options.toolRuntime?.specs.length) options = { ...options, toolRuntime: undefined };
   const generationMode = ["create_image", "create_video"].includes(input.session?.outputMode);
+  if (generationMode && options.toolRuntime) {
+    const runtime = options.toolRuntime;
+    options = { ...options, toolRuntime: { ...runtime, execute: async (...args) => {
+      const result = await runtime.execute(...args);
+      if (input.session.imageReferenceMode === "conditioned" && result.images?.length) {
+        const additional = result.images.filter(image => !preparedImages.some(item => item.visualId === image.visualId));
+        preparedImages.push(...additional);
+        input.session = { ...input.session, referenceSnapshots: [...input.session.referenceSnapshots, ...additional.map(image => ({
+          entryId: result.data.caseId, alias: `@${image.label}`, title: image.label, referenceKind: "vision", referenceText: "",
+          imageRefs: [{ visualId: image.visualId }], assetRefs: [], referenceSources: []
+        }))] };
+      }
+      return result;
+    } } };
+  }
   const executionProfile = generationMode
     ? normalizeComposerAiProfile(input.session?.generationAiProfile)
     : planningProfile;
-  if (!generationMode && usesProjectedDeepseekSettings(executionProfile, settingsValue.ai)) {
+  const selected = selectedComposerService(generationMode && input.session?.imageReferenceMode !== "prompt_only" ? executionProfile : planningProfile, settingsValue.ai, settingsValue.vision);
+  if (!composerImageInputAvailability(input.session, selected).available) {
+    throw new ComposerServiceError(`${selected.label} 无法读取参考原图，请切换支持看图的模型`, 422, { retryable: false });
+  }
+  if (!generationMode && !selected.vision && usesProjectedDeepseekSettings(executionProfile, settingsValue.ai)) {
     assertTextReferencesAvailable(input.session);
     return executeDeepSeekTurn(input, settingsValue.ai, options);
   }
-  const service = requireVisualService(executionProfile, settingsValue.vision, "创作");
+  const visionRuntime = { ...settingsValue.vision };
+  if (executionProfile.serviceId === "deepseek" && !visionRuntime.providerProfiles?.deepseek?.id) {
+    const ai = normalizeAiSettings(settingsValue.ai);
+    if (ai.activeProvider === "deepseek") visionRuntime.providerProfiles = { ...visionRuntime.providerProfiles, deepseek: {
+      id: "deepseek", label: "DeepSeek", protocol: "chat_completions", endpoint: DEEPSEEK_ENDPOINT,
+      apiKey: ai.apiKey, consent: ai.consent
+    }};
+  }
+  const service = requireVisualService(executionProfile, visionRuntime, "创作");
   if (input.session?.outputMode === "create_video") {
     return generateVideoTurn(input, service, settingsValue, preparedImages, options);
   }
@@ -916,7 +972,9 @@ async function executeVisualTextTurn(input, service, preparedImages, options) {
     fetchImpl: options.fetchImpl,
     onRequestStart: options.onRequestStart,
     onDelta: automatic ? (_delta, cumulative) => projector.push(cumulative) : options.onDelta,
-    stream: options.stream !== false
+    stream: options.stream !== false,
+    toolRuntime: options.toolRuntime,
+    conversation: request
   });
   if (automatic) {
     const parsed = projector.push(result.content, { final: true });
@@ -1012,7 +1070,7 @@ async function generateImageTurn(input, service, preparedImages, options) {
   if (service.imageGeneration.protocol === "responses_tool") {
     const instructions = [
       systemInstruction,
-      "本轮最终结果是图片。必须调用 image_generation 工具，依据用户要求、手选原图及其职责直接创建图片；不要只返回文字提示词。"
+      "本轮最终结果是图片。若需要案例资料，先完成必要查询与读取，然后必须调用 image_generation，依据用户要求和明确指定的原图创建图片。"
     ].join("\n\n");
     if (referenceMode === "conditioned") {
       const result = imageEdit?.mode === "local"
@@ -1044,7 +1102,7 @@ async function generateImageTurn(input, service, preparedImages, options) {
   if (service.imageGeneration.protocol !== "images_generations") {
     throw new ComposerServiceError("当前创作服务没有配置可用的生图接口", 422, { retryable: false });
   }
-  const referenceImages = [
+  let referenceImages = [
     ...(imageEdit ? [{
       label: "当前结果底图",
       dataUrl: imageEdit.baseImage.dataUrl,
@@ -1056,6 +1114,11 @@ async function generateImageTurn(input, service, preparedImages, options) {
   ];
   assertImagesEndpointRequest(service, referenceImages, requestParameters);
   const promptResult = await assembleImagePrompt(input, preparedImages, options);
+  if (referenceMode === "conditioned") {
+    const additional = referenceImagesForEdits(input.session, preparedImages);
+    referenceImages = [...referenceImages.filter(item => item.editBase), ...additional];
+    assertImagesEndpointRequest(service, referenceImages, requestParameters);
+  }
   const finalPrompt = promptResult.finalPrompt;
   const imageResult = await requestImagesEndpoint(service, finalPrompt, referenceImages, requestParameters, options, imageEdit);
   return {
@@ -1241,7 +1304,7 @@ function executionRequest(input) {
     references: (input.session?.referenceSnapshots ?? []).map((item) => ({
       alias: item.alias,
       referenceKind: item.referenceKind,
-      referenceText: item.referenceKind === "video_sources" ? item.referenceText || "" : item.originalText || "",
+      referenceText: item.referenceText || item.originalText || "",
       sources: item.referenceKind === "video_sources"
         ? (item.referenceSources ?? []).map(({ kind, label }) => ({ kind, label }))
         : [],
@@ -1269,13 +1332,7 @@ function multimodalContent(session, request, preparedImages, protocol, preparedV
     const textOnly = session?.imageReferenceMode === "text_only";
     const savedReconstructions = (reference.assets ?? []).map((asset, index) => String(asset?.reconstructionPrompt ?? "").trim()
       ? `[图片${index + 1}重建提示词]\n${String(asset.reconstructionPrompt).trim()}` : "").filter(Boolean).join("\n\n");
-    const referenceText = textOnly
-      ? savedReconstructions || String(reference.referenceText ?? "").trim()
-      : [String(reference.originalText ?? "").trim(), savedReconstructions].filter(Boolean).join("\n\n");
-    const referenceLabel = textOnly
-      ? "[已保存的 V2 高保真提示词]"
-      : savedReconstructions ? "[案例已有提示词与 V2 高保真提示词]" : "[案例已有提示词]";
-    content.push({ type: "text", text: `${reference.alias}${referenceText ? `\n${referenceLabel}\n${referenceText}` : "\n[纯图片案例]"}` });
+    if (savedReconstructions) content.push({ type: "text", text: `${reference.alias}\n[案例已有 V2 高保真提示词]\n${savedReconstructions}` });
     if (textOnly) continue;
     (reference.imageRefs ?? []).forEach((imageRef, index) => {
       const image = images.get(imageRef.visualId);
@@ -1300,16 +1357,34 @@ async function requestStructured(service, instructions, content, options = {}) {
 }
 
 async function requestText(service, instructions, content, options = {}) {
+  if (options.toolRuntime?.specs.length) {
+    const body = service.protocol === "responses"
+      ? responsesBody(service, instructions, content, options.stream !== false)
+      : chatBody(service, instructions, content, options.stream !== false);
+    if (options.conversation) applyComposerConversation(body, options.conversation, service.protocol);
+    if (body.stream && service.protocol !== "responses") body.stream_options = { include_usage: true };
+    return runComposerToolLoop({ body, protocol: service.protocol === "responses" ? "responses" : "chat_completions",
+      runtime: { ...options.toolRuntime, chatImagePart: image => chatImagePart(service, image) },
+      signal: options.signal, onDelta: options.onDelta, maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS,
+      request: async nextBody => {
+        const response = await requestRaw(service.endpoint, service.apiKey, nextBody, options, REQUEST_TIMEOUT_MS, service.label);
+        if (!response.ok) throw responseError(service.label, response.status, await response.json().catch(() => ({})), { secrets: [service.apiKey] });
+        return response;
+      }
+    });
+  }
   if (options.stream === false) {
     const body = service.protocol === "responses"
       ? responsesBody(service, instructions, content, false)
       : chatBody(service, instructions, content, false);
+    if (options.conversation) applyComposerConversation(body, options.conversation, service.protocol);
     const payload = await requestJson(service, body, options);
     return service.protocol === "responses" ? parseResponsesPayload(payload, service) : parseChatPayload(payload, service);
   }
   const body = service.protocol === "responses"
     ? responsesBody(service, instructions, content, true)
     : chatBody(service, instructions, content, true);
+  if (options.conversation) applyComposerConversation(body, options.conversation, service.protocol);
   const response = await requestRaw(service.endpoint, service.apiKey, body, options, REQUEST_TIMEOUT_MS, service.label);
   const contentType = String(response.headers?.get?.("content-type") ?? "");
   if (!contentType.includes("text/event-stream")) {
@@ -1328,7 +1403,17 @@ async function requestText(service, instructions, content, options = {}) {
 async function requestResponsesImage(service, instructions, content, fallbackPrompt, requestParameters, options, imageTool = { type: "image_generation" }) {
   const body = responsesBody(service, instructions, content, false);
   body.tools = [{ ...imageTool, ...requestParameters }];
-  const payload = await requestJson(service, body, options, IMAGE_REQUEST_TIMEOUT_MS);
+  const loopResult = options.toolRuntime?.specs.length ? await runComposerToolLoop({
+    body, protocol: "responses",
+    runtime: options.toolRuntime, signal: options.signal, maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS, allowImageOutput: true,
+    request: async nextBody => {
+      const response = await requestRaw(service.endpoint, service.apiKey, nextBody, options, IMAGE_REQUEST_TIMEOUT_MS, service.label);
+      if (!response.ok) throw responseError(service.label, response.status, await response.json().catch(() => ({})), { secrets: [service.apiKey] });
+      return response;
+    }
+  }) : null;
+  const payload = loopResult ? { output: loopResult.outputItems, output_text: loopResult.content, model: loopResult.model }
+    : await requestJson(service, body, options, IMAGE_REQUEST_TIMEOUT_MS);
   const calls = (Array.isArray(payload?.output) ? payload.output : []).filter((item) => item?.type === "image_generation_call");
   const images = calls.flatMap((call) => call.result ? [{ blob: base64Image(call.result, "image/png"), revisedPrompt: String(call.revised_prompt ?? "").trim() }] : []);
   if (!images.length) throw new ComposerServiceError(`${service.label} 没有返回生成图片`, 422, { retryable: true });
@@ -1337,7 +1422,7 @@ async function requestResponsesImage(service, instructions, content, fallbackPro
   return {
     finalPrompt: revisedPrompt || String(fallbackPrompt ?? "").trim() || "创建图片",
     images,
-    usage: normalizeResponsesUsage(payload.usage),
+    usage: loopResult?.usage ?? normalizeResponsesUsage(payload.usage),
     model: String(payload.model ?? ""),
     requestModel: service.model,
     finishReason: "completed"
@@ -1467,6 +1552,8 @@ function responsesBody(service, instructions, content, stream) {
 
 function chatBody(service, instructions, content, stream) {
   return {
+    ...(service.serviceId === "deepseek" ? { thinking: {type:service.thinking ? "enabled" : "disabled"},
+      ...(service.thinking ? {reasoning_effort:"high"} : {}), ...(stream ? {stream_options:{include_usage:true}} : {}) } : {}),
     model: service.model,
     stream,
     messages: [
@@ -1610,6 +1697,7 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       model,
       planning,
       reasoningEffort: "",
+      ...(profile.serviceId === "deepseek" ? { thinking: profile.thinking } : {}),
       structuredOutput: modelCapability?.structuredOutput ?? provider.structuredOutput,
       mediaInput: { ...(provider.mediaInput ?? {}), ...(modelCapability?.mediaInput ?? {}) },
       videoInput: (modelCapability?.inputModalities ?? discoveredCapability?.inputModalities ?? []).includes("video"),
@@ -1769,6 +1857,8 @@ function providerModelDescriptor(profile, modelId) {
 
 function providerModelSupports(profile, modelId, taskId) {
   const id = String(modelId ?? "").trim();
+  const known = profile?.id === "deepseek" ? getAiModelCapability(profile.id, id) : null;
+  if (known) return known.tasks.includes(taskId);
   const descriptor = providerModelDescriptor(profile, id);
   if (descriptor) return descriptor.tasks?.includes(taskId) === true;
   return profile?.capabilities?.includes(taskId) === true
@@ -1782,7 +1872,7 @@ function compatibleImageReferenceCapability(visionSettingsValue, modelId) {
 }
 
 function modelReferenceCapability(profile, modelId, fallback = { supported: null, maxItems: null }) {
-  const value = providerModelDescriptor(profile, modelId)?.referenceImages;
+  const value = (profile?.id === "deepseek" ? getAiModelCapability(profile.id, modelId)?.referenceImages : null) ?? providerModelDescriptor(profile, modelId)?.referenceImages;
   const maximum = value?.maxItems === null || value?.maxItems === undefined || value?.maxItems === ""
     ? null
     : Number(value.maxItems);
@@ -2198,7 +2288,7 @@ function parseObject(content, message) {
 }
 
 function textMessagesForBudget(body) {
-  if (Array.isArray(body.messages)) return body.messages.map((item) => ({ content: typeof item.content === "string" ? item.content : JSON.stringify(item.content.filter?.((part) => part.type === "text") ?? []) }));
+  if (Array.isArray(body.messages)) return body.messages.map((item) => ({ content: typeof item.content === "string" ? item.content : JSON.stringify(item.content?.filter?.((part) => part.type === "text") ?? []) }));
   if (typeof body.input === "string") return [{ content: body.input }];
   if (Array.isArray(body.input) && body.input.some((item) => item?.type === "text" || item?.type === "image")) {
     return body.input.filter((item) => item?.type === "text").map((item) => ({ content: item.text ?? "" }));

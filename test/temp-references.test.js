@@ -5,7 +5,6 @@ import {
   composerPasteFiles,
   createTempReference,
   extractTempReferenceText,
-  imageTempReferenceBlock,
   namePastedTempReferenceFile,
   tempReferenceAssetIds,
   unreadReferenceImageAssets,
@@ -112,48 +111,6 @@ test("temporary reference backup paths keep safe relative paths and discard unsa
   assert.equal(Object.hasOwn(unsafe.assetRefs[0], "archivePath"), false);
 });
 
-test("a text-only service blocks image attachments without choosing another service", () => {
-  const references = [{
-    sourceType: "temporary",
-    assetRefs: [{ assetId: "temp-reference-asset:one", kind: "image", mimeType: "image/png" }]
-  }];
-
-  assert.deepEqual(imageTempReferenceBlock(references, { serviceId: "deepseek", vision: false }), {
-    blocked: true,
-    imageCount: 1,
-    choices: ["chooseVisionService", "analyzeImages", "cancel"]
-  });
-  assert.deepEqual(imageTempReferenceBlock(references, { serviceId: "openai", vision: true }), {
-    blocked: false,
-    imageCount: 1,
-    choices: []
-  });
-  assert.deepEqual(imageTempReferenceBlock([{ ...references[0], referenceText: "A centered portrait with hard side light." }], { serviceId: "deepseek", vision: false }), {
-    blocked: false,
-    imageCount: 0,
-    choices: []
-  });
-  assert.deepEqual(imageTempReferenceBlock([{
-    sourceType: "library",
-    imageRefs: [{ visualId: "temp-reference-asset:one", mimeType: "image/png" }]
-  }], { serviceId: "deepseek", vision: false }), {
-    blocked: true,
-    imageCount: 1,
-    choices: ["chooseVisionService", "analyzeImages", "cancel"]
-  });
-  assert.deepEqual(imageTempReferenceBlock([{
-    sourceType: "library",
-    referenceKind: "prompt",
-    originalText: "A centered portrait with hard side light.",
-    referenceText: "A centered portrait with hard side light.",
-    imageRefs: [{ visualId: "temp-reference-asset:one", mimeType: "image/png" }],
-    assets: [{ assetId: "temp-reference-asset:one", kind: "image" }]
-  }], { serviceId: "deepseek", vision: false }), {
-    blocked: false,
-    imageCount: 0,
-    choices: []
-  });
-});
 
 test("a partial temporary-image analysis remains eligible for completion", () => {
   const base = {

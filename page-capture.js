@@ -680,7 +680,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       return { id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id, candidates: candidate ? [candidate] : [], capturedAt };
     }
     if (siteData?.pageKind === "feed") {
-      if (wholePage) await scanLoadedPage(() => undefined);
+      if (wholePage && !(siteData.adapter === "jimeng" && (siteData.candidates?.length || 0) >= maxCandidates)) await scanLoadedPage(() => undefined);
       return {
         id: sessionId,
         sourceUrl: canonicalUrl,
@@ -688,6 +688,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
         candidates: Array.isArray(siteData.candidates) ? siteData.candidates.slice(0, maxCandidates) : [],
         capturedAt,
         siteStatus: siteData.completeness === "complete" ? "complete" : "partial"
+      };
+    }
+    if (siteData?.adapter === "jimeng" && siteData.pageKind === "detail" && !pageSelection) {
+      return {
+        id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id,
+        candidates: Array.isArray(siteData.candidates) ? siteData.candidates.slice(0, 1) : [],
+        capturedAt, siteStatus: siteData.completeness === "complete" ? "complete" : "partial"
       };
     }
     if (adapter.id === "x" && !pageSelection) {
@@ -783,19 +790,55 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   async function scanLoadedPage(collectVisible) {
     const maxSteps = positiveInteger(options.maxScrollSteps, 30);
+    const feedRoot = options.siteData?.adapter === "jimeng" ? document.querySelector?.('[aria-label="Explore content"]') : null;
+    let scrollRoot = null;
+    if (feedRoot) {
+      for (let element = feedRoot.parentElement;
+        element && element !== document.body; element = element.parentElement) {
+        if (element.scrollHeight > element.clientHeight && /auto|scroll/u.test(getComputedStyle(element).overflowY)) {
+          scrollRoot = element;
+          break;
+        }
+      }
+    }
+    const start = scrollRoot ? { top: scrollRoot.scrollTop, left: scrollRoot.scrollLeft } : null;
     let stableRounds = 0;
     let previousPosition = -1;
-    for (let step = 0; step < maxSteps && stableRounds < 3 && !cancelled; step += 1) {
-      const height = Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight);
-      const viewport = Math.max(1, Number(window.innerHeight) || 720);
-      const nextTop = Math.min(Math.max(0, height - viewport), Math.max(0, window.scrollY) + Math.round(viewport * 0.85));
-      window.scrollTo({ top: nextTop, behavior: "instant" });
-      await waitForVisibleMedia();
-      await collectVisible();
-      const nextHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight);
-      const position = Math.max(0, Number(window.scrollY) || nextTop);
-      stableRounds = position === previousPosition && position + viewport >= nextHeight ? stableRounds + 1 : 0;
-      previousPosition = position;
+    try {
+      for (let step = 0; step < maxSteps && stableRounds < 3 && !cancelled; step += 1) {
+        const height = scrollRoot ? scrollRoot.scrollHeight : Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight);
+        const viewport = Math.max(1, scrollRoot ? scrollRoot.clientHeight : Number(window.innerHeight) || 720);
+        const nextTop = Math.min(Math.max(0, height - viewport), Math.max(0, scrollRoot ? scrollRoot.scrollTop : window.scrollY) + Math.round(viewport * 0.85));
+        (scrollRoot || window).scrollTo({ top: nextTop, behavior: "instant" });
+        await waitForVisibleMedia();
+        if (feedRoot?.getAttribute?.("aria-busy") === "true" && !cancelled) {
+          await new Promise((resolve, reject) => {
+            const finish = (error) => {
+              observer.disconnect();
+              clearTimeout(timer);
+              cancellation.signal.removeEventListener("abort", onAbort);
+              if (error) reject(error); else resolve();
+            };
+            const onAbort = () => finish();
+            const observer = new MutationObserver(() => {
+              if (feedRoot.getAttribute("aria-busy") !== "true") finish();
+            });
+            const timer = setTimeout(() => finish(new Error("即梦作品仍在加载，请稍后重新扫描")), positiveInteger(options.mediaTimeoutMs, 1200));
+            observer.observe(feedRoot, { attributes: true, attributeFilter: ["aria-busy"] });
+            cancellation.signal.addEventListener("abort", onAbort, { once: true });
+            if (feedRoot.getAttribute("aria-busy") !== "true" || cancelled) finish();
+          });
+        }
+        await collectVisible();
+        if (feedRoot && [...feedRoot.querySelectorAll?.(".masonry-layout-item[data-index]") || []]
+          .some((element) => Number(element.getAttribute("data-index")) + 1 >= maxCandidates)) break;
+        const nextHeight = scrollRoot ? scrollRoot.scrollHeight : Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight);
+        const position = Math.max(0, Number(scrollRoot ? scrollRoot.scrollTop : window.scrollY) || nextTop);
+        stableRounds = position === previousPosition && position + viewport >= nextHeight ? stableRounds + 1 : 0;
+        previousPosition = position;
+      }
+    } finally {
+      if (scrollRoot) scrollRoot.scrollTo({ ...start, behavior: "instant" });
     }
   }
 

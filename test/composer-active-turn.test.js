@@ -80,3 +80,16 @@ test("checkpoint writes keep the first in-flight snapshot and then only the late
   releases.shift()();
   await writer.drain();
 });
+
+
+test("interrupted native tool records settle without sending a new request", () => {
+  const session = { activeTurn: { turnId: "turn", userMessageId: "user", status: "waiting" }, libraryTools: { events: [
+    { callId: "first", userMessageId: "user", name: "search_cases", status: "completed", label: "找到案例" },
+    { callId: "second", userMessageId: "user", name: "read_case_text", status: "running", label: "正在读取" }
+  ], requestCount: 2 } };
+  const recovered = recoverInterruptedComposerTurn(session);
+  assert.equal(recovered.libraryTools.events[0].status, "completed");
+  assert.equal(recovered.libraryTools.events[1].status, "interrupted");
+  assert.equal(recovered.libraryTools.requestCount, 2);
+  assert.match(recovered.libraryTools.events[1].label, /未自动重试/);
+});

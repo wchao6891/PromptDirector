@@ -16,8 +16,12 @@ test("privacy policy discloses the current seven AI tasks and their external-med
   assert.match(policy, /用户选择的第三方 AI 服务/);
   assert.match(policy, /自定义兼容接口/);
   assert.match(policy, /图片、视频/);
-  assert.match(policy, /只发送完成当前任务所必需、且由用户明确选择或提交的内容/);
-  assert.match(policy, /不会自动发送整库、全部案例、未选择案例/);
+  assert.match(policy, /只发送完成当前任务所必需、且由用户明确选择、提交或按其查询和参考意图读取的内容/);
+  assert.match(policy, /不会发送整库或全部案例/);
+  assert.match(policy, /仅在用户要求查询或参考案例库时调用本地工具/);
+  assert.match(policy, /按需读取文字并展示来源/);
+  assert.match(policy, /关闭状态在刷新后保留/);
+  assert.match(policy, /检索不会自动发送案例图片、视频或原始文档文件/);
 });
 
 test("privacy policy makes the two independent execution confirmations explicit", async () => {

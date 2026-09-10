@@ -78,7 +78,7 @@ export function primaryVisionAnalysis(entryValue = {}) {
 
 export function primaryVisionDescription(entryValue = {}) {
   const analysis = primaryVisionAnalysis(entryValue);
-  return clean(analysis?.reconstructionPrompt || analysis?.description);
+  return clean(analysis?.reconstructionPrompt ?? analysis?.description);
 }
 
 export function visualDescriptions(entryValue = {}) {

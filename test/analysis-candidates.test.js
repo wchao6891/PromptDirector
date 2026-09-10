@@ -373,7 +373,7 @@ test("composer planner sends only prompt originals and vision descriptions as un
   assert.match(request.messages[0].content, /自然语言说明/);
   assert.match(request.messages[0].content, /只问一个问题/);
   assert.doesNotMatch(request.messages[0].content, /dimensionUses|preserveMode/);
-  assert.equal(request.model, "deepseek-v4-flash");
+  assert.equal(request.model, "deepseek-flash");
   assert.deepEqual(request.thinking, { type: "disabled" });
   assert.equal(Object.hasOwn(request, "reasoning_effort"), false);
   assert.equal(result.status, "ready");
@@ -792,4 +792,14 @@ test("a tag identical to its group reuses the group node instead of failing the 
   ]);
 
   assert.equal(applied.state.entries[0].facetAssignments[0].nodeId, "output.fps");
+});
+
+test("clearing a user-owned image reconstruction retains analysis evidence and tags", () => {
+  const original = { visionAnalysis: { version: 2, reconstructionPrompt: "模型结果", tags: [{ g: "style.render", t: "电影感" }], quality: "complete", imageFingerprint: "fixture" } };
+  const cleared = editVisionReconstructionPrompt(original, "  ");
+  assert.equal(cleared.visionAnalysis.reconstructionPrompt, "");
+  assert.equal(cleared.visionAnalysis.userEdited, true);
+  assert.deepEqual(cleared.visionAnalysis.tags, original.visionAnalysis.tags);
+  assert.equal(cleared.visionAnalysis.imageFingerprint, "fixture");
+  assert.equal(original.visionAnalysis.reconstructionPrompt, "模型结果");
 });

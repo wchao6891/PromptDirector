@@ -9,6 +9,7 @@ import {
   exportGeneratedSkillPackage,
   exportStoredSkillPackage,
   parseSkillArchive,
+  parseSkillFile,
   parseSkillFiles,
   parseSkillMarkdown
 } from "../creative-skill-package.js";
@@ -26,6 +27,31 @@ test("generated packages contain a standard SKILL.md and Markdown references onl
   assert.equal(parsed.description, "将国风审美转成可复用创作方法。");
   assert.deepEqual(parsed.references.map((item) => item.path), ["references/composition.md", "references/provenance.md"]);
   assert.equal(parsed.files.size, 3);
+});
+
+test("ordinary Markdown imports use the filename and full text without requiring Skill metadata", async () => {
+  const markdown = "# 创作方法\n\n保持主体清晰。\n\n示例：scripts/helper.py\n";
+  const file = new File([markdown], "构图方法.MD", { type: "text/plain" });
+  const parsed = await parseSkillFile(file);
+  assert.equal(parsed.name, "构图方法");
+  assert.equal(parsed.description, "");
+  assert.equal(parsed.body, markdown.trim());
+  assert.deepEqual([...parsed.files.keys()], ["SKILL.md"]);
+  assert.equal(await parsed.files.get("SKILL.md").text(), markdown);
+  assert.deepEqual(parsed.references, []);
+  assert.equal(parsed.requiresTextModeConfirmation, false);
+  const withMetadata = "---\ntitle: 随手笔记\n---\n\n不需要标准字段。";
+  assert.equal((await parseSkillFile(new File([withMetadata], "notes.md"))).body, withMetadata);
+  await assert.rejects(parseSkillFile(new File(["  "], "empty.md")), /正文不能为空/);
+  await assert.rejects(parseSkillFile(file, { maxFileBytes: file.size - 1 }), /单个文件/);
+});
+
+test("file import retains ZIP and skill archive support", async () => {
+  const archive = await exportGeneratedSkillPackage({ portableId: "archive-method", description: "Archive method.", skillMarkdown: "# Method\n\nCompose." });
+  for (const extension of ["zip", "skill"]) {
+    const parsed = await parseSkillFile(new File([archive], `method.${extension}`));
+    assert.equal(parsed.name, "archive-method");
+  }
 });
 
 test("frontmatter reads only name and description while preserving the executable body", () => {

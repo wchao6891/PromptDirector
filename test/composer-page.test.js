@@ -89,7 +89,7 @@ test("composer reference selection is visual while Skill management stays on its
   assert.match(composerJs, /reference\.title/);
   const referenceCard = composerJs.slice(
     composerJs.indexOf("function referenceAliasButton"),
-    composerJs.indexOf("function referenceTypeLabel")
+    composerJs.indexOf("function createLibraryCandidate")
   );
   assert.match(referenceCard, /insertComposerAlias\(reference\.alias\)/);
   assert.doesNotMatch(referenceCard, /openReferenceWorkspace/);
@@ -99,7 +99,8 @@ test("composer reference selection is visual while Skill management stays on its
   assert.match(composerJs, /function activeComposerFeedbackElement\(\)/);
   assert.doesNotMatch(composerJs, /extractProjectMethod/);
   assert.match(skillsJs, /extractCreativeSkillDraft/);
-  assert.match(skillsJs, /parseSkillArchive/);
+  assert.match(skillsJs, /await parseSkillFile\(file\)/);
+  assert.match(skillsJs, /await parseSkillFiles\(map\)/);
   assert.match(skillsJs, /exportStoredSkillPackage|skillDetailExport/);
   assert.match(composerJs, /findCreativeSkillsBySlashQuery/);
   assert.match(composerJs, /createAppliedSkillSnapshot/);
@@ -108,8 +109,10 @@ test("composer reference selection is visual while Skill management stays on its
   assert.match(composerJs, /const payload = plannerRequestPayload\(composerSession, "", composerSettings\)/);
   assert.match(composerJs, /const layers = composerAssemblyLayers\(/);
   assert.match(composerJs, /layers\.map\(\(layer\) =>/);
-  assert.match(composerJs, /retrieveComposerSources\(/);
-  assert.match(composerJs, /function renderRetrievedSources\(\)/);
+  assert.match(composerJs, /createLocalComposerLibraryTools\(/);
+  assert.doesNotMatch(composerJs, /retrieveSourcesForTurn|retrieveComposerSources/);
+  assert.match(composerJs, /function createLibraryCandidate\(/);
+  assert.doesNotMatch(composerJs, /composerRetrievalSources/);
   assert.doesNotMatch(composerJs, /planSnapshot|currentPlan|dimensionUses/);
   assert.match(composerJs, /routeOperationLabel\(activeOperation\?\.executionRoute/);
   assert.doesNotMatch(composerJs, /type:\s*["']plan["']/);
@@ -165,25 +168,19 @@ test("composer temporary references share one attachment entry and block text-on
   assert.doesNotMatch(composerHtml, /id="composer-attachment-menu"|id="composer-attachment-library"/);
   assert.match(composerHtml, /id="composer-temp-references"/);
   assert.match(composerHtml, /id="composer-temp-reference-save-all"/);
-  assert.match(composerHtml, /id="composer-image-blocker"/);
-  assert.match(composerHtml, /id="composer-image-blocker-choose-service"/);
-  assert.match(composerHtml, /id="composer-image-blocker-analyze"/);
-  assert.match(composerHtml, /id="composer-image-blocker-cancel"/);
-
+  assert.match(composerHtml, /id="composer-image-input-status"/);
+  assert.match(composerHtml, /id="composer-image-input-model"/);
+  assert.doesNotMatch(composerHtml, /composer-image-blocker/);
   assert.match(composerJs, /type:\s*"ADD_TEMP_REFERENCES"/);
   assert.match(composerJs, /type:\s*"REMOVE_TEMP_REFERENCE"/);
   assert.match(composerJs, /type:\s*"SAVE_TEMP_REFERENCE_AS_CASE"/);
-  assert.match(composerJs, /createComposerAnalysisTaskBridge/);
-  assert.match(composerJs, /detachBlockedReferenceAnalysis/);
-  assert.match(composerJs, /stopBlockedReferenceAnalysis/);
-  assert.match(composerJs, /retryBlockedReferenceAnalysis/);
-  assert.doesNotMatch(composerJs, /type:\s*"ANALYZE_TEMP_REFERENCES"/);
-  assert.doesNotMatch(composerJs, /if \(imageAnalysisPending\) event\.preventDefault\(\)/);
+  assert.doesNotMatch(composerJs, /createComposerAnalysisTaskBridge|START_OR_JOIN_ANALYSIS_TASK/);
+  assert.match(composerJs, /composerImageInputModel\.addEventListener\("click", \(event\) => \{\s*event\.stopPropagation\(\);\s*openComposerModelMenu\(\);/);
   assert.match(composerJs, /composerPasteFiles\(event\.clipboardData\)/);
   assert.match(composerJs, /if \(!files\.length\) return;\s*event\.preventDefault\(\)/s);
   const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
-  assert.ok(sendTurn.indexOf("showImageTempReferenceBlock") < sendTurn.indexOf("appendComposerMessage"));
-  assert.ok(sendTurn.indexOf("showImageTempReferenceBlock") < sendTurn.indexOf("composerInstruction.value = \"\""));
+  assert.ok(sendTurn.indexOf("renderImageInputStatus") < sendTurn.indexOf("appendComposerMessage"));
+  assert.ok(sendTurn.indexOf("renderImageInputStatus") < sendTurn.indexOf("composerInstruction.value = \"\""));
   assert.doesNotMatch(composerJs, /removeAllImageTempReferences/);
 });
 
@@ -199,7 +196,7 @@ test("composer sends a manual text task from the direct execution phase", async 
 
 test("composer sends an automatic text task through the prepared one-response route", async () => {
   const composerJs = await readFile(new URL("../composer-page.js", import.meta.url), "utf8");
-  const runTurn = composerJs.slice(composerJs.indexOf("async function runComposerTurn"), composerJs.indexOf("function retrieveSourcesForTurn"));
+  const runTurn = composerJs.slice(composerJs.indexOf("async function runComposerTurn"), composerJs.indexOf("async function rebuildComposerSearchIndex"));
 
   assert.match(runTurn, /operation\.executionRoute/);
   assert.match(runTurn, /runAgentExecution\(operation, settingsValue, executionRoute, operation\.session\.currentInstruction\)/);
@@ -252,7 +249,7 @@ test("composer keeps one stable creation toolbar and separates result action lev
   }
   assert.ok(footer.indexOf("composer-attachment-local") < footer.indexOf("composer-type-switch"));
   assert.ok(footer.indexOf("composer-library-search") < footer.indexOf("composer-type-switch"));
-  assert.match(footer, /id="composer-library-search"[^>]+aria-pressed="false"/);
+  assert.match(footer, /id="composer-library-search"[^>]+aria-pressed="true"/);
   assert.ok(footer.indexOf("composer-type-switch") < footer.indexOf("composer-reference-open"));
   assert.ok(footer.indexOf("composer-reference-open") < footer.indexOf("composer-options"));
   assert.ok(footer.indexOf("composer-options") < footer.indexOf("composer-model-trigger"));

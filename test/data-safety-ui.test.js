@@ -124,7 +124,9 @@ test("multi-ZIP import uses one wide preflight with blocking failures and one ba
   assert.match(flow, /batch\.controller\.signal/);
   assert.match(flow, /PREVIEW_LIBRARY_IMPORT_BATCH/);
   assert.match(flow, /APPLY_LIBRARY_IMPORT_BATCH/);
-  assert.match(flow, /assertStorageCapacity\(estimate, batch\.plannedBytes\)/);
+  assert.match(flow, /assertStorageCapacity\(estimate, plannedBytes\)/);
+  const plan = flow.slice(flow.indexOf("async function refreshLibraryPackageBatchPlan"), flow.indexOf("function libraryPackageMessage"));
+  assert.ok(plan.indexOf("batch.preview = response") > plan.indexOf("assertStorageCapacity(estimate, plannedBytes)"), "publish readiness only after the capacity check");
   assert.match(flow, /retryLibraryPackageItem/);
   assert.match(flow, /removeLibraryPackageItem/);
   assert.match(flow, /batch\.preview\?\.unresolvedConflicts/);

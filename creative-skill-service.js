@@ -1,3 +1,5 @@
+import { defaultSkillExtractionInstruction } from './skill-extraction-instruction.js';
+export { defaultSkillExtractionInstruction } from './skill-extraction-instruction.js';
 import {
   COMPOSER_INPUT_MAX_CHARACTERS,
   createComposerSession,
@@ -6,12 +8,6 @@ import {
 } from "./composer.js";
 import { executeComposerTurnWithService } from "./composer-service.js";
 import { entryMediaAssets } from "./media.js";
-
-export function defaultSkillExtractionInstruction(localeValue = "zh-CN") {
-  return localeValue === "en"
-    ? "Extract only reusable methods that serve the stated goal. Separate transferable rules from source-specific details. Preserve useful variables and decision boundaries. Do not judge completeness, score the user, or summarize unrelated commonalities. Write imperative instructions for another capable creative agent."
-    : "只提取服务于目标的可复用方法，区分可迁移规律与案例专属内容，保留有用变量和判断边界。不要评价完整性，不要给用户打分，也不要总结与目标无关的共同点。用命令式写给另一个有能力的创作 Agent。";
-}
 
 export function defaultSkillVisualInstruction(localeValue = "zh-CN") {
   return localeValue === "en"
@@ -204,7 +200,7 @@ export function anonymousSkillSources(entriesValue = [], selectionsValue = [], o
         const promptText = mediaPrompts.get(String(asset.id));
         const documentText = asset.kind === "document" ? multiline(documents.get(String(asset.id))) : "";
         const visualText = !asset?.visionAnalysis?.invalidated
-          ? multiline(asset?.visionAnalysis?.reconstructionPrompt || asset?.visionAnalysis?.description) : "";
+          ? multiline(asset?.visionAnalysis?.reconstructionPrompt ?? asset?.visionAnalysis?.description) : "";
         return [
           promptText ? { kind: "original_prompt", text: promptText } : null,
           documentText ? { kind: "document_text", text: documentText } : null,

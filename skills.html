@@ -16,7 +16,7 @@
       <div class="skills-top-actions">
         <button id="skill-context-back" class="button-secondary skill-context-back" type="button" aria-label="返回案例库" title="返回案例库" data-i18n-aria-label="返回案例库" data-i18n-title="返回案例库"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg><span data-i18n="返回案例库">返回案例库</span></button>
       </div>
-      <input id="skill-zip-file" class="sr-only" type="file" accept=".zip,application/zip" />
+      <input id="skill-zip-file" class="sr-only" type="file" accept=".zip,.skill,.md,application/zip,text/markdown" />
       <input id="skill-folder-files" class="sr-only" type="file" webkitdirectory multiple />
     </header>
 
@@ -143,7 +143,7 @@
     <dialog id="skill-import-dialog" class="skill-import-dialog">
       <header><h2 data-i18n="导入外部 Skill">导入外部 Skill</h2><button id="skill-import-close" class="icon-button" type="button" aria-label="关闭" data-i18n-aria-label="关闭" title="关闭" data-i18n-title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
       <p data-i18n="完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。">完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。</p>
-      <div><button id="skill-import-zip" type="button" data-i18n="选择 ZIP">选择 ZIP</button><button id="skill-import-folder" class="button-secondary" type="button" data-i18n="选择目录">选择目录</button></div>
+      <div><button id="skill-import-zip" type="button" data-i18n="选择 .zip / .skill / .md">选择 .zip / .skill / .md</button><button id="skill-import-folder" class="button-secondary" type="button" data-i18n="选择目录">选择目录</button></div>
     </dialog>
     <dialog id="skill-submission-dialog" class="skill-submission-dialog">
       <header><div><small data-i18n="公开投稿">公开投稿</small><h2 data-i18n="投稿到精选 Skill">投稿到精选 Skill</h2></div><button id="skill-submission-close" class="icon-button" type="button" aria-label="关闭" title="关闭" data-i18n-aria-label="关闭" data-i18n-title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>

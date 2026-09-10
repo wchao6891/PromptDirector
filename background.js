@@ -1,3 +1,4 @@
+import { saveComposerToolDraft, preserveSavedToolDrafts } from './composer-tool-drafts.js';
 import { renderPageCaptureRegionPreview, clearPageCapturePageState } from "./page-capture-highlight.js";
 import { collectLibTvPublicPayload, normalizeLibTvPublicPayload } from "./libtv-capture.js";
 import { updateArticleText } from "./article-edit.js";
@@ -886,6 +887,8 @@ async function handleMessage(message, interaction = {}) {
       return completeVideoAnalysisAction(message);
     case "FAIL_VIDEO_ANALYSIS":
       return failVideoAnalysisAction(message);
+    case "SAVE_COMPOSER_TOOL_DRAFT":
+      return enqueue(async () => saveComposerToolDraftAction(message));
     case "CREATE_CREATIVE_SKILL":
       return enqueue(async () => createCreativeSkillAction(message));
     case "SAVE_CREATIVE_SKILL_VERSION":
@@ -3179,6 +3182,17 @@ async function readState() {
   };
 }
 
+async function saveComposerToolDraftAction(message) {
+  const keys = [STORAGE_KEYS.composerSessions, STORAGE_KEYS.creativeSkills, STORAGE_KEYS.entries];
+  const stored = await chrome.storage.local.get(keys);
+  const state = { composerSessions: normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]),
+    creativeSkills: stored[STORAGE_KEYS.creativeSkills], entries: stored[STORAGE_KEYS.entries] };
+  const result = saveComposerToolDraft(state, message);
+  await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: result.composerSessions,
+    [STORAGE_KEYS.creativeSkills]: result.creativeSkills, [STORAGE_KEYS.entries]: result.entries });
+  return {ok:true, session:result.composerSessions.find(item=>item.id===message.sessionId)};
+}
+
 async function createCreativeSkillAction(message) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
   const result = createCreativeSkill(stored[STORAGE_KEYS.creativeSkills], message.skill);
@@ -3495,6 +3509,7 @@ async function dispatchCreativeJob(job) {
 function upsertSessionList(values, sessionValue) {
   const session = createComposerSession(sessionValue);
   const sessions = normalizeComposerSessions(values);
+  preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
   return normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
 }
 
@@ -4301,10 +4316,10 @@ async function analyzeTempReferencesAction(message) {
     if (!session) return { ok: false, message: "没有找到这份创作草稿" };
     const requested = new Set(requestedIds);
     const references = session.referenceSnapshots.filter((reference) =>
-      requested.has(reference.entryId)
+      (requested.has(reference.referenceId || reference.entryId) || requested.has(reference.entryId))
       && unreadReferenceImageAssets(reference).length
     );
-    if (references.length !== requested.size) {
+    if ([...requested].some((id) => !references.some((reference) => reference.entryId === id || reference.referenceId === id))) {
       return { ok: false, message: "参考图片已经变化，请确认后重试" };
     }
     const configuration = await loadAiConfiguration();
@@ -4325,6 +4340,7 @@ async function analyzeTempReferencesAction(message) {
           priority: message.priority
         });
         return {
+          result,
           description: result.description,
           requestCount: Math.max(0,
             (Number(result.attempts?.serviceRequests) || 0)
@@ -4342,7 +4358,10 @@ async function analyzeTempReferencesAction(message) {
         };
       }));
       return {
-        referenceId: reference.entryId,
+        referenceId: reference.referenceId || reference.entryId,
+        entryId: reference.entryId,
+        sourceType: reference.sourceType,
+        assetResults,
         descriptions: assetResults.map((item) => item.description),
         requestCount: assetResults.reduce((total, item) => total + item.requestCount, 0),
         fingerprints: assetResults.map((item) => item.fingerprint),
@@ -4351,9 +4370,9 @@ async function analyzeTempReferencesAction(message) {
     }));
     const analyzed = settledReferences.flatMap((settled) => settled.status === "fulfilled" ? [settled.value] : []);
     const failures = settledReferences.flatMap((settled, index) => settled.status === "rejected"
-      ? [{ referenceId: references[index].entryId, message: userMessage(settled.reason) }]
+      ? [{ referenceId: references[index].referenceId || references[index].entryId, message: userMessage(settled.reason) }]
       : []);
-    if (!analyzed.length) throw new Error(failures[0]?.message || "临时图片分析失败");
+    if (!analyzed.length) throw new Error(failures[0]?.message || "参考图片分析失败");
 
     return await enqueue(async () => {
       if (message.taskId && !await analysisTaskAttemptIsActive(message.taskId, message.attemptId)) {
@@ -4365,7 +4384,7 @@ async function analyzeTempReferencesAction(message) {
       if (!latestSession) return { ok: false, message: "分析期间创作草稿已经变化，本次结果没有写入" };
       for (const item of analyzed) {
         const current = latestSession.referenceSnapshots.find((reference) =>
-          reference.entryId === item.referenceId
+          (reference.referenceId || reference.entryId) === item.referenceId
           && unreadReferenceImageAssets(reference).length
         );
         if (!current) return { ok: false, message: "分析期间参考图片已经变化，本次结果没有写入" };
@@ -4378,16 +4397,41 @@ async function analyzeTempReferencesAction(message) {
           }
         }
       }
+      let caseState = domainState(await readState());
+      const undoStore = { ...((await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo))[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
+      let casesChanged = false;
+      for (const item of analyzed) {
+        if (item.sourceType === "temporary") continue;
+        for (const assetResult of item.assetResults) {
+          const entry = caseState.entries.find((candidate) => candidate.id === item.entryId);
+          const visual = entry && normalizeEntryVisuals(entry).visuals.find((candidate) => candidate.id === assetResult.fingerprint.assetId);
+          const blob = visual && await getVisionImageBlob(visual.id);
+          if (!entry || !visual || !blob || await imageFingerprint(blob) !== assetResult.fingerprint.fingerprint) {
+            return { ok: false, message: "分析期间源案例或图片已经变化，本次结果没有写入" };
+          }
+          const applied = applyCompletedVisionResult(caseState, entry, visual, assetResult.result, {
+            fingerprint: assetResult.fingerprint.fingerprint,
+            catalogRevision: stored[STORAGE_KEYS.facetCatalog]?.revision,
+            locale
+          });
+          caseState = applied.state;
+          undoStore[entry.id] = applied.undo;
+          casesChanged = true;
+        }
+      }
       const resultByReferenceId = new Map(analyzed.map((item) => [item.referenceId, item]));
       const updatedSession = createComposerSession({
         ...latestSession,
         referenceSnapshots: latestSession.referenceSnapshots.map((reference) => {
-          const result = resultByReferenceId.get(reference.entryId);
+          const result = resultByReferenceId.get(reference.referenceId || reference.entryId);
           return result ? {
             ...reference,
             referenceKind: "vision",
             referenceText: result.descriptions.join("\n\n"),
-            assets: result.analyses
+            assets: [
+              ...(reference.assets ?? []).filter((asset) => !result.analyses.some((analysis) => analysis.assetId === asset.assetId)),
+              ...result.analyses
+            ]
           } : reference;
         })
       });
@@ -4395,7 +4439,10 @@ async function analyzeTempReferencesAction(message) {
         updatedSession,
         ...latestSessions.filter((item) => item.id !== updatedSession.id)
       ]);
-      await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
+      await commitLocalChanges({
+        ...(casesChanged ? { ...storagePayload(caseState), [STORAGE_KEYS.visionAnalysisUndo]: undoStore } : {}),
+        [STORAGE_KEYS.composerSessions]: next
+      });
       return {
         ok: true,
         quality: failures.length ? "partial" : "complete",
@@ -4464,6 +4511,7 @@ async function upsertComposerSession(value) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
   const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   const session = createComposerSession(value);
+  preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
   if (!isMeaningfulComposerSession(session)) return { ok: false, message: "空白新对话不会保存到历史" };
   const next = normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
   await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
@@ -5349,6 +5397,28 @@ function canonicalAiTaskId(value) {
   return map[id] || id;
 }
 
+function applyCompletedVisionResult(state, entry, visual, result, { fingerprint, catalogRevision, locale, batchJobId = "" }) {
+  const analysisState = {
+    ...state,
+    entries: state.entries.map((item) => item.id === entry.id
+      ? { ...item, visionAnalysis: visual?.visionAnalysis } : item)
+  };
+  const applied = applyVisionAnalysis(analysisState, entry.id, result, {
+    version: VISION_ANALYSIS_VERSION, visualId: visual.id, imageFingerprint: fingerprint,
+    profileFingerprint: result.profileFingerprint, catalogRevision, locale,
+    providerType: result.providerType, model: result.model, usage: result.usage,
+    cacheHit: result.cacheHit, attempts: result.attempts, batchJobId
+  });
+  const analyzed = applied.state.entries.find((item) => item.id === entry.id);
+  const visionAnalysis = analyzed.visionAnalysis;
+  delete analyzed.visionAnalysis;
+  const normalized = updateEntryVisual(analyzed, visual.id, (item) => ({
+    ...item, contentHash: fingerprint, visionAnalysis
+  }));
+  applied.state.entries = applied.state.entries.map((item) => item.id === entry.id ? normalized : item);
+  return applied;
+}
+
 async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "", bypassCache = false, assignmentOverride = null, priority = "user_batch") {
     const state = await readState();
     const entry = findEntry(state, entryId);
@@ -5380,33 +5450,10 @@ async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobI
       if (!currentVisual || !currentBlob || await imageFingerprint(currentBlob) !== fingerprint) {
         return { ok: false, message: "分析期间截图已经变化，本次结果没有写入，请重新分析" };
       }
-      const analysisState = domainState(currentState);
-      analysisState.entries = analysisState.entries.map((item) => item.id === current.id
-        ? { ...item, visionAnalysis: currentVisual?.visionAnalysis }
-        : item);
-      const applied = applyVisionAnalysis(analysisState, current.id, result, {
-        version: VISION_ANALYSIS_VERSION,
-        visualId: visual.id,
-        imageFingerprint: fingerprint,
-        profileFingerprint: result.profileFingerprint,
-        catalogRevision: state.facetCatalog.revision,
-        locale: outputLocale,
-        providerType: result.providerType,
-        model: result.model,
-        usage: result.usage,
-        cacheHit: result.cacheHit,
-        attempts: result.attempts,
+      const applied = applyCompletedVisionResult(domainState(currentState), current, currentVisual, result, {
+        fingerprint, catalogRevision: state.facetCatalog.revision, locale: outputLocale,
         batchJobId: String(batchJobIdValue ?? "").trim()
       });
-      const analyzed = applied.state.entries.find((item) => item.id === current.id);
-      const visionAnalysis = analyzed.visionAnalysis;
-      delete analyzed.visionAnalysis;
-      const normalized = updateEntryVisual(analyzed, visual.id, (item) => ({
-        ...item,
-        contentHash: fingerprint,
-        visionAnalysis
-      }));
-      applied.state.entries = applied.state.entries.map((item) => item.id === current.id ? normalized : item);
       const undoStore = {
         ...((await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo))[STORAGE_KEYS.visionAnalysisUndo] ?? {})
       };

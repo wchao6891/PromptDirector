@@ -100,6 +100,6 @@ test("AI tags show only leaf labels while preserving their full path for context
   assert.match(attributes, /label: item\.name, path: item\.path/);
   assert.match(source, /function detailTag\(\{ facet, label, path = label \}\)[\s\S]*setAttribute\("aria-label", fullPath\)/);
   assert.doesNotMatch(attributes, /entry\.customLabels|customFacet|自定义标签/);
-  assert.match(editor, /"已有 AI 标签"/);
-  assert.match(editor, /"添加 AI 标签"/);
+  assert.match(editor, /"创作标签"/);
+  assert.match(editor, /"添加标签"/);
 });

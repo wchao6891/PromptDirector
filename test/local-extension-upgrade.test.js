@@ -135,3 +135,91 @@ test("cleanup after loading a recovery copy cannot delete the running installati
   await cleanupLocalUpgrade(record, {runtime, fetchFn:served(join(f.path, RECOVERY_DIRECTORY))});
   assert.equal(await readFile(join(f.path,RECOVERY_DIRECTORY,'background.js'),'utf8'), 'old background');
 });
+
+// Model Chrome's disk-backed File snapshot becoming unreadable before consumption.
+function staleSnapshots(root, fail) {
+  return {
+    ...root,
+    async getDirectoryHandle(...args) { return staleSnapshots(await root.getDirectoryHandle(...args), fail); },
+    async getFileHandle(name, options) {
+      const handle = await root.getFileHandle(name, options);
+      return { ...handle, async getFile() {
+        const blob = await handle.getFile();
+        if (!fail(root.path, name)) return blob;
+        const error = () => { throw new DOMException("An operation that depends on state cached in an interface object was made but the state had changed since it was read from disk.", "InvalidStateError"); };
+        blob.arrayBuffer = error;
+        blob.text = error;
+        return blob;
+      } };
+    },
+    async *entries() {
+      for await (const [name, handle] of root.entries()) {
+        yield [name, handle.kind === "directory" ? staleSnapshots(handle, fail) : await this.getFileHandle(name)];
+      }
+    }
+  };
+}
+
+test("upgrade refreshes one stale disk snapshot without restarting the upgrade or losing recovery bytes", async t => {
+  const f = await fixture(t);
+  let failures = 0;
+  const root = staleSnapshots(f.root, (path, name) => path === f.path && name === "background.js" && failures++ === 0);
+  let record;
+  await installLocalUpgrade(root, await prepareLocalUpgrade(await packageFor(), runtime), {
+    runtime, fetchFn: f.fetchFn, saveRecord: async value => { record = value; }
+  });
+  assert.equal(record.phase, "written");
+  assert.equal(await readFile(join(f.path, RECOVERY_DIRECTORY, "background.js"), "utf8"), "old background");
+  assert.equal(await readFile(join(f.path, "media/user.mp4"), "utf8"), "media bytes");
+});
+
+test("persistent stale file state stops with a path and leaves the original install intact", async t => {
+  const f = await fixture(t);
+  let attempts = 0;
+  const root = staleSnapshots(f.root, (path, name) => {
+    if (path !== f.path || name !== "background.js") return false;
+    attempts++;
+    return true;
+  });
+  let record;
+  await assert.rejects(installLocalUpgrade(root, await prepareLocalUpgrade(await packageFor(), runtime), {
+    runtime, fetchFn: f.fetchFn, saveRecord: async value => { record = value; }
+  }), /background\.js/);
+  assert.equal(attempts, 2, "refresh the snapshot once, never loop indefinitely");
+  assert.equal(record, null);
+  assert.equal(await readFile(join(f.path, "background.js"), "utf8"), "old background");
+  assert.equal(JSON.parse(await readFile(join(f.path, "manifest.json"))).version, manifest.version);
+});
+
+test("stale readback after a write refreshes without writing the program twice", async t => {
+  let writes = 0;
+  const f = await fixture(t, path => {
+    if (path === join(f.path, "background.js")) writes++;
+    return false;
+  });
+  let reads = 0;
+  const root = staleSnapshots(f.root, (path, name) => path === f.path && name === "background.js" && writes === 1 && reads++ === 0);
+  let record;
+  await installLocalUpgrade(root, await prepareLocalUpgrade(await packageFor(), runtime), {
+    runtime, fetchFn: f.fetchFn, saveRecord: async value => { record = value; }
+  });
+  assert.equal(writes, 1);
+  assert.equal(record.phase, "written");
+});
+
+test("persistent stale readback rolls back using the recovery file, never the replaced live snapshot", async t => {
+  let writes = 0;
+  const f = await fixture(t, path => {
+    if (path === join(f.path, "background.js")) writes++;
+    return false;
+  });
+  const root = staleSnapshots(f.root, (path, name) => path === f.path && name === "background.js" && writes === 1);
+  let record;
+  await assert.rejects(installLocalUpgrade(root, await prepareLocalUpgrade(await packageFor(), runtime), {
+    runtime, fetchFn: f.fetchFn, saveRecord: async value => { record = value; }
+  }), /background\.js/);
+  assert.equal(writes, 2, "one update write and one rollback write");
+  assert.equal(record, null);
+  assert.equal(await readFile(join(f.path, "background.js"), "utf8"), "old background");
+  assert.equal(await readFile(join(f.path, "media/user.mp4"), "utf8"), "media bytes");
+});

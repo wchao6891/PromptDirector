@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import base64
 import json
+import os
+from pathlib import Path
 
 from playwright.sync_api import expect
 
@@ -44,7 +45,7 @@ def main() -> None:
                     "openai": {
                         "apiKey": "openai-e2e-key",
                         "consent": True,
-                        "models": {"imageAnalysis": "gpt-5-mini"},
+                        "models": {"imageAnalysis": "gpt-5-mini", "creativePlanning": "gpt-5-mini"},
                     },
                 },
                 assignments={
@@ -55,17 +56,22 @@ def main() -> None:
         })
         vision_requests: list[dict] = []
         composer_requests: list[dict] = []
-        fail_vision = {"value": False}
 
         def mock_openai(route) -> None:
             payload = route.request.post_data_json
             if payload is None:
                 route.continue_()
                 return
-            vision_requests.append(payload)
-            if fail_vision["value"]:
-                route.fulfill(status=500, content_type="application/json", body=json.dumps({"error": {"message": "vision unavailable"}}))
+            if payload.get("stream"):
+                composer_requests.append(payload)
+                visible = json.dumps({"route": "compose", "status": "ready"}) + "\nUse the original composition."
+                events = [
+                    {"type": "response.output_text.delta", "delta": visible},
+                    {"type": "response.completed", "response": {"model": "gpt-5-mini", "status": "completed", "usage": {"input_tokens": 12, "output_tokens": 8}}},
+                ]
+                route.fulfill(status=200, content_type="text/event-stream", body="".join(f"data: {json.dumps(event)}\n\n" for event in events))
                 return
+            vision_requests.append(payload)
             route.fulfill(
                 status=200,
                 content_type="application/json",
@@ -184,50 +190,40 @@ def main() -> None:
         assert mobile_geometry["pageOverflow"] <= 1, mobile_geometry
         assert mobile_geometry["inputBottom"] <= mobile_geometry["viewportHeight"] + 1, mobile_geometry
         assert mobile_geometry["cardStripOverflow"], mobile_geometry
+        composer.set_viewport_size({"width": 1280, "height": 900})
         composer.locator("#composer-instruction").fill("Use the attached composition")
         composer.locator("#composer-action").click()
-        expect(composer.locator("#composer-image-blocker")).to_be_visible()
-        expect(composer.locator("#composer-image-blocker-description")).to_contain_text("2 次额外请求")
-        expect(composer.locator("#composer-image-blocker-description")).to_contain_text("gpt-5-mini")
+        expect(composer.locator("#composer-image-input-status")).to_be_visible()
+        expect(composer.locator("#composer-image-input-message")).to_contain_text("切换支持看图的模型")
+        expect(composer.locator("#composer-image-blocker")).to_have_count(0)
         expect(composer.locator("#composer-instruction")).to_have_value("Use the attached composition")
-        message_count = composer.evaluate(
-            """async (sessionId) => {
-              const stored = await chrome.storage.local.get('composerSessions');
-              return stored.composerSessions.find(item => item.id === sessionId).messages.length;
-            }""",
-            session_id,
-        )
-        assert message_count == 0
-        expect(composer.locator("#composer-model-label")).to_have_text("Flash")
-        expect(composer.locator("#composer-model-label")).to_have_attribute("title", "DeepSeek Flash")
-        composer.locator("#composer-image-blocker-analyze").click()
-        expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("Use the analyzed composition.")
-        expect(composer.locator("#composer-model-label")).to_have_text("Flash")
-        expect(composer.locator("#composer-model-label")).to_have_attribute("title", "DeepSeek Flash")
-        analyzed = composer.evaluate(
-            """async (sessionId) => {
-              const stored = await chrome.storage.local.get('composerSessions');
-              const session = stored.composerSessions.find(item => item.id === sessionId);
-              return session.referenceSnapshots
-                .filter(item => item.sourceType === 'temporary' && item.assetRefs.some(asset => asset.kind === 'image'))
-                .map(item => ({kind: item.referenceKind, text: item.referenceText}));
-            }""",
-            session_id,
-        )
-        assert len(vision_requests) == 1, vision_requests
+        assert not vision_requests and not composer_requests
+        artifact_dir = os.environ.get("PROMPTDIRECTOR_E2E_ARTIFACT_DIR")
+        if artifact_dir:
+            Path(artifact_dir).mkdir(parents=True, exist_ok=True)
+            composer.screenshot(path=str(Path(artifact_dir) / "composer-switch-model.png"), full_page=True)
+        composer.locator("#composer-image-input-model").click()
+        expect(composer.locator("#composer-model-menu")).to_be_visible()
+        composer.locator("#composer-model-dynamic button", has_text="OpenAI").click()
+        expect(composer.locator("#composer-image-input-status")).to_be_hidden()
+        composer.locator("#composer-action").click()
+        expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("Use the original composition.")
+        if artifact_dir:
+            composer.screenshot(path=str(Path(artifact_dir) / "composer-original-image-response.png"), full_page=True)
         assert len(composer_requests) == 1, composer_requests
+        assert len(vision_requests) == 0, vision_requests
+        images = [part for row in composer_requests[0]["input"] for part in row.get("content", []) if part.get("type") == "input_image"]
+        assert len(images) == 2, composer_requests[0]
+        assert all(part["image_url"].startswith("data:image/png;base64,") for part in images)
+        expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "true")
         assembly_snapshot = composer.evaluate(
             """async (sessionId) => {
               const stored = await chrome.storage.local.get('composerSessions');
               return stored.composerSessions.find(item => item.id === sessionId)?.assemblySnapshot || null;
-            }""",
-            session_id,
+            }""", session_id,
         )
-        assert assembly_snapshot["prerequisiteAnalysisRequests"] == 1, assembly_snapshot
-        assert analyzed == [
-            {"kind": "vision", "text": "Centered subject with a clear silhouette and controlled contrast."},
-            {"kind": "vision", "text": "Centered subject with a clear silhouette and controlled contrast."},
-        ], analyzed
+        assert assembly_snapshot["prerequisiteAnalysisRequests"] == 0, assembly_snapshot
+        assert assembly_snapshot["media"]["expectedSentImageCount"] == 2, assembly_snapshot
 
         composer.locator("#composer-attachment-files").set_input_files({
             "name": "clip.mp4",
@@ -249,49 +245,39 @@ def main() -> None:
         entries = composer.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries || [])")
         assert len(entries) == 3, entries
 
-        dispatch_file(composer, "paste", "failed-analysis.png")
-        expect(composer.locator(".composer-temp-reference-card")).to_have_count(1)
-        composer.locator("#composer-instruction").fill("Keep this request and attachment after an analysis failure")
-        composer.locator("#composer-action").click()
-        expect(composer.locator("#composer-image-blocker")).to_be_visible()
-        fail_vision["value"] = True
-        composer.locator("#composer-image-blocker-analyze").click()
-        expect(composer.locator("#composer-image-blocker-description")).to_contain_text(
-            "本轮输入和附件均已保留",
-            timeout=15_000,
+        # An explicit analysis task for two pictures from one case writes both results back.
+        task_ids = composer.evaluate(
+            """async () => {
+              const stored = await chrome.storage.local.get('entries');
+              const imageEntries = stored.entries.filter(entry => entry.mediaAssets.some(asset => asset.kind === 'image'));
+              const combined = {...imageEntries[0], mediaAssets: imageEntries.flatMap(entry => entry.mediaAssets)};
+              await chrome.storage.local.set({entries: [combined]});
+              const domain = await import(chrome.runtime.getURL('composer.js'));
+              const session = domain.createComposerSession({referenceSnapshots: domain.createReferenceSnapshots([combined], [{entryId: combined.id, assetIds: combined.mediaAssets.map(asset => asset.id)}])});
+              await chrome.runtime.sendMessage({type: 'UPSERT_COMPOSER_SESSION', session});
+              const response = await chrome.runtime.sendMessage({type: 'START_OR_JOIN_ANALYSIS_TASK', sessionId: session.id, tempReferenceIds: session.referenceSnapshots.map(reference => reference.referenceId), clientRequestId: crypto.randomUUID(), consumerId: crypto.randomUUID()});
+              return {entryId: combined.id, sessionId: session.id, response};
+            }"""
         )
-        expect(composer.locator("#composer-instruction")).to_have_value("Keep this request and attachment after an analysis failure")
-        expect(composer.locator(".composer-temp-reference-card")).to_have_count(1)
-        assert len(composer_requests) == 1, composer_requests
-        failed_reference = composer.evaluate(
-            """async (sessionId) => {
-              const stored = await chrome.storage.local.get('composerSessions');
-              const session = stored.composerSessions.find(item => item.id === sessionId);
-              return session.referenceSnapshots.find(item => item.title === 'failed-analysis.png');
-            }""",
-            session_id,
-        )
-        assert failed_reference["referenceText"] == "", failed_reference
-        composer.locator("#composer-image-blocker-cancel").click()
-
-        composer.locator(".composer-temp-reference-card").get_by_role("button", name="保存到案例库：failed-analysis.png").click()
-        expect(composer.locator(".composer-temp-reference-card")).to_have_count(0)
-        composer.locator("#composer-action").click()
-        expect(composer.locator("#composer-image-blocker")).to_be_visible()
-        expect(composer.locator("#composer-image-blocker-description")).to_contain_text("尚未分析的参考图片")
-        assert len(composer_requests) == 1, composer_requests
-        composer.locator("#composer-image-blocker-cancel").click()
-
-        print({
-            "inputPaths": ["file", "paste", "drop"],
-            "persisted": persisted,
-            "mobile": mobile_geometry,
-            "textOnlyBlockedBeforeSend": True,
-            "explicitVisionAnalysisRequests": len(vision_requests),
-            "failurePreservedInputAndAttachment": True,
-            "savedImageCaseBlockedBeforeTextOnlySend": True,
-            "savedCases": len(entries),
-        })
+        assert task_ids["response"]["ok"], task_ids
+        from e2e_support import wait_for_async_condition
+        completed = wait_for_async_condition(composer,
+            """async (taskId) => {
+              const response = await chrome.runtime.sendMessage({type:'GET_ANALYSIS_TASK',taskId});
+              return ['completed','failed'].includes(response.task?.status) ? response : null;
+            }""", arg=task_ids["response"]["task"]["id"])
+        assert completed["task"]["status"] == "completed", completed
+        saved_analyses = composer.evaluate(
+            """async (entryId) => {
+              const stored = await chrome.storage.local.get('entries');
+              return stored.entries.find(entry => entry.id === entryId).mediaAssets.filter(asset => asset.kind === 'image').map(asset => asset.visionAnalysis);
+            }""", task_ids["entryId"])
+        assert len(saved_analyses) == 2 and all(value and value.get("reconstructionPrompt") for value in saved_analyses), saved_analyses
+        assert not run.page_errors, run.page_errors
+        print({"inputPaths": ["file", "paste", "drop"], "mobile": mobile_geometry,
+               "originalImagesSent": len(images), "automaticAnalysisRequests": 0,
+               "switchModelMenuStaysOpen": True, "explicitAnalysisSavedImages": len(saved_analyses),
+               "savedCases": len(entries)})
 
 
 if __name__ == "__main__":

@@ -106,6 +106,28 @@ export async function exportStoredSkillPackage(skillValue = {}, options = {}) {
   return createZipBlob(files);
 }
 
+export async function parseSkillFile(file, limitsValue = {}) {
+  if (/\.md$/i.test(file.name || "")) {
+    const limits = skillPackageLimits(limitsValue);
+    if (file.size > limits.maxFileBytes) throw new Error(`Skill 单个文件超过安全上限：${file.name}`);
+    if (file.size > limits.maxArchiveBytes) throw new Error("Skill 包解压内容超过安全上限");
+    const body = await readMarkdown(file, file.name);
+    if (!body) throw new Error("Skill 正文不能为空");
+    return {
+      name: file.name.replace(/\.md$/i, ""),
+      description: "",
+      body,
+      markdown: body,
+      root: "",
+      references: [],
+      files: new Map([["SKILL.md", file]]),
+      dependencies: [],
+      requiresTextModeConfirmation: false
+    };
+  }
+  return parseSkillArchive(file, limitsValue);
+}
+
 export async function parseSkillArchive(archive, limitsValue = {}) {
   const files = await readZipBlob(archive, skillPackageLimits(limitsValue));
   return parseSkillFiles(files, limitsValue);

@@ -7,16 +7,16 @@ const GOOGLE_IMAGE_GENERATION_SOURCE = Object.freeze({
 
 const DEEPSEEK_VISION_SOURCE = Object.freeze({
   authority: "DeepSeek API Docs",
-  document: "DeepSeek-V4-Flash-Vision-Exp Release",
-  url: "https://api-docs.deepseek.com/news/news260821/",
-  reviewedAt: "2026-08-24"
+  document: "DeepSeek-V4.1-Flash Release and Vision",
+  url: "https://api-docs.deepseek.com/updates/",
+  reviewedAt: "2026-09-10"
 });
 
 const DEEPSEEK_CONCURRENCY_SOURCE = Object.freeze({
   authority: "DeepSeek API Docs",
   document: "Models & Pricing",
   url: "https://api-docs.deepseek.com/quick_start/pricing/",
-  reviewedAt: "2026-08-24"
+  reviewedAt: "2026-09-10"
 });
 
 const ZHIPU_GLM_46V_SOURCE = Object.freeze({
@@ -58,21 +58,6 @@ function googleImageModel(value) {
 
 export const AI_MODEL_CAPABILITIES = Object.freeze([
   Object.freeze({
-    id: "deepseek-v4-flash",
-    providerId: "deepseek",
-    protocol: "chat_completions",
-    tasks: Object.freeze(["textTags", "skillExtraction", "creativePlanning"]),
-    inputModalities: Object.freeze(["text"]),
-    outputModalities: Object.freeze(["text"]),
-    supportedParameters: Object.freeze(["response_format", "reasoning_effort"]),
-    supportedResolutions: Object.freeze([]),
-    supportedAspectRatios: Object.freeze([]),
-    contextLength: 1_000_000,
-    structuredOutput: "json_object",
-    concurrencyLimit: Object.freeze({ value: 2500, source: DEEPSEEK_CONCURRENCY_SOURCE }),
-    source: DEEPSEEK_CONCURRENCY_SOURCE
-  }),
-  Object.freeze({
     id: "deepseek-v4-pro",
     providerId: "deepseek",
     protocol: "chat_completions",
@@ -88,13 +73,17 @@ export const AI_MODEL_CAPABILITIES = Object.freeze([
     source: DEEPSEEK_CONCURRENCY_SOURCE
   }),
   Object.freeze({
-    id: "deepseek-v4-flash-vision-exp",
+    id: "deepseek-flash",
+    aliases: Object.freeze(["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]),
+    name: "DeepSeek Flash",
     providerId: "deepseek",
     protocol: "chat_completions",
     tasks: Object.freeze(["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"]),
     inputModalities: Object.freeze(["text", "image"]),
     outputModalities: Object.freeze(["text"]),
-    supportedParameters: Object.freeze(["response_format"]),
+    supportedParameters: Object.freeze(["response_format", "reasoning_effort", "tools"]),
+    contextLength: 1_000_000,
+    structuredOutput: "json_object",
     supportedResolutions: Object.freeze([]),
     supportedAspectRatios: Object.freeze([]),
     referenceImages: Object.freeze({ supported: true, maxItems: 600, source: "declared", observedAt: "" }),
@@ -191,8 +180,9 @@ const MODEL_CAPABILITY_INDEX = new Map(
 export function getAiModelCapability(providerIdValue, modelIdValue) {
   const providerId = String(providerIdValue ?? "").trim();
   const modelId = String(modelIdValue ?? "").trim().replace(/^models\//, "");
-  const capability = MODEL_CAPABILITY_INDEX.get(`${providerId}:${modelId}`);
-  return capability ? structuredClone(capability) : null;
+  const capability = MODEL_CAPABILITY_INDEX.get(`${providerId}:${modelId}`)
+    ?? AI_MODEL_CAPABILITIES.find(item => item.providerId === providerId && item.aliases?.includes(modelId));
+  return capability ? { ...structuredClone(capability), id: modelId, canonicalId: capability.id } : null;
 }
 
 export function listAiModelCapabilities(providerIdValue) {

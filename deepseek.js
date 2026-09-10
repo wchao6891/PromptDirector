@@ -1,3 +1,5 @@
+import { applyComposerConversation } from './composer-conversation.js';
+import { runComposerToolLoop } from "./composer-tool-loop.js";
 import {
   analysisTaxonomyPayload,
   validateAnalysisTagResponse,
@@ -7,6 +9,7 @@ import { parseStructuredObject } from "./structured-output.js";
 import { inspectAnalysisResponse, fetchAnalysisJson } from "./analysis-response.js";
 import { ANALYSIS_RETRY_POLICY, createAnalysisRequestBudget, consumeAnalysisRequest, analysisRequestCounts } from "./analysis-retry-policy.js";
 import {
+  COMPOSER_INPUT_MAX_CHARACTERS,
   normalizeComposerAiProfile,
   normalizePlannerResult,
   plannerRequestPayload,
@@ -23,7 +26,7 @@ import { composerAutoResponseProtocolFacts, createComposerAutoResponseProjector 
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
 
 export const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
-export const DEFAULT_ANALYSIS_MODEL = "deepseek-v4-flash";
+export const DEFAULT_ANALYSIS_MODEL = "deepseek-flash";
 export const DEFAULT_COMPOSER_STREAM_TIMEOUT_MS = 120_000;
 export const DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS = 120_000;
 export const ANALYSIS_SERVICE_RETRY_LIMIT = ANALYSIS_RETRY_POLICY.serviceRetries;
@@ -380,6 +383,7 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
       { role: "user", content: JSON.stringify(executionRequest) }
     ]
   }, profile);
+  applyComposerConversation(body, executionRequest);
   assertComposerRequestBudget(body.messages);
   const requestController = new AbortController();
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_COMPOSER_STREAM_TIMEOUT_MS;
@@ -390,8 +394,7 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
   const timeoutId = setTimeout(() => { timedOut = true; requestController.abort(); }, timeoutMs);
   let streamed;
   try {
-    const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, requestController.signal, options.onRequestStart);
-    streamed = await readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
+    streamed = await readComposerResponse(body, settings, options, requestController.signal);
   } catch (error) {
     if (timedOut) throw new DeepSeekApiError(`${provider.label} 流式输出超时，本次结果未保存`, 408);
     throw error;
@@ -504,6 +507,7 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
       { role: "user", content: JSON.stringify(executionRequest) }
     ]
   }, profile);
+  applyComposerConversation(body, executionRequest);
   assertComposerRequestBudget(body.messages);
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs === null
@@ -515,8 +519,7 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
   options.signal?.addEventListener("abort", onAbort, { once: true });
   const timeoutId = timeoutMs === null ? null : setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
-    const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, controller.signal, options.onRequestStart);
-    const result = await readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
+    const result = await readComposerResponse(body, settings, options, controller.signal);
     if (!String(result.content ?? "").trim()) throw new DeepSeekApiError(`${provider.label} 没有返回完整内容`, 422);
     return result;
   } catch (error) {
@@ -526,6 +529,17 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
     if (timeoutId !== null) clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", onAbort);
   }
+}
+
+async function readComposerResponse(body, settings, options, signal) {
+  const provider = aiProvider(settings);
+  if (options.toolRuntime?.specs.length) {
+    return runComposerToolLoop({ body, protocol: "chat_completions", runtime: options.toolRuntime,
+      signal, onDelta: options.onDelta, maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS,
+      request: nextBody => fetchDeepSeekStream(nextBody, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart) });
+  }
+  const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart);
+  return readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
 }
 
 export async function readDeepSeekSse(response, onDelta = () => undefined, providerLabel = "DeepSeek", apiKey = "") {

@@ -91,18 +91,6 @@ export async function extractTempReferenceText(file, options = {}) {
   });
 }
 
-export function imageTempReferenceBlock(referenceSnapshots, service) {
-  const imageCount = (Array.isArray(referenceSnapshots) ? referenceSnapshots : []).reduce((count, reference) => {
-    return count + unreadReferenceImageAssets(reference).length;
-  }, 0);
-  const blocked = Boolean(imageCount && service?.vision !== true);
-  return {
-    blocked,
-    imageCount,
-    choices: blocked ? ["chooseVisionService", "analyzeImages", "cancel"] : []
-  };
-}
-
 export function unreadReferenceImageAssets(reference) {
   const analyzedAssets = new Map((Array.isArray(reference?.assets) ? reference.assets : [])
     .map((item) => [String(item?.assetId ?? "").trim(), item]));

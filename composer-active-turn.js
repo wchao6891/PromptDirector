@@ -1,3 +1,4 @@
+import { settleLibraryToolEvents } from "./composer-library-tools.js";
 const ACTIVE_TURN_STATUSES = Object.freeze([
   "submitted",
   "waiting",
@@ -59,6 +60,7 @@ export function recoverInterruptedComposerTurn(sessionValue, nowValue = new Date
   return {
     ...sessionValue,
     activeTurn: recoveredTurn,
+    libraryTools: settleLibraryToolEvents(sessionValue.libraryTools, recoveredTurn.userMessageId),
     lastFailure: {
       userMessageId: recoveredTurn.userMessageId,
       phase: "streaming",

@@ -163,7 +163,6 @@ export function undoVisionAnalysis(state = {}, undo = {}) {
 export function editVisionReconstructionPrompt(entry = {}, prompt) {
   if (!entry.visionAnalysis || entry.visionAnalysis.invalidated) throw new Error("这条案例还没有可编辑的反推提示词");
   const value = String(prompt ?? "").trim();
-  if (!value) throw new Error("反推提示词不能为空");
   return {
     ...entry,
     visionAnalysis: {

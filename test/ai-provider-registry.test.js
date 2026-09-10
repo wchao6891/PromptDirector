@@ -207,8 +207,8 @@ test("registry v5 exposes task concurrency defaults and official model limits", 
   const deepSeekVision = getAiModelCapability("deepseek", "deepseek-v4-flash-vision-exp");
   const deepSeekFlash = getAiModelCapability("deepseek", "deepseek-v4-flash");
   const deepSeekPro = getAiModelCapability("deepseek", "deepseek-v4-pro");
-  assert.deepEqual(deepSeekFlash.inputModalities, ["text"]);
-  assert.deepEqual(deepSeekFlash.tasks, ["textTags", "skillExtraction", "creativePlanning"]);
+  assert.deepEqual(deepSeekFlash.inputModalities, ["text", "image"]);
+  assert.deepEqual(deepSeekFlash.tasks, ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"]);
   assert.equal(deepSeekFlash.concurrencyLimit.value, 2500);
   assert.equal(deepSeekPro.concurrencyLimit.value, 500);
   assert.equal(deepSeekVision.inputModalities.includes("image"), true);
