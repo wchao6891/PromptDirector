@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from playwright.sync_api import expect
 
-from e2e_support import SOURCE_EXTENSION_DIR, ai_configuration_fixture, extension_session, wait_for_async_condition
+from e2e_support import ai_configuration_fixture, extension_session, wait_for_async_condition
 from zhipu_glm_analysis_e2e import extension_with_local_provider_permission
 
 
