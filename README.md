@@ -1,63 +1,108 @@
-# PromptDirector｜视觉创作灵感库
+<p align="center"><img src="docs/assets/github-banner.svg" alt="PromptDirector — Capture, collect, organize" width="100%"></p>
 
-提示词导演，你的视觉创作私人灵感库。
+<p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
-PromptDirector 是一个免费、开源、本地优先的 Chrome 扩展。它把网页文字、图片、视频和文档保存为可检索的创作资料，在下一次图片、视频、广告或分镜创作时快速找回和复用。
+<h1 align="center">Keep the image. Keep the prompt.</h1>
 
-## 能做什么
+<p align="center"><strong>好画面，连同提示词一起收藏。</strong><br>Collect creative references from Higgsfield, Jimeng, X and more.<br>Keep images, videos, prompts and sources together in your own visual library.</p>
 
-- 高亮网页文字、框选画面或选择页面媒体，将提示词与视觉素材一起保存；已适配页面可一键保存原始图片、视频、教程正文与附件；
-- 在图片优先的资料墙中搜索、筛选、标记和管理案例；
-- 保存本地图片、视频、PDF、Markdown、TXT、HTML、视频时间点笔记和快速笔记；
-- 用可嵌套的项目树整理案例，并支持组合案例、批量加入或移出项目以及子树分享；
-- 浏览经过审核的精选案例，并把需要的内容保存进自己的本地资料库；
-- 把案例提炼成可复用的创作 Skill，在创作台组合案例、Skill 和临时附件；
-- 生成可编辑的图片或视频提示词，也可以连接自己的服务直接生成媒体；
-- 使用可选的文字、画面或视频分析，让资料更容易检索；案例库中的本地视频也可在明确确认后发送给已配置且支持视频输入的模型；
-- 为选定案例生成分享 ZIP；导入时逐项隔离坏文件，单个不兼容媒体不会阻断其他健康案例；
-- 创建可换电脑恢复的完整资料夹备份（包含回收站，并在备份时复制可读取的本机链接原件），可选择安全合并或带回退点的精确恢复，也可通过加密同步文件夹在自己的设备间恢复资料。
+<p align="center"><a href="https://github.com/wchao6891/PromptDirector/releases/latest"><strong>Download the latest release</strong></a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/">Explore curated cases</a> · <a href="#install-and-update">Installation guide</a></p>
 
-采集保留预览、调整和保存步骤，不调用 AI。视频优先保存本地，可用的独立播放器与 HLS 流可在库内播放；平台登录、原地址有效期和当前页面结构会影响结果。详见[采集说明](docs/CAPTURE_SUPPORT.md)。
+<p align="center">Free & open source · Local first · No account required · Optional AI analysis</p>
 
-## 隐私与数据
+## Bring the best of your favorite platforms together
 
-资料、媒体、标签和设置默认保存在当前浏览器。不会创建账号、投放广告或收集使用统计。
+Found a reference worth keeping? Save more than a bookmark. PromptDirector is a Chrome extension with capture adaptations for creative websites and social platforms. It brings the media, text and source available on a page into one case.
 
-文字分析、提示词创作、画面分析和视频分析均由用户主动开启并使用自己的服务密钥。发送范围会在界面中说明；未选择的资料、整库内容和密钥不会随请求发送。详见[隐私政策](store/PRIVACY_POLICY.md)。
+| Find inspiration on | Keep it in your library |
+| --- | --- |
+| **Higgsfield** | Collect work images, videos and creative descriptions to reference a shot or visual approach later. |
+| **Jimeng / 即梦** | Collect work media and the original prompt, model and author information provided by the page. |
+| **X / Twitter** | Extract post text and image or video references; save prompts shared by the author alongside the work. |
+| **More creative websites** | Adaptations also cover LiblibAI, LibTV, Krea, Pinterest and Behance. On other pages, select text, pick images or capture a screenshot. |
 
-## 安装
+**Open a work or post → Start capture with one click → Preview and adjust → Save.**
 
-普通用户请直接从 [Chrome Web Store 安装 PromptDirector](https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm)，由商店完成安装与后续自动更新。
+Capture depends on content the page provides and makes accessible. Original prompts must be shared by their authors; descriptions and AI analysis are not original prompts. Login state, page changes and media access restrictions can affect the result.
 
-需要检查源码或参与开发时，可从 [GitHub Releases](https://github.com/wchao6891/PromptDirector/releases) 下载名称带 `FIXED-ID-DEV` 的最新 ZIP。首次安装时，将包内程序文件解压到固定的 `PromptDirector` 文件夹（不带版本号），确保 `manifest.json` 位于该文件夹第一层。在 Chrome 或 Edge 的扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”，然后选择解压后的目录。这个包保留 Chrome Web Store 分配的固定扩展身份，适合本地开发验证。
+Capture does not call AI. Videos are saved locally when possible; supported standalone players and HLS streams can play inside the library. See the [capture guide](docs/CAPTURE_SUPPORT.md) for playback and access boundaries.
 
-不带 `FIXED-ID-DEV` 的同版本 ZIP 仅供维护者上传 Chrome Web Store，清单中按商店要求移除了 `key`，不要把它作为本地解压安装包。同一扩展身份下的常规更新不需要导出或重新导入案例；如曾使用其他扩展 ID，请按[扩展身份迁移说明](docs/EXTENSION_ID_MIGRATION.md)恢复资料。
+## Make your collection useful
 
-## 本地版更新
+| What you want to do | How PromptDirector helps |
+| --- | --- |
+| **Find a reference visually** | Browse an image-first library, search text and filter by tags to rediscover useful work. |
+| **Organize a project** | Arrange cases in nested projects, combine related cases and manage references in batches. |
+| **Understand what works** | Connect your own AI service to analyze text, images or videos when you want more context and searchable notes. |
+| **Keep your materials together** | Add local images, videos, PDFs, Markdown, TXT, HTML and timestamped video notes. |
+| **Share and preserve your work** | Export selected cases or a project subtree as a sharing package. Full folder backups support recovery on another computer; encrypted folder sync supports recovery across your devices. |
 
-已具备本地升级功能的版本：在“设置”检查更新，点击“升级本地版”，首次选择 Chrome 当前加载的安装文件夹并授权，之后复用这个安装位置；授权失效时再授权。已有文件夹即使带旧版本号也可继续使用，无需重命名、移动或重新安装。程序更新后重启插件，重新打开设置核对版本；如出现“清理升级临时文件”，点击完成清理。案例和媒体继续使用当前浏览器中的原资料库。
+For further creative work, you can turn references into reusable Skills and combine them in the Composer to produce editable prompts. Capturing, organizing and browsing your library do not require an AI service.
 
-旧版本首次接入：下载新版 `FIXED-ID-DEV` ZIP，将包内程序文件覆盖到 Chrome 当前加载的原目录，再到扩展管理页点击重新加载。保持原插件与固定身份，无需卸载，也无需备份再导入案例。源码工作目录通过 Git 更新。
+## Start with curated references
 
-## 从源码构建
+See the image, read the prompt and save what fits your project. Here are a few examples from the current public collection.
 
-需要 Node.js 22.13 或更高版本。
+<table>
+<tr>
+<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/133a11be119a75a17b40-fe515974461558ef.webp" alt="Celestial ensemble: composition and staging reference"></a></td>
+<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/a2b45b757798adb2685d-8dea3cc7d3e303fd.webp" alt="War-tent confrontation: character blocking and lighting reference"></a></td>
+<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/6652ed14274cd7be008f-73367e80019b085c.webp" alt="Foxfire paper shadows: material and style reference"></a></td>
+</tr>
+<tr><td>Celestial ensemble</td><td>War-tent confrontation</td><td>Foxfire paper shadows</td></tr>
+</table>
+
+[Browse the curated library →](https://wchao6891.github.io/PromptDirector-Curated/)
+
+These are curated content previews, not demonstrations of platform capture. Refer to each case's source and rights information before reusing its media.
+
+## Your library stays yours
+
+Cases, media, tags and settings are stored in your current browser by default. No account, ads or usage analytics. AI features are opt-in and use your own service keys; the interface explains what will be sent. Read the [privacy policy](store/PRIVACY_POLICY.md).
+
+## Install and update
+
+**For a local installation, download the `FIXED-ID-DEV` ZIP and load its extracted folder in Chrome or Edge.**
+
+<details>
+<summary>Full installation and in-place update instructions</summary>
+
+1. Open the [latest GitHub release](https://github.com/wchao6891/PromptDirector/releases/latest) and download the ZIP with `FIXED-ID-DEV` in its name.
+2. Extract the extension files into a permanent folder named `PromptDirector`, without a version number. `manifest.json` must be at the folder's top level.
+3. Open Chrome or Edge's extension management page, enable **Developer mode**, select **Load unpacked**, and choose that folder.
+
+The `FIXED-ID-DEV` package keeps the extension's fixed identity. The ZIP without `FIXED-ID-DEV` is for Chrome Web Store submission and omits the manifest key; use the fixed-ID package for local installation. If you previously used a different extension ID, follow the [identity migration guide](docs/EXTENSION_ID_MIGRATION.md).
+
+**Updating an existing local installation:** In Settings, check for updates and select the local upgrade action. On first use, choose and authorize the folder Chrome currently loads. Keep that existing location, even if its name contains an old version. After updating, restart the extension, verify the version in Settings and run the temporary-file cleanup action if shown. Cases and media continue to use the same browser library.
+
+For older versions without the updater, overwrite the program files in the original installation folder with the latest `FIXED-ID-DEV` package, then reload the extension. Keep the existing extension and identity. A routine update does not require uninstalling, exporting or reimporting cases. Source checkouts update through Git.
+
+You can also install through the [Chrome Web Store](https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm), which manages subsequent updates.
+
+</details>
+
+<details>
+<summary>Development and verification</summary>
+
+Requires Node.js 22.13 or later.
 
 ```sh
 npm install
 npm run verify
 ```
 
-`npm run verify` 是完整验证门槛，构建与验证不会自动发布 GitHub Release 或上传商店：先完成源码、资源、历史数据兼容与单元测试，再把固定 ID 本地包加载到隔离的 Chrome for Testing 中跑完整浏览器 E2E；全部通过后生成商店包，并用上一正式版资料执行同一 Chrome Profile 的最终包升级演练。任一阶段失败都不会通过门禁。只需快速检查源码时可运行 `npm run verify:source`，只检查历史数据合同可运行 `npm run check:compat`。`npm run test:local-extension` 是打包后自动化主验收；`npm run package` 生成保留固定身份的本地安装包；`npm run package:release` 生成移除 `key` 的 Chrome Web Store 上传包。两者共用案例、媒体和创作功能。商店包移除本地程序安装器，只保留 Chrome 更新；固定身份本地包保留原位升级。正式身份缺失时命令会明确失败，避免用户资料被错误扩展 ID 隔离。
+`npm run verify` runs the full verification gate: source and asset checks, historical-data compatibility and unit tests, packaged browser journeys in isolated Chrome for Testing, and an upgrade rehearsal with the previous release's data in the same Chrome profile. It builds packages but does not publish a GitHub release or upload to the Store.
 
-已发布数据的长期支持规则、权威夹具和升级门禁见[数据兼容说明](docs/DATA_COMPATIBILITY.md)。当前浏览器兼容边界和已确认但延期的增强记录在[已知限制](docs/KNOWN_LIMITATIONS.md)。
+For a source-only check, run `npm run verify:source`; for the historical data contract, run `npm run check:compat`. `npm run test:local-extension` runs packaged browser acceptance. `npm run package` builds the fixed-ID local package; `npm run package:release` builds the Store upload package. Both share case, media and creative features. The Store package uses Chrome-managed updates; the local package includes in-place upgrading. Packaging fails if the official identity is missing.
 
-## 参与与许可
+See [data compatibility](docs/DATA_COMPATIBILITY.md) and [known limitations](docs/KNOWN_LIMITATIONS.md) for support boundaries.
 
-欢迎其他开发者共同维护 PromptDirector，包括修复问题、补充测试与文档、改善交互和完善跨浏览器体验。提交前请运行 `npm run verify`。
+</details>
 
-界面改动先阅读[当前设计与验收原则](design-qa.md#当前设计与验收原则)，以用户已确认的页面效果为基线，同时验证视觉和原有操作流程。
+## Contribute and license
 
-提交 issue 或代码时请说明用户可观察到的行为、复现方式和验证结果。请不要在 issue、日志、测试样本或提交中包含 API Key、私人来源、未授权素材或用户资料。
+Contributions to capture adaptations, interactions, tests and documentation are welcome. When [reporting an issue](https://github.com/wchao6891/PromptDirector/issues), describe the page type, observable behavior and reproduction steps. Remove API keys, private data and unauthorized media from examples. Run `npm run verify` before submitting code.
 
-本项目采用 [Apache License 2.0](LICENSE)。第三方组件说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+For interface changes, read the [current design and acceptance principles](design-qa.md#当前设计与验收原则). Use the approved page appearance as the baseline and verify both visual presentation and existing interactions.
+
+Code is licensed under [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependencies. The code license does not grant rights to third-party case media.
