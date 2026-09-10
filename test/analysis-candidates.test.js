@@ -14,8 +14,8 @@ import {
   rejectAnalysisCandidate,
   restoreVisionAfterScreenshot,
   undoVisionAnalysis
-} from "../analysis-candidates.js";
-import { createDefaultFacetCatalog } from "../facets.js";
+} from "../extension/analysis-candidates.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
 import {
   DeepSeekApiError,
   analyzeTextDetailedWithDeepSeek,
@@ -24,9 +24,9 @@ import {
   mergeAiSettings,
   normalizeAiSettings,
   planComposerTurn
-} from "../deepseek.js";
-import { createComposerSession, normalizeComposerSettings } from "../composer.js";
-import { applyFixedAnalysisTags } from "../tag-taxonomy.js";
+} from "../extension/deepseek.js";
+import { createComposerSession, normalizeComposerSettings } from "../extension/composer.js";
+import { applyFixedAnalysisTags } from "../extension/tag-taxonomy.js";
 
 test("structured fields become editable evidence-backed candidates without fixed dimensions", () => {
   const candidates = extractStructureCandidates({ text: '{"lighting":"large softbox","camera":{"lens":"35mm"}}\nCUSTOM LOOK: faded print\nPrice: $20' });

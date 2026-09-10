@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const manifest = JSON.parse(await readFile(join(projectRoot, "manifest.json"), "utf8"));
-const source = await readFile(join(projectRoot, "assets", "icons", "icon-source.svg"));
+const manifest = JSON.parse(await readFile(join(projectRoot, "extension", "manifest.json"), "utf8"));
+const source = await readFile(join(projectRoot, "extension", "assets", "icons", "icon-source.svg"));
 const targets = new Map(Object.entries({ ...manifest.icons, ...manifest.action?.default_icon })
   .map(([size, path]) => [Number(size), path])
   .filter(([size, path]) => Number.isInteger(size) && size > 0 && /^assets\/icons\/icon-\d+\.png$/.test(path)));
@@ -19,7 +19,7 @@ for (const [size, relativePath] of [...targets].sort(([left], [right]) => left -
   }).render();
   validatePixels(rendered, size, relativePath);
   const png = rendered.asPng();
-  const target = join(projectRoot, relativePath);
+  const target = join(projectRoot, "extension", relativePath);
   if (checkOnly) {
     const current = await readFile(target).catch(() => null);
     if (!current?.equals(png)) throw new Error(`${relativePath} 不是 SVG 母版生成的当前品牌图标`);

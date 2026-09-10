@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizePortableMediaDescriptor } from "../library-package-contract.js";
+import { normalizePortableMediaDescriptor } from "../extension/library-package-contract.js";
 
 test("jpeg and jpg aliases normalize to the actual portable path without changing the image format", () => {
   const normalized = normalizePortableMediaDescriptor({

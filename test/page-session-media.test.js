@@ -5,7 +5,7 @@ import {
   discardPageSessionMedia,
   preparePageSessionMedia,
   readPageSessionMediaChunk
-} from "../page-session-media.js";
+} from "../extension/page-session-media.js";
 
 test("page-session media reads only the exact selected HTTPS URL with browser credentials", async () => {
   const injected = (0, eval)(`(${preparePageSessionMedia.toString()})`);

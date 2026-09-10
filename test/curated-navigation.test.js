@@ -4,10 +4,10 @@ import { readFile } from "node:fs/promises";
 
 async function sources() {
   const [library, page, html, css] = await Promise.all([
-    readFile(new URL("../library.js", import.meta.url), "utf8"),
-    readFile(new URL("../curated-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../curated.html", import.meta.url), "utf8"),
-    readFile(new URL("../curated.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/curated-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/curated.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/curated.css", import.meta.url), "utf8")
   ]);
   return { library, page, html, css };
 }

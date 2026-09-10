@@ -6,7 +6,7 @@ import {
   installPageCaptureSiteObserver,
   isTrustedPageCaptureMediaUrl,
   normalizePageCaptureSitePayload
-} from "../page-capture-site-adapters.js";
+} from "../extension/page-capture-site-adapters.js";
 
 test("Jimeng structured payload restores author, prompt, model, time, metrics and original media", () => {
   const normalized = normalizePageCaptureSitePayload({

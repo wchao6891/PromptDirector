@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { retrieveComposerSources } from "../composer-retrieval.js";
-import { buildSearchIndex } from "../search-index.js";
-import { CONTENT_IDS } from "../taxonomy.js";
+import { retrieveComposerSources } from "../extension/composer-retrieval.js";
+import { buildSearchIndex } from "../extension/search-index.js";
+import { CONTENT_IDS } from "../extension/taxonomy.js";
 
 test("local composer retrieval keeps cases and guides as separate source roles", () => {
   const sources = retrieveComposerSources({

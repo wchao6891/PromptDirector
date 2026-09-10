@@ -81,28 +81,12 @@ You can also install through the [Chrome Web Store](https://chromewebstore.googl
 
 </details>
 
-<details>
-<summary>Development and verification</summary>
 
-Requires Node.js 22.13 or later.
-
-```sh
-npm install
-npm run verify
-```
-
-`npm run verify` runs the full verification gate: source and asset checks, historical-data compatibility and unit tests, packaged browser journeys in isolated Chrome for Testing, and an upgrade rehearsal with the previous release's data in the same Chrome profile. It builds packages but does not publish a GitHub release or upload to the Store.
-
-For a source-only check, run `npm run verify:source`; for the historical data contract, run `npm run check:compat`. `npm run test:local-extension` runs packaged browser acceptance. `npm run package` builds the fixed-ID local package; `npm run package:release` builds the Store upload package. Both share case, media and creative features. The Store package uses Chrome-managed updates; the local package includes in-place upgrading. Packaging fails if the official identity is missing.
-
-See [data compatibility](docs/DATA_COMPATIBILITY.md) and [known limitations](docs/KNOWN_LIMITATIONS.md) for support boundaries.
-
-</details>
 
 ## Contribute and license
 
 Contributions to capture adaptations, interactions, tests and documentation are welcome. When [reporting an issue](https://github.com/wchao6891/PromptDirector/issues), describe the page type, observable behavior and reproduction steps. Remove API keys, private data and unauthorized media from examples. Run `npm run verify` before submitting code.
 
-For interface changes, read the [current design and acceptance principles](design-qa.md#当前设计与验收原则). Use the approved page appearance as the baseline and verify both visual presentation and existing interactions.
+See the [development guide](docs/DEVELOPMENT.md) and [interface guidelines](docs/DESIGN.md) to contribute.
 
 Code is licensed under [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependencies. The code license does not grant rights to third-party case media.

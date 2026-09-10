@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import {
   portableManagedAsset,
   readLinkedAssetForShare
-} from "../offscreen.js";
-import { resolvePortableAssetFormat } from "../asset-formats.js";
+} from "../extension/offscreen.js";
+import { resolvePortableAssetFormat } from "../extension/asset-formats.js";
 
 const linkedAsset = Object.freeze({
   id: "source:psd",

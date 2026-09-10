@@ -5,9 +5,9 @@ import { readFile } from "node:fs/promises";
 import {
   capturePermissionMessage,
   captureVisibleTabWithRecovery
-} from "../capture-region.js";
+} from "../extension/capture-region.js";
 
-const sourceUrl = new URL("../capture-region.js", import.meta.url);
+const sourceUrl = new URL("../extension/capture-region.js", import.meta.url);
 
 test("expired activeTab access becomes a recovery instruction instead of a Chrome permission error", () => {
   const message = capturePermissionMessage(

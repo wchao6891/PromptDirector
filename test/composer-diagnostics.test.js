@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildComposerDiagnostic, composerOutputChecks, diagnosticFilename } from "../composer-diagnostics.js";
-import { createComposerSession } from "../composer.js";
+import { buildComposerDiagnostic, composerOutputChecks, diagnosticFilename } from "../extension/composer-diagnostics.js";
+import { createComposerSession } from "../extension/composer.js";
 
 test("local output checks catch aliases and fake placeholder instructions without another model call", () => {
   const checks = composerOutputChecks(createComposerSession({ targetType: "image" }), {

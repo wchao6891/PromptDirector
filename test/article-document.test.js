@@ -7,7 +7,7 @@ import {
   normalizeArticleDocument,
   removeArticleDocumentAsset,
   remapArticleDocumentAssets
-} from "../article-document.js";
+} from "../extension/article-document.js";
 
 test("article documents preserve readable block order while discarding invalid blocks", () => {
   const document = normalizeArticleDocument({

@@ -12,6 +12,6 @@ test("PDF.js packaging uses one exact dependency version and a byte-identical ve
 });
 
 test("the PDF viewer keeps dynamic expression evaluation disabled", async () => {
-  const source = await readFile(new URL("../document-viewer.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/document-viewer.js", import.meta.url), "utf8");
   assert.match(source, /isEvalSupported:\s*false/);
 });

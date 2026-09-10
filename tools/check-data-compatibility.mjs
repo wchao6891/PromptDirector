@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 import {
   CURRENT_LIBRARY_PACKAGE_VERSION,
   SUPPORTED_LIBRARY_PACKAGE_VERSIONS
-} from "../library-package-format.js";
-import { prepareLibraryPackageDraft } from "../library-package-migrations.js";
-import { migrateLibraryState } from "../migration.js";
-import { SCHEMA_VERSION } from "../taxonomy.js";
+} from "../extension/library-package-format.js";
+import { prepareLibraryPackageDraft } from "../extension/library-package-migrations.js";
+import { migrateLibraryState } from "../extension/migration.js";
+import { SCHEMA_VERSION } from "../extension/taxonomy.js";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const fixtureRoot = join(projectRoot, "test", "fixtures", "compat");
@@ -80,8 +80,9 @@ function latestReleaseTag() {
 }
 
 function releaseVersions(tag) {
-  const taxonomy = gitFile(tag, "taxonomy.js");
-  const packageFormat = gitFile(tag, "library-package-format.js");
+  const sourcePrefix = execFileSync("git", ["ls-tree", "--name-only", tag, "extension/manifest.json"], { cwd: projectRoot, encoding: "utf8" }).trim() ? "extension/" : "";
+  const taxonomy = gitFile(tag, `${sourcePrefix}taxonomy.js`);
+  const packageFormat = gitFile(tag, `${sourcePrefix}library-package-format.js`);
   const schemaVersion = integerConstant(taxonomy, "SCHEMA_VERSION");
   const currentPackageVersion = integerConstant(packageFormat, "CURRENT_LIBRARY_PACKAGE_VERSION");
   const supportedLiteral = packageFormat.match(/SUPPORTED_LIBRARY_PACKAGE_VERSIONS\s*=\s*Object\.freeze\(\[([^\]]+)\]\)/u)?.[1];

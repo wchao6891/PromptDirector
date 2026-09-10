@@ -2,18 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-import { hasEnglishTranslation, translateForLocale } from "../i18n.js";
+import { hasEnglishTranslation, translateForLocale } from "../extension/i18n.js";
 
 test("manifest locale catalogs expose the same message keys", async () => {
   const [zh, en] = await Promise.all([
-    readJson("../_locales/zh_CN/messages.json"),
-    readJson("../_locales/en/messages.json")
+    readJson("../extension/_locales/zh_CN/messages.json"),
+    readJson("../extension/_locales/en/messages.json")
   ]);
   assert.deepEqual(Object.keys(en).sort(), Object.keys(zh).sort());
 });
 
 test("every static HTML i18n marker has an English translation", async () => {
-  for (const path of ["../collector.html", "../library.html", "../composer.html", "../skills.html", "../curated.html", "../curated-skills.html"]) {
+  for (const path of ["../extension/collector.html", "../extension/library.html", "../extension/composer.html", "../extension/skills.html", "../extension/curated.html", "../extension/curated-skills.html"]) {
     const html = await readFile(new URL(path, import.meta.url), "utf8");
     const keys = [...html.matchAll(/data-i18n(?:-placeholder|-aria-label|-title)?="([^"]+)"/g)].map((match) => match[1]);
     const missing = [...new Set(keys.filter((key) => !hasEnglishTranslation(key)))];
@@ -22,7 +22,7 @@ test("every static HTML i18n marker has an English translation", async () => {
 });
 
 test("product pages do not leave Chinese interface text outside the translation system", async () => {
-  for (const path of ["../collector.html", "../library.html", "../composer.html", "../skills.html", "../curated.html", "../curated-skills.html"]) {
+  for (const path of ["../extension/collector.html", "../extension/library.html", "../extension/composer.html", "../extension/skills.html", "../extension/curated.html", "../extension/curated-skills.html"]) {
     const html = await readFile(new URL(path, import.meta.url), "utf8");
     const unmarkedText = [];
     for (const match of html.matchAll(/>([^<>]*[\p{Script=Han}][^<>]*)</gu)) {
@@ -43,7 +43,7 @@ test("product pages do not leave Chinese interface text outside the translation 
 });
 
 test("dynamic interface helpers only receive Chinese copy with an English translation", async () => {
-  const paths = ["../library.js", "../composer-page.js", "../skills-page.js", "../collector.js", "../collector-page-capture-view.js", "../curated-page.js", "../ui-dialogs.js", "../tag-editor.js", "../local-extension-upgrade-ui.js"];
+  const paths = ["../extension/library.js", "../extension/composer-page.js", "../extension/skills-page.js", "../extension/collector.js", "../extension/collector-page-capture-view.js", "../extension/curated-page.js", "../extension/ui-dialogs.js", "../extension/tag-editor.js", "../extension/local-extension-upgrade-ui.js"];
   const missing = [];
   for (const path of paths) {
     const source = await readFile(new URL(path, import.meta.url), "utf8");
@@ -51,7 +51,7 @@ test("dynamic interface helpers only receive Chinese copy with an English transl
       const key = JSON.parse(`"${match[1]}"`);
       if (/\p{Script=Han}/u.test(key) && !hasEnglishTranslation(key)) missing.push(`${path}: ${key}`);
     }
-    if (!["../library.js", "../composer-page.js"].includes(path)) continue;
+    if (!["../extension/library.js", "../extension/composer-page.js"].includes(path)) continue;
     for (const line of source.split("\n").filter((value) => value.includes("textEl("))) {
       for (const match of line.matchAll(/"((?:[^"\\]|\\.)*)"/gu)) {
         const key = JSON.parse(`"${match[1]}"`);
@@ -96,9 +96,9 @@ test("collector runtime states and destructive draft actions have English copy",
 
 test("collector routes dynamic system text through the shared translation boundary", async () => {
   const [collector, background, library] = await Promise.all([
-    readFile(new URL("../collector.js", import.meta.url), "utf8"),
-    readFile(new URL("../background.js", import.meta.url), "utf8"),
-    readFile(new URL("../library.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.js", import.meta.url), "utf8")
   ]);
   assert.match(collector, /const value = translateUiMessage\(message \|\| ""\)/);
   assert.match(collector, /item\.customized \? item\.name : t\(item\.name\)/);

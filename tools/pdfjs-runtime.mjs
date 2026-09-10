@@ -50,7 +50,7 @@ function pdfjsPaths(projectRoot) {
     packageLock: join(root, "package-lock.json"),
     installedPackage: join(root, "node_modules", "pdfjs-dist", "package.json"),
     installedRoot: join(root, "node_modules", "pdfjs-dist"),
-    vendorRoot: join(root, "vendor", "pdfjs")
+    vendorRoot: join(root, "extension", "vendor", "pdfjs")
   };
 }
 

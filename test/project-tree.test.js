@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { projectMovePlan, projectTreeRows, readProjectExpansion, saveProjectExpansion } from "../project-tree.js";
-import { collectionPathLabelsById, moveCollection, normalizeOrganizerState } from "../organizer.js";
+import { projectMovePlan, projectTreeRows, readProjectExpansion, saveProjectExpansion } from "../extension/project-tree.js";
+import { collectionPathLabelsById, moveCollection, normalizeOrganizerState } from "../extension/organizer.js";
 
 function fixture() {
   return normalizeOrganizerState({ collections: [

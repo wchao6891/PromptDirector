@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createZipBlob } from "../zip.js";
-import { extensionIdForKey, cleanupLocalUpgrade, installLocalUpgrade, isExtensionProgramPath, localReleasePackageUrl, prepareLocalUpgrade, RECOVERY_DIRECTORY, verifyInstallationDirectory, verifyRecoveredUpgrade, verifyRunningUpgrade } from "../local-extension-upgrade.js";
-const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url)));
+import { createZipBlob } from "../extension/zip.js";
+import { extensionIdForKey, cleanupLocalUpgrade, installLocalUpgrade, isExtensionProgramPath, localReleasePackageUrl, prepareLocalUpgrade, RECOVERY_DIRECTORY, verifyInstallationDirectory, verifyRecoveredUpgrade, verifyRunningUpgrade } from "../extension/local-extension-upgrade.js";
+const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url)));
 const id = await extensionIdForKey(manifest.key);
 const nextVersion = [...manifest.version.split(".").slice(0, -1), Number(manifest.version.split(".").at(-1)) + 1].join(".");
 const runtime = { id, getManifest: () => manifest, getURL: path => `chrome-extension://${id}/${path}` };
@@ -38,7 +38,7 @@ test("local package identity and version are validated before directory writes",
   await assert.rejects(prepareLocalUpgrade(await createZipBlob([...files].map(([name, data]) => ({ name, data }))), runtime), /缺少运行文件/);
 });
 test("program paths exclude user data and dangerous archive paths", () => {
-  for (const path of ["cases.json", "media/user.mp4", "../background.js", "assets/../../x.js", "C:/x.js", "a\\b.js", ".git/config"]) assert.equal(isExtensionProgramPath(path), false, path);
+  for (const path of ["cases.json", "media/user.mp4", "../extension/background.js", "assets/../../x.js", "C:/x.js", "a\\b.js", ".git/config"]) assert.equal(isExtensionProgramPath(path), false, path);
   assert.equal(isExtensionProgramPath("vendor/pdfjs/build/pdf.mjs"), true);
   assert.equal(localReleasePackageUrl(manifest, `${manifest.homepage_url}/releases/tag/v${nextVersion}`, nextVersion), `${manifest.homepage_url}/releases/download/v${nextVersion}/PromptDirector-${nextVersion}-FIXED-ID-DEV.zip`);
   assert.throws(() => localReleasePackageUrl(manifest, `https://evil.example/releases/tag/v${nextVersion}`, nextVersion), /不一致/);

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const root = new URL("../", import.meta.url);
+const root = new URL("../extension/", import.meta.url);
 
 test("copy stays local while an explicit image action activates result capture", async () => {
   const composer = await readFile(new URL("composer-page.js", root), "utf8");

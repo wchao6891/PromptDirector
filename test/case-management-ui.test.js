@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const [html, source, background, css, icons] = await Promise.all([
-  readFile(new URL("../library.html", import.meta.url), "utf8"),
-  readFile(new URL("../library.js", import.meta.url), "utf8"),
-  readFile(new URL("../background.js", import.meta.url), "utf8"),
-  readFile(new URL("../library.css", import.meta.url), "utf8"),
-  readFile(new URL("../assets/ui-icons.svg", import.meta.url), "utf8")
+  readFile(new URL("../extension/library.html", import.meta.url), "utf8"),
+  readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/library.css", import.meta.url), "utf8"),
+  readFile(new URL("../extension/assets/ui-icons.svg", import.meta.url), "utf8")
 ]);
 
 test("selection mode exposes all filtered results, user tags, projects, sharing, and recycle-bin actions", () => {

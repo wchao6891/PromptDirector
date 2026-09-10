@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createCaptureWorkspace } from "../capture-workspace.js";
+import { createCaptureWorkspace } from "../extension/capture-workspace.js";
 
 test("capture workspace persists a selected fragment behind one dispatch interface", async () => {
   const stored = {};

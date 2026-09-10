@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
 
-import { createDefaultFacetCatalog } from "../facets.js";
-import { buildSearchIndex, searchIndexedEntries } from "../search-index.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { buildSearchIndex, searchIndexedEntries } from "../extension/search-index.js";
 
 test("the reusable search index preserves free text and operator matching", () => {
   const entries = [{

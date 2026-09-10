@@ -14,9 +14,9 @@ import {
   normalizeAiTaskAssignments,
   publicAiProviderRegistry,
   resolveAiProviderAssignment
-} from "../ai-provider-registry.js";
-import { AI_PROVIDER_PRESETS, getAiProviderPreset } from "../ai-provider-presets.js";
-import { getAiModelCapability } from "../ai-model-capabilities.js";
+} from "../extension/ai-provider-registry.js";
+import { AI_PROVIDER_PRESETS, getAiProviderPreset } from "../extension/ai-provider-presets.js";
+import { getAiModelCapability } from "../extension/ai-model-capabilities.js";
 
 function configuredRegistry() {
   return normalizeAiProviderRegistry({ providers: {

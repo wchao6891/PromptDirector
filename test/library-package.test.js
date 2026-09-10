@@ -8,11 +8,11 @@ import {
   projectPackageEntryIds,
   selectLibraryPackage,
   selectProjectPackage
-} from "../library-package.js";
-import { createDefaultFacetCatalog, createFacet, createFacetNode } from "../facets.js";
-import { CONTENT_IDS, CONTENT_ROLES, SCHEMA_VERSION, createContentType, createDefaultTaxonomy } from "../taxonomy.js";
-import { COMPOSER_METHOD_VERSION, createComposerSession, normalizeComposerSettings } from "../composer.js";
-import { createZipBlob, readZipBlob } from "../zip.js";
+} from "../extension/library-package.js";
+import { createDefaultFacetCatalog, createFacet, createFacetNode } from "../extension/facets.js";
+import { CONTENT_IDS, CONTENT_ROLES, SCHEMA_VERSION, createContentType, createDefaultTaxonomy } from "../extension/taxonomy.js";
+import { COMPOSER_METHOD_VERSION, createComposerSession, normalizeComposerSettings } from "../extension/composer.js";
+import { createZipBlob, readZipBlob } from "../extension/zip.js";
 
 function packageData(entries, facetCatalog) {
   return {

@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { prepareComposerVideos, sessionHasVideoReferences } from "../composer-video-references.js";
-import { createReferenceSnapshots } from "../composer.js";
-import { ASSET_FORMAT_REGISTRY } from "../asset-formats.js";
-import { TEMP_REFERENCE_FILE_ACCEPT, validateTempReferenceFile } from "../temp-references.js";
+import { prepareComposerVideos, sessionHasVideoReferences } from "../extension/composer-video-references.js";
+import { createReferenceSnapshots } from "../extension/composer.js";
+import { ASSET_FORMAT_REGISTRY } from "../extension/asset-formats.js";
+import { TEMP_REFERENCE_FILE_ACCEPT, validateTempReferenceFile } from "../extension/temp-references.js";
 
 test("a video without prompts or analyses is still a usable library reference", () => {
   const references = createReferenceSnapshots([{
@@ -46,8 +46,8 @@ test("video preparation reads each selected resource once and cannot send missin
 
 test("video dialogue uses the durable runner and persists streamed partial text", async () => {
   const [page, runner] = await Promise.all([
-    readFile(new URL("../composer-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../creative-job-runner.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/creative-job-runner.js", import.meta.url), "utf8")
   ]);
   assert.match(page, /sessionHasVideoReferences\(working\)[\s\S]*startPersistentCreativeJob/);
   assert.doesNotMatch(page, /prepareSelectedReferenceVideos/);

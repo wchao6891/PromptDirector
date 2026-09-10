@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createComposerSession } from "../composer.js";
-import { executeComposerTurnWithService } from "../composer-service.js";
+import { createComposerSession } from "../extension/composer.js";
+import { executeComposerTurnWithService } from "../extension/composer-service.js";
 
 const model = "glm-5.3-flash";
 const session = createComposerSession({

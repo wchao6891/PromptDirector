@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { findPersistedVisionAnalysis } from "../vision-analysis-cache.js";
+import { findPersistedVisionAnalysis } from "../extension/vision-analysis-cache.js";
 
 function entryWithAnalysis(id, quality, overrides = {}) {
   return {

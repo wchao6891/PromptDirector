@@ -14,9 +14,9 @@ import {
   normalizeSelection,
   renderLibraryJson,
   renderMarkdown
-} from "../lib.js";
-import { CONTENT_IDS, SCHEMA_VERSION, createDefaultTaxonomy } from "../taxonomy.js";
-import { createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, createFacetNode } from "../facets.js";
+} from "../extension/lib.js";
+import { CONTENT_IDS, SCHEMA_VERSION, createDefaultTaxonomy } from "../extension/taxonomy.js";
+import { createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, createFacetNode } from "../extension/facets.js";
 
 test("normalizeSelection preserves paragraphs while removing copied line noise", () => {
   assert.equal(

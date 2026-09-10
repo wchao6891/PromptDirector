@@ -1,5 +1,5 @@
 import test from "node:test";
-import { tiktokMediaController } from "../media-playback.js";
+import { tiktokMediaController } from "../extension/media-playback.js";
 import assert from "node:assert/strict";
 
 import {
@@ -7,7 +7,7 @@ import {
   buildYouTubePlaybackRule,
   ensureYouTubePlaybackPermission,
   youtubePlaybackError
-} from "../media-playback.js";
+} from "../extension/media-playback.js";
 
 test("YouTube playback permission is requested only on demand and installs a scoped session rule", async () => {
   const calls = [];

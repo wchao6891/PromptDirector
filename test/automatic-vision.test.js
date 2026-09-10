@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildAutomaticVisionJob } from "../automatic-vision.js";
+import { buildAutomaticVisionJob } from "../extension/automatic-vision.js";
 
 const entries = [{
   id: "case-one",

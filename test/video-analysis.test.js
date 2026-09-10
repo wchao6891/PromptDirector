@@ -9,7 +9,7 @@ import {
   requireVideoAnalysisConfirmation,
   VIDEO_RECONSTRUCTION_CONTRACT_VERSION,
   videoAnalysisPrompt
-} from "../video-analysis.js";
+} from "../extension/video-analysis.js";
 
 test("a direct video request times out once without retrying or accepting a late response", async () => {
   let calls = 0;

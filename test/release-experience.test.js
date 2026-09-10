@@ -10,12 +10,12 @@ const pageScripts = ["library.js", "composer-page.js", "skills-page.js", "collec
 
 test("ordinary product pages use the shared branded dialog instead of browser prompts", async () => {
   for (const filename of pageScripts) {
-    const source = await readFile(new URL(`../${filename}`, import.meta.url), "utf8");
+    const source = await readFile(new URL(`../extension/${filename}`, import.meta.url), "utf8");
     assert.doesNotMatch(source, /\b(?:window\.)?(?:prompt|confirm|alert)\s*\(/, `${filename} 不能调用系统弹窗`);
   }
 
-  const dialogs = await readFile(new URL("../ui-dialogs.js", import.meta.url), "utf8");
-  const foundation = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
+  const dialogs = await readFile(new URL("../extension/ui-dialogs.js", import.meta.url), "utf8");
+  const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
   assert.match(dialogs, /export async function showAppDialog/);
   assert.match(dialogs, /export async function confirmAppAction/);
   assert.match(dialogs, /export async function promptAppText/);
@@ -24,7 +24,7 @@ test("ordinary product pages use the shared branded dialog instead of browser pr
 });
 
 test("video links and quick notes each use a purpose-built one-step form", async () => {
-  const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const video = library.slice(library.indexOf("async function addVideoReference"), library.indexOf("async function saveVideoReference"));
   const note = library.slice(library.indexOf("async function createQuickNote"), library.indexOf("async function prepareLocalMedia"));
 
@@ -38,7 +38,7 @@ test("video links and quick notes each use a purpose-built one-step form", async
 });
 
 test("general settings expose one change-aware save action without a save rollback", async () => {
-  const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const panel = html.slice(html.indexOf('id="settings-general-panel"'), html.indexOf('id="settings-tasks-panel"'));
 
   assert.equal((panel.match(/id="save-library-settings"/g) ?? []).length, 1);
@@ -47,8 +47,8 @@ test("general settings expose one change-aware save action without a save rollba
 });
 
 test("the selected toolbar mark has one lime SVG master and matching manifest PNG sizes", async () => {
-  const svg = await readFile(new URL("../assets/icons/icon-source.svg", import.meta.url), "utf8");
-  const manifest = JSON.parse(await readFile(new URL("../manifest.json", import.meta.url), "utf8"));
+  const svg = await readFile(new URL("../extension/assets/icons/icon-source.svg", import.meta.url), "utf8");
+  const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
 
   assert.match(svg, /fill="#D1FE17"/);
   assert.match(svg, /fill="#0F1113"/);
@@ -60,7 +60,7 @@ test("the selected toolbar mark has one lime SVG master and matching manifest PN
     128: "assets/icons/icon-128.png"
   });
   const pages = await Promise.all(["library.html", "collector.html", "composer.html", "skills.html", "curated-skills.html"]
-    .map((name) => readFile(new URL(`../${name}`, import.meta.url), "utf8")));
+    .map((name) => readFile(new URL(`../extension/${name}`, import.meta.url), "utf8")));
   for (const page of pages) assert.match(page, /assets\/icons\/icon-source\.svg/);
   const { stdout } = await execFileAsync(process.execPath, ["tools/build-brand-icons.mjs", "--check"], {
     cwd: new URL("..", import.meta.url)

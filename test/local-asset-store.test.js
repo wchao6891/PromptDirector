@@ -11,9 +11,9 @@ import {
   queryLocalAssetHandlePermission,
   readLocalAssetFile,
   saveLocalAssetHandle
-} from "../local-asset-store.js";
+} from "../extension/local-asset-store.js";
 
-const source = await readFile(new URL("../local-asset-store.js", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/local-asset-store.js", import.meta.url), "utf8");
 
 function fileMetadata(overrides = {}) {
   return { name: "scene.psd", size: 128, lastModified: 42, ...overrides };

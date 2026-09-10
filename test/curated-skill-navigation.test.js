@@ -4,14 +4,14 @@ import { readFile } from "node:fs/promises";
 
 async function sources() {
   const [casesHtml, skillsHtml, curatedSkillPage, skillsPage, skillsCenter, foundation, composerPage, composerStyle] = await Promise.all([
-    readFile(new URL("../curated.html", import.meta.url), "utf8"),
-    readFile(new URL("../curated-skills.html", import.meta.url), "utf8"),
-    readFile(new URL("../curated-skill-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../skills-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../skills.html", import.meta.url), "utf8"),
-    readFile(new URL("../ui-foundation.css", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.js", import.meta.url), "utf8"),
-    readFile(new URL("../composer-page.css", import.meta.url), "utf8")
+    readFile(new URL("../extension/curated.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/curated-skills.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/curated-skill-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8")
   ]);
   return { casesHtml, skillsHtml, curatedSkillPage, skillsPage, skillsCenter, foundation, composerPage, composerStyle };
 }

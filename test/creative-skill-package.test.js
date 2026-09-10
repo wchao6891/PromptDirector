@@ -11,7 +11,7 @@ import {
   parseSkillArchive,
   parseSkillFiles,
   parseSkillMarkdown
-} from "../creative-skill-package.js";
+} from "../extension/creative-skill-package.js";
 
 test("generated packages contain a standard SKILL.md and Markdown references only", async () => {
   const archive = await exportGeneratedSkillPackage({

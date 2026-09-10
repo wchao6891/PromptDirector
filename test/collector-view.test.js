@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import {
   assignVisualPreviewSource,
   collectorViewState
-} from "../collector-view.js";
+} from "../extension/collector-view.js";
 
 test("cached screenshot URLs bind to newly created thumbnail nodes before they are connected", () => {
   const image = { isConnected: false, src: "" };
@@ -41,7 +41,7 @@ test("one captured item stays in quick preview until the user asks to edit it", 
 });
 
 test("quick preview exposes one-step removal for every captured text and image", async () => {
-  const collectorSource = await readFile(new URL("../collector.js", import.meta.url), "utf8");
+  const collectorSource = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
   const quickPreview = collectorSource.slice(
     collectorSource.indexOf("function createQuickPreview"),
     collectorSource.indexOf("function createFragmentCard")
@@ -60,7 +60,7 @@ test("quick preview exposes one-step removal for every captured text and image",
 });
 
 test("page capture replaces failed remote thumbnails with an explicit unavailable preview", async () => {
-  const collectorSource = await readFile(new URL("../collector.js", import.meta.url), "utf8");
+  const collectorSource = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
   const pageCaptureRenderer = collectorSource.slice(
     collectorSource.indexOf("function renderPageCapture"),
     collectorSource.indexOf("function updatePageCaptureSelection")
@@ -69,16 +69,16 @@ test("page capture replaces failed remote thumbnails with an explicit unavailabl
   assert.match(pageCaptureRenderer, /image\.addEventListener\("error"/);
   assert.match(pageCaptureRenderer, /preview\.replaceChildren\(textNode\("span", t\("预览不可用"\)\)\)/);
   assert.match(pageCaptureRenderer, /pageCaptureMediaSourceLabel\(media\.sourceKind, media\.captureMethod\)/);
-  const collectorHtml = await readFile(new URL("../collector.html", import.meta.url), "utf8");
+  const collectorHtml = await readFile(new URL("../extension/collector.html", import.meta.url), "utf8");
   assert.match(collectorHtml, /id="page-capture-help"/);
   assert.match(collectorSource, /t\("选择要保存的内容"\)/);
 });
 
 test("page capture uses the final save as media authorization and keeps uncertain media separate", async () => {
   const [collectorSource, collectorHtml, backgroundSource] = await Promise.all([
-    Promise.all(["../collector.js", "../collector-page-capture-view.js"].map(path => readFile(new URL(path, import.meta.url), "utf8"))).then(parts => parts.join("\n")),
-    readFile(new URL("../collector.html", import.meta.url), "utf8"),
-    readFile(new URL("../background.js", import.meta.url), "utf8")
+    Promise.all(["../extension/collector.js", "../extension/collector-page-capture-view.js"].map(path => readFile(new URL(path, import.meta.url), "utf8"))).then(parts => parts.join("\n")),
+    readFile(new URL("../extension/collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/background.js", import.meta.url), "utf8")
   ]);
   const pageCaptureRenderer = collectorSource.slice(
     collectorSource.indexOf("function renderPageCapture"),
@@ -108,10 +108,10 @@ test("page capture uses the final save as media authorization and keeps uncertai
 
 test("page capture can correct the confirmed DOM region and previews one ordered article", async () => {
   const [collectorSource, collectorHtml, backgroundSource, librarySource] = await Promise.all([
-    readFile(new URL("../collector.js", import.meta.url), "utf8"),
-    readFile(new URL("../collector.html", import.meta.url), "utf8"),
-    readFile(new URL("../background.js", import.meta.url), "utf8"),
-    readFile(new URL("../library.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/library.js", import.meta.url), "utf8")
   ]);
   assert.match(collectorHtml, /id="page-capture-add-region"/);
   assert.match(collectorHtml, /id="page-capture-exclude-region"/);
@@ -162,8 +162,8 @@ test("continuing an existing case keeps the target explicit at the final action"
 
 test("collector translates only built-in capture content types", async () => {
   const [collectorSource, backgroundSource] = await Promise.all([
-    readFile(new URL("../collector.js", import.meta.url), "utf8"),
-    readFile(new URL("../background.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/background.js", import.meta.url), "utf8")
   ]);
   assert.match(collectorSource, /item\.customized \? item\.name : t\(item\.name\)/);
   assert.match(collectorSource, /partContentType\?\.customized \? partContentType\.name : t\(partContentType\?\.name \|\| "待确认"\)/);
@@ -172,9 +172,9 @@ test("collector translates only built-in capture content types", async () => {
 
 test("the collector auto-reads only highlights and reserves clipboard access for the extract buttons", async () => {
   const [collectorSource, collectorHtml, backgroundSource] = await Promise.all([
-    readFile(new URL("../collector.js", import.meta.url), "utf8"),
-    readFile(new URL("../collector.html", import.meta.url), "utf8"),
-    readFile(new URL("../background.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/background.js", import.meta.url), "utf8")
   ]);
 
   assert.match(collectorSource, /TRY_ACTIVE_SELECTION_TO_DRAFT/);
@@ -229,9 +229,9 @@ test("the collector auto-reads only highlights and reserves clipboard access for
 
 test("every captured draft exposes project and the shared multi-tag editor before save", async () => {
   const [collectorSource, collectorHtml, draftSource] = await Promise.all([
-    readFile(new URL("../collector.js", import.meta.url), "utf8"),
-    readFile(new URL("../collector.html", import.meta.url), "utf8"),
-    readFile(new URL("../capture-draft.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/collector.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/collector.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/capture-draft.js", import.meta.url), "utf8")
   ]);
   const metadata = collectorHtml.slice(
     collectorHtml.indexOf('<section id="capture-metadata"'),

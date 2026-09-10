@@ -10,8 +10,8 @@ import {
   tempReferenceAssetIds,
   unreadReferenceImageAssets,
   validateTempReferenceFile
-} from "../temp-references.js";
-import { createComposerSession } from "../composer.js";
+} from "../extension/temp-references.js";
+import { createComposerSession } from "../extension/composer.js";
 
 const supportedFiles = [
   ["frame.png", "image/png"],

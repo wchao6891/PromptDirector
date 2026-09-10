@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const root = new URL("../", import.meta.url);
+const root = new URL("../extension/", import.meta.url);
 const [html, css, js] = await Promise.all([
   readFile(new URL("library.html", root), "utf8"),
   readFile(new URL("library.css", root), "utf8"),

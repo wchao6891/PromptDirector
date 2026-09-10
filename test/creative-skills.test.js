@@ -12,11 +12,11 @@ import {
   normalizeAppliedSkillSnapshots,
   restoreCreativeSkillVersion,
   saveCreativeSkillVersion
-} from "../creative-skills.js";
+} from "../extension/creative-skills.js";
 import {
   creativeRunEvidenceCandidates,
   selectedCreativeRunEvidenceSources
-} from "../creative-skill-service.js";
+} from "../extension/creative-skill-service.js";
 
 function createSkill(state, name = "国风视觉", overrides = {}) {
   return createCreativeSkill(state, {

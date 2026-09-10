@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
 
-import { createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, createFacetNode } from "../facets.js";
-import { entryAttributeSummary, entrySourceMetadataRows, filterEntries } from "../library-model.js";
-import { CONTENT_IDS } from "../taxonomy.js";
+import { createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, createFacetNode } from "../extension/facets.js";
+import { entryAttributeSummary, entrySourceMetadataRows, filterEntries } from "../extension/library-model.js";
+import { CONTENT_IDS } from "../extension/taxonomy.js";
 
 test("library filters use OR inside a facet, AND across facets, and include child tags through parents", () => {
   let catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "画面情绪" });

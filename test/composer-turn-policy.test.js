@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveComposerTurnPolicy } from "../composer-turn-policy.js";
+import { resolveComposerTurnPolicy } from "../extension/composer-turn-policy.js";
 
 test("a manually selected text task executes directly in one model call", () => {
   assert.deepEqual(resolveComposerTurnPolicy({

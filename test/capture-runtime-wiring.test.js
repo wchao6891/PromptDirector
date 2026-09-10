@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 test("the collector live-refreshes on draft storage changes", async () => {
-  const source = await readFile(new URL("../collector.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
   assert.match(source, /chrome\.storage\.onChanged\.addListener/);
   assert.match(source, /changes\.captureDraft/);
 });
 
 test("opening the capture workspace never starts synchronization", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf('case "GET_CAPTURE_WORKSPACE"');
   const end = source.indexOf('case "GET_DATA_SAFETY_STATUS"', start);
   const branch = source.slice(start, end);
@@ -18,7 +18,7 @@ test("opening the capture workspace never starts synchronization", async () => {
 });
 
 test("reading library state never starts synchronization", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf('case "GET_STATE"');
   const end = source.indexOf('case "GET_CAPTURE_WORKSPACE"', start);
   const branch = source.slice(start, end);
@@ -28,7 +28,7 @@ test("reading library state never starts synchronization", async () => {
 });
 
 test("draft edits and save share one lightweight queue so the last capture cannot miss the commit", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   for (const messageType of [
     "UPDATE_CAPTURE_DRAFT", "UPDATE_CAPTURE_FRAGMENT", "REMOVE_CAPTURE_FRAGMENT",
     "REMOVE_CAPTURE_VISUAL", "CANCEL_CAPTURE_DRAFT", "COMMIT_CAPTURE_DRAFT"
@@ -41,7 +41,7 @@ test("draft edits and save share one lightweight queue so the last capture canno
 });
 
 test("creative result capture and metadata commit cross both queues as one transaction", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf("async function captureAndCommitCreativeOutputs");
   const end = source.indexOf("function dispatchCaptureMessage", start);
   const transaction = source.slice(start, end);
@@ -51,7 +51,7 @@ test("creative result capture and metadata commit cross both queues as one trans
 });
 
 test("captured posts retain real media facts when suggesting a case category", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf("async function commitPageCapture");
   const end = source.indexOf("async function", start + 20);
   const save = source.slice(start, end);
@@ -60,7 +60,7 @@ test("captured posts retain real media facts when suggesting a case category", a
 });
 
 test("restoring an overwritten screenshot marks that existing media id dirty", async () => {
-  const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   const start = source.indexOf("async function undoLastSave()");
   const end = source.indexOf("async function deleteEntry", start);
   const undo = source.slice(start, end);

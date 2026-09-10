@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { installXVideoObserver } from "../x-video-capture.js";
-import { PAGE_CAPTURE_LIMITS, PORTABLE_LIBRARY_LIMITS } from "../resource-limits.js";
+import { installXVideoObserver } from "../extension/x-video-capture.js";
+import { PAGE_CAPTURE_LIMITS, PORTABLE_LIBRARY_LIMITS } from "../extension/resource-limits.js";
 
 const check = process.argv.includes("--check");
 const root = new URL("../", import.meta.url);
@@ -10,7 +10,7 @@ const files = new Map([
   ["hls-runtime.js", await readFile(new URL("node_modules/hls.js/dist/hls.min.js", root))]
 ]);
 for (const [name, bytes] of files) {
-  const path = new URL(name, root);
+  const path = new URL(`extension/${name}`, root);
   if (check) {
     if (!bytes.equals(await readFile(path))) throw new Error(`Capture runtime differs: ${name}`);
   } else await writeFile(path, bytes);

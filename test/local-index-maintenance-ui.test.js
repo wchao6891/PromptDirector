@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const [html, source, background] = await Promise.all([
-  readFile(new URL("../library.html", import.meta.url), "utf8"),
-  readFile(new URL("../library.js", import.meta.url), "utf8"),
-  readFile(new URL("../background.js", import.meta.url), "utf8")
+  readFile(new URL("../extension/library.html", import.meta.url), "utf8"),
+  readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/background.js", import.meta.url), "utf8")
 ]);
 
 test("local index maintenance groups its original controls with the title and has no decorative progress bar", () => {

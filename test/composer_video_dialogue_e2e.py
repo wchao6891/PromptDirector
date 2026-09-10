@@ -87,7 +87,7 @@ def run_route(provider_id, model, temporary):
         }''', {'providerId': provider_id, 'model': model, 'temporary': temporary})
         page = run.open_page('composer.html?session=video-dialogue', wait_until='networkidle')
         if temporary:
-            page.locator('#composer-attachment-files').set_input_files(str(SOURCE_EXTENSION_DIR / 'test/fixtures/zhipu-local-video-smoke.mp4'))
+            page.locator('#composer-attachment-files').set_input_files(str(Path(__file__).parent / 'fixtures/zhipu-local-video-smoke.mp4'))
         try:
             expect(page.locator('.composer-temp-reference-card' if temporary else '.composer-input-reference-card')).to_have_count(1)
         except AssertionError:

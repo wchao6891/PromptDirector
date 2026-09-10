@@ -30,9 +30,9 @@ test("hash runtime packages remain acceptable to installed updaters and hash str
   const { join } = await import("node:path");
   const { pathToFileURL } = await import("node:url");
   const { createHash } = await import("node:crypto");
-  const { isExtensionProgramPath } = await import("../local-extension-upgrade.js");
-  const names = ["blob-digest.js", "THIRD_PARTY_NOTICES.md", ...(await readdir(new URL("../vendor/noble-hashes/", import.meta.url))).map(name => `vendor/noble-hashes/${name}`)];
-  const input = await Promise.all(names.map(async name => ({ name, data: await readFile(new URL(`../${name}`, import.meta.url)) })));
+  const { isExtensionProgramPath } = await import("../extension/local-extension-upgrade.js");
+  const names = ["blob-digest.js", "THIRD_PARTY_NOTICES.md", ...(await readdir(new URL("../extension/vendor/noble-hashes/", import.meta.url))).map(name => `vendor/noble-hashes/${name}`)];
+  const input = await Promise.all(names.map(async name => ({ name, data: await readFile(new URL(name === "THIRD_PARTY_NOTICES.md" ? `../${name}` : `../extension/${name}`, import.meta.url)) })));
   for (const release of [false, true]) {
     const packaged = packageRuntimeFiles(input, { release });
     for (const file of packaged) assert.ok(isExtensionProgramPath(file.name), `Old updater rejects ${file.name}`);

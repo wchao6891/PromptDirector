@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aiConfigurationFromStorage, resolveTextTaskSettings, resolveVisionTaskSettings, resolveVideoAnalysisTask } from "../ai-runtime.js";
-import { analyzeTextDetailedWithDeepSeek } from "../deepseek.js";
-import { analyzeImageWithVision } from "../vision.js";
-import { analyzeVideoWithChatCompletions } from "../video-analysis.js";
-import { createDefaultFacetCatalog } from "../facets.js";
+import { aiConfigurationFromStorage, resolveTextTaskSettings, resolveVisionTaskSettings, resolveVideoAnalysisTask } from "../extension/ai-runtime.js";
+import { analyzeTextDetailedWithDeepSeek } from "../extension/deepseek.js";
+import { analyzeImageWithVision } from "../extension/vision.js";
+import { analyzeVideoWithChatCompletions } from "../extension/video-analysis.js";
+import { createDefaultFacetCatalog } from "../extension/facets.js";
 
 const model = "glm-5.3-flash";
 const tasks = ["textTags", "imageAnalysis", "videoAnalysis"];

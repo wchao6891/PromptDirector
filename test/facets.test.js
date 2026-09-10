@@ -12,7 +12,7 @@ import {
   recoverFullyArchivedFacets,
   restoreArchivedFacets,
   restoreArchivedNodes
-} from "../facets.js";
+} from "../extension/facets.js";
 
 test("generic facet operations remain testable without changing the fixed product default", () => {
   let catalog = createEmptyFacetCatalog();

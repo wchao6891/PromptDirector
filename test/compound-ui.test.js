@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const styles = await readFile(new URL("../library.css", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const styles = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
 
 test("finishing a compound selection exits selection mode before the gallery refreshes", () => {
   const block = functionBlock("async function saveCompoundSelection()", "async function saveProjectSelection()");

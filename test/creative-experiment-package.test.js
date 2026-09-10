@@ -5,8 +5,8 @@ import {
   buildCreativeExperimentPackage,
   mergeCreativeExperimentPackage,
   parseCreativeExperimentPackage
-} from "../creative-experiment-package.js";
-import { createComposerSession, normalizeComposerSettings } from "../composer.js";
+} from "../extension/creative-experiment-package.js";
+import { createComposerSession, normalizeComposerSettings } from "../extension/composer.js";
 
 function state() {
   return {

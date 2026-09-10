@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import {
   buildCuratedSkillSnapshot,
   buildCuratedSkillSubmissionArchive
-} from "../curated-skill-package.js";
-import { currentCreativeSkillVersion, createCreativeSkill, createCreativeSkillsState } from "../creative-skills.js";
-import { readZipBlob } from "../zip.js";
+} from "../extension/curated-skill-package.js";
+import { currentCreativeSkillVersion, createCreativeSkill, createCreativeSkillsState } from "../extension/creative-skills.js";
+import { readZipBlob } from "../extension/zip.js";
 
 function fixture(overrides = {}) {
   return createCreativeSkill(createCreativeSkillsState(), {

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile(new URL("../background.js", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 
 test("background accepts only the Registry v4 AI configuration message", () => {
   assert.match(source, /case "UPDATE_AI_PROVIDER_CONFIGURATION"/);

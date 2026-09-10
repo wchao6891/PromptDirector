@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { migrateLibraryState, needsMigration } from "../migration.js";
-import { CONTENT_IDS, SCHEMA_VERSION, createDefaultTaxonomy } from "../taxonomy.js";
+import { migrateLibraryState, needsMigration } from "../extension/migration.js";
+import { CONTENT_IDS, SCHEMA_VERSION, createDefaultTaxonomy } from "../extension/taxonomy.js";
 
 test("saving and reloading a source selection retains its stated rights without inventing permission", () => {
   const origin = {

@@ -12,7 +12,7 @@ import {
   resolveVisionTaskSettings,
   videoAnalysisRouteMatches,
   videoAnalysisRouteSnapshot
-} from "../ai-runtime.js";
+} from "../extension/ai-runtime.js";
 
 test("video reconstruction instructions migrate into the single AI preference record", () => {
   const migrated = normalizeAiPreferences({

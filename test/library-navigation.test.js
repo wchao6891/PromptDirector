@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const html = await readFile(new URL("../library.html", import.meta.url), "utf8");
-const source = await readFile(new URL("../library.js", import.meta.url), "utf8");
+const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
+const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
 
 test("top navigation keeps search-adjacent actions focused on adding, creating, and settings", () => {
   const actions = html.slice(html.indexOf('<div class="top-actions">'), html.indexOf('<input id="media-file"'));
@@ -27,7 +27,7 @@ test("top navigation keeps search-adjacent actions focused on adding, creating, 
 
 test("about details are on demand while version stays at the bottom of general settings", async () => {
   const about = html.slice(html.indexOf('<footer class="settings-about"'), html.indexOf("</footer>", html.indexOf('<footer class="settings-about"')));
-  const script = await readFile(new URL("../library.js", import.meta.url), "utf8");
+  const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   assert.match(about, /id="about-version">PromptDirector</);
   assert.match(about, /id="open-about"/);
   assert.doesNotMatch(about, /Apache-2\.0|github\.com/);
@@ -37,7 +37,7 @@ test("about details are on demand while version stays at the bottom of general s
 });
 
 test("closed dialogs cannot enter the page layout", async () => {
-  const css = await readFile(new URL("../ui-foundation.css", import.meta.url), "utf8");
+  const css = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
   assert.match(css, /dialog:not\(\[open\]\)\s*\{\s*display:\s*none\s*!important/);
 });
 
@@ -53,7 +53,7 @@ test("sidebar separates projects, content types, and on-demand attribute filters
 });
 
 test("desktop sidebar width is adjustable and persists as a bounded UI preference", async () => {
-  const css = await readFile(new URL("../library.css", import.meta.url), "utf8");
+  const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
   assert.match(html, /id="sidebar-resizer"[^>]*role="separator"[^>]*tabindex="0"/);
   assert.match(css, /grid-template-columns: var\(--sidebar-width, 244px\) 6px minmax\(0, 1fr\)/);
   assert.match(css, /@media \(max-width: 900px\)[\s\S]*?\.sidebar-resizer \{ display: none; \}/);
@@ -106,7 +106,7 @@ test("classification manager keeps taxonomy work while settings owns AI services
 });
 
 test("collector opens a new library tab and disables the side panel for that tab", async () => {
-  const collector = await readFile(new URL("../collector.js", import.meta.url), "utf8");
+  const collector = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
   assert.match(collector, /chrome\.tabs\.create\(\{\s*url:\s*chrome\.runtime\.getURL\("library\.html"\),\s*active:\s*false\s*\}\)/);
   assert.match(collector, /chrome\.sidePanel\?\.setOptions\?\.\(\{\s*tabId:\s*tab\.id,\s*enabled:\s*false\s*\}\)/);
   assert.match(collector, /chrome\.tabs\.update\(tab\.id,\s*\{\s*active:\s*true\s*\}\)/);
@@ -115,8 +115,8 @@ test("collector opens a new library tab and disables the side panel for that tab
 
 test("Skill details keep creation primary and place refine and export in one More menu", async () => {
   const [skillsHtml, skillsSource] = await Promise.all([
-    readFile(new URL("../skills.html", import.meta.url), "utf8"),
-    readFile(new URL("../skills-page.js", import.meta.url), "utf8")
+    readFile(new URL("../extension/skills.html", import.meta.url), "utf8"),
+    readFile(new URL("../extension/skills-page.js", import.meta.url), "utf8")
   ]);
   assert.match(skillsHtml, /id="skill-detail-more"/);
   assert.match(skillsHtml, /id="skill-export"/);

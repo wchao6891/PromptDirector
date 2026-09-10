@@ -5,7 +5,7 @@ import {
   promptForEntryImage,
   validReconstructionPrompt,
   visualAnalysisPromptReplacement
-} from "../image-prompt.js";
+} from "../extension/image-prompt.js";
 
 const fingerprint = "a".repeat(64);
 

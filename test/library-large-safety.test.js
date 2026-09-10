@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const library = await readFile(new URL("../library.js", import.meta.url), "utf8");
-const background = await readFile(new URL("../background.js", import.meta.url), "utf8");
-const styles = await readFile(new URL("../library.css", import.meta.url), "utf8");
+const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
+const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
+const styles = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
 
 test("current libraries bypass whole-library migration and normalization on every read", () => {
   const readState = background.slice(background.indexOf("async function readState()"), background.indexOf("async function readComposerSessions"));

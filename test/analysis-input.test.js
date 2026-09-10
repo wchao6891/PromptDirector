@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { canonicalTextAnalysisInput, hasCommittedTextAnalysisTags } from "../analysis-input.js";
+import { canonicalTextAnalysisInput, hasCommittedTextAnalysisTags } from "../extension/analysis-input.js";
 
 test("canonical text analysis input prefers the primary image prompt over shared text", () => {
   const entry = {
