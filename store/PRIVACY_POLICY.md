@@ -43,9 +43,13 @@
 
 本地数据会保留，直到用户在案例库中修改或删除、清除扩展数据，或卸载扩展。用户可在卸载前创建本地备份，并可在 AI 服务连接设置中清除本地 API Key 和发送授权。
 
+When Agent connection is enabled, requested case content and original files are delivered to the paired local Agent. The Agent host may send these materials to its configured model or services according to the user’s instructions and its own settings. PromptDirector does not control that subsequent processing. Downloaded originals and connection receipts remain locally until the user removes them.
+
 ## Chrome Web Store Limited Use
 
 提示词导演对用户数据的使用遵守 Chrome Web Store User Data Policy 的 Limited Use 要求：权限和用户数据只用于提供或改进本政策所述、用户可见的单一用途与功能；不会将用户数据用于个性化广告、再营销或基于兴趣的广告；不会出售用户数据；不会允许人工读取用户数据，除非用户为解决其明确提出的支持请求而对特定内容另行授权，或法律与安全义务确有要求。
+
+启用 Agent 连接后，所请求的案例内容和原件会交给配对的本机 Agent。Agent 宿主可能按用户指令及其自身设置将这些材料发送给所配置的模型或服务，这部分处理由宿主管理。本机原件副本和连接回执会保留至用户清理。
 
 ## 权限用途
 
@@ -60,7 +64,8 @@
 - `https://wchao6891.github.io/*`：读取 PromptDirector 官方精选目录、目录指标、封面和只读预览数据。
 - `https://github.com/*`：读取用户明确选择保存的官方精选 Release 包，并打开公开的问题反馈或投稿页面；本地开发版还会读取官方更新版本，并在用户确认后下载程序更新包。
 - `https://objects.githubusercontent.com/*` 与 `https://release-assets.githubusercontent.com/*`：跟随 GitHub Release 的受信下载链读取用户明确选择的精选包及其媒体，或本地开发版的程序更新包；不会读取其他 GitHub 账号数据。
-- 可选的 `<all_urls>`：不在安装时授予。只有用户主动使用需要相应站点权限的采集功能或保存第三方 AI 服务、自定义兼容接口时，扩展才会请求相应域名的运行时权限。
+- 可选的 `<all_urls>`：不在安装时授予。只有用户主动使用需要相应站点权限的采集功能或保存第三方 AI 服务、自定义兼容接口时，扩展才会请求相应域名的运行时权限。启用 Agent 连接时会申请网站访问权限，以便配对的 Agent 按指令在独立标签页采集网址；不会被动监控浏览活动。
+- 可选的 `nativeMessaging`：只在用户启用 Agent 连接时申请，用于与用户安装的本机连接器通信。配对的 Agent 可以按指令搜索案例、读取选定原件、采集网址及回存材料，不能通过该接口读取 AI 服务密钥。断开连接后拒绝新请求，已提交任务继续执行。
 - 可选的 `clipboardRead`：只在用户明确触发需要读取剪贴板内容的功能时请求。
 - 可选的 `declarativeNetRequestWithHostAccess`：只在用户已授予相应站点访问权限、且功能需要按该权限处理网络请求时使用。
 
@@ -109,7 +114,8 @@ PromptDirector complies with the Limited Use requirements of the Chrome Web Stor
 - `https://wchao6891.github.io/*`: read the official curated catalog, metrics, covers, and read-only previews.
 - `https://github.com/*`: read an official curated Release package selected by the user and open public feedback or submission pages. Local development builds also check official versions and download program updates after user confirmation.
 - `https://objects.githubusercontent.com/*` and `https://release-assets.githubusercontent.com/*`: follow GitHub's trusted Release download chain for user-selected curated packages and media, or local development program updates; no other GitHub account data is read.
-- Optional `<all_urls>`: not granted at installation. PromptDirector requests only the specific origin needed when the user starts a site-dependent capture or saves a third-party or compatible AI endpoint.
+- Optional `<all_urls>`: not granted at installation. Ordinary capture and AI settings request the necessary origins. Enabling Agent connection requests website access so the paired Agent can capture user-requested URLs in a dedicated tab; browsing is not passively monitored.
+- Optional `nativeMessaging`: requested when the user enables Agent connection, to communicate with the locally installed connector. A paired Agent can search cases, read selected originals, capture URLs and save materials. This interface does not expose AI service credentials. Disconnecting rejects new requests; submitted tasks continue.
 - Optional `clipboardRead`: requested only for a user-triggered feature that reads clipboard content.
 - Optional `declarativeNetRequestWithHostAccess`: requested only when a user-granted site permission and the chosen feature require a bounded network rule.
 

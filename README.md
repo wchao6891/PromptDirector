@@ -90,3 +90,7 @@ Contributions to capture adaptations, interactions, tests and documentation are 
 See the [development guide](docs/DEVELOPMENT.md) and [interface guidelines](docs/DESIGN.md) to contribute.
 
 Code is licensed under [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependencies. The code license does not grant rights to third-party case media.
+
+## Agent access
+
+The optional MCP connector lets an Agent search cases, read original prompts and files, capture requested URLs, and save creative materials. The first connector release supports **macOS Chrome** and requires a separate local installation. Download the `Agent-Connector` asset from Releases and follow the [connector guide](connector/README.md). The extension ZIP alone does not install the connector.

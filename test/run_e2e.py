@@ -10,6 +10,7 @@ from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
 SCRIPTS = [
+    "agent_library_e2e.py",
     "e2e_worker_attachment_e2e.py",
     "frontend_compact_surfaces_e2e.py",
     "capture_and_cross_page_e2e.py",

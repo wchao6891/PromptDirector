@@ -1,4 +1,11 @@
 import { splitArticleCases } from "./article-case-groups.js";
+import { createAgentConnection } from "./agent-connection.js";
+import { createAgentTasks } from "./agent-tasks.js";
+import { createAgentLibrary } from "./agent-library.js";
+import { createAgentTransfers } from "./agent-transfers.js";
+import { saveAgentMaterial } from "./agent-save.js";
+import { captureAgentUrl } from "./agent-capture.js";
+import { agentError, AGENT_PROTOCOL_VERSION } from "./agent-protocol.js";
 import { collectFeishuDocument } from "./feishu-document-capture.js";
 import { saveComposerToolDraft, preserveSavedToolDrafts } from './composer-tool-drafts.js';
 import { renderPageCaptureRegionPreview, clearPageCapturePageState } from "./page-capture-highlight.js";
@@ -526,6 +533,66 @@ const captureRuntime = createCaptureWorkspace({
   resolveSourceContext: resolveCaptureSourceContext
 });
 
+const agentLibrary = createAgentLibrary({
+  loadState: () => enqueue(readState),
+  readBlob: async id => await getMediaBlob(id) || await getScreenshotBlob(id),
+  readDerived: getDerivedMedia, readDerivedMetadata: getAllDerivedMetadata,
+  libraryUrl: chrome.runtime.getURL("library.html")
+});
+const agentTransfers = createAgentTransfers({
+  storage: chrome.storage.local, readBlob: getMediaBlob, writeBlob: savePortableAssetBlob, deleteBlob: deleteMediaBlob,
+  prepare: async record => {
+    await ensureOffscreenDocument();
+    const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "PREPARE_AGENT_FILE", record });
+    if (!response?.ok) throw new Error(response?.message || "文件准备失败");
+    return response.prepared;
+  }
+});
+const agentTasks = createAgentTasks({ storage: chrome.storage.local,
+  execute: (operation, input, requestId) => {
+    if (operation === "capture") return enqueueCapture(() => captureAgentUrl(input, requestId, {
+      chromeApi: chrome, loadState: readState, collect: collectPageCaptureTab,
+      commit: (batch, metadata) => enqueue(() => commitPageCapture(batch, metadata))
+    }));
+    if (operation === "save_material") return enqueue(() => agentTransfers.lock(() => saveAgentMaterial(input, requestId, {
+      loadState: readState, transfers: agentTransfers, buildEntry,
+      getInstanceId: async () => (await agentConnection.snapshot()).instanceId,
+      classify: (entry, state) => classifyContent(entry, state.classificationRules, state.taxonomy),
+      place: organizerAfterCapturePlacement, commit: commitLocalChanges, notify: notifySaved, schemaVersion: SCHEMA_VERSION
+    })));
+    throw agentError("unknown_operation", "未知写入操作。");
+  }
+});
+const agentConnection = createAgentConnection({ chromeApi: chrome, execute: dispatchAgentOperation });
+void agentConnection.start();
+
+async function dispatchAgentOperation(operation, input) {
+  switch (operation) {
+    case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
+      extensionVersion: chrome.runtime.getManifest().version,
+      capabilities: ["search", "read_case", "read_media", "capture", "save_material", "get_task"] };
+    case "search": return agentLibrary.search(input);
+    case "read_case": return agentLibrary.read(input);
+    case "read_media": return agentLibrary.media(input);
+    case "capture":
+    case "save_material": {
+      const { requestId, ...args } = input;
+      return agentTasks.submit(operation, args, requestId);
+    }
+    case "get_task": {
+      const receipt = await agentTasks.inspect(input.requestId);
+      if (receipt.result?.results) receipt.result.results = receipt.result.results.map(item => ({ ...item,
+        ...(item.entryId ? { openUrl: chrome.runtime.getURL(`library.html?case=${encodeURIComponent(item.entryId)}`) } : {}) }));
+      return receipt;
+    }
+    case "begin_transfer": return agentTransfers.begin(input);
+    case "append_transfer": return agentTransfers.append(input);
+    case "finish_transfer": return agentTransfers.finish(input);
+    case "abort_transfer": return agentTransfers.abort(input);
+    default: throw agentError("unknown_operation", "连接器不支持这个业务操作。");
+  }
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
   enqueue(async () => {
     await extensionUpdateLifecycle.handleInstalled(details);
@@ -627,6 +694,14 @@ function openCreativeResultSidePanel(message, sender) {
 
 async function handleMessage(message, interaction = {}) {
   switch (message?.type) {
+    case "GET_AGENT_CONNECTION":
+    case "SET_AGENT_CONNECTION": {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
+        throw new Error("Agent 连接只能在插件设置中管理");
+      }
+      return { ok: true, connection: message.type === "SET_AGENT_CONNECTION"
+        ? await agentConnection.setEnabled(message.enabled === true) : await agentConnection.snapshot() };
+    }
     case "GET_STATE": {
       return enqueue(async () => ({ ok: true, ...publicLibraryState(await readState()) }));
     }
@@ -643,6 +718,7 @@ async function handleMessage(message, interaction = {}) {
           return { ok: true, assetIds: ids };
         }
         const retained = collectRetainedLocalAssetIds(await readState());
+        for (const id of await agentTransfers.retainedIds()) retained.add(id);
         return { ok: true, assetIds: ids.filter(id => retained.has(id)) };
       });
     case "GET_DATA_SAFETY_STATUS":

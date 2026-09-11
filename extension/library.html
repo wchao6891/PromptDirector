@@ -309,6 +309,11 @@
             </div>
             <p id="capture-permission-settings-feedback" class="data-safety-feedback" role="status" aria-live="polite"></p>
           </section>
+          <section class="setting-section">
+            <div class="capture-permission-row"><strong data-i18n="Agent 连接">Agent 连接</strong><span id="agent-connection-status" role="status" data-i18n="未连接">未连接</span><button id="toggle-agent-connection" class="button-secondary" type="button" data-i18n="启用">启用</button></div>
+            <p id="agent-connection-help" class="data-safety-feedback" hidden data-i18n="安装本机连接器后启用，允许配对的 Agent 查询资料、读取原件和入库。网页采集需要网站访问权限；断开后停止接收新请求，已提交任务继续处理。">安装本机连接器后启用，允许配对的 Agent 查询资料、读取原件和入库。网页采集需要网站访问权限；断开后停止接收新请求，已提交任务继续处理。</p>
+            <p id="agent-connection-feedback" class="data-safety-feedback" role="status" aria-live="polite"></p>
+          </section>
           <section id="data-safety-dialog" class="setting-section settings-data-safety">
             <div class="setting-section-heading data-heading"><h3 data-i18n="备份与同步">备份与同步</h3><small id="data-safety-count"></small><div class="data-safety-primary-actions">
               <button id="create-folder-backup" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-download"></use></svg><span data-i18n="备份资料库">备份资料库</span></button>
@@ -551,5 +556,6 @@
     </dialog>
 
     <script type="module" src="library.js"></script>
-  </body>
+    <script type="module" src="agent-settings.js"></script>
+</body>
 </html>

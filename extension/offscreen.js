@@ -1,3 +1,4 @@
+import { prepareAgentFile } from "./agent-file-preparation.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { deleteMediaBlob, getMediaBlob, saveMediaBlob } from "./media-store.js";
 import { readVideoMedia } from "./browser-video-media.js";
@@ -58,6 +59,8 @@ if (globalThis.chrome?.runtime?.onMessage) {
 
 async function handleMessage(message) {
   switch (message.type) {
+    case "PREPARE_AGENT_FILE":
+      return { ok: true, prepared: await prepareAgentFile(message.record) };
     case "PREPARE_STORED_VIDEO_POSTER": {
       const blob = await getMediaBlob(message.assetId);
       if (!blob) throw new Error("本地视频文件缺失");
