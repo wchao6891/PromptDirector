@@ -29,6 +29,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm ci --prefix connector --ignore-scripts
       - run: npm run verify:source
 
   browser-package:
@@ -64,12 +65,14 @@ jobs:
           python -m playwright install --with-deps chromium
       - run: npm run test:local-extension
       - run: npm run package:release
+      - run: npm run package:connector
       - run: npm run test:upgrade
-      - name: Verify both Chrome archives
+      - name: Verify extension and connector archives
         run: |
           PROMPTDIRECTOR_PACKAGE_VERSION="$(node -p 'require("./package.json").version')"
           unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}.zip"
           unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-FIXED-ID-DEV.zip"
+          unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-Agent-Connector.zip"
       - name: Preserve the exact tested packages
         uses: actions/upload-artifact@v7
         with:

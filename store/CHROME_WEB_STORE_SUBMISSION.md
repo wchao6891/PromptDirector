@@ -6,7 +6,7 @@ This file is the source-of-truth worksheet for the current PromptDirector manife
 
 - Chrome Web Store item public key: stored in the source `manifest.json` for local identity verification only; `package:release` removes `key` from the upload manifest.
 - Expected extension ID: `iahakaahijddcjjldidbclicedibgpjm`.
-- Current upload artifact: `dist/PromptDirector-1.20.8.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
+- Current upload artifact: `dist/PromptDirector-1.21.0.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
 - Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest and excludes the local program installer. Record the generated ZIP size and SHA-256 from the final release assets.
 
 ## Store listing
@@ -46,13 +46,14 @@ Chinese Dashboard value:
 - `https://github.com/*`: read a curated GitHub Release selected by the user and open public feedback or submission pages.
 - `https://objects.githubusercontent.com/*`: follow GitHub's Release download path for selected curated content.
 - `https://release-assets.githubusercontent.com/*`: download selected curated Release archives and media after integrity checks.
-- Optional `<all_urls>`: request only the exact site or AI-service origin needed after the user starts or configures that feature; it is not granted at installation.
+- Optional `<all_urls>`: not granted at installation. Capture and AI settings request the necessary origins. Enabling Agent connection requests website access so the paired Agent can capture user-requested URLs in a dedicated tab; this does not monitor browsing.
+- Optional `nativeMessaging`: requested only when enabling Agent connection; communicates with the separately installed local connector for case search, original-file access, requested capture and material saving.
 - Optional `clipboardRead`: read clipboard content only when the user triggers the relevant action.
 - Optional `declarativeNetRequestWithHostAccess`: create bounded media-read rules only on origins the user already granted.
 
 ## Chinese permission justifications
 
-- Host permissions: 固定的 GitHub Pages 与 GitHub 域名仅用于读取官方精选目录、封面、审核记录及用户选择下载的精选 Release 包。其他网站和 AI 服务使用可选 `<all_urls>`，只在用户主动采集或配置服务时请求具体来源；不在安装时获得全网访问，也不后台浏览网页。
+- Host permissions: 固定的 GitHub Pages 与 GitHub 域名仅用于读取官方精选目录、封面、审核记录及用户选择下载的精选 Release 包。其他网站和 AI 服务使用可选 `<all_urls>`，普通采集和服务配置请求具体来源；用户启用 Agent 连接时申请网站访问，以便按指令在独立标签页采集网址。不在安装时授予，不被动监控浏览。
 - `activeTab`: 用户点击扩展、右键菜单、选图或截图后，临时读取当前标签页中的用户可见内容并完成该次采集。不会被动访问其他标签页或后台记录浏览。
 - `alarms`: 用于安排、轮询、暂停和恢复用户已启动的本地后台任务，使服务工作器休眠后仍可继续；不用于追踪浏览活动。
 - `clipboardRead`: 仅当用户点击从剪贴板提取文字或图片的明确动作时，请求可选权限并读取本次剪贴板内容；不在后台持续读取。

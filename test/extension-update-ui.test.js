@@ -36,8 +36,8 @@ test("settings update badge and background status events are preserved", () => {
   assert.match(source, /message\?\.type !== "EXTENSION_UPDATE_STATUS_CHANGED"/);
 });
 test("compact settings preserve direct data actions and same-group permission/sync controls", () => {
-  assert.equal($(".capture-permission-row").length, 2);
-  $(".capture-permission-row").each((_i, row) => {
+  assert.equal($(".capture-permission-list .capture-permission-row").length, 2);
+  $(".capture-permission-list .capture-permission-row").each((_i, row) => {
     assert.equal($(row).children("strong").length, 1);
     assert.equal($(row).children("button").length, 1);
   });

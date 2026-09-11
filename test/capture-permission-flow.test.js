@@ -41,7 +41,7 @@ test("explicit clipboard extraction uses one optional permission with a recovera
 
   assert.ok(manifest.optional_permissions.includes("clipboardRead"));
   assert.ok(manifest.optional_permissions.includes("declarativeNetRequestWithHostAccess"));
-  assert.equal(manifest.optional_permissions.length, 2);
+  assert.deepEqual([...manifest.optional_permissions].sort(), ["clipboardRead", "declarativeNetRequestWithHostAccess", "nativeMessaging"].sort());
   assert.equal(await hasClipboardReadPermission(permissions), false);
   assert.equal(await ensureClipboardReadPermission(permissions), true);
   assert.deepEqual(calls, [

@@ -4,6 +4,8 @@ const EN = Object.freeze({
   "文章内案例": "Cases within article",
   "已拆分 {count} 个案例，另有 {review} 组内容需要核对。": "Split into {count} cases; {review} additional groups need review.",
   "未识别到可靠的多个案例边界，请保留整篇文章或手动选择内容": "No reliable boundaries between multiple cases were found. Keep the full article or select content manually.",
+  "Agent 连接": "Agent connection",
+  "安装本机连接器后启用，允许配对的 Agent 查询资料、读取原件和入库。网页采集需要网站访问权限；断开后停止接收新请求，已提交任务继续处理。": "Enable after installing the local connector. A paired Agent can search cases, read originals and save materials. Web capture requires website access. Disconnecting stops new requests; submitted tasks continue.",
   "案例库：按需；仅在你要求查询或参考时使用，点击关闭": "Library: on demand. Used only when you ask to search or reference it. Click to turn off.",
   "案例库：关闭，点击开启": "Library: off. Click to enable.",
   "当前模型未声明工具能力，可通过选择案例手动查询；点击关闭案例库": "Tool support is not declared for this model. Search manually using Select cases. Click to disable the library.",
