@@ -5504,63 +5504,89 @@ async function createArticleDocumentReader(entryValue) {
   const entry = normalizeEntryMedia(entryValue);
   const reader = el("article", "article-document-reader");
   const assets = new Map(entry.mediaAssets.map((asset) => [asset.id, asset]));
-  for (const block of entry.articleDocument?.blocks || []) {
-    if (block.kind === "heading") {
-      const heading = rawTextEl(`h${Math.min(6, Math.max(1, Number(block.level) || 2))}`, "", block.text);
-      heading.dataset.articleBlockId = block.id;
-      reader.append(heading);
-      continue;
-    }
-    if (["paragraph", "list", "quote", "code", "table"].includes(block.kind)) {
-      const tagName = block.kind === "quote" ? "blockquote" : block.kind === "list" ? "div" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
-      const node = rawTextEl(tagName, block.kind === "table" ? "article-table-text" : "", block.text);
-      renderArticleBlockText(node, block);
-      node.dataset.articleBlockId = block.id;
-      reader.append(node);
-      continue;
-    }
-    const asset = block.assetId ? assets.get(block.assetId) : null;
-    if (block.kind === "image") {
-      const figure = el("figure", "article-document-media");
-      if (asset?.kind === "image" && asset.storageMode === "managed") {
-        const image = document.createElement("img");
-        image.className = "article-document-image";
-        image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
-        image.alt = block.label || entry.title;
-        image.src = await originalScreenshotUrl(asset.id);
-        image.loading = "lazy";
-        image.addEventListener("click", () => openImageLightbox(image, entry));
-        figure.append(image);
-      } else figure.append(articleSourceLink(block.sourceUrl, block.label || "打开原图"));
-      if (block.label) figure.append(rawTextEl("figcaption", "", block.label));
-      reader.append(figure);
-      continue;
-    }
-    if (block.kind === "video") {
-      const figure = el("figure", "article-document-media article-document-video");
-      if (asset?.kind === "video" && asset.storageMode !== "reference") figure.append(await createMediaViewer(asset, "", entry));
-      else if (asset?.kind === "video") figure.append(await createCompactCapturedMedia(entry, asset));
-      else figure.append(articleSourceLink(block.sourceUrl, block.label || "打开视频来源"));
-      if (block.label) figure.append(rawTextEl("figcaption", "", block.label));
-      reader.append(figure);
-      continue;
-    }
-    if (["document", "attachment", "link"].includes(block.kind)) {
-      const card = el("div", "article-document-resource");
-      card.append(
-        rawTextEl("span", "article-document-resource-type", block.kind === "attachment" ? "SKILL" : block.kind === "document" ? "DOC" : "LINK"),
-        rawTextEl("strong", "", block.label || asset?.sourceTitle || t("文章资源"))
-      );
-      const sourceUrl = block.sourceUrl || asset?.sourceUrl || "";
-      if (sourceUrl) card.append(articleSourceLink(sourceUrl, asset ? "打开来源" : "打开链接"));
-      if (["document", "attachment"].includes(asset?.kind) && asset.storageMode === "managed") {
-        const blob = await getMediaBlob(asset.id);
-        if (blob) card.append(managedAssetDownloadLink(asset, rememberDetailBlobUrl(blob)));
-        card.append(rawTextEl("small", "", t("本地副本已保存在案例媒体中")));
+  const allBlocks = entry.articleDocument?.blocks || [];
+  const blockById = new Map(allBlocks.map(block => [block.id, block]));
+  const cellOwned = new Set(allBlocks.flatMap(block => (block.rows || []).flatMap(row => row.flatMap(cell => cell.blockIds))));
+  async function appendBlocks(reader, blocks) {
+    for (const block of blocks) {
+      if (block.kind === "table" && block.rows) {
+        const wrap = el("div", "article-table-scroll");
+        const table = el("table", "article-structured-table");
+        const body = document.createElement("tbody");
+        for (const row of block.rows) {
+          const tr = document.createElement("tr");
+          for (const cell of row) {
+            const td = document.createElement(cell.header ? "th" : "td");
+            td.rowSpan = cell.rowspan; td.colSpan = cell.colspan;
+            if (cell.align) td.style.textAlign = cell.align;
+            if (cell.valign) td.style.verticalAlign = cell.valign;
+            if (cell.width) td.style.minWidth = `${cell.width}px`;
+            await appendBlocks(td, cell.blockIds.map(id => blockById.get(id)).filter(Boolean));
+            tr.append(td);
+          }
+          body.append(tr);
+        }
+        table.append(body); wrap.append(table); reader.append(wrap);
+        continue;
       }
-      reader.append(card);
+      if (block.kind === "heading") {
+        const heading = rawTextEl(`h${Math.min(6, Math.max(1, Number(block.level) || 2))}`, "", block.text);
+        heading.dataset.articleBlockId = block.id;
+        reader.append(heading);
+        continue;
+      }
+      if (["paragraph", "list", "quote", "code", "table"].includes(block.kind)) {
+        const tagName = block.kind === "quote" ? "blockquote" : block.kind === "list" ? "div" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
+        const node = rawTextEl(tagName, block.kind === "table" ? "article-table-text" : "", block.text);
+        renderArticleBlockText(node, block);
+        node.dataset.articleBlockId = block.id;
+        reader.append(node);
+        continue;
+      }
+      const asset = block.assetId ? assets.get(block.assetId) : null;
+      if (block.kind === "image") {
+        const figure = el("figure", "article-document-media");
+        if (asset?.kind === "image" && asset.storageMode === "managed") {
+          const image = document.createElement("img");
+          image.className = "article-document-image";
+          image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
+          image.alt = block.label || entry.title;
+          image.src = await originalScreenshotUrl(asset.id);
+          image.loading = "lazy";
+          image.addEventListener("click", () => openImageLightbox(image, entry));
+          figure.append(image);
+        } else figure.append(articleSourceLink(block.sourceUrl, block.label || "打开原图"));
+        if (block.label) figure.append(rawTextEl("figcaption", "", block.label));
+        reader.append(figure);
+        continue;
+      }
+      if (block.kind === "video") {
+        const figure = el("figure", "article-document-media article-document-video");
+        if (asset?.kind === "video" && asset.storageMode !== "reference") figure.append(await createMediaViewer(asset, "", entry));
+        else if (asset?.kind === "video") figure.append(await createCompactCapturedMedia(entry, asset));
+        else figure.append(articleSourceLink(block.sourceUrl, block.label || "打开视频来源"));
+        if (block.label) figure.append(rawTextEl("figcaption", "", block.label));
+        reader.append(figure);
+        continue;
+      }
+      if (["document", "attachment", "link"].includes(block.kind)) {
+        const card = el("div", "article-document-resource");
+        card.append(
+          rawTextEl("span", "article-document-resource-type", block.kind === "attachment" ? "SKILL" : block.kind === "document" ? "DOC" : "LINK"),
+          rawTextEl("strong", "", block.label || asset?.sourceTitle || t("文章资源"))
+        );
+        const sourceUrl = block.sourceUrl || asset?.sourceUrl || "";
+        if (sourceUrl) card.append(articleSourceLink(sourceUrl, asset ? "打开来源" : "打开链接"));
+        if (["document", "attachment"].includes(asset?.kind) && asset.storageMode === "managed") {
+          const blob = await getMediaBlob(asset.id);
+          if (blob) card.append(managedAssetDownloadLink(asset, rememberDetailBlobUrl(blob)));
+          card.append(rawTextEl("small", "", t("本地副本已保存在案例媒体中")));
+        }
+        reader.append(card);
+      }
     }
   }
+  await appendBlocks(reader, allBlocks.filter(block => !cellOwned.has(block.id)));
   attachArticleEditor(reader, entry, {
     t, onError: error => showFeedback(error.message, true),
     contextParts: [entry.sourceFacts?.author, entry.sourceFacts?.handle ? `@${entry.sourceFacts.handle}` : "",

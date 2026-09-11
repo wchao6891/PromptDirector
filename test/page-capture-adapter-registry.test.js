@@ -26,6 +26,7 @@ test("the capture registry covers the requested public-site families without dup
     ["https://www.douban.com/photos/album/1/", "douban"],
     ["https://www.poco.cn/works/detail_id1", "poco"],
     ["https://mp.weixin.qq.com/s/example", "wechat"],
+    ["https://tenant.feishu.cn/docx/example", "feishu"],
     ["https://www.liblib.art/imageinfo/example", "liblibai"],
     ["https://www.krea.ai/feed/example-00000000-0000-0000-0000-000000000000", "krea"],
     ["https://higgsfield.ai/@creator/projects/example", "higgsfield"],
