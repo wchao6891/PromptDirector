@@ -60,7 +60,12 @@ export const PAGE_CAPTURE_ADAPTERS = Object.freeze([
   adapter("douban", "豆瓣相册", ["douban.com"], "generic", ["main article", ".photo_wrap", ".photolst li"]),
   adapter("poco", "POCO", ["poco.cn"], "generic", ["main article", "[class*=work]"]),
 
-  adapter("xiaoheihe", "小黑盒", ["xiaoheihe.cn"], "verified-declarative", [], { content: [".hb-article"] }),
+  adapter("xiaoheihe", "小黑盒", ["xiaoheihe.cn"], "verified-declarative", [], {
+    content: [".hb-article", ".hb-bbs-image-text"],
+    contentRequiredPathPrefixes: ["/app/bbs/link/"],
+    contentParts: [".image-text__header-image .swiper-wrapper", ".image-text__content"],
+    title: [".section-title__content"], author: [".link-user__username"]
+  }),
   adapter("wechat", "微信公众号", ["mp.weixin.qq.com"], "verified-declarative", ["#js_content"], {
     content: ["#js_content"], title: ["#activity-name"], author: ["#js_name"], publishedAt: ["#publish_time", "em#publish_time"]
   }, ["qpic.cn", "qlogo.cn"]),

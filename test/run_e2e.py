@@ -73,6 +73,7 @@ SCRIPTS = [
     "feishu_capture_e2e.py",
     "generic_scroll_capture_e2e.py",
     "article_cases_capture_e2e.py",
+    "xiaoheihe_capture_e2e.py",
     "artstation_capture_e2e.py",
     "krea_capture_e2e.py",
     "libtv_capture_e2e.py",

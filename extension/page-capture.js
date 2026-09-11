@@ -683,8 +683,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
       contentRoot = document.createElement("div");
       contentRoot.innerHTML = options.feishuDocument.html;
     }
-    // A cloud document without its rendered editor is not a navigation-page capture.
-    if (adapter.id === "feishu" && !contentRoot && !pageSelection && !editedRoot) {
+    // A known document route without its body must not turn navigation into a case.
+    const requiresContentRoot = adapter.id === "feishu" || (adapter.fields?.contentRequiredPathPrefixes || []).some(prefix => location.pathname.startsWith(prefix));
+    if (requiresContentRoot && !contentRoot && !pageSelection && !editedRoot) {
       return { id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id, candidates: [], capturedAt, siteStatus: "partial" };
     }
     if (editedRoot) {
@@ -1259,10 +1260,14 @@ export async function collectPageCaptureSnapshot(options = {}) {
       : adapterFields.title || root.querySelector("h1,h2,h3,[role=heading]")?.textContent || structured.headline || structured.name || (context.pageType === "post" ? "" : root.querySelector("img[alt]")?.alt));
     const pageSelection = isPageRoot ? context.pageSelection : null;
     const articleText = context.pageType === "article" ? context.article?.textContent : "";
-    const text = post ? post.text : cleanBlockText(context.contentRoot ? (options.feishuDocument?.text || root.innerText || root.textContent) : isPageRoot
+    // One work can place its gallery and prompt in sibling regions, outside ordinary article markup.
+    const partSelectors = context.contentRoot ? context.adapter.fields?.contentParts || [] : [];
+    const contentParts = partSelectors.length ? [...root.querySelectorAll(partSelectors.join(","))] : [];
+    const captureRoots = contentParts.length ? contentParts : [root];
+    const text = post ? post.text : cleanBlockText(context.contentRoot ? (options.feishuDocument?.text || (contentParts.length ? contentParts.map(readBlockText).filter(Boolean).join("\n\n") : root.innerText || root.textContent)) : isPageRoot
       ? pageSelection?.text || articleText || siteData?.contentText || context.article?.textContent || structured.articleBody || root.innerText || context.metadata.description
       : root.innerText || root.textContent);
-    const contentHtml = post ? post.html : context.contentRoot ? contentRootHtml(root, context.adapter) : isPageRoot
+    const contentHtml = post ? post.html : context.contentRoot ? contentRootHtml(root, contentParts) : isPageRoot
       ? pageSelection?.html || context.article?.content || ""
       : "";
     const structuredTextBlocks = !context.contentRoot && !articleText && siteData?.contentText
@@ -1277,7 +1282,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       : null;
     const textBlocks = post?.textBlocks || pageSelection?.textBlocks || structuredTextBlocks || collectTextBlocks(root, contentHtml, text);
     const siteMedia = [...(options.feishuDocument?.media || []), ...(Array.isArray(siteData?.media) ? siteData.media : []), ...collectStructuredMedia(structured)];
-    const domMedia = post?.media || (pageSelection || root.isConnected === false ? [] : collectMedia(root, context.maxMedia));
+    const domMedia = post?.media || (pageSelection || root.isConnected === false ? [] : captureRoots.flatMap(part => collectMedia(part, context.maxMedia)));
     const pairedDomIds = new Set();
     const pairedSiteMedia = siteMedia.map((item) => {
       const visible = domMedia.find((candidate) => mediaValuesOverlap(item, candidate));
@@ -1623,8 +1628,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
       .slice(0, limit);
   }
 
-  function contentRootHtml(root, adapter) {
-    const fragment = root.cloneNode(true);
+  function contentRootHtml(root, parts = []) {
+    const fragment = root.cloneNode(!parts.length);
+    for (const part of parts) fragment.append(part.cloneNode(true));
     // Preserve editor paragraphs as semantic HTML for sectioning and saved reading order.
     for (const node of fragment.querySelectorAll("div.zone-container.text-editor")) {
       if (node.closest("h1,h2,h3,h4,h5,h6")) continue;
