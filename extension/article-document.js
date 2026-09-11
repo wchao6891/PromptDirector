@@ -14,14 +14,23 @@ export function normalizeArticleDocument(value) {
     return [normalized];
   }).sort((left, right) => left.sourceOrder - right.sourceOrder);
   if (!blocks.length) return null;
+  const byId = new Map(blocks.map(block => [block.id, block]));
+  const owned = new Set();
+  for (const table of blocks.filter(block => block.rows)) {
+    for (const row of table.rows) for (const cell of row) {
+      cell.blockIds = cell.blockIds.filter(id => byId.has(id) && !byId.get(id).rows && !owned.has(id) && id !== table.id && (owned.add(id), true));
+    }
+    table.text = table.rows.map(row => row.map(cell => cell.blockIds.map(id => byId.get(id).text || "").filter(Boolean).join("\n")).join("\t")).join("\n").trim();
+  }
   return { version: ARTICLE_DOCUMENT_VERSION, blocks };
 }
 
 export function articleDocumentText(value) {
   const documentValue = normalizeArticleDocument(value);
   if (!documentValue) return "";
+  const cellIds = new Set(documentValue.blocks.flatMap(block => (block.rows || []).flatMap(row => row.flatMap(cell => cell.blockIds))));
   return documentValue.blocks
-    .filter((block) => TEXT_BLOCK_KINDS.has(block.kind))
+    .filter((block) => TEXT_BLOCK_KINDS.has(block.kind) && !cellIds.has(block.id))
     .map((block) => block.text)
     .filter(Boolean)
     .join("\n\n");
@@ -79,7 +88,7 @@ function normalizeArticleBlock(value, index) {
     : cleanMultiline(value.text);
   const assetId = clean(value.assetId);
   const sourceUrl = safeHttpUrl(value.sourceUrl || value.url);
-  if (TEXT_BLOCK_KINDS.has(kind) && !text) return null;
+  if (TEXT_BLOCK_KINDS.has(kind) && !text && !(kind === "table" && Array.isArray(value.rows) && value.rows.length)) return null;
   if (ASSET_BLOCK_KINDS.has(kind) && !assetId && !sourceUrl) return null;
   if (kind === "link" && !sourceUrl) return null;
   const sourceOrderValue = Number(value.sourceOrder);
@@ -96,6 +105,17 @@ function normalizeArticleBlock(value, index) {
     ...(label ? { label } : {}),
     ...(mimeType ? { mimeType } : {})
   };
+  if (kind === "table" && Array.isArray(value.rows) && value.rows.length) {
+    block.rows = value.rows.filter(Array.isArray).map(row => row.filter(cell => cell && typeof cell === "object").map(cell => ({
+      header: cell.header === true,
+      rowspan: Number.isSafeInteger(cell.rowspan) && cell.rowspan > 0 ? cell.rowspan : 1,
+      colspan: Number.isSafeInteger(cell.colspan) && cell.colspan > 0 ? cell.colspan : 1,
+      ...(Number.isFinite(cell.width) && cell.width > 0 ? { width: cell.width } : {}),
+      ...(["left", "right", "center", "justify", "start", "end"].includes(cell.align) ? { align: cell.align } : {}),
+      ...(["top", "middle", "bottom", "baseline"].includes(cell.valign) ? { valign: cell.valign } : {}),
+      blockIds: Array.isArray(cell.blockIds) ? cell.blockIds.map(clean).filter(Boolean) : []
+    })));
+  }
   if (kind === "heading") block.level = Math.min(6, Math.max(1, Math.trunc(Number(value.level) || 2)));
   if (kind === "list") block.ordered = value.ordered === true;
   if (kind === "video" && safeHttpUrl(value.posterUrl)) block.posterUrl = safeHttpUrl(value.posterUrl);

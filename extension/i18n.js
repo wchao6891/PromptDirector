@@ -1,6 +1,9 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "文章内案例": "Cases within article",
+  "已拆分 {count} 个案例，另有 {review} 组内容需要核对。": "Split into {count} cases; {review} additional groups need review.",
+  "未识别到可靠的多个案例边界，请保留整篇文章或手动选择内容": "No reliable boundaries between multiple cases were found. Keep the full article or select content manually.",
   "案例库：按需；仅在你要求查询或参考时使用，点击关闭": "Library: on demand. Used only when you ask to search or reference it. Click to turn off.",
   "案例库：关闭，点击开启": "Library: off. Click to enable.",
   "当前模型未声明工具能力，可通过选择案例手动查询；点击关闭案例库": "Tool support is not declared for this model. Search manually using Select cases. Click to disable the library.",
@@ -51,7 +54,7 @@ const EN = Object.freeze({
   "停止扫描": "Stop scanning",
   "点击网页中遗漏的内容，完成后返回": "Click missing content on the page, then finish",
   "点击网页中不想保存的内容，完成后返回": "Click unwanted content on the page, then finish",
-  "部分内容无法在网页定位，请以保存预览为准": "Some content cannot be located on the page. Check the save preview.",
+  "原网页暂时无法高亮定位，请在采集预览中核对内容": "Highlighting is temporarily unavailable on the source page. Check the capture preview.",
   "无法在当前网页显示区域高亮": "Could not highlight content on this page",
 
   "清理升级临时文件": "Clear temporary update files",

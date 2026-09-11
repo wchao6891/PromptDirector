@@ -1,3 +1,5 @@
+import { splitArticleCases } from "./article-case-groups.js";
+import { collectFeishuDocument } from "./feishu-document-capture.js";
 import { saveComposerToolDraft, preserveSavedToolDrafts } from './composer-tool-drafts.js';
 import { renderPageCaptureRegionPreview, clearPageCapturePageState } from "./page-capture-highlight.js";
 import { collectLibTvPublicPayload, normalizeLibTvPublicPayload } from "./libtv-capture.js";
@@ -1203,7 +1205,11 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
           break;
         }
         const before = candidates.size;
-        for (const candidate of snapshot.candidates || []) {
+        const pageCandidates = (snapshot.candidates || []).flatMap(candidate => {
+          const groups = splitArticleCases(candidate);
+          return groups.length ? groups : [candidate];
+        });
+        for (const candidate of pageCandidates) {
           const key = `${candidate.canonicalUrl || ""}\n${candidate.sourceFacts?.itemId || ""}\n${candidate.title || ""}`;
           if (!candidates.has(key)) candidates.set(key, candidate);
           if (candidates.size >= targetCount) break;
@@ -1252,6 +1258,11 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
     }
     if (activePageCapture?.sessionId === sessionId) activePageCapture = null;
   }
+  if (mode === "article") {
+    const groups = (result?.result?.candidates || []).flatMap(splitArticleCases);
+    if (!groups.length) return { ok: false, message: "未识别到可靠的多个案例边界，请保留整篇文章或手动选择内容" };
+    result.result = {...result.result, candidates:groups, captureMode:"list", saveMode:"multiple", articleSplit:true};
+  }
   const batch = normalizePageCaptureBatch({
     ...result?.result,
     ...(listMode ? {
@@ -1281,6 +1292,14 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
 }
 
 async function collectPageCaptureTab(tab, options) {
+  let feishuDocument = null;
+  if (/^https:\/\/(?:[^/]+\.)?feishu\.cn\//iu.test(tab.url) && !options.editedRegion) {
+    const [documentResult] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, func: collectFeishuDocument,
+      args: [{ sessionId: options.sessionId, timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs }]
+    });
+    feishuDocument = documentResult?.result || null;
+  }
   let siteData = await readPageCaptureSiteData(tab);
   if (activePageCapture?.sessionId === options.sessionId && activePageCapture.cancelled) return { candidates: [] };
   const adapter = PAGE_CAPTURE_ADAPTERS.find((item) => item.id === siteData?.adapter);
@@ -1312,7 +1331,8 @@ async function collectPageCaptureTab(tab, options) {
       maxCandidates: options.maxCandidates,
       maxRegionCandidates: PAGE_CAPTURE_QUALITY_LIMITS.maxRegionCandidates,
       maxContentTargets: PAGE_CAPTURE_QUALITY_LIMITS.maxContentTargetsPerCandidate,
-      maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
+      feishuDocument,
+      maxMedia: Math.max(PAGE_CAPTURE_LIMITS.maxMediaPerCandidate, feishuDocument?.mediaCount || 0),
       maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
       mediaTimeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
       maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
@@ -1502,7 +1522,7 @@ async function previewPageCaptureRegion(tabIdValue, preview) {
     });
     return result?.result?.ok
       ? { ok: true }
-      : { ok: false, message: "部分内容无法在网页定位，请以保存预览为准" };
+      : { ok: false, message: "原网页暂时无法高亮定位，请在采集预览中核对内容" };
   } catch {
     return { ok: false, message: "无法在当前网页显示区域高亮" };
   }

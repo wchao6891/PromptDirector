@@ -60,3 +60,24 @@ test("legacy cases can omit an article document", () => {
   assert.equal(normalizeArticleDocument(null), null);
   assert.equal(normalizeArticleDocument({ blocks: [] }), null);
 });
+
+test("table cells retain ordered editable blocks across asset remapping and removal", () => {
+  const value = { blocks: [
+    { id: "table", kind: "table", text: "old flattened text", rows: [[
+      { rowspan: 2, colspan: 1, width: 320, blockIds: ["before", "image", "after"] },
+      { blockIds: [] }
+    ]] },
+    { id: "before", kind: "paragraph", text: "Before image" },
+    { id: "image", kind: "image", assetId: "capture:image" },
+    { id: "after", kind: "paragraph", text: "After image" }
+  ] };
+  const saved = finalizeArticleDocumentAssets(value, { "capture:image": "saved:image" });
+  assert.deepEqual(saved.blocks[0].rows[0][0].blockIds, ["before", "image", "after"]);
+  assert.equal(saved.blocks[0].rows[0][0].rowspan, 2);
+  assert.equal(saved.blocks[0].rows[0][0].width, 320);
+  assert.equal(saved.blocks[2].assetId, "saved:image");
+  assert.equal(articleDocumentText(saved), "Before image\nAfter image");
+  const removed = removeArticleDocumentAsset(saved, "saved:image");
+  assert.deepEqual(removed.blocks[0].rows[0][0].blockIds, ["before", "after"]);
+  assert.equal(removed.blocks[0].rows[0].length, 2);
+});

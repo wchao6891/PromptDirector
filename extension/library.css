@@ -1545,3 +1545,11 @@ details:not([open]) > .selection-menu-panel { display: none; }
   html[lang="en"] .share-dialog-options { grid-template-columns: minmax(0, 1fr); }
 }
 #settings-ai-panel .ai-model-choice { font-weight: 400; }
+
+.article-table-scroll { max-width: 100%; overflow-x: auto; }
+.article-structured-table { border-collapse: collapse; width: 100%; font-weight: 400; }
+.article-structured-table td, .article-structured-table th { border: 1px solid var(--line); padding: 12px; vertical-align: top; min-width: 180px; text-align: left; }
+.article-structured-table th { background: var(--raised); }
+.article-structured-table td > * + *, .article-structured-table th > * + * { margin-top: 12px; }
+.article-structured-table .article-document-media { margin: 12px 0; }
+.article-structured-table .article-document-image { max-width: 100%; height: auto; }

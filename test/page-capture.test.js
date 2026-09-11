@@ -352,7 +352,7 @@ test("the generic capture exposes meaningful nested blocks without turning every
   assert.match(targets, /articleBlockIds/);
   assert.match(targets, /mediaIds/);
   assert.match(targets, /div,section,figure/);
-  assert.match(targets, /!element\.querySelector\?\.\(semanticSelector\)/);
+  assert.match(targets, /!element\.querySelector\?\.\(`\$\{semanticSelector\},div,section`\)/);
   assert.match(source, /playerForCompanionPoster/);
   assert.match(source, /companionPosterForPlayer/);
 });
@@ -1069,4 +1069,15 @@ test("list capture inherits a representative structure without auto-accepting a 
     media: [{ id: "video", kind: "video", url: "https://example.com/3.mp4" }],
     articleDocument: { version: 1, blocks: [{ id: "video-block", kind: "video", assetId: "video", sourceOrder: 0 }] }
   }), false);
+});
+
+test("session image file bytes are not mislabeled as a screenshot fallback", async () => {
+  const bytes = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+  const result = await resolvePageCaptureImage({ dataUrl: "data:image/png;base64,AQID", captureMethod: "page-session" }, {
+    fetchMedia: async () => { throw new Error("No network URL expected"); },
+    decodeDataUrl: async () => bytes
+  });
+  assert.equal(result.blob, bytes);
+  assert.equal(result.captureMethod, "page-session");
+  assert.equal(result.usedPixelFallback, false);
 });

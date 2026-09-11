@@ -40,3 +40,10 @@ test("media format comes from recognized file metadata, never a creator's title"
   assert.equal(mediaFormatLabel({ sourceTitle: "Test film" }), "FILE");
   assert.equal(mediaFormatLabel({ sourceTitle: "Test animation.mov" }), "MOV");
 });
+
+test("a short document with a structured table keeps the article reader despite image classification", () => {
+  assert.equal(usesArticleReader({
+    contentRole: "image_case", sourceFacts: { pageType: "article" },
+    articleDocument: { blocks: [{ id: "table", kind: "table", rows: [[{ blockIds: [] }]] }] }
+  }), true);
+});

@@ -164,10 +164,17 @@ elements.clipboardPermissionDialog.addEventListener("cancel", (event) => {
 });
 elements.pageCaptureScan.addEventListener("click", () => {
   pageCaptureListRequested = false;
-  void startPageCapture("loaded", elements.pageCaptureScan);
+  void startPageCapture(pageCaptureBatch?.articleSplit ? "article" : "loaded", elements.pageCaptureScan);
 });
-elements.pageCaptureMode.addEventListener("change", () => {
-  pageCaptureListRequested = elements.pageCaptureMode.value === "list";
+elements.pageCaptureMode.addEventListener("change", async () => {
+  const mode = elements.pageCaptureMode.value;
+  if (mode === "article") { await startPageCapture("article", elements.pageCaptureScan); return; }
+  if (pageCaptureBatch?.articleSplit) {
+    await startPageCapture("loaded", elements.pageCaptureScan);
+    pageCaptureListRequested = mode === "list";
+    render(); return;
+  }
+  pageCaptureListRequested = mode === "list";
   if (!pageCaptureListRequested && pageCaptureBatch?.captureMode === "list") void startPageCapture("loaded", elements.pageCaptureScan);
   else render();
 });
@@ -720,7 +727,7 @@ function renderPageCapture() {
   elements.pageCaptureScan.hidden = false;
   elements.pageCaptureScan.disabled = busy;
   elements.pageCaptureMode.disabled = busy;
-  elements.pageCaptureMode.value = listMode || pageCaptureListRequested ? "list" : "single";
+  elements.pageCaptureMode.value = pageCaptureBatch.articleSplit ? "article" : listMode || pageCaptureListRequested ? "list" : "single";
   elements.pageCaptureListSetup.hidden = listMode || !pageCaptureListRequested;
   elements.pageCaptureListRun.disabled = busy || selectedCount !== 1;
   elements.pageCaptureTargetCount.disabled = busy;
@@ -735,7 +742,9 @@ function renderPageCapture() {
   elements.pageCaptureEditHelp.textContent = pageCaptureEditing?.mode === "include" ? t("点击网页中遗漏的内容，完成后返回") : t("点击网页中不想保存的内容，完成后返回");
   if (listMode) {
     const reviewCount = pageCaptureBatch.candidates.filter((candidate) => candidate.batchStructureStatus === "review").length;
-    elements.pageCaptureListSummary.textContent = t("目标 {target} 个，实际识别 {actual} 个。{reason}", {
+    elements.pageCaptureListSummary.textContent = pageCaptureBatch.articleSplit
+      ? t("已拆分 {count} 个案例，另有 {review} 组内容需要核对。", {count:pageCaptureBatch.candidates.length-reviewCount, review:reviewCount})
+      : t("目标 {target} 个，实际识别 {actual} 个。{reason}", {
       target: pageCaptureBatch.targetCount,
       actual: pageCaptureBatch.candidates.length,
       reason: pageCaptureStopReasonLabel(pageCaptureBatch.stopReason)
@@ -961,7 +970,8 @@ async function previewPageCaptureRegion(candidate, locate = false) {
       edits: candidate?.region?.edits || [], locate
     }
   }).catch(() => ({ ok: false, message: t("无法在当前网页显示区域高亮") }));
-  if (request === pageCapturePreviewRequest && candidate && !response?.ok) showFeedback(response?.message || t("部分内容无法在网页定位，请以保存预览为准"), true);
+  // Highlight availability is separate from capture/save completeness.
+  if (request === pageCapturePreviewRequest && candidate && !response?.ok) showFeedback(response?.message || t("原网页暂时无法高亮定位，请在采集预览中核对内容"));
 }
 
 async function editConfirmedPageCaptureRegion(mode, button) {
@@ -1506,12 +1516,12 @@ async function startPageCapture(mode, button) {
           }
         });
         const normalized = { ...candidate, contentText, textBlocks };
-        return representative
+        return representative && !normalized.batchStructureStatus
           ? { ...normalized, batchStructureStatus: pageCaptureStructureMatches(representative, normalized) ? "matched" : "review" }
           : normalized;
       });
       const batch = normalizePageCaptureBatch({ ...response.batch, candidates, status: "preview" });
-      const selections = mode === "list"
+      const selections = mode === "list" || mode === "article"
         ? batch.candidates.filter((candidate) => candidate.batchStructureStatus !== "review").map((candidate) => normalizePageCaptureSelection({
             candidateId: candidate.id,
             selectedTextBlockIds: candidate.textBlocks.map((item) => item.id),

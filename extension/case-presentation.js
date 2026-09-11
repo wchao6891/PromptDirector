@@ -7,6 +7,7 @@ function usesCreativeCase(entry) {
 }
 
 export function usesArticleReader(entry = {}) {
+  if (entry.articleDocument?.blocks?.some(block => block.kind === "table" && block.rows?.length)) return true;
   if (usesCreativeCase(entry) || !entry.articleDocument?.blocks?.length) return false;
   const role = contentRoleForEntry(entry);
   return [CONTENT_ROLES.tutorial, CONTENT_ROLES.reference].includes(role)
