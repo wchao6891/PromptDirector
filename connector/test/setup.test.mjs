@@ -17,9 +17,9 @@ async function temporary(fn) { const root = await mkdtemp(join(tmpdir(), 'pd-onb
 const entry = root => mcpConfiguration(root, '11111111-1111-4111-8111-111111111111');
 
 test('host paths use documented user scope and explicit runtime roots', () => {
-  assert.equal(hostConfiguration('codex', { home: '/example', env: { CODEX_HOME: '/portable' } }).path, '/portable/config.toml');
-  assert.equal(hostConfiguration('claude', { home: '/example', env: {} }).path, '/example/.claude.json');
-  assert.equal(hostConfiguration('workbuddy', { home: '/example', env: {} }).path, '/example/.workbuddy/mcp.json');
+  assert.equal(hostConfiguration('codex', { home: '/example', env: { CODEX_HOME: '/portable' } }).path, join('/portable', 'config.toml'));
+  assert.equal(hostConfiguration('claude', { home: '/example', env: {} }).path, join('/example', '.claude.json'));
+  assert.equal(hostConfiguration('workbuddy', { home: '/example', env: {} }).path, join('/example', '.workbuddy/mcp.json'));
   assert.deepEqual(hostConfiguration('generic'), { host: 'generic' });
   assert.throws(() => hostConfiguration('chatgpt-cloud'), /云端/);
 });
@@ -68,12 +68,14 @@ test('offline setup reports browser action without claiming host session success
   assert.equal(result.configuration.state, 'configured');
 }));
 
-test('full installed SDK verification reads the bound library and distinguishes the host session', { timeout: process.platform === 'win32' ? 60000 : 15000 }, () => temporary(async root => {
+test('full installed SDK verification reads the bound library and distinguishes the host session', { timeout: process.platform === 'win32' ? 60000 : 15000 }, t => temporary(async root => {
   const instanceId = randomUUID(), extensionId = 'a'.repeat(32);
   const options = { root, instanceId, host: 'codex', home: root, env: {}, nativeDirectory: join(root, 'registration'), extensionId };
   // Install a real connector into a private directory. Chrome's native stream is
   // a fixture here; MCP client, installed server, broker and file config are real.
+  t.diagnostic('installing isolated runtime');
   const initial = await connect(options, { installRuntime: plan => install(plan, { register: async () => {} }) });
+  t.diagnostic(`initial state: ${initial.state}`);
   assert.equal(initial.state, 'awaiting_browser');
   const input = new PassThrough(), output = new PassThrough();
   let ready; const readiness = new Promise(resolve => { ready = resolve; });
@@ -85,16 +87,21 @@ test('full installed SDK verification reads the bound library and distinguishes 
       : { cases: [{ caseId: 'fixture-case', title: 'Fixture original prompt' }], total: 1 };
     input.write(encodeFrame({ type: 'response', id: message.id, result }));
   }));
+  t.diagnostic('starting broker fixture');
   const native = await startNativeHost({ root, origin: `chrome-extension://${extensionId}/`, input, output });
   try {
     input.write(encodeFrame({ type: 'hello', protocolVersion: 1, extensionId, instanceId })); await readiness;
+    t.diagnostic('broker ready; verifying installed MCP');
     const verified = await verifyConnection({ root, instanceId });
+    t.diagnostic(`verified state: ${verified.state}`);
     assert.equal(verified.state, 'connector_verified'); assert.equal(verified.hostSessionVerified, false);
     assert.equal(verified.caseCount, 1); assert.equal(verified.sampleCases[0].caseId, 'fixture-case');
+    t.diagnostic('checking repeated connection');
     const repeat = await connect(options, { installRuntime: async () => {} });
     assert.equal(repeat.connected, true); assert.equal(repeat.configuration.changed, false);
     assert(!JSON.stringify(verified).includes('secret'));
-  } finally { await native.close(); input.destroy(); output.destroy(); }
+  } catch (error) { t.diagnostic(error.stack); throw error; }
+  finally { t.diagnostic('closing broker'); await native.close(); input.destroy(); output.destroy(); t.diagnostic('broker closed'); }
 }));
 
 

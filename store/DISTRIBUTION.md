@@ -87,4 +87,3 @@ Data types handled, including local-only handling:
 - User-generated content: prompts, notes, cases, projects, tags, Skills, and creative requests.
 
 See the privacy policy for the data handled by user-triggered operations.
-
