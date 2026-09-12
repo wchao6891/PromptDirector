@@ -92,7 +92,7 @@ test('full installed SDK verification reads the bound library and distinguishes 
   try {
     input.write(encodeFrame({ type: 'hello', protocolVersion: 1, extensionId, instanceId })); await readiness;
     t.diagnostic('broker ready; verifying installed MCP');
-    const verified = await verifyConnection({ root, instanceId, onProgress: stage => t.diagnostic(stage) });
+    const verified = await verifyConnection({ root, instanceId, onProgress: stage => t.diagnostic(`${new Date().toISOString()} ${stage}`) });
     t.diagnostic(`verified state: ${verified.state}`);
     assert.equal(verified.state, 'connector_verified'); assert.equal(verified.hostSessionVerified, false);
     assert.equal(verified.caseCount, 1); assert.equal(verified.sampleCases[0].caseId, 'fixture-case');

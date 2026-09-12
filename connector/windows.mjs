@@ -17,6 +17,16 @@ $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
 $acl=Get-Acl -LiteralPath $p
 $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier])
 if ($owner.Value -ne $sid.Value) { throw 'Connector directory must belong to current user' }
+$rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+$inheritance=[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+if ($acl.AreAccessRulesProtected -and $rules.Count -eq 1) {
+ $r=$rules[0]
+ if ($r.IdentityReference.Value -eq $sid.Value -and
+     $r.AccessControlType -eq 'Allow' -and
+     $r.FileSystemRights -eq [Security.AccessControl.FileSystemRights]::FullControl -and
+     $r.InheritanceFlags -eq $inheritance -and
+     $r.PropagationFlags -eq [Security.AccessControl.PropagationFlags]::None) { return }
+}
 $private=New-Object Security.AccessControl.DirectorySecurity
 $private.SetOwner($sid)
 $private.SetAccessRuleProtection($true,$false)
