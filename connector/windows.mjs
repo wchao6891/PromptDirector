@@ -16,11 +16,17 @@ export function windowsRuntimeEnvironment(env = process.env) {
 export async function privateWindowsDirectory(root) {
   // Paths are data in the child environment, never interpolated PowerShell code.
   const script = `$ErrorActionPreference='Stop'
+function Trace($stage) { if ($env:PROMPTDIRECTOR_DEBUG) { [Console]::Error.WriteLine(([DateTime]::UtcNow.ToString('o'))+' '+$stage) } }
+Trace 'script-start'
 $p=$env:PROMPTDIRECTOR_PRIVATE_DIRECTORY
+Trace 'get-item'
 $item=Get-Item -LiteralPath $p -Force
+Trace 'identity'
 if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Connector directory cannot be a reparse point' }
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+Trace 'get-acl'
 $acl=Get-Acl -LiteralPath $p
+Trace 'acl-read'
 $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier])
 if ($owner.Value -ne $sid.Value) { throw 'Connector directory must belong to current user' }
 $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
@@ -44,10 +50,13 @@ if (!$actual.AreAccessRulesProtected) { throw 'Private directory permissions wer
 foreach($r in $actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
  if ($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Value -ne $sid.Value) { throw 'Unexpected directory access' }
 }`;
+  const started = Date.now();
+  if (process.env.PROMPTDIRECTOR_DEBUG) console.error('[PromptDirector permissions] start');
   try {
-    await execute(windowsCommand('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+    const result = await execute(windowsCommand('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
       windowsHide: true, env: { ...process.env, PROMPTDIRECTOR_PRIVATE_DIRECTORY: root }
     });
+    if (process.env.PROMPTDIRECTOR_DEBUG) console.error(`[PromptDirector permissions] ${Date.now() - started}ms\n${result.stderr}`);
   } catch { throw new Error('无法保护 Windows 连接目录，请确认目录属于当前用户且允许设置私有访问权限。'); }
 }
 export function windowsLauncher(plan) {

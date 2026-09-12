@@ -73,6 +73,7 @@ test('full installed SDK verification reads the bound library and distinguishes 
   const options = { root, instanceId, host: 'codex', home: root, env: {}, nativeDirectory: join(root, 'registration'), extensionId };
   // Install a real connector into a private directory. Chrome's native stream is
   // a fixture here; MCP client, installed server, broker and file config are real.
+  process.env.PROMPTDIRECTOR_DEBUG = '1';
   t.diagnostic('installing isolated runtime');
   const initial = await connect(options, { installRuntime: plan => install(plan, { register: async () => {} }) });
   t.diagnostic(`initial state: ${initial.state}`);
@@ -101,7 +102,7 @@ test('full installed SDK verification reads the bound library and distinguishes 
     assert.equal(repeat.connected, true); assert.equal(repeat.configuration.changed, false);
     assert(!JSON.stringify(verified).includes('secret'));
   } catch (error) { t.diagnostic(error.stack); throw error; }
-  finally { t.diagnostic('closing broker'); await native.close(); input.destroy(); output.destroy(); t.diagnostic('broker closed'); }
+  finally { t.diagnostic('closing broker'); await native.close(); input.destroy(); output.destroy(); t.diagnostic('broker closed'); delete process.env.PROMPTDIRECTOR_DEBUG; }
 }));
 
 

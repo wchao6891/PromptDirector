@@ -37,7 +37,7 @@ export async function verifyConnection({ root = connectorRoot(), instanceId, pro
   const client = new Client({ name: 'promptdirector-setup-check', version: '1' });
   try {
     onProgress('mcp-start');
-    await client.connect(new StdioClientTransport(mcp));
+    await client.connect(new StdioClientTransport({ ...mcp, env: { ...mcp.env, ...(process.env.PROMPTDIRECTOR_DEBUG ? { PROMPTDIRECTOR_DEBUG: process.env.PROMPTDIRECTOR_DEBUG } : {}) } }));
     onProgress('mcp-tools');
     const listed = await client.listTools();
     const names = listed.tools.map(tool => tool.name);
