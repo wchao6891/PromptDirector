@@ -2,42 +2,68 @@
 
 <p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
-<h1 align="center">Keep the image. Keep the prompt.</h1>
+<h1 align="center">Turn great references into your next creation.</h1>
 
-<p align="center"><strong>好画面，连同提示词一起收藏。</strong><br>Collect creative references from Higgsfield, Jimeng, X and more.<br>Keep images, videos, prompts and sources together in your own visual library.</p>
+<p align="center"><strong>One-click capture. A visual prompt library. Ready for your Agent.</strong><br>Collect from Jimeng, Higgsfield, X, HeyBox, WeChat articles, Feishu docs and more.<br>Keep the image, the prompt and the context — then put them to work in your next project.</p>
 
 <p align="center"><a href="https://github.com/wchao6891/PromptDirector/releases/latest"><strong>Download the latest release</strong></a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/">Explore curated cases</a> · <a href="#install-and-update">Installation guide</a></p>
 
-<p align="center">Free & open source · Local first · No account required · Optional AI analysis</p>
+<p align="center">Free & open source · Local first · No account required · Local MCP Agent access</p>
 
-## Bring the best of your favorite platforms together
+## Found a great reference? Start capturing in one click.
 
-Found a reference worth keeping? Save more than a bookmark. PromptDirector is a Chrome extension with capture adaptations for creative websites and social platforms. It brings the media, text and source available on a page into one case.
+**Keep the work and the creative clues behind it.** PromptDirector is a Chrome extension for visual creators. Collect images, videos, text, prompts and sources into a library you can browse visually, organize by project and bring into your next creative conversation.
 
-| Find inspiration on | Keep it in your library |
+**Open a work, post or article → Capture → Preview and select → Save cases.**
+
+| Where inspiration lives | What you can bring with you |
 | --- | --- |
-| **Higgsfield** | Collect work images, videos and creative descriptions to reference a shot or visual approach later. |
-| **Jimeng / 即梦** | Collect work media and the original prompt, model and author information provided by the page. |
-| **X / Twitter** | Extract post text and image or video references; save prompts shared by the author alongside the work. |
-| **More creative websites** | Adaptations also cover LiblibAI, LibTV, Krea, Pinterest and Behance. On other pages, select text, pick images or capture a screenshot. |
+| **Jimeng · Higgsfield · LiblibAI · Krea · LibTV** | Work images, videos and publicly available prompts or creative details. Keep the visual and its context together. |
+| **HeyBox / 小黑盒 · WeChat articles** | Save a whole article or split clearly structured multi-case posts into selectable image-and-prompt groups. Keep a single HeyBox image gallery with its prompt from the post body. |
+| **Feishu documents** | Capture document bodies, long documents and images within tables, preserving cell placement and merged cells. |
+| **X / Twitter · Xiaohongshu · Weibo · Reddit** | Collect the current post's text and accessible media, including prompts shared by the author. |
+| **Pinterest · Behance · ArtStation · Huaban · ZCOOL** | Bring visual work into one place to browse, search and organize. |
+| **More webpages and local files** | General webpage capture, text and image selection, screenshots and local imports help gather scattered materials. |
 
-**Open a work or post → Start capture with one click → Preview and adjust → Save.**
+### One article. A collection of individual references.
 
-Capture depends on content the page provides and makes accessible. Original prompts must be shared by their authors; descriptions and AI analysis are not original prompts. Login state, page changes and media access restrictions can affect the result.
+For articles with clear case headings or numbering, preview the detected groups under **Cases in article**, select the cases you want and save them individually. Review each image-and-prompt group before saving, or keep the whole article for context.
 
-Capture does not call AI. Videos are saved locally when possible; supported standalone players and HLS streams can play inside the library. See the [capture guide](docs/CAPTURE_SUPPORT.md) for playback and access boundaries.
+### Keep the context that makes a reference useful.
 
-## Make your collection useful
+Multi-image works stay grouped, articles retain media order and Feishu tables retain their layout. Media, text, original prompts, sources and later analysis have their own place, ready to revisit or use with a model.
 
-| What you want to do | How PromptDirector helps |
+Capture, browsing and organization require no AI service. Pages must be accessible and original prompts must be public; login state, lazy loading and site changes can affect results. Preview before saving. Videos are saved locally when a complete file is accessible; supported standalone players and HLS streams can play in the library. See the [capture guide](docs/CAPTURE_SUPPORT.md).
+
+## Your eye chooses. Your Agent takes it further.
+
+**Connect your library to Codex, Claude Code or WorkBuddy.** Search references, read prompts, retrieve originals, capture URLs and save creative materials back to the library through your Agent conversation.
+
+1. Select **Copy connection request** in the extension's **Settings → Agent connection**.
+2. Paste it into an Agent with local MCP support so it can install, configure and verify the connector.
+3. Enable the connection in Chrome when prompted, then start using your library.
+
+Try requests like:
+
+> “Find character-poster references in my library and list a few options for me to choose.”
+>
+> “Read the selected cases' original images and prompts, then use them to draft this campaign's visual direction.”
+>
+> “Save the approved prompt and generated images back to PromptDirector.”
+
+**Google Chrome on Windows, macOS and Linux.** Configuration entry points are provided for Codex, Claude Code and WorkBuddy; other local MCP clients can use the generic configuration. The Agent installs a separate local connector, and the first connection requires browser authorization. Cloud-only workspaces cannot use this local flow. Creative and generation capabilities depend on your Agent and its tools. [Agent setup guide →](connector/INSTALL.md)
+
+## Build a library that grows with your creative practice
+
+| What your next project needs | What your library provides |
 | --- | --- |
-| **Find a reference visually** | Browse an image-first library, search text and filter by tags to rediscover useful work. |
-| **Organize a project** | Arrange cases in nested projects, combine related cases and manage references in batches. |
-| **Understand what works** | Connect your own AI service to analyze text, images or videos when you want more context and searchable notes. |
-| **Keep your materials together** | Add local images, videos, PDFs, Markdown, TXT, HTML and timestamped video notes. |
-| **Share and preserve your work** | Export selected cases or a project subtree as a sharing package. Full folder backups support recovery on another computer; encrypted folder sync supports recovery across your devices. |
+| **A reference you can recognize at a glance** | An image-first case wall, text search and tag filters. Browse the work and choose for yourself. |
+| **A focused collection for each project** | Nested projects, related cases and batch management to keep a creative task's materials together. |
+| **Experience you can reuse** | The Composer reads selected cases and drafts editable prompts, reusable Skills and tag suggestions for your review. |
+| **Room for more than images** | Local images, videos, PDFs, Markdown, TXT, HTML and timestamped video notes. |
+| **A collection you can share and preserve** | Export cases or project subtrees, create full folder backups, recover on another computer and use encrypted folder sync. |
 
-The Composer can chat, find cases on request, read selected material, create editable prompts and draft reusable Skills or case tags for your review. It can also check the curated catalog for available versions without downloading packages. Search results stay in the conversation until you choose references; only selected or explicitly requested images are sent to a model. Capturing, organizing and browsing your library do not require an AI service.
+AI analysis is optional and uses your own service. Selected references help communicate the visual direction you want; only selected or explicitly requested original images are sent to a model. You can also use PromptDirector entirely as a visual reference library.
 
 ## Start with curated references
 
@@ -90,7 +116,3 @@ Contributions to capture adaptations, interactions, tests and documentation are 
 See the [development guide](docs/DEVELOPMENT.md) to build and test contributions.
 
 Code is licensed under [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependencies. The code license does not grant rights to third-party case media.
-
-## Agent access
-
-In settings, select **Copy connection request** under Agent connection and send it to an Agent with local MCP support. The Agent follows the [setup guide](connector/INSTALL.md) to install the connector, configure it and verify access; enable the connection in Chrome when requested. Supports **Google Chrome on Windows, macOS and Linux**. Agents can search cases, read prompts and original files, capture requested URLs and save creative materials. The connector is a separate local component installed by the Agent; cloud-only workspaces cannot use this local setup flow.
