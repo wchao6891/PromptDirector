@@ -13,6 +13,20 @@ def main():
         setup=run.open_page('collector.html')
         run.seed_storage(setup,{'schemaVersion':24,'entries':[entry],**ai_configuration_fixture(providers={'deepseek':{
             'apiKey':'isolated-fixture','consent':True,'models':{'creativePlanning':'deepseek-flash'}}},assignments={'creativePlanning':{'providerId':'deepseek','model':'deepseek-flash'}})})
+        run.context.add_init_script("""(() => {
+          if (!location.pathname.endsWith('/composer.html') || new URL(location.href).searchParams.has('session')) return;
+          const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+          const ready = new Promise(resolve => { window.__releaseComposerReady = resolve; });
+          let held = false;
+          chrome.runtime.sendMessage = (...args) => {
+            const result = send(...args);
+            if (args[0]?.type === 'GET_STATE' && !held) {
+              held = true;
+              return result.then(async response => { await ready; return response; });
+            }
+            return result;
+          };
+        })();""")
         page=run.open_page('composer.html')
         requests=[]
         mode='skill'
@@ -46,6 +60,11 @@ def main():
             wait_for_async_condition(page,"""async()=>{const id=new URL(location.href).searchParams.get('session');return !(await chrome.runtime.sendMessage({type:'GET_COMPOSER_SESSION',sessionId:id})).session.activeTurn;}""")
             assert len(requests)==before+count
             assert all('data:image' not in json.dumps(r) for r in requests[before:])
+        expect(page.locator('#composer-instruction')).to_be_disabled()
+        expect(page.locator('#composer-action')).to_be_disabled()
+        assert not requests, 'Loading the workspace must not send a model request'
+        page.evaluate('window.__releaseComposerReady()')
+        expect(page.locator('#composer-instruction')).to_be_editable()
         send('把刚才的方法提炼成 Skill',2)
         stored=page.evaluate("async()=>chrome.storage.local.get('creativeSkills')")
         assert not stored.get('creativeSkills',{}).get('items',[])
