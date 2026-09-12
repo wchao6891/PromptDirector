@@ -7,6 +7,12 @@ export function windowsCommand(name, env = process.env) {
   if (!env.SystemRoot) throw new Error('Windows 系统目录不可用，无法安全调用系统安装工具。');
   return win32.join(env.SystemRoot, 'System32', name);
 }
+// PowerShell's module discovery and Windows identity APIs need the Windows
+// runtime environment even when an MCP host filters inherited variables.
+export function windowsRuntimeEnvironment(env = process.env) {
+  const names = new Set(['systemroot', 'windir', 'comspec', 'psmodulepath', 'userdomain', 'computername']);
+  return Object.fromEntries(Object.entries(env).filter(([key, value]) => names.has(key.toLowerCase()) && typeof value === 'string'));
+}
 export async function privateWindowsDirectory(root) {
   // Paths are data in the child environment, never interpolated PowerShell code.
   const script = `$ErrorActionPreference='Stop'

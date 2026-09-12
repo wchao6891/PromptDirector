@@ -6,12 +6,13 @@ import { installationPlan, install } from './install.mjs';
 import { hostConfiguration, configurationPlan, writeConfiguration } from './host-config.mjs';
 import { discoverLibraries } from './discovery.mjs';
 import { connectorRoot, instancePaths } from './paths.mjs';
+import { windowsRuntimeEnvironment } from './windows.mjs';
 import { isMain } from './is-main.mjs';
 
 export function mcpConfiguration(root, instanceId) {
   if (instanceId) instancePaths(root, instanceId);
   return { command: process.execPath, args: [join(root, 'runtime/mcp.mjs')],
-    env: { PROMPTDIRECTOR_CONNECTOR_HOME: root, ...(instanceId ? { PROMPTDIRECTOR_INSTANCE: instanceId } : {}) } };
+    env: { ...(process.platform === 'win32' ? windowsRuntimeEnvironment() : {}), PROMPTDIRECTOR_CONNECTOR_HOME: root, ...(instanceId ? { PROMPTDIRECTOR_INSTANCE: instanceId } : {}) } };
 }
 export async function setupPlan({ host, root = connectorRoot(), instanceId, home = homedir(), env = process.env, nativeDirectory, extensionId } = {}) {
   const installation = await installationPlan({ root, nativeDirectory, extensionId });

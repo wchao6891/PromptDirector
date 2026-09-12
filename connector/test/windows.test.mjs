@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { instancePaths, ensurePrivateRoot } from '../paths.mjs';
-import { windowsLauncher, windowsCommand, registerWindowsHost } from '../windows.mjs';
+import { windowsLauncher, windowsCommand, registerWindowsHost, windowsRuntimeEnvironment } from '../windows.mjs';
 const execute = promisify(execFile);
 
 test('Windows pipes distinguish private roots without imposing Unix path limits', () => {
@@ -42,4 +42,10 @@ test('Windows registration preserves Chinese manifest paths and private ACL in r
     await execute(windowsCommand('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { env: { ...process.env, PROMPTDIRECTOR_TEST_KEY: key }, windowsHide: true });
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('MCP Windows runtime environment preserves OS discovery without copying credentials', () => {
+  assert.deepEqual(windowsRuntimeEnvironment({ SystemRoot: 'C:\\Windows', PSMODULEPATH: 'system-module-path', USERDOMAIN: 'fixture-domain', API_KEY: 'test-only-secret', TOKEN: 'test-only-token' }), {
+    SystemRoot: 'C:\\Windows', PSMODULEPATH: 'system-module-path', USERDOMAIN: 'fixture-domain'
+  });
 });
