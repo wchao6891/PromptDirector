@@ -81,21 +81,13 @@
           <div id="gallery-view-controls" class="gallery-view-controls">
             <label class="gallery-sort-field"><span class="sr-only" data-i18n="案例排序">案例排序</span><select id="gallery-sort" aria-label="案例排序" data-i18n-aria-label="案例排序"><option value="added-desc" data-i18n="最近加入">最近加入</option><option value="updated-desc" data-i18n="最近更新">最近更新</option><option value="title" data-i18n="标题">标题</option><option id="project-manual-sort-option" value="project-manual" hidden data-i18n="手动排序">手动排序</option></select></label>
             <button id="manage-case-order" class="icon-button" type="button" aria-label="管理案例顺序" title="管理案例顺序" hidden data-i18n-aria-label="管理案例顺序" data-i18n-title="管理案例顺序"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg></button>
-            <button id="select-cases" class="icon-button gallery-select-button" type="button" aria-label="选择案例" data-i18n-aria-label="选择案例" title="选择案例" data-i18n-title="选择案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-square-check-big"></use></svg></button>
+            <button id="select-cases" class="button-secondary gallery-select-button" type="button" aria-label="管理案例" data-i18n-aria-label="管理案例" title="管理案例" data-i18n-title="管理案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-square-check-big"></use></svg><span data-i18n="管理">管理</span></button>
           </div>
           <div id="share-bar" class="share-bar" hidden>
             <strong id="share-count" data-i18n="已选 0">已选 0</strong>
             <div id="selection-simple-actions" class="selection-simple-actions">
               <button id="selection-select-filtered" class="button-secondary" type="button" data-i18n="全选筛选结果">全选筛选结果</button>
               <div id="selection-selected-actions" class="selection-selected-actions" hidden>
-                <button id="selection-clear" class="button-secondary selection-compact-action" type="button" disabled aria-label="清空已选" data-i18n-aria-label="清空已选" title="清空已选" data-i18n-title="清空已选"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg><span class="selection-action-label" data-i18n="清空">清空</span></button>
-                <details id="selection-label-menu" class="selection-menu">
-                  <summary aria-label="添加标签" data-i18n-aria-label="添加标签"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-tag"></use></svg><span class="selection-action-label" data-i18n="添加标签">添加标签</span></summary>
-                  <div class="project-menu-panel selection-menu-panel selection-label-panel">
-                    <label class="selection-label-field"><span data-i18n="添加标签">添加标签</span><input id="selection-label-input" type="text" placeholder="输入标签名" data-i18n-placeholder="输入标签名" autocomplete="off" /></label>
-                    <button id="selection-add-labels" class="project-menu-primary" type="button" disabled data-i18n="添加标签">添加标签</button>
-                  </div>
-                </details>
                 <details id="selection-project-menu" class="selection-menu">
                   <summary aria-label="项目" data-i18n-aria-label="项目"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-folder"></use></svg><span class="selection-action-label" data-i18n="项目">项目</span></summary>
                   <div class="project-menu-panel selection-menu-panel selection-project-panel">
@@ -109,14 +101,23 @@
                     <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目并移动">新建项目并移动</button>
                   </div>
                 </details>
-                <button id="share-export" type="button" disabled data-i18n="分享">分享</button>
+                <button id="selection-trash" class="button-secondary quiet-danger selection-compact-action" type="button" disabled aria-label="移入回收站" data-i18n-aria-label="移入回收站" title="移入回收站" data-i18n-title="移入回收站"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-trash-2"></use></svg><span class="selection-action-label" data-i18n="删除">删除</span></button>
+                <details id="selection-label-menu" class="selection-menu">
+                  <summary aria-label="添加标签" data-i18n-aria-label="添加标签"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-tag"></use></svg><span class="selection-action-label" data-i18n="标签">标签</span></summary>
+                  <div class="project-menu-panel selection-menu-panel selection-label-panel">
+                    <label class="selection-label-field"><span data-i18n="添加标签">添加标签</span><input id="selection-label-input" type="text" placeholder="输入标签名" data-i18n-placeholder="输入标签名" autocomplete="off" /></label>
+                    <button id="selection-add-labels" class="project-menu-primary" type="button" disabled data-i18n="添加标签">添加标签</button>
+                  </div>
+                </details>
                 <details id="selection-more-menu" class="selection-menu">
                   <summary aria-label="更多" data-i18n-aria-label="更多"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-ellipsis"></use></svg><span class="selection-action-label" data-i18n="更多">更多</span></summary>
                   <div class="project-menu-panel selection-menu-panel selection-more-panel">
+                    <button id="share-export" class="button-secondary" type="button" disabled data-i18n="分享">分享</button>
                     <button id="selection-combine" class="button-secondary" type="button" disabled data-i18n="组合案例">组合案例</button>
+                    <button id="selection-text-analyze" class="button-secondary" type="button" disabled data-i18n="文字打标">文字打标</button>
                     <button id="selection-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析图片">批量分析图片</button>
                     <button id="selection-video-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析视频">批量分析视频</button>
-                    <button id="selection-trash" class="quiet-danger" type="button" disabled data-i18n="移入回收站">移入回收站</button>
+                    <button id="selection-clear" class="button-secondary" type="button" disabled data-i18n="清空已选">清空已选</button>
                   </div>
                 </details>
               </div>
@@ -158,7 +159,11 @@
       <div><strong data-i18n="松开以检查导入内容">松开以检查导入内容</strong></div>
     </div>
 
-    <dialog id="share-dialog" class="data-safety-dialog share-dialog" aria-labelledby="share-dialog-title">
+    <dialog id="text-batch-dialog" class="app-dialog">
+    <div class="dialog-heading"><h2 data-i18n="文字打标">文字打标</h2><button id="text-batch-close" class="icon-button" type="button" aria-label="关闭" data-i18n-aria-label="关闭" title="关闭" data-i18n-title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></div>
+    <div id="text-batch-content"></div>
+  </dialog>
+  <dialog id="share-dialog" class="data-safety-dialog share-dialog" aria-labelledby="share-dialog-title">
       <header class="data-safety-header">
         <div><p class="eyebrow">SHARE CASES</p><h2 id="share-dialog-title" data-i18n="分享案例">分享案例</h2></div>
         <button id="share-dialog-close" class="icon-button" type="button" aria-label="关闭分享" title="关闭分享" data-i18n-aria-label="关闭分享" data-i18n-title="关闭分享"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
@@ -267,10 +272,10 @@
     <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
     <aside id="detail-drawer" class="detail-drawer" role="dialog" aria-modal="true" aria-label="案例详情" data-i18n-aria-label="案例详情" aria-hidden="true">
       <header id="drawer-toolbar" class="drawer-toolbar">
-        <nav id="detail-navigation" class="detail-navigation" aria-label="切换案例" data-i18n-aria-label="切换案例"><button id="detail-prev" class="icon-button" type="button" aria-label="上一条" data-i18n-aria-label="上一条" title="上一条" data-i18n-title="上一条"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg></button><button id="detail-next" class="icon-button" type="button" aria-label="下一条" data-i18n-aria-label="下一条" title="下一条" data-i18n-title="下一条"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg></button></nav>
         <button id="detail-mode-toggle" class="icon-button" type="button" aria-label="切换侧栏详情" title="切换侧栏详情" data-i18n-aria-label="切换侧栏详情" data-i18n-title="切换侧栏详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-panel-left"></use></svg></button>
         <button id="detail-close" class="icon-button" type="button" aria-label="关闭详情" data-i18n-aria-label="关闭详情" title="关闭详情" data-i18n-title="关闭详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
       </header>
+      <nav id="detail-navigation" class="detail-navigation" aria-label="切换案例" data-i18n-aria-label="切换案例"><button id="detail-prev" class="icon-button" type="button" aria-label="上一案例" data-i18n-aria-label="上一案例" title="上一案例" data-i18n-title="上一案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg><span class="case-navigation-label" data-i18n="案例">案例</span></button><button id="detail-next" class="icon-button" type="button" aria-label="下一案例" data-i18n-aria-label="下一案例" title="下一案例" data-i18n-title="下一案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg><span class="case-navigation-label" data-i18n="案例">案例</span></button></nav>
       <div id="detail-resizer" class="detail-resizer" role="separator" tabindex="0" aria-label="调整详情侧栏宽度" data-i18n-aria-label="调整详情侧栏宽度" aria-orientation="vertical" aria-valuemin="520" aria-valuemax="1200" aria-valuenow="760"></div>
       <div id="detail-content" class="detail-content"></div>
     </aside>
@@ -346,10 +351,10 @@
         </section>
         <section id="settings-tasks-panel" class="settings-panel settings-tasks-panel" data-settings-panel="tasks" hidden>
 
-          <div class="batch-card batch-primary">
-            <div class="batch-card-heading"><div><h3 data-i18n="批量文字分析">批量文字分析</h3></div><div class="batch-actions"><span id="batch-status-badge" data-i18n="尚未开始">尚未开始</span>
-              <button id="preview-analysis-batch" type="button" data-i18n="生成预览">生成预览</button>
-              <button id="start-analysis-batch" type="button" disabled data-i18n="确认并开始">确认并开始</button>
+          <div class="batch-card batch-primary" id="text-batch-card">
+            <div class="batch-card-heading"><div class="task-copy"><h3 data-i18n="文字标签补全">文字标签补全</h3><span id="batch-status-badge" role="status"></span><span id="analysis-batch-summary" class="batch-summary"></span></div><div class="batch-actions">
+              <button id="preview-analysis-batch" class="button-secondary" type="button" data-i18n="检查缺失">检查缺失</button>
+              <button id="start-analysis-batch" type="button" disabled data-i18n="开始打标">开始打标</button>
               <button id="pause-analysis-batch" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>
               <button id="resume-analysis-batch" type="button" hidden data-i18n="继续">继续</button>
               <button id="retry-analysis-failures" class="button-secondary" type="button" hidden data-i18n="重试失败项">重试失败项</button>
@@ -357,17 +362,16 @@
               <button id="cancel-analysis-batch" class="quiet-danger" type="button" hidden data-i18n="取消">取消</button>
               <button id="undo-analysis-batch" class="button-secondary" type="button" hidden data-i18n="撤回本次分析">撤回本次分析</button>
             </div></div>
-            <div id="analysis-batch-summary" class="batch-summary" data-i18n="先生成预览，不会直接产生 API 请求。">先生成预览，不会直接产生 API 请求。</div>
 
             <div id="analysis-progress" class="maintenance-progress" hidden><progress id="analysis-progress-bar" max="1" value="0"></progress></div>
 
-            <details class="task-diagnostics"><summary data-i18n="故障诊断">故障诊断</summary><label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label><details id="analysis-diagnostics" class="analysis-diagnostics" hidden>
+            <div class="task-tools"><details class="task-diagnostics"><summary data-i18n="故障诊断">故障诊断</summary><p id="analysis-batch-details"></p><label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label><details id="analysis-diagnostics" class="analysis-diagnostics" hidden>
               <summary><span data-i18n="分析诊断">分析诊断</span><span id="analysis-runtime-version"></span></summary>
               <div class="analysis-diagnostics-heading"><p data-i18n="仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。">仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。</p><button id="copy-analysis-diagnostics" class="button-secondary" type="button" data-i18n="复制诊断日志">复制诊断日志</button></div>
               <ol id="analysis-diagnostic-events"></ol>
-            </details></details><details class="advanced-reanalysis"><summary data-i18n="重建标签系统">重建标签系统</summary><p data-i18n="付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。">付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。</p><div class="batch-actions"><button id="preview-analysis-reanalyze" class="button-secondary" type="button" data-i18n="预览重建费用">预览重建费用</button><button id="start-analysis-reanalyze" type="button" disabled hidden data-i18n="确认付费并重建">确认付费并重建</button></div></details>
+            </details></details><details class="advanced-reanalysis"><summary data-i18n="重建标签系统">重建标签系统</summary><p data-i18n="付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。">付费重跑全部文字案例；结果先暂存，全部成功后一次切换，并可完整撤回。</p><div class="batch-actions"><button id="preview-analysis-reanalyze" class="button-secondary" type="button" data-i18n="预览重建费用">预览重建费用</button><button id="start-analysis-reanalyze" type="button" disabled hidden data-i18n="确认付费并重建">确认付费并重建</button></div></details></div>
           </div>
-          <div class="batch-card local-index-card"><div class="task-heading"><h3 data-i18n="资料索引自动补全">资料索引自动补全</h3><div class="batch-actions">
+          <div class="batch-card local-index-card"><div class="task-heading"><div class="task-copy"><h3 data-i18n="资料索引自动补全">资料索引自动补全</h3><div id="reanalyze-preview" class="reanalyze-preview" role="status" aria-live="polite"></div></div><div class="batch-actions">
               <button id="preview-reanalyze" type="button" data-i18n="检查缺失项">检查缺失项</button>
               <button id="apply-reanalyze" type="button" hidden data-i18n="开始补全">开始补全</button>
               <button id="pause-library-maintenance" class="button-secondary" type="button" hidden data-i18n="暂停">暂停</button>
@@ -375,7 +379,6 @@
               <button id="retry-library-maintenance" class="button-secondary" type="button" hidden data-i18n="重试失败项">重试失败项</button>
               <button id="cancel-library-maintenance" class="quiet-danger" type="button" hidden data-i18n="取消">取消</button>
             </div></div>
-            <div id="reanalyze-preview" class="reanalyze-preview" role="status" aria-live="polite"></div>
           </div>
           <div id="legacy-candidates" class="batch-card"></div>
         </section>

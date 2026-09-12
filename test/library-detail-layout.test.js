@@ -91,14 +91,13 @@ test("single case details use one scroll surface with a full-width discovery wal
   assert.match(body, /overflow:\s*visible/);
   assert.doesNotMatch(body, /padding-top:/);
   assert.match(discovery, /--masonry-gap:\s*var\(--visual-wall-gap\)/);
-  assert.match(script, /navigation:\s*usesStageNavigation \? elements\.detailNavigation : null/);
-  assert.match(script, /if \(navigation\) item\.append\(navigation\)/);
+  assert.doesNotMatch(script, /item\.append\(navigation\)|prepend\(elements\.detailNavigation\)/);
   assert.match(mobileDrawer, /height:\s*100dvh/);
   assert.match(mobilePrimary, /display:\s*block/);
   assert.match(mobileGallery, /height:\s*58dvh/);
 });
 
-test("single case navigation is positioned inside the primary case area", async () => {
+test("case navigation stays in the fixed detail shell outside variable media and text layouts", async () => {
   const source = await readFile(cssUrl, "utf8");
   const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
@@ -112,24 +111,25 @@ test("single case navigation is positioned inside the primary case area", async 
   assert.match(navigation, /top:\s*50%/);
   assert.match(navigation, /width:\s*100%/);
   assert.match(navigation, /z-index:\s*[2-9]/);
-  assert.match(script, /if \(navigation\) item\.append\(navigation\)/);
+  assert.doesNotMatch(script, /append\(elements\.detailNavigation\)|prepend\(elements\.detailNavigation\)|item\.append\(navigation\)/);
+  const toolbar = html.slice(html.indexOf('<header id="drawer-toolbar"'), html.indexOf('</header>', html.indexOf('<header id="drawer-toolbar"')));
+  assert.doesNotMatch(toolbar, /id="detail-navigation"/);
+  assert.ok(html.indexOf('id="detail-navigation"') < html.indexOf('id="detail-content"'));
+  assert.match(rule(source, ".detail-content"), /margin-inline:\s*var\(--detail-navigation-gutter\)/);
+  assert.doesNotMatch(source, /has-document-navigation/);
 });
 
-test("document navigation moves into the top toolbar and long documents use a real scroll surface", async () => {
+test("documents keep the same case navigation and their real scroll surface", async () => {
   const source = await readFile(cssUrl, "utf8");
   const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
-  const toolbarNavigation = rule(source, ".drawer-toolbar.has-document-navigation .detail-navigation");
   const documentStage = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-stage");
   const documentItem = rule(source, ".detail-visual-gallery.is-document-detail .detail-visual-item");
 
   assert.match(script, /const hasArticleDocument = !capturedPost && usesArticleReader\(entry\)/);
-  assert.match(script, /const usesStageNavigation = !capturedPost && !hasArticleDocument && \(entryHasMedia\(entry, "image"\) \|\| entryHasMedia\(entry, "video"\)\)/);
-  assert.match(script, /if \(!usesStageNavigation\) elements\.drawerToolbar\.prepend\(elements\.detailNavigation\)/);
+  assert.match(script, /classList\.toggle\("has-text-header", Boolean\(entry\.compoundCase\) \|\| !hasMediaStage\)/);
+  assert.doesNotMatch(script, /drawerToolbar\.prepend\(elements\.detailNavigation\)/);
   assert.match(script, /gallery\.classList\.toggle\("is-document-detail", asset\.kind === "document"\)/);
   assert.match(script, /stage\.scrollTop = 0/);
-  assert.match(toolbarNavigation, /top:\s*14px/);
-  assert.match(toolbarNavigation, /right:\s*102px/);
-  assert.match(toolbarNavigation, /width:\s*auto/);
   assert.match(documentStage, /overflow:\s*auto/);
   assert.match(documentItem, /height:\s*auto/);
   assert.match(documentItem, /overflow:\s*visible/);
@@ -157,7 +157,9 @@ test("media switching preserves the detail scroll anchor and locks image stage h
   assert.match(gallery, /lockedImageStageHeight/);
   assert.match(gallery, /captureDetailScrollAnchor/);
   assert.match(gallery, /restoreDetailScrollAnchor/);
-  assert.match(gallery, /button\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(gallery, /trigger\.disabled \? mediaNavigation : trigger\)\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(gallery, /rail\.offsetHeight \+ mediaNavigation\.offsetHeight/);
+  assert.match(gallery, /event\.stopPropagation\(\)/);
 });
 
 test("compound details retain their existing split layout", async () => {

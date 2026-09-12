@@ -92,7 +92,7 @@ def main() -> None:
         expect(resizer).to_have_attribute("aria-valuenow", "260")
         saved_width = library.evaluate("async () => (await chrome.storage.local.get('uiPreferences')).uiPreferences.sidebarWidth")
         assert saved_width == 260, saved_width
-        expect(library.locator("#content-filters .content-filter-option")).to_have_count(6)
+        expect(library.locator("#content-filters .content-filter-option")).to_have_count(8)
         expect(library.locator("#content-filters")).not_to_contain_text("全部")
         expect(library.locator("#facet-filters .facet-filter-body .filter-option", has_text="全部")).to_have_count(0)
 
@@ -225,6 +225,8 @@ def main() -> None:
         assert cancel_metrics["scrollWidth"] <= cancel_metrics["clientWidth"], cancel_metrics
         library.screenshot(path=str(screenshots / "promptdirector-selection-toolbar-active.png"))
         library.set_viewport_size({"width": 1440, "height": 900})
+        if not library.locator("#selection-clear").is_visible():
+            library.locator("#selection-more-menu > summary").click()
         library.locator("#selection-clear").click()
         expect(library.locator("#share-count")).to_have_text("已选 0")
         expect(library.locator("#selection-selected-actions")).to_be_hidden()
@@ -305,7 +307,7 @@ def main() -> None:
         print({
             "workspace_items": 4,
             "project_rows": 1,
-            "content_rows": 6,
+            "content_rows": library.locator("#content-filters .content-filter-option").count(),
             "mobile_drawer": drawer,
             "mobile_overflow": overflow,
             "wall": wall,

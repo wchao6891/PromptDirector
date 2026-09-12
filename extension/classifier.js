@@ -7,7 +7,7 @@ import {
 import { entryHasMedia, normalizeEntryMedia } from "./media.js";
 import { entryHasVisual } from "./visuals.js";
 
-export const CLASSIFIER_VERSION = 5;
+export const CLASSIFIER_VERSION = 6;
 
 const WEIGHT = Object.freeze({ weak: 1, supporting: 2, format: 3, strong: 4, modelBody: 5, decisive: 6 });
 const THRESHOLD = Object.freeze({ tutorial: 6, tutorialTie: 8, imageCaseText: 360 });
@@ -118,6 +118,12 @@ export function classifyImportedMedia(entry = {}, taxonomy = createDefaultTaxono
   }
   if (kinds.has("document")) {
     return classificationForRole(taxonomy, CONTENT_ROLES.reference, "本机文档按文件形态归类", "local_import");
+  }
+  if (kinds.has("audio")) {
+    return classificationForRole(taxonomy, CONTENT_ROLES.audio, "本机音频按文件形态归类", "local_import");
+  }
+  if (kinds.has("attachment")) {
+    return classificationForRole(taxonomy, CONTENT_ROLES.sourceFile, "创作源文件按文件形态归类", "local_import");
   }
   return classification([], "needs_review", "local_import", "无法识别本机资料形态");
 }

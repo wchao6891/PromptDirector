@@ -24,7 +24,7 @@ import {
 
 test("new libraries include first-class image, video, and document material types", () => {
   const taxonomy = createDefaultTaxonomy();
-  assert.deepEqual(taxonomy.nodes.map((item) => item.name), ["攻略教程", "图片提示词", "视频提示词", "图片案例", "视频案例", "资料文档"]);
+  assert.deepEqual(taxonomy.nodes.map((item) => item.name), ["攻略教程", "图片提示词", "视频提示词", "图片案例", "视频案例", "资料文档", "声音", "源文件"]);
   assert.equal(isValidContentPath(taxonomy, [CONTENT_IDS.promptImage]), true);
   assert.equal(contentRoleForPath(taxonomy, [CONTENT_IDS.videoCase]), CONTENT_ROLES.videoCase);
   assert.equal(contentRoleForPath(taxonomy, [CONTENT_IDS.reference]), CONTENT_ROLES.reference);

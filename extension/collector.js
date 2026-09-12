@@ -37,7 +37,6 @@ import {
   pageCapturePermissionOrigins,
   pageCaptureStructureMatches
 } from "./page-capture.js";
-import { PAGE_CAPTURE_LIMITS } from "./resource-limits.js";
 import { createTagEditor } from "./tag-editor.js";
 
 await initializeUi();
@@ -50,7 +49,7 @@ const elements = Object.fromEntries([
   "save-separate", "start-screenshot", "start-selection", "start-smart-visuals", "start-state", "normal-start",
   "other-capture-methods", "smart-selection", "smart-selection-count", "smart-selection-help", "smart-selection-warning", "smart-selection-cancel", "smart-selection-confirm",
   "start-page-capture", "add-page-capture", "page-capture", "page-capture-title", "page-capture-help", "page-capture-list", "page-capture-scan", "page-capture-cancel", "page-capture-save", "page-capture-save-text-only",
-  "page-capture-mode", "page-capture-tools", "page-capture-save-summary", "capture-extra-metadata", "page-capture-edit-status", "page-capture-edit-help", "page-capture-edit-cancel",
+  "page-capture-mode", "page-capture-tools", "page-capture-organize", "capture-extra-metadata", "page-capture-edit-status", "page-capture-edit-help", "page-capture-edit-cancel",
   "page-capture-clear", "page-capture-media-viewer", "page-capture-media-stage", "page-capture-media-position", "page-capture-media-title", "page-capture-media-meta",
   "page-capture-media-review", "page-capture-media-review-status", "page-capture-media-review-list",
   "page-capture-add-region", "page-capture-exclude-region", "page-capture-undo-region", "page-capture-reset-region",
@@ -125,7 +124,6 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 await refresh();
 await tryAutoSelection();
 void refreshPageCapturePermissionState();
-elements.pageCaptureTargetCount.max = String(PAGE_CAPTURE_LIMITS.maxCandidates);
 
 elements.openLibrary.addEventListener("click", () => void openLibraryTab());
 window.addEventListener("focus", () => {
@@ -191,6 +189,10 @@ elements.pageCaptureCombinedTitle.addEventListener("change", () => {
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, combinedTitle: elements.pageCaptureCombinedTitle.value });
 });
 elements.pageCaptureCancel.addEventListener("click", cancelPageCapture);
+elements.pageCaptureOrganize.addEventListener("click", () => {
+  elements.captureMetadata.scrollIntoView({ block: "start", behavior: "instant" });
+  elements.captureCollection.focus({ preventScroll: true });
+});
 elements.pageCaptureSave.addEventListener("click", () => savePageCapture(false));
 elements.pageCaptureSaveTextOnly.addEventListener("click", () => savePageCapture(true));
 elements.pageCaptureClear.addEventListener("click", clearPageCaptureConfirmation);
@@ -561,7 +563,8 @@ function render() {
   document.body.classList.toggle("page-capture-active", Boolean(pageCaptureBatch));
   if (pageCaptureBatch) {
     elements.pageCaptureTools.before(elements.captureAddMoreActions);
-    elements.pageCaptureActions.before(elements.captureMetadata);
+    if (pageCaptureBatch.captureMode === "list") elements.pageCaptureList.before(elements.captureMetadata);
+    else elements.pageCaptureActions.before(elements.captureMetadata);
   } else {
     elements.organizer.before(elements.captureAddMoreActions);
     elements.captureAddMoreActions.before(elements.captureMetadata);
@@ -708,9 +711,10 @@ function renderPageCapture() {
   const scanning = pageCaptureBatch.status === "scanning";
   const busy = scanning || pageCaptureBatch.status === "saving" || Boolean(pageCaptureEditing) || pageCaptureCancelling;
   elements.pageCaptureTitle.textContent = t("网页采集");
-  elements.pageCaptureHelp.textContent = pageCaptureBatch.status === "scanning"
-    ? t("正在扫描已加载内容；可随时停止，结束后会恢复原滚动位置。")
-    : pageCaptureBatch.error || (selectedCount ? t("已选 {count} 项内容", { count: selectedCount }) : pageCaptureBatch.candidates.length ? t("选择要保存的内容") : t("未识别到内容，可重新扫描或返回选择其他采集方式"));
+  elements.pageCaptureHelp.textContent = scanning ? t("正在扫描…")
+    : pageCaptureBatch.status === "saving" ? t("正在保存…")
+    : pageCaptureBatch.error || (!pageCaptureBatch.candidates.length ? t("未识别到内容，可重新扫描或返回选择其他采集方式") : "");
+  elements.pageCaptureHelp.hidden = !elements.pageCaptureHelp.textContent;
   const selectedMediaCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
   const saveBlocked = busy || !selectedCount || (listMode && !["multiple", "combined"].includes(pageCaptureBatch.saveMode));
   elements.pageCaptureSave.disabled = saveBlocked;
@@ -719,9 +723,8 @@ function renderPageCapture() {
   elements.pageCaptureSave.textContent = listMode
     ? pageCaptureBatch.saveMode === "combined" ? t("合并保存案例") : t("保存 {count} 个案例", { count: selectedCount })
     : t("保存案例");
-  elements.pageCaptureSaveSummary.textContent = scanning ? t("正在读取网页正文和媒体…")
-    : pageCaptureBatch.status === "saving" ? t("正在保存…")
-    : selectedCount ? t("已选 {count} 项内容 · {media} 项媒体", { count: selectedCount, media: selectedMediaCount }) : t("请选择一项内容");
+  elements.pageCaptureOrganize.hidden = !listMode || !selectedCount;
+  elements.pageCaptureOrganize.disabled = busy;
   elements.pageCaptureCancel.textContent = scanning ? t("停止扫描") : t("退出");
   elements.pageCaptureCancel.disabled = pageCaptureBatch.status === "saving" || pageCaptureCancelling;
   elements.pageCaptureScan.hidden = false;
@@ -742,13 +745,14 @@ function renderPageCapture() {
   elements.pageCaptureEditHelp.textContent = pageCaptureEditing?.mode === "include" ? t("点击网页中遗漏的内容，完成后返回") : t("点击网页中不想保存的内容，完成后返回");
   if (listMode) {
     const reviewCount = pageCaptureBatch.candidates.filter((candidate) => candidate.batchStructureStatus === "review").length;
-    elements.pageCaptureListSummary.textContent = pageCaptureBatch.articleSplit
-      ? t("已拆分 {count} 个案例，另有 {review} 组内容需要核对。", {count:pageCaptureBatch.candidates.length-reviewCount, review:reviewCount})
-      : t("目标 {target} 个，实际识别 {actual} 个。{reason}", {
-      target: pageCaptureBatch.targetCount,
-      actual: pageCaptureBatch.candidates.length,
-      reason: pageCaptureStopReasonLabel(pageCaptureBatch.stopReason)
-    }) + (reviewCount ? t(" · {count} 个结构不同的案例未自动加入，请单独确认。", { count: reviewCount }) : "");
+    const incomplete = !scanning && pageCaptureBatch.targetCount > pageCaptureBatch.candidates.length;
+    const stopWarning = ["layout-changed", "pagination-failed"].includes(pageCaptureBatch.stopReason);
+    elements.pageCaptureListSummary.textContent = [
+      incomplete ? t("仅取得 {actual}/{target} 个案例", { actual: pageCaptureBatch.candidates.length, target: pageCaptureBatch.targetCount }) : "",
+      stopWarning ? pageCaptureStopReasonLabel(pageCaptureBatch.stopReason) : "",
+      reviewCount ? t("{count} 个案例待复核", { count: reviewCount }) : ""
+    ].filter(Boolean).join(" · ");
+    elements.pageCaptureListSummary.hidden = !elements.pageCaptureListSummary.textContent;
     if (document.activeElement !== elements.pageCaptureSaveMode) elements.pageCaptureSaveMode.value = pageCaptureBatch.saveMode;
     elements.pageCaptureCombinedTitleRow.hidden = pageCaptureBatch.saveMode !== "combined";
     if (document.activeElement !== elements.pageCaptureCombinedTitle) elements.pageCaptureCombinedTitle.value = pageCaptureBatch.combinedTitle;
@@ -808,8 +812,7 @@ function createPageCaptureArticlePreview(candidate, selection) {
         ...candidate.media.filter((media) => media.placement === "inline").map((media, index) => ({ id: `fallback:${media.id}`, kind: media.kind, assetId: media.id, sourceUrl: media.url, label: media.alt, sourceOrder: candidate.textBlocks.length + index }))
       ];
   heading.append(
-    textNode("strong", candidate.extraction.scope === "selection" ? t("原网页选区") : "完整文章预览"),
-    textNode("small", `${pageCaptureExtractionLabel(candidate.extraction.method)} · ${blocks.length} 个有序内容块`)
+    textNode("strong", candidate.extraction.scope === "selection" ? t("原网页选区") : "完整文章预览")
   );
   section.append(heading);
   const mediaById = new Map(candidate.media.map((media) => [media.id, media]));
@@ -1222,17 +1225,9 @@ function renderPageCaptureMediaViewer() {
 
 function pageCaptureStopReasonLabel(value) {
   return ({
-    "target-reached": t("已达到目标数量。"),
-    "no-new-items": t("列表没有新增案例，已按实际数量结束。"),
-    "no-next-page": t("没有可继续的列表页，已按实际数量结束。"),
     "layout-changed": t("列表结构发生变化，已停止。"),
-    "pagination-failed": t("列表翻页失败，已按当前结果结束。"),
-    cancelled: t("采集已由用户停止。")
-  })[value] || t("已按当前列表可识别结果结束。");
-}
-
-function pageCaptureExtractionLabel(value) {
-  return ({ readability: t("智能正文"), structured: t("结构化正文"), page: t("页面正文") })[value] || t("页面正文");
+    "pagination-failed": t("列表翻页失败，已按当前结果结束。")
+  })[value] || "";
 }
 
 function pageCaptureMediaSourceLabel(value, captureMethod = "") {
@@ -1565,8 +1560,8 @@ async function startPageListCapture(button) {
     showFeedback(t("请先查看并确认一个代表案例，再开始列表采集"), true);
     return;
   }
-  if (!Number.isSafeInteger(targetCount) || targetCount < 1 || targetCount > PAGE_CAPTURE_LIMITS.maxCandidates) {
-    showFeedback(t("请输入 1 到 {count} 之间的目标案例数", { count: PAGE_CAPTURE_LIMITS.maxCandidates }), true);
+  if (!Number.isSafeInteger(targetCount) || targetCount < 1) {
+    showFeedback(t("请输入正整数目标案例数"), true);
     return;
   }
   await startPageCapture("list", button);
@@ -1631,8 +1626,8 @@ async function savePageCapture(textOnly = false) {
         pageCaptureDraftIds = new Set();
         await clearPageCaptureMarkers(saveBatch.tabId);
       } else elements.pageCaptureMediaReview.open = true;
-      const notice = incomplete.length ? t("{message}；部分媒体未完整保存，请在案例库检查", { message: response.message }) : response.message;
-      const message = [notice, ...failureReasons, ...cleanupErrors].filter(Boolean).join("；");
+      const notice = incomplete.length ? t("{message}；部分媒体未完整保存，请在案例库检查", { message: response.message }) : remainingIds.size ? response.message : t("已保存");
+      const message = [notice, ...(incomplete.length ? [] : response.warnings || []), ...failureReasons, ...cleanupErrors].filter(Boolean).join("；");
       showFeedback(message, Boolean(remainingIds.size || cleanupErrors.length));
       try { await refresh(); }
       catch (error) { showFeedback(`${message}；${error.message}`, true); render(); }

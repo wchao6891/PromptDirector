@@ -86,8 +86,8 @@ def main() -> None:
         before_preview = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging'])")
         library.locator(".advanced-reanalysis > summary").click()
         library.locator("#preview-analysis-reanalyze").click()
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("3 次请求")
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("全部成功前只暂存")
+        expect(library.locator("#analysis-batch-details")).to_contain_text("3 次请求")
+        expect(library.locator("#analysis-batch-details")).to_contain_text("全部成功前只暂存")
         after_preview = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging'])")
         assert json.dumps(after_preview, sort_keys=True, ensure_ascii=False) == json.dumps(before_preview, sort_keys=True, ensure_ascii=False)
 
@@ -121,8 +121,8 @@ def main() -> None:
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
         expect(library.locator("#batch-status-badge")).to_contain_text("重建待完成")
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("1 条成功结果已安全暂存")
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("AI 返回了未知分类路径")
+        expect(library.locator("#analysis-batch-details")).to_contain_text("1 条成功结果已安全暂存")
+        expect(library.locator("#analysis-batch-details")).to_contain_text("AI 返回了未知分类路径")
         expect(library.locator("#retry-analysis-failures")).to_have_text("继续完成重建（1 条）")
         expect(library.locator("#apply-staged-analysis-rebuild")).to_have_text("应用完整成功结果（1 条失败不写入）")
         expect(library.locator("#start-analysis-batch")).to_be_hidden()
@@ -130,7 +130,7 @@ def main() -> None:
 
         library.locator("#apply-staged-analysis-rebuild").click()
         expect(library.locator("#batch-status-badge")).to_contain_text("成功结果已应用")
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("完整成功结果已经生效，1 条失败案例未写入，可单独重试")
+        expect(library.locator("#analysis-batch-details")).to_contain_text("完整成功结果已经生效，1 条失败案例未写入，可单独重试")
         expect(library.locator("#apply-staged-analysis-rebuild")).to_be_hidden()
         expect(library.locator("#retry-analysis-failures")).to_be_hidden()
         partial_state = library.evaluate(
@@ -155,8 +155,8 @@ def main() -> None:
             )
 
         library.locator("#preview-analysis-batch").click()
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("2 次请求")
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("未分析 2 条")
+        expect(library.locator("#analysis-batch-details")).to_contain_text("2 次请求")
+        expect(library.locator("#analysis-batch-details")).to_contain_text("未分析 2 条")
 
         library.evaluate(
             """async () => {

@@ -32,6 +32,13 @@ const DEFINITIONS = [
   format("aiff", "audio", "audio", ["aif", "aiff"], ["audio/aiff", "audio/x-aiff"]),
   format("wma", "audio", "audio", ["wma"], ["audio/x-ms-wma"]),
 
+  format("docx", "document", "document", ["docx"], ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]),
+  format("pptx", "document", "document", ["pptx"], ["application/vnd.openxmlformats-officedocument.presentationml.presentation"], { preserveOnly: true }),
+  format("xlsx", "document", "document", ["xlsx"], ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], { preserveOnly: true }),
+  format("xls", "document", "document", ["xls"], ["application/vnd.ms-excel"], { preserveOnly: true }),
+  format("doc", "document", "document", ["doc"], ["application/msword"], { preserveOnly: true }),
+  format("ppt", "document", "document", ["ppt"], ["application/vnd.ms-powerpoint"], { preserveOnly: true }),
+  format("csv", "document", "document", ["csv"], ["text/csv", "application/csv", "text/plain"], { preserveOnly: true }),
   format("pdf", "document", "document", ["pdf"], ["application/pdf"]),
   format("txt", "document", "document", ["txt"], ["text/plain"]),
   format("markdown", "document", "document", ["md", "markdown"], ["text/markdown", "text/plain"]),
@@ -225,8 +232,9 @@ function format(id, kind, category, extensions, mimeTypes, options = {}) {
     category,
     extensions: Object.freeze(extensions),
     mimeTypes: Object.freeze(mimeTypes),
-    preview: kind === "attachment" ? "inert" : options.plainText ? "text" : "native",
+    preview: kind === "attachment" || options.preserveOnly ? "inert" : options.plainText ? "text" : "native",
     plainText: options.plainText === true,
+    ...(options.preserveOnly ? { preserveOnly: true } : {}),
     ...(options.extensionRequired ? { extensionRequired: true } : {})
   });
 }

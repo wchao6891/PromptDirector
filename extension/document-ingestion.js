@@ -1,8 +1,10 @@
+import { convertDocx } from "./docx-ingestion.js";
 import { parseRTF } from "./vendor/document-ingestion/rtf-toolkit/parser/parser.js";
 import { toHTML } from "./vendor/document-ingestion/rtf-toolkit/renderers/html.js";
 import TurndownService from "./vendor/document-ingestion/turndown.browser.es.js";
 
 const SOURCE_FORMATS = new Map([
+  ["docx", "docx"],
   ["pdf", "pdf"],
   ["txt", "txt"],
   ["md", "markdown"],
@@ -19,6 +21,10 @@ export async function ingestLocalDocument(blob, options = {}) {
   const extension = clean(options.extension).toLocaleLowerCase("en-US");
   const sourceFormat = SOURCE_FORMATS.get(extension);
   if (!sourceFormat) throw new Error("暂不支持这种文档格式");
+  if (sourceFormat === "docx") {
+    const result = await convertDocx(blob);
+    return documentResult({ contentText: htmlToMarkdown(result.html, options), contentFormat: "markdown", sourceFormat, warnings: result.warnings });
+  }
   if (sourceFormat === "pdf") {
     const contentText = typeof options.extractPdfText === "function"
       ? normalizePlainText(await options.extractPdfText(blob))
@@ -74,13 +80,26 @@ function htmlToMarkdown(source, options) {
   const root = documentValue.body || documentValue;
   if (typeof options.toMarkdown === "function") return normalizeMarkdown(options.toMarkdown(root));
   if (!root?.nodeType && typeof root?.textContent === "string") return normalizeMarkdown(root.textContent);
-  return normalizeMarkdown(new TurndownService({
+  const service = new TurndownService({
     headingStyle: "atx",
     bulletListMarker: "-",
     codeBlockStyle: "fenced",
     emDelimiter: "_",
     strongDelimiter: "**"
-  }).turndown(root));
+  });
+  service.addRule("documentTables", {
+    filter: "table",
+    replacement: (_content, node) => {
+      const rows = [...node.querySelectorAll("tr")].map(row => [...row.children]
+        .filter(cell => ["TH", "TD"].includes(cell.tagName))
+        .map(cell => service.turndown(cell.innerHTML).replace(/\|/gu, "&#124;").replace(/\n+/gu, " ")));
+      if (!rows.length) return "";
+      const width = Math.max(...rows.map(row => row.length));
+      const line = row => `| ${Array.from({ length: width }, (_, index) => row[index] || "").join(" | ")} |`;
+      return `\n\n${[line(rows[0]), line(Array(width).fill("---")), ...rows.slice(1).map(line)].join("\n")}\n\n`;
+    }
+  });
+  return normalizeMarkdown(service.turndown(root));
 }
 
 function parseHtml(source, parser) {

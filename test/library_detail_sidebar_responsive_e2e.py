@@ -58,6 +58,9 @@ def sidebar_geometry(page) -> dict:
           );
           return {
             drawerWidth: drawer.width,
+            drawerRight: drawer.right,
+            drawerCenterY: (drawer.top + drawer.bottom) / 2,
+            contentWidth: rect("#detail-content").width,
             galleryWidth: gallery.width,
             bodyWidth: body.width,
             itemRight: item.right,
@@ -74,10 +77,10 @@ def sidebar_geometry(page) -> dict:
 
 
 def assert_sidebar_geometry(value: dict) -> None:
-    assert value["bodyWidth"] >= value["drawerWidth"] - 2, value
-    assert value["galleryWidth"] >= value["drawerWidth"] - 2, value
-    assert 8 <= value["itemRight"] - value["nextRight"] <= 24, value
-    assert value["videoTop"] <= value["nextCenterY"] <= value["videoBottom"], value
+    assert value["bodyWidth"] >= value["contentWidth"] - 2, value
+    assert value["galleryWidth"] >= value["contentWidth"] - 2, value
+    assert 4 <= value["drawerRight"] - value["nextRight"] <= 16, value
+    assert abs(value["nextCenterY"] - value["drawerCenterY"]) < 1, value
     assert value["titleUsableWidth"] >= 220, value
     assert value["navigationOverlapsControls"] is False, value
     assert value["detailOverflow"] is False, value
@@ -144,7 +147,8 @@ def main() -> None:
         library.locator("#detail-mode-toggle").click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-detail-mode", "fullscreen")
         fullscreen = sidebar_geometry(library)
-        assert 8 <= fullscreen["itemRight"] - fullscreen["nextRight"] <= 24, fullscreen
+        assert 4 <= fullscreen["drawerRight"] - fullscreen["nextRight"] <= 16, fullscreen
+        assert abs(fullscreen["nextCenterY"] - fullscreen["drawerCenterY"]) < 1, fullscreen
         assert fullscreen["titleUsableWidth"] >= 180, fullscreen
         fullscreen_editor = library.locator(".entry-editor-body").evaluate(
             "node => ({clientWidth: node.clientWidth, scrollWidth: node.scrollWidth})"

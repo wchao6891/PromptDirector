@@ -71,7 +71,7 @@ test("page capture replaces failed remote thumbnails with an explicit unavailabl
   assert.match(pageCaptureRenderer, /pageCaptureMediaSourceLabel\(media\.sourceKind, media\.captureMethod\)/);
   const collectorHtml = await readFile(new URL("../extension/collector.html", import.meta.url), "utf8");
   assert.match(collectorHtml, /id="page-capture-help"/);
-  assert.match(collectorSource, /t\("选择要保存的内容"\)/);
+  assert.match(collectorSource, /pageCaptureHelp.hidden = !elements.pageCaptureHelp.textContent/);
 });
 
 test("page capture uses the final save as media authorization and keeps uncertain media separate", async () => {
@@ -82,14 +82,14 @@ test("page capture uses the final save as media authorization and keeps uncertai
   ]);
   const pageCaptureRenderer = collectorSource.slice(
     collectorSource.indexOf("function renderPageCapture"),
-    collectorSource.indexOf("function pageCaptureExtractionLabel")
+    collectorSource.indexOf("function pageCaptureMediaSourceLabel")
   );
   assert.match(pageCaptureRenderer, /confirmPageCaptureCandidate/);
   assert.match(pageCaptureRenderer, /selectedTextBlockIds: candidate\.textBlocks\.map/);
   assert.match(pageCaptureRenderer, /pageCaptureDefaultMediaIds\(candidate\)/);
   assert.match(pageCaptureRenderer, /mediaDecision: "pending"/);
   assert.match(pageCaptureRenderer, /finalizePageCaptureSelectionsForSave/);
-  assert.match(pageCaptureRenderer, /t\("已选 \{count\} 项内容 · \{media\} 项媒体"/);
+  assert.doesNotMatch(pageCaptureRenderer, /已选 \{count\} 项内容/);
   assert.match(pageCaptureRenderer, /可能遗漏媒体/);
   assert.match(pageCaptureRenderer, /batchStructureStatus === "review"/);
   assert.match(pageCaptureRenderer, /updatePageCaptureMediaSelection/);

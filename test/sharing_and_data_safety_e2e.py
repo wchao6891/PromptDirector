@@ -130,6 +130,8 @@ def main() -> None:
         library.locator(".case-card").nth(0).click()
         library.locator(".case-card").nth(1).click()
         expect(library.locator("#share-count")).to_have_text("已选 2")
+        if not library.locator("#share-export").is_visible():
+            library.locator("#selection-more-menu > summary").click()
         library.locator("#share-export").click()
         expect(library.locator("#share-dialog")).to_be_visible()
         expect(library.locator("#share-dialog-submit")).to_be_disabled()
@@ -199,6 +201,8 @@ def main() -> None:
 
         library.locator("#select-cases").click()
         library.locator('.case-card[data-entry-id="share-two"]').click()
+        if not library.locator("#share-export").is_visible():
+            library.locator("#selection-more-menu > summary").click()
         library.locator("#share-export").click()
         expect(library.locator("#share-dialog")).to_be_visible()
         expect(library.locator("#share-dialog-disclosure")).not_to_be_checked()

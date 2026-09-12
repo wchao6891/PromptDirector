@@ -10,13 +10,14 @@ function rule(source, selector) {
   return source.match(new RegExp(`(?:^|\\n)\\s*${escaped}\\s*\\{([^}]+)\\}`))?.[1] ?? "";
 }
 
-test("project filters keep a stable heading and project selection mode closes its top gap", () => {
+test("project filters keep a stable heading and every management mode follows the measured topbar", () => {
   assert.doesNotMatch(libraryCss, /sidebar-filter-tools|active-filter-badge/);
   assert.doesNotMatch(libraryCss, /\.filter-heading #clear-filters/);
   assert.match(libraryCss, /\.filter-heading #create-collection[^}]*display:\s*inline-flex/);
-  const selectionRule = rule(libraryCss, ".gallery-heading.project-selection-mode");
-  assert.match(selectionRule, /top:\s*64px/);
-  assert.match(selectionRule, /margin-top:\s*-8px/);
+  const headingRule = rule(libraryCss, ".gallery-heading");
+  assert.match(headingRule, /position:\s*sticky/);
+  assert.match(headingRule, /top:\s*var\(--library-topbar-height\)/);
+  assert.match(headingRule, /background:\s*var\(--paper\)/);
 });
 
 test("skill page action triggers share an aligned height and the top action row centers them", () => {

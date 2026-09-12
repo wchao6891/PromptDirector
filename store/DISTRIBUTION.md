@@ -6,7 +6,7 @@ Public distribution formats and the permissions used by PromptDirector.
 
 - Chrome Web Store item public key: stored in the source `manifest.json` for local identity verification only; `package:release` removes `key` from the upload manifest.
 - Expected extension ID: `iahakaahijddcjjldidbclicedibgpjm`.
-- Current upload artifact: `dist/PromptDirector-1.21.1.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
+- Current upload artifact: `dist/PromptDirector-1.22.0.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
 - Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest and excludes the local program installer.
 
 ## Store listing

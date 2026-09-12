@@ -149,15 +149,15 @@ def main() -> None:
         assert next(p for p in stored["mediaPrompts"] if p["text"] == "第十五张的独立原始")["assetId"] == "multi-image-15"
         library.locator(".entry-editor-inline > summary").click()
 
-        assert_action_is_reachable(library, "设为主要媒体")
+        assert_action_is_reachable(library, "设为主图")
         assert_action_is_reachable(library, "此媒体移入回收站")
 
         library.set_viewport_size({"width": 390, "height": 844})
         expect(library.locator(".detail-visual-caption")).to_be_visible()
-        assert_action_is_reachable(library, "设为主要媒体")
+        assert_action_is_reachable(library, "设为主图")
         assert_action_is_reachable(library, "此媒体移入回收站")
 
-        library.get_by_role("button", name="设为主要媒体").click()
+        library.get_by_role("button", name="设为主图").click()
         expect(library.locator(".detail-visual-caption")).to_contain_text("主要媒体")
         state = library.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert state["entries"][0]["primaryMediaId"] == "multi-image-15"

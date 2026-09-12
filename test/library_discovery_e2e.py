@@ -106,15 +106,16 @@ def main() -> None:
             """primary => {
               const primaryRect = primary.getBoundingClientRect();
               const titleRect = primary.querySelector('.detail-body h2').getBoundingClientRect();
-              const navigationRect = primary.querySelector('#detail-navigation').getBoundingClientRect();
+              const navigationRect = document.querySelector('#detail-navigation').getBoundingClientRect();
               return {
                 titleOffset: titleRect.top - primaryRect.top,
-                navigationInsidePrimary: navigationRect.top >= primaryRect.top && navigationRect.bottom <= primaryRect.bottom
+                navigationInDrawer: document.querySelector('#detail-navigation').parentElement.id === 'detail-drawer',
+                navigationCenterY: (navigationRect.top + navigationRect.bottom) / 2
               };
             }"""
         )
         assert detail_geometry["titleOffset"] < 40, detail_geometry
-        assert detail_geometry["navigationInsidePrimary"], detail_geometry
+        assert detail_geometry["navigationInDrawer"], detail_geometry
         expect(library.locator("#detail-prev")).to_be_disabled()
         expect(library.locator("#detail-next")).to_be_enabled()
         next_hit = library.locator("#detail-next").evaluate(
@@ -142,7 +143,9 @@ def main() -> None:
 
         library.locator("#detail-content").hover(position={"x": 40, "y": 200})
         library.mouse.wheel(0, library.locator("#detail-content").evaluate("element => element.scrollHeight"))
-        expect(library.locator("#detail-navigation")).not_to_be_in_viewport()
+        expect(library.locator("#detail-navigation")).to_be_in_viewport()
+        scrolled_center = library.locator("#detail-navigation").evaluate("node => {const r = node.getBoundingClientRect(); return (r.top + r.bottom) / 2}")
+        assert abs(scrolled_center - detail_geometry["navigationCenterY"]) < 1, detail_geometry
         expect(similar).not_to_have_count(24, timeout=10_000)
         incremental_count = similar.count()
         assert 24 < incremental_count <= 60, incremental_count

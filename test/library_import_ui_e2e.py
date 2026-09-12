@@ -184,7 +184,7 @@ def main() -> None:
             expect(duplicate_row).to_contain_text("仍导入")
 
             library.locator("#import-start").click()
-            expect(library.locator("#import-job-title")).to_have_text("导入完成", timeout=8000)
+            expect(library.locator("#import-dialog")).not_to_be_visible(timeout=8000)
             payload = library.evaluate("() => window.__capturedStartImport")
             assert payload["collectionId"] == "collection:fixture", payload
             assert len(payload["stagedAssets"]) == 3, payload
@@ -193,6 +193,10 @@ def main() -> None:
             assert {item["keepDuplicate"] for item in payload["items"]} == {False, True}, payload
             assert payload["options"] == {"autoAnalyze": False}, payload
 
+            expect(library.locator("#feedback")).to_contain_text("导入完成")
+            library.locator("#add-menu > summary").click()
+            library.locator("#add-media").click()
+            library.locator("#import-last-job").click()
             expect(library.locator("#import-undo")).to_be_visible()
             expect(library.locator("#import-view-project")).to_be_visible()
             library.locator("#import-view-project").click()
@@ -214,7 +218,7 @@ def main() -> None:
             expect(library.locator(".detail-visual-gallery.is-document-detail")).to_be_visible()
             expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", library.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries.find(item => item.title === 'new-note.md').id)"))
             expect(library.locator(".markdown-reader")).to_contain_text("END-OF-DOCUMENT")
-            expect(library.locator(".drawer-toolbar.has-document-navigation #detail-navigation")).to_be_visible()
+            expect(library.locator("#detail-drawer > #detail-navigation")).to_be_visible()
             document_toolbar = library.evaluate(
                 """() => {
                   const box = (selector) => {
@@ -336,7 +340,7 @@ def main() -> None:
                 }"""
             )
             library.locator("#import-retry").click()
-            expect(library.locator("#import-job-title")).to_have_text("导入完成", timeout=8000)
+            expect(library.locator("#import-dialog")).not_to_be_visible(timeout=8000)
             retry_jobs = library.evaluate("() => chrome.storage.local.get('importJobs').then(value => value.importJobs.items)")
             assert len(retry_jobs) == 2, retry_jobs
             assert retry_jobs[1]["retryOf"] == "import-job:retry-ui", retry_jobs

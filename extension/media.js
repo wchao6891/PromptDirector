@@ -90,6 +90,7 @@ export function normalizeMediaAsset(value = {}) {
     ...(assetPath ? { assetPath } : {}),
     ...(relativePath ? { relativePath } : {}),
     ...(clean(value.posterAssetId) ? { posterAssetId: clean(value.posterAssetId) } : {}),
+    ...(kind === "document" && Array.isArray(value.extractionWarnings) ? { extractionWarnings: [...new Set(value.extractionWarnings.map(clean).filter(Boolean))] } : {}),
     ...(kind === "document" ? { extractedTextFormat: normalizeExtractedTextFormat(value.extractedTextFormat, format) } : {}),
     ...(usage === "poster" && clean(value.derivedFromAssetId) ? { derivedFromAssetId: clean(value.derivedFromAssetId) } : {}),
     ...(kind === "video" && storageMode === "reference" && reference.url ? { reference } : {}),

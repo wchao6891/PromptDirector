@@ -64,3 +64,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+## Mammoth
+
+Browser DOCX content extraction. BSD-2-Clause licensed. Source: https://github.com/mwilliamson/mammoth.js . Exact version is pinned in package-lock.json; its license is included in vendor/document-ingestion/mammoth-LICENSE. Bundled dependency licenses are included in vendor/document-ingestion/mammoth-THIRD-PARTY-NOTICES; build checks bind these notices to the exact browser runtime. JSZip is used under its MIT license option.

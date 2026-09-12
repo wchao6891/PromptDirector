@@ -1,6 +1,6 @@
 {
   "name": "prompt-case-collector",
-  "version": "1.21.1",
+  "version": "1.22.0",
   "private": false,
   "license": "Apache-2.0",
   "repository": "https://github.com/wchao6891/PromptDirector",
@@ -43,6 +43,7 @@
     "@mozilla/readability": "0.6.0",
     "@noble/hashes": "2.4.0",
     "hls.js": "1.7.2",
+    "mammoth": "1.12.3",
     "pdfjs-dist": "6.2.108",
     "turndown": "7.2.4"
   },

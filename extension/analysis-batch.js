@@ -19,12 +19,14 @@ export const VIDEO_BATCH_CONCURRENCY = 2;
 
 export async function previewAnalysisBatch(entries = [], options = {}) {
   const eligible = [];
-  const mode = ["reanalyze", "rebuild"].includes(options.mode) ? "rebuild" : "incremental";
+  const mode = options.mode === "selected" ? "selected" : ["reanalyze", "rebuild"].includes(options.mode) ? "rebuild" : "incremental";
+  const selected = new Set((options.entryIds ?? []).map(String));
   const profileFingerprint = String(options.profileFingerprint ?? "").trim();
   for (const entry of Array.isArray(entries) ? entries : []) {
+    if (mode === "selected" && !selected.has(String(entry?.id))) continue;
     const { text, assetId, textRevision } = canonicalTextAnalysisInput(entry);
     if (!entry?.id || !text) continue;
-    const reason = mode === "rebuild" ? "explicit_reanalysis" : textAnalysisReason(entry);
+    const reason = mode !== "incremental" ? "explicit_reanalysis" : textAnalysisReason(entry);
     if (!reason) continue;
     eligible.push({
       entryId: entry.id,
@@ -323,7 +325,7 @@ export function normalizeAnalysisBatchJob(value) {
   return {
     version: ANALYSIS_BATCH_VERSION,
     kind: ["vision", "video"].includes(value.kind) ? value.kind : "text_tags",
-    mode: ["reanalyze", "rebuild"].includes(value.mode) ? "rebuild" : "incremental",
+    mode: value.mode === "selected" ? "selected" : ["reanalyze", "rebuild"].includes(value.mode) ? "rebuild" : "incremental",
     id: String(value.id),
     status: jobStatuses.has(value.status) ? value.status : "paused",
     createdAt: String(value.createdAt ?? ""),

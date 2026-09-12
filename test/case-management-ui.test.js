@@ -27,7 +27,14 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
   assert.match(bar, /id="selection-selected-actions"[^>]*hidden/);
   assert.match(bar, /id="selection-label-menu"[\s\S]*id="selection-label-input"[\s\S]*id="selection-add-labels"/);
   assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-project-target"[\s\S]*id="selection-new-project"/);
-  assert.match(bar, /id="selection-more-menu"[\s\S]*id="selection-combine"[\s\S]*id="selection-analyze"[\s\S]*id="selection-trash"/);
+  assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-trash"[\s\S]*id="selection-label-menu"[\s\S]*id="selection-more-menu"/);
+  const more = bar.slice(bar.indexOf('id="selection-more-menu"'), bar.indexOf('id="selection-clear"'));
+  assert.match(more, /id="share-export" class="button-secondary"[\s\S]*id="selection-combine"[\s\S]*id="selection-analyze"/);
+  assert.doesNotMatch(more, /id="selection-trash"|id="selection-project-menu"/);
+  assert.doesNotMatch(css, /\.selection-action-label\s*\{[^}]*clip:/);
+  assert.match(css, /\.gallery-heading\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--library-topbar-height\)/);
+  assert.match(source, /libraryToolbarObserver\.observe\(libraryTopbar\)/);
+  assert.doesNotMatch(css, /\.share-bar\s*\{[^}]*position:\s*fixed/);
 
   const selectAll = source.slice(source.indexOf("function selectAllFilteredCases"), source.indexOf("function clearSelectedCases"));
   assert.match(selectAll, /visibleEntries\.map\(\(entry\) => entry\.id\)/);

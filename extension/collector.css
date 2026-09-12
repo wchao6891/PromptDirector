@@ -222,7 +222,7 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
 .page-capture-article-media.media-excluded, .page-capture-article-resource.media-excluded { opacity: .4; text-decoration: line-through; }
 .page-capture-article-media.media-pending, .page-capture-article-resource.media-pending { outline: 1px dashed var(--selection-edge); }
 .page-capture-actions { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 10px 0 14px; background: var(--paper); border-top: 1px solid var(--line); }
-#page-capture-save-summary { flex-basis: 100%; }
+#page-capture-organize { color: var(--muted); }
 #page-capture-save { flex: 1; }
 #page-capture-save-text-only { font-size: 11px; padding-inline: 8px; }
 .page-capture-media-viewer { width: min(92vw, 720px); max-width: 720px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; color: var(--ink); background: var(--card); }

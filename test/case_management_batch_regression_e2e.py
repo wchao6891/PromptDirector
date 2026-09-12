@@ -190,6 +190,8 @@ def main() -> None:
         assert organizer_members(library) == before_failure
         library.evaluate("() => { chrome.runtime.sendMessage = window.__caseManagementSendMessage; }")
 
+        if not library.locator("#selection-clear").is_visible():
+            library.locator("#selection-more-menu > summary").click()
         library.locator("#selection-clear").click()
         first = library.locator("#case-list > .case-card").first
         first_box = first.bounding_box()

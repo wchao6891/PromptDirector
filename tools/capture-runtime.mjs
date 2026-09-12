@@ -19,7 +19,12 @@ const license = await readFile(new URL("node_modules/hls.js/LICENSE", root), "ut
 const noticePath = new URL("THIRD_PARTY_NOTICES.md", root);
 const notices = await readFile(noticePath, "utf8");
 const marker = "\n## hls.js\n";
-const expected = `${notices.split(marker)[0]}${marker}\nBundled local video playback runtime. Exact version: package-lock.json. Source: https://github.com/video-dev/hls.js\n\n${license.trim()}\n`;
+const section = `${marker}\nBundled local video playback runtime. Exact version: package-lock.json. Source: https://github.com/video-dev/hls.js\n\n${license.trim()}\n`;
+const sectionStart = notices.indexOf(marker);
+const sectionEnd = sectionStart < 0 ? -1 : notices.indexOf("\n## ", sectionStart + marker.length);
+const expected = sectionStart < 0
+  ? `${notices.trimEnd()}\n${section}`
+  : `${notices.slice(0, sectionStart)}${section}${sectionEnd < 0 ? "" : notices.slice(sectionEnd)}`;
 if (check && notices !== expected) throw new Error("hls.js license differs");
 if (!check) await writeFile(noticePath, expected);
 console.log("Capture runtimes and license match locked sources");

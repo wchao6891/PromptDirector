@@ -10,6 +10,13 @@ from pathlib import Path
 
 TEST_DIR = Path(__file__).resolve().parent
 SCRIPTS = [
+    "analysis_diagnostics_e2e.py",
+    "analysis_failure_commit_e2e.py",
+    "library_quick_actions_e2e.py",
+    "text_tagging_maintenance_e2e.py",
+    "local_document_import_e2e.py",
+    "page_capture_batch_scale_e2e.py",
+    "page_capture_batch_scroll_e2e.py",
     "agent_library_e2e.py",
     "e2e_worker_attachment_e2e.py",
     "frontend_compact_surfaces_e2e.py",

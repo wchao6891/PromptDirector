@@ -141,6 +141,10 @@ function appendInline(parent, sourceValue, options) {
 function appendInlineToken(parent, token, options) {
   const media = token.match(/^(!?)\[([^\]]*)\]\(([^)]+)\)$/);
   if (media) {
+    if (media[1] && /^document-image:\d+$/u.test(media[3]) && options.loadLocalImage) {
+      parent.append(localDocumentImage(media[3], media[2], options));
+      return;
+    }
     const url = safeRemoteUrl(media[3]);
     if (media[1]) parent.append(remoteImage(url, media[2], options));
     else {
@@ -160,6 +164,23 @@ function appendInlineToken(parent, token, options) {
       : token.startsWith("**") || token.startsWith("__") ? "strong" : "em");
   element.textContent = token.replace(/^(?:`|~~|\*\*|__|\*|_)/, "").replace(/(?:`|~~|\*\*|__|\*|_)$/, "");
   parent.append(element);
+}
+
+function localDocumentImage(reference, alt, options) {
+  const figure = document.createElement("span");
+  figure.className = "markdown-remote-image";
+  figure.textContent = alt || "正在读取文档图片";
+  Promise.resolve().then(() => options.loadLocalImage(reference)).then(url => {
+    if (!/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[A-Za-z0-9+/=]+$/u.test(url || "")) {
+      throw new Error("文档图片无法预览，请下载原文档查看");
+    }
+    const image = document.createElement("img");
+    image.src = url;
+    image.alt = alt;
+    image.loading = "lazy";
+    figure.replaceChildren(image);
+  }).catch(error => { figure.textContent = error.message || "文档图片读取失败"; });
+  return figure;
 }
 
 function remoteImage(url, alt, options) {
@@ -213,11 +234,11 @@ function listItem(value) {
 
 function isTableHeader(lines, index) {
   return index + 1 < lines.length && lines[index].includes("|") &&
-    /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[index + 1]);
+    /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[index + 1]);
 }
 
 function tableCells(value) {
-  return String(value).trim().replace(/^\||\|$/g, "").split("|").map((item) => item.trim());
+  return String(value).trim().replace(/^\||\|$/g, "").split("|").map((item) => item.trim().replace(/&#124;/g, "|"));
 }
 
 function safeRemoteUrl(value) {

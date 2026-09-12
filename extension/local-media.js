@@ -156,10 +156,17 @@ async function prepareLocalMediaValue(file, assetId, options) {
     reviewStatus: "verified"
   };
   if (format.kind === "document") {
-    const document = await ingestDetectedDocument(blob, definition, format.extension, options);
+    let document;
+    try {
+      document = await ingestDetectedDocument(blob, definition, format.extension, options);
+    } catch (error) {
+      if (format.extension !== "docx") throw error;
+      document = { contentText: "", contentFormat: "plain", sourceFormat: format.extension,
+        warnings: [`原件已保存；DOCX 正文提取失败：${error.message || "文档无法解析"}`] };
+    }
     return {
       blob,
-      asset: { ...base, extractedTextFormat: document.contentFormat },
+      asset: { ...base, extractedTextFormat: document.contentFormat, extractionWarnings: document.warnings },
       ...document
     };
   }
@@ -307,6 +314,9 @@ function posterAsset(id, derivedFromAssetId, blob, dimensions, capturedAt, sourc
 }
 
 async function ingestDetectedDocument(blob, definition, extension, options) {
+  if (definition?.preserveOnly) {
+    return { contentText: "", contentFormat: "plain", sourceFormat: extension, warnings: ["原件已保存；此格式暂不提取正文，可下载原文件使用"] };
+  }
   if (!definition?.plainText) {
     return ingestLocalDocument(blob, {
       extension,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,7 +7,17 @@ const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const targetRoot = join(projectRoot, "extension", "vendor", "document-ingestion");
 const checkOnly = process.argv.includes("--check");
 const rtfDist = join(projectRoot, "node_modules", "@jonahschulte", "rtf-toolkit", "dist");
+const mammothNotices = join(projectRoot, "tools", "licenses", "mammoth-THIRD-PARTY-NOTICES");
+const mammothRuntime = await readFile(join(projectRoot, "node_modules", "mammoth", "mammoth.browser.js"));
+const notices = await readFile(mammothNotices, "utf8");
+// A new upstream browser bundle requires reviewing its embedded dependencies.
+if (!notices.includes(`Runtime SHA-256: ${createHash("sha256").update(mammothRuntime).digest("hex")}`)) {
+  throw new Error("Mammoth browser dependency notices must be updated for the installed runtime");
+}
 const sources = [
+  [mammothNotices, join(targetRoot, "mammoth-THIRD-PARTY-NOTICES")],
+  [join(projectRoot, "node_modules", "mammoth", "mammoth.browser.js"), join(targetRoot, "mammoth.browser.js")],
+  [join(projectRoot, "node_modules", "mammoth", "LICENSE"), join(targetRoot, "mammoth-LICENSE")],
   [join(rtfDist, "parser", "parser.js"), join(targetRoot, "rtf-toolkit", "parser", "parser.js")],
   [join(rtfDist, "parser", "tokenizer.js"), join(targetRoot, "rtf-toolkit", "parser", "tokenizer.js")],
   [join(rtfDist, "renderers", "html.js"), join(targetRoot, "rtf-toolkit", "renderers", "html.js")],
