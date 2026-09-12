@@ -178,6 +178,7 @@ try {
     creativeStateRefreshPending = false;
     await refreshCreativeResultState();
   }
+  renderSendState();
 } catch (error) {
   composerInitializationComplete = true;
   composerFeedback(error.message || t("无法读取创作资料"), true);
@@ -3308,7 +3309,10 @@ async function savePromptVersion(sessionId, version, button) {
 }
 
 function renderSendState() {
-  if (!composerSession) return;
+  const ready = composerInitializationComplete && Boolean(composerSession);
+  elements.composerInstruction.disabled = !ready;
+  elements.composerAction.disabled = !ready;
+  if (!ready) return;
   renderComposerAiProfile();
   const prompts = composerSession.referenceSnapshots.filter((item) => item.referenceKind === "prompt").length;
   const descriptions = composerSession.referenceSnapshots.filter((item) => item.referenceKind === "vision").length;
