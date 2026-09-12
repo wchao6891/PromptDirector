@@ -31,8 +31,8 @@ def main():
    expect(panel.locator('.page-capture-item')).to_have_count(4,timeout=30000)
    expect(panel.locator('#page-capture-mode')).to_have_value('article')
    expect(panel.locator('#page-capture-save-mode')).to_have_value('multiple')
-   expect(panel.locator('#page-capture-list-summary')).to_contain_text('3 个案例')
-   expect(panel.locator('#page-capture-list-summary')).to_contain_text('1 组')
+   expect(panel.locator('.page-capture-item.confirmed')).to_have_count(3)
+   expect(panel.locator('#page-capture-list-summary')).to_contain_text('1 个案例待复核')
    panel.screenshot(path=str(ext/'article-cases-preview.png'),full_page=True)
    # Whole article remains available via the same mode control.
    source.bring_to_front()

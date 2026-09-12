@@ -21,7 +21,7 @@ test("compound details expose direct primary-case and cover-image actions", () =
   assert.match(detail, /设为主要案例/);
   assert.match(detail, /memberEntryIds:\s*\[member\.id,/);
   assert.match(detail, /coverVisualId:\s*primaryVisual\(member\)\?\.id/);
-  assert.match(gallery, /设为组合主图/);
+  assert.match(gallery, /设为主图/);
   assert.match(gallery, /compoundCaseId:\s*entry\.id/);
   assert.match(gallery, /coverVisualId:\s*asset\.id/);
   assert.doesNotMatch(organizer, /labeledSelect\("封面"/);

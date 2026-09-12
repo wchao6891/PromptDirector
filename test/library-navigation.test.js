@@ -12,7 +12,8 @@ test("top navigation keeps search-adjacent actions focused on adding, creating, 
   assert.match(actions, /id="start-compose"/);
   assert.match(actions, /id="open-settings"[^>]*aria-label="设置"[^>]*title="设置"/);
   assert.doesNotMatch(actions, /id="package-menu"|id="select-cases"|id="open-batch-tools"|id="open-import-job"|id="open-about"/);
-  assert.match(html.slice(html.indexOf('id="gallery-heading"'), html.indexOf('id="case-list"')), /id="select-cases"[^>]*aria-label="选择案例"[^>]*title="选择案例"/);
+  assert.match(html.slice(html.indexOf('id="gallery-heading"'), html.indexOf('id="case-list"')), /id="select-cases"[^>]*aria-label="管理案例"[^>]*title="管理案例"/);
+  assert.match(html, /class="button-secondary gallery-select-button"[\s\S]*data-i18n="管理">管理/);
   assert.doesNotMatch(actions, /id="share-cases"|id="combine-cases"|id="manage-facets"/);
   assert.match(html, /<aside[^>]*id="filter-sidebar"[\s\S]*id="manage-facets"/);
   const workspace = html.slice(html.indexOf('<nav class="workspace-navigation"'), html.indexOf('</nav>', html.indexOf('<nav class="workspace-navigation"')));

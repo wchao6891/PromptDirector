@@ -111,7 +111,7 @@ def main() -> None:
         expect(library.locator(".detail-quick-organization")).not_to_contain_text("不用预先创建")
         expect(library.locator(".detail-quick-organization")).not_to_contain_text("任意输入")
         expect(library.locator(".detail-quick-organization .detail-delete-action")).to_have_count(0)
-        expect(library.locator(".metadata-section .detail-delete-action")).to_contain_text("移入回收站")
+        expect(library.locator(".metadata-section .detail-delete-action")).to_contain_text("删除案例")
         expect(library.locator(".metadata-actions > *")).to_have_count(2)
         expect(library.locator(".detail-content > .detail-footer-actions")).to_have_count(0)
 
@@ -197,7 +197,7 @@ def main() -> None:
         library.locator("#detail-close").click()
         library.locator(f'.case-card[data-entry-id="{no_source_entry["id"]}"]').click()
         expect(library.locator(".metadata-section")).to_have_count(0)
-        expect(library.locator(".detail-body > .detail-footer-actions .detail-delete-action")).to_contain_text("移入回收站")
+        expect(library.locator(".detail-body > .detail-footer-actions .detail-delete-action")).to_contain_text("删除案例")
         expect(library.locator(".detail-body > .detail-footer-actions")).to_be_visible()
 
         print({

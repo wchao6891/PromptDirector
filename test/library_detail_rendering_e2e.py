@@ -52,6 +52,9 @@ def switch_case_without_stale_frame(page, selector: str, expected_id: str, stale
           window.__detailIdbDelayMs = 180;
           document.querySelector(selector).click();
           await Promise.resolve();
+          if (document.querySelector('#detail-content .detail-loading')?.textContent?.trim()) {
+            throw new Error('案例切换时加载占位出现临时标题');
+          }
           const immediate = {
             loadingId: document.querySelector('#detail-drawer').dataset.loadingEntryId || '',
             title: document.querySelector('#detail-content .detail-title')?.textContent?.trim() || '',
@@ -61,6 +64,9 @@ def switch_case_without_stale_frame(page, selector: str, expected_id: str, stale
           await new Promise((resolve, reject) => {
             let frames = 0;
             const tick = () => {
+              if (document.querySelector('#detail-content .detail-loading')?.textContent?.trim()) {
+                return reject(new Error('案例切换期间加载占位闪出临时标题'));
+              }
               const drawer = document.querySelector('#detail-drawer');
               const title = document.querySelector('#detail-content .detail-title')?.textContent?.trim() || '';
               const imageVisible = Boolean(document.querySelector('#detail-content .detail-image'));

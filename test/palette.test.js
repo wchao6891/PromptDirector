@@ -66,3 +66,11 @@ test("palette v2 keeps a usable swatch for intentional monochrome images", () =>
     assert.deepEqual(extractPalette({ data, width, height }), [value ? "#F8F8F8" : "#080808"]);
   }
 });
+
+test("only current nonempty palettes count as complete", async () => {
+  const { hasCurrentPalette, PALETTE_VERSION } = await import("../extension/palette.js");
+  assert.equal(hasCurrentPalette({ version: PALETTE_VERSION, colors: ["#223344"] }), true);
+  assert.equal(hasCurrentPalette({ version: PALETTE_VERSION, colors: [] }), false);
+  assert.equal(hasCurrentPalette({ version: PALETTE_VERSION - 1, colors: ["#223344"] }), false);
+  assert.equal(hasCurrentPalette(null), false);
+});

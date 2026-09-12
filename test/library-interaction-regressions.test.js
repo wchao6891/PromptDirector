@@ -106,7 +106,8 @@ test("analysis progress reports failures without exposing incomplete-result word
     library.indexOf("function renderAnalysisBatch"),
     library.indexOf("function analysisFailureSummary")
   );
-  assert.doesNotMatch(renderAnalysisBatch, /待补全|重试失败\/待补全|部分完成/);
+  assert.doesNotMatch(renderAnalysisBatch, /重试失败\/待补全|部分完成/);
+  assert.match(renderAnalysisBatch, /失败 \{failed\}/);
   assert.doesNotMatch(renderAnalysisBatch, /\$\{job\.counts\.partial \|\| 0\} partial/);
 });
 

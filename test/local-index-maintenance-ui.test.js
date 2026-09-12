@@ -11,7 +11,7 @@ const [html, source, background] = await Promise.all([
 test("local index maintenance groups its original controls with the title and has no decorative progress bar", () => {
   const card = html.slice(html.indexOf('<div class="batch-card local-index-card">'), html.indexOf('id="legacy-candidates"'));
   assert.match(card, /资料索引自动补全/);
-  assert.match(card, /class="task-heading"><h3[^>]*>资料索引自动补全<\/h3><div class="batch-actions">/);
+  assert.match(card, /class="task-heading"><div class="task-copy"><h3[^>]*>资料索引自动补全<\/h3><div id="reanalyze-preview"/);
   assert.match(card, /id="preview-reanalyze"[^>]*>检查缺失项/);
   assert.match(card, /id="apply-reanalyze"[^>]*hidden[^>]*>开始补全/);
   assert.doesNotMatch(card, /<progress|maintenance-progress/);

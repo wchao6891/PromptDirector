@@ -1,3 +1,4 @@
+import { waitForDownload } from "./download-completion.js";
 import { splitArticleCases } from "./article-case-groups.js";
 import { createAgentConnection } from "./agent-connection.js";
 import { createAgentTasks } from "./agent-tasks.js";
@@ -266,7 +267,7 @@ import {
 } from "./trash.js";
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 import { CHROME_WEB_STORE_URL } from "./product-links.js";
-import { PALETTE_VERSION } from "./palette.js";
+import { PALETTE_VERSION, hasCurrentPalette } from "./palette.js";
 import {
   COMPOSER_METHOD_VERSION,
   appendDiagnosticEvent,
@@ -477,7 +478,6 @@ const SYNCED_STORAGE_KEYS = new Set([
   STORAGE_KEYS.creativeSkills
 ]);
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
-const DOWNLOAD_TIMEOUT_MS = 30_000;
 let writeQueue = Promise.resolve();
 let captureWriteQueue = Promise.resolve();
 let creatingOffscreenDocument = null;
@@ -1105,9 +1105,9 @@ async function handleMessage(message, interaction = {}) {
     case "APPLY_ENTRY_ANALYSIS_RESULT":
       return enqueue(async () => applyEntryAnalysisResult(message));
     case "PREVIEW_ANALYSIS_BATCH":
-      return enqueue(async () => previewDeepSeekBatch(message.outputLocale, message.mode));
+      return enqueue(async () => previewDeepSeekBatch(message.outputLocale, message.mode, message.entryIds));
     case "CREATE_ANALYSIS_BATCH":
-      return enqueue(async () => createDeepSeekBatch(message.outputLocale, message.mode));
+      return enqueue(async () => createDeepSeekBatch(message.outputLocale, message.mode, message.entryIds, message.expectedEntryIds));
     case "CLAIM_ANALYSIS_ITEMS":
       return enqueue(async () => claimDeepSeekBatchItems(message.jobId));
     case "GET_ANALYSIS_BATCH_STATUS":
@@ -1257,9 +1257,12 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
   const sessionId = crypto.randomUUID();
   const listMode = mode === "list";
   const targetCount = listMode
-    ? Math.min(PAGE_CAPTURE_LIMITS.maxCandidates, Math.max(1, Math.trunc(Number(targetCountValue) || 1)))
+    ? Number(targetCountValue)
     : 0;
-  activePageCapture = { sessionId, tabId: tab.id, cancelled: false };
+  if (listMode && (!Number.isSafeInteger(targetCount) || targetCount < 1)) {
+    return { ok: false, message: "请输入正整数目标案例数" };
+  }
+  activePageCapture = { sessionId, tabId: tab.id, cancelled: false, maxCandidates: listMode ? targetCount : PAGE_CAPTURE_LIMITS.maxCandidates };
   await chrome.runtime.sendMessage({ type: "PAGE_CAPTURE_CHANGED", sessionId, requestId, phase: mode === "whole" || listMode ? "scanning" : "starting" }).catch(() => undefined);
   const originalUrl = tab.url;
   let result = null;
@@ -1275,8 +1278,10 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
       const candidates = new Map();
       let currentTab = tab;
       let adapter = "";
+      const visitedUrls = new Set();
       for (let pageIndex = 0; pageIndex < targetCount && !activePageCapture?.cancelled; pageIndex += 1) {
-        const snapshot = await collectPageCaptureTab(currentTab, { sessionId, mode: "whole", maxCandidates: targetCount });
+        visitedUrls.add(currentTab.url);
+        const snapshot = await collectPageCaptureTab(currentTab, { sessionId, mode: "whole", maxCandidates: targetCount, listMode: true });
         if (!adapter) adapter = snapshot.adapter;
         else if (snapshot.adapter !== adapter) {
           stopReason = "layout-changed";
@@ -1301,7 +1306,7 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
           stopReason = "cancelled";
           break;
         }
-        if (!nextUrl) {
+        if (!nextUrl || visitedUrls.has(nextUrl) || candidates.size === before) {
           stopReason = candidates.size === before ? "no-new-items" : "no-next-page";
           break;
         }
@@ -1378,7 +1383,7 @@ async function collectPageCaptureTab(tab, options) {
     });
     feishuDocument = documentResult?.result || null;
   }
-  let siteData = await readPageCaptureSiteData(tab);
+  let siteData = await readPageCaptureSiteData(tab, { maxCandidates: options.maxCandidates });
   if (activePageCapture?.sessionId === options.sessionId && activePageCapture.cancelled) return { candidates: [] };
   const adapter = PAGE_CAPTURE_ADAPTERS.find((item) => item.id === siteData?.adapter);
   let downloads = { items: [], failures: 0 };
@@ -1412,6 +1417,7 @@ async function collectPageCaptureTab(tab, options) {
       feishuDocument,
       maxMedia: Math.max(PAGE_CAPTURE_LIMITS.maxMediaPerCandidate, feishuDocument?.mediaCount || 0),
       maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
+      listMode: options.listMode === true,
       mediaTimeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
       maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
       editedRegion: options.editedRegion || null,
@@ -1422,7 +1428,7 @@ async function collectPageCaptureTab(tab, options) {
   });
   let snapshot = injected?.result || {};
   if (siteData?.pageKind === "feed") {
-    siteData = await readPageCaptureSiteData(tab, { installObserver: false }) || siteData;
+    siteData = await readPageCaptureSiteData(tab, { installObserver: false, maxCandidates: options.maxCandidates }) || siteData;
     snapshot = { ...snapshot, candidates: siteData.candidates, siteStatus: siteData.completeness };
   }
   snapshot = await resolvePageCaptureVideoFrames(snapshot, tab.id, chrome.scripting);
@@ -1467,7 +1473,7 @@ async function waitForPageCaptureTab(tabId, expectedUrl) {
   });
 }
 
-async function readPageCaptureSiteData(tab, { installObserver = true } = {}) {
+async function readPageCaptureSiteData(tab, { installObserver = true, maxCandidates = PAGE_CAPTURE_LIMITS.maxCandidates } = {}) {
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) return null;
   try {
     if (installObserver) {
@@ -1476,7 +1482,7 @@ async function readPageCaptureSiteData(tab, { installObserver = true } = {}) {
         world: "MAIN",
         func: installPageCaptureSiteObserver,
         args: [{
-          maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates,
+          maxCandidates,
           maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate
         }]
       });
@@ -1486,7 +1492,7 @@ async function readPageCaptureSiteData(tab, { installObserver = true } = {}) {
       world: "MAIN",
       func: /(^|\.)liblib\.tv$/u.test(new URL(tab.url).hostname) ? collectLibTvPublicPayload : collectPageCaptureSitePayload,
       args: [{
-        maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates,
+        maxCandidates,
         maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
         maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes
       }]
@@ -1560,7 +1566,7 @@ async function capturePageCaptureViewportFallbacks(message, sender) {
   if (!activePageCapture || message?.sessionId !== activePageCapture.sessionId || sender?.tab?.id !== activePageCapture.tabId) {
     return { ok: false, message: "整页扫描会话已经结束" };
   }
-  const selections = (Array.isArray(message?.selections) ? message.selections : []).slice(0, PAGE_CAPTURE_LIMITS.maxCandidates);
+  const selections = (Array.isArray(message?.selections) ? message.selections : []).slice(0, activePageCapture.maxCandidates);
   if (!selections.length || !Number.isInteger(sender.tab.windowId)) return { ok: true, dataUrls: [] };
   const [activeTab] = await chrome.tabs.query({ active: true, windowId: sender.tab.windowId });
   if (activeTab?.id !== sender.tab.id) return { ok: false, message: "扫描页面已不在前台" };
@@ -6273,7 +6279,7 @@ async function applyEntryAnalysisResult(message) {
   };
 }
 
-async function previewDeepSeekBatch(outputLocale, mode = "incremental") {
+async function previewDeepSeekBatch(outputLocale, mode = "incremental", entryIds = []) {
   const state = await readState();
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.batchJob,
@@ -6297,12 +6303,13 @@ async function previewDeepSeekBatch(outputLocale, mode = "incremental") {
     analysisModel: settings.activeProvider === "compatible" ? settings.compatible.model : settings.analysisModel,
     profileFingerprint,
     mode,
+    entryIds: Array.isArray(entryIds) ? entryIds : [],
     fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length
   });
   return { ok: true, message: "批量分析预览已生成", preview };
 }
 
-async function createDeepSeekBatch(outputLocale, mode = "incremental") {
+async function createDeepSeekBatch(outputLocale, mode = "incremental", entryIds = [], expectedEntryIds) {
   const state = await readState();
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.batchJob,
@@ -6334,12 +6341,19 @@ async function createDeepSeekBatch(outputLocale, mode = "incremental") {
     outputLocale: locale,
     profileFingerprint,
     mode,
+    entryIds: Array.isArray(entryIds) ? entryIds : [],
     catalogRevision: state.facetCatalog.revision,
     fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length,
     concurrency: configuration.assignments.textTags.concurrency,
     providerId: configuration.assignments.textTags.providerId,
     outputProtocol: "json_object"
   });
+  if (Array.isArray(expectedEntryIds)) {
+    const expected = new Set(expectedEntryIds.map(String));
+    if (job.items.length !== expected.size || job.items.some((item) => !expected.has(item.entryId))) {
+      return { ok: false, previewChanged: true, message: "待分析案例已变化，请重新检查后确认费用" };
+    }
+  }
   const changes = { [STORAGE_KEYS.batchJob]: job };
   if (job.mode === "rebuild") {
     changes[STORAGE_KEYS.analysisRebuildStaging] = { version: 1, jobId: job.id, results: {} };
@@ -7613,8 +7627,8 @@ function libraryMaintenanceTargets(entriesValue, derivedMetadata) {
       if (asset.kind !== "image" || asset.usage === "poster" || seenAssets.has(asset.id)) continue;
       seenAssets.add(asset.id);
       const cachedPalette = metadata.get(asset.id)?.palette;
-      const inlineCurrent = asset.palette?.colors?.length && asset.palette.version === PALETTE_VERSION;
-      const cachedCurrent = cachedPalette?.colors?.length && cachedPalette.version === PALETTE_VERSION;
+      const inlineCurrent = hasCurrentPalette(asset.palette);
+      const cachedCurrent = hasCurrentPalette(cachedPalette);
       if (!inlineCurrent && !cachedCurrent) paletteAssetIds.push(asset.id);
     }
   }
@@ -7641,6 +7655,8 @@ async function runLibraryMaintenanceSlice() {
       return;
     }
     job = await enqueue(() => completeMaintenanceClassifications(job));
+    const state = await readState();
+    const assets = new Map(state.entries.flatMap(entryMediaAssets).map((asset) => [asset.id, asset]));
     const started = performance.now();
     let processedInSlice = 0;
     while (job.status === "running" && nextLibraryMaintenanceItem(job)?.kind === "palette" &&
@@ -7649,7 +7665,7 @@ async function runLibraryMaintenanceSlice() {
       let result;
       try {
         const cached = await getDerivedMetadata(item.id);
-        if (cached?.palette?.version === PALETTE_VERSION && cached.palette.colors?.length) result = { ok: true };
+        if (hasCurrentPalette(cached?.palette) || hasCurrentPalette(assets.get(item.id)?.palette)) result = { ok: true };
         else {
           await ensureOffscreenDocument();
           const analyzed = await chrome.runtime.sendMessage({
@@ -8961,41 +8977,6 @@ async function recoverCreativeJobs() {
       [STORAGE_KEYS.creativeJobs]: interrupted,
       [STORAGE_KEYS.composerSessions]: upsertSessionList(sessions, session)
     });
-  });
-}
-
-function waitForDownload(downloadId) {
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(
-      () => finish(new Error("本地文件写入超时")),
-      DOWNLOAD_TIMEOUT_MS
-    );
-
-    const onChanged = (delta) => {
-      if (delta.id !== downloadId || !delta.state) return;
-      if (delta.state.current === "complete") finish();
-      if (delta.state.current === "interrupted") {
-        finish(new Error(delta.error?.current || "本地文件写入被中断"));
-      }
-    };
-
-    const finish = (error) => {
-      clearTimeout(timeoutId);
-      chrome.downloads.onChanged.removeListener(onChanged);
-      if (error) reject(error);
-      else resolve();
-    };
-
-    chrome.downloads.onChanged.addListener(onChanged);
-    chrome.downloads
-      .search({ id: downloadId })
-      .then(([item]) => {
-        if (item?.state === "complete") finish();
-        if (item?.state === "interrupted") {
-          finish(new Error(item.error || "本地文件写入被中断"));
-        }
-      })
-      .catch(finish);
   });
 }
 

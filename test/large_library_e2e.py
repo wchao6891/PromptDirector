@@ -3,14 +3,12 @@ from __future__ import annotations
 import json
 import tempfile
 import time
-from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
-from e2e_support import launch_context
+from e2e_support import EXTENSION_DIR, launch_context
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
 
 
 def main() -> None:
@@ -241,6 +239,8 @@ def main() -> None:
                 assert selection_mobile["barLeft"] >= 0 and selection_mobile["barRight"] <= selection_mobile["viewport"], selection_mobile
                 assert selection_mobile["overflow"] is False, selection_mobile
                 library.set_viewport_size({"width": 1666, "height": 900})
+                if not library.locator("#selection-clear").is_visible():
+                    library.locator("#selection-more-menu > summary").click()
                 library.locator("#selection-clear").click()
                 assert library.locator("#share-count").inner_text() == "已选 0"
                 library.locator("#share-cancel").click()

@@ -156,6 +156,7 @@ export function libraryMaintenanceSummary(value, nowValue = Date.now()) {
     remaining,
     succeeded: job.succeeded,
     failed: job.failures.length,
+    failures: job.failures,
     itemsPerSecond,
     estimatedSeconds: itemsPerSecond ? remaining / itemsPerSecond : 0,
     updatedAt: job.updatedAt

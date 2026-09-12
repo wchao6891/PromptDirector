@@ -155,6 +155,7 @@ export function stagedAssetMediaRecord(value, options = {}) {
     ...(staged.durationMs ? { durationMs: staged.durationMs } : {}),
     ...(staged.playbackCapability ? { playbackCapability: staged.playbackCapability } : {}),
     ...(staged.kind === "document" && staged.contentFormat ? { extractedTextFormat: staged.contentFormat } : {}),
+    ...(staged.kind === "document" && staged.warnings?.length ? { extractionWarnings: staged.warnings } : {}),
     ...(staged.posterAssetId ? { posterAssetId: staged.posterAssetId } : {})
   };
 }

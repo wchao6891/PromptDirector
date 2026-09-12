@@ -235,7 +235,7 @@ test("startup normalization never rewrites an unchanged creative job from a stal
 
 test("startup recovery re-reads and commits interrupted jobs inside the shared write queue", () => {
   const start = background.indexOf("async function recoverCreativeJobs()");
-  const end = background.indexOf("function waitForDownload", start);
+  const end = background.indexOf("async function showResultToast", start);
   const recovery = background.slice(start, end);
 
   assert.match(recovery, /await enqueue\(async \(\) => \{/);

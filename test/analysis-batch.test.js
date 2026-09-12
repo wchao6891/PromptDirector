@@ -805,3 +805,19 @@ test("legacy partial vision items migrate to failed so the UI can retry them", (
     failed: 1
   });
 });
+
+test("selected text tagging retags unchanged selections, skips empty text, and never becomes a catalog rebuild", async () => {
+  const entries = [
+    { id: "selected", text: "same", analysisMeta: { textRevision: 1 }, facetAssignments: [{ source: "deepseek_text", nodeId: "old" }] },
+    { id: "outside", text: "needs tags" },
+    { id: "empty", text: "" }
+  ];
+  assert.deepEqual((await previewAnalysisBatch(entries)).entries.map(item => item.entryId), ["outside"]);
+  const job = await createAnalysisBatchJob(entries, { mode: "selected", entryIds: ["selected", "empty"] });
+  assert.deepEqual(job.items.map(item => item.entryId), ["selected"]);
+  assert.equal(normalizeAnalysisBatchJob(job).mode, "selected");
+  assert.equal((await previewAnalysisBatch(entries, { mode: "selected", entryIds: [] })).caseCount, 0);
+  const claimed = claimAnalysisItems(job);
+  const failed = failAnalysisItem(claimed.job, "selected", claimed.claims[0].claimId, { message: "test failure", status: 422 });
+  assert.deepEqual(retryFailedAnalysisItems(failed).items.map(item => [item.entryId, item.status]), [["selected", "pending"]]);
+});

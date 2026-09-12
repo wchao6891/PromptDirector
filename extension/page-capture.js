@@ -797,7 +797,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: roots.length });
       for (const [index, root] of roots.entries()) {
         const candidate = candidateForRoot(root, index, {
-          adapter, metadata, structured, article: null, siteData: null, canonicalUrl, pageType, maxMedia
+          adapter, metadata, structured, article: null, siteData: null, canonicalUrl,
+          pageType: options.listMode ? "gallery" : pageType, maxMedia
         });
         if (candidate) current.push(candidate);
       }
@@ -810,6 +811,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       for (const candidate of current) {
         if (accumulated.has(candidate.id) || accumulated.size < maxCandidates) accumulated.set(candidate.id, candidate);
       }
+      return accumulated.size;
     };
     await collectVisibleWithFallbacks();
     if (wholePage || documentRoot) await scanLoadedPage(collectVisibleWithFallbacks, contentRoot);
@@ -841,7 +843,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         })
       : [];
     if (regionCandidates.length) await attachViewportFallbacks(regionCandidates);
-    const candidates = capturedCards.length > 1 && ["feed", "gallery"].includes(pageType)
+    const candidates = capturedCards.length > 1 && (options.listMode || ["feed", "gallery"].includes(pageType))
       ? capturedCards.slice(0, maxCandidates)
       : regionCandidates.length ? regionCandidates
         : bodyCandidate ? [bodyCandidate] : capturedCards.slice(0, maxCandidates);
@@ -866,6 +868,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   async function scanLoadedPage(collectVisible, contentHint = null) {
     const maxSteps = positiveInteger(options.maxScrollSteps, 30);
+    let targetReached = false;
     const feedRoot = options.siteData?.adapter === "jimeng" ? document.querySelector?.('[aria-label="Explore content"]') : null;
     let scrollRoot = null;
     const anchors = feedRoot ? [feedRoot] : contentHint?.isConnected ? [contentHint]
@@ -897,7 +900,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         await waitForVisibleMedia();
         await collectVisible();
       }
-      for (let step = 0; step < maxSteps && stableRounds < 3 && !cancelled; step += 1) {
+      for (let step = 0; (options.listMode || step < maxSteps) && stableRounds < 3 && !cancelled; step += 1) {
         const height = scrollRoot ? scrollRoot.scrollHeight : Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight);
         const viewport = Math.max(1, scrollRoot ? scrollRoot.clientHeight : Number(window.innerHeight) || 720);
         const nextTop = Math.min(Math.max(0, height - viewport), Math.max(0, scrollRoot ? scrollRoot.scrollTop : window.scrollY) + Math.round(viewport * 0.85));
@@ -922,7 +925,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
             if (feedRoot.getAttribute("aria-busy") !== "true" || cancelled) finish();
           });
         }
-        await collectVisible();
+        const collectedCount = await collectVisible();
+        if (options.listMode && collectedCount >= maxCandidates) { targetReached = true; break; }
         if (feedRoot && [...feedRoot.querySelectorAll?.(".masonry-layout-item[data-index]") || []]
           .some((element) => Number(element.getAttribute("data-index")) + 1 >= maxCandidates)) break;
         const nextHeight = scrollRoot ? scrollRoot.scrollHeight : Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight);
@@ -930,7 +934,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         stableRounds = position === previousPosition && position + viewport >= nextHeight ? stableRounds + 1 : 0;
         previousPosition = position;
       }
-      if (!feedRoot && (stableRounds < 3 || cancelled)) scanIncomplete = true;
+      if (!feedRoot && ((!targetReached && stableRounds < 3) || cancelled)) scanIncomplete = true;
     } finally {
       if (scrollRoot) scrollRoot.scrollTo({ ...start, behavior: "instant" });
     }

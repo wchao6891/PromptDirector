@@ -1,5 +1,9 @@
 export const PALETTE_VERSION = 2;
 
+export function hasCurrentPalette(palette) {
+  return palette?.version === PALETTE_VERSION && Array.isArray(palette.colors) && palette.colors.length > 0;
+}
+
 const EDGE_RATIO = 0.03;
 const MINIMUM_EDGE_PIXELS = 2;
 const NEUTRAL_CHANNEL_SPREAD = 12;

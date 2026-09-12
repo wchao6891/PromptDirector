@@ -105,9 +105,8 @@
           <div class="page-capture-list-controls"><label><span data-i18n="目标案例数">目标案例数</span><input id="page-capture-target-count" type="number" min="1" inputmode="numeric" placeholder="数量" data-i18n-placeholder="数量" /></label><button id="page-capture-list-run" class="button-secondary" type="button" data-i18n="读取列表">读取列表</button></div>
         </section>
         <section id="page-capture-list-result" class="page-capture-list-result" hidden>
-          <strong data-i18n="批量保存方式">批量保存方式</strong>
           <p id="page-capture-list-summary"></p>
-          <label><span data-i18n="保存形态">保存形态</span><select id="page-capture-save-mode"><option value="" data-i18n="请选择">请选择</option><option value="multiple" data-i18n="分别保存多个案例">分别保存多个案例</option><option value="combined" data-i18n="合并为一个案例">合并为一个案例</option></select></label>
+          <label><span data-i18n="保存方式">保存方式</span><select id="page-capture-save-mode"><option value="" data-i18n="请选择">请选择</option><option value="multiple" data-i18n="分别保存多个案例">分别保存多个案例</option><option value="combined" data-i18n="合并为一个案例">合并为一个案例</option></select></label>
           <label id="page-capture-combined-title-row" hidden><span data-i18n="合并案例标题">合并案例标题</span><input id="page-capture-combined-title" autocomplete="off" placeholder="默认使用列表页标题" data-i18n-placeholder="默认使用列表页标题" /></label>
         </section>
         <div id="page-capture-list" class="page-capture-list"></div>
@@ -127,7 +126,7 @@
           <div id="page-capture-media-review-list" class="page-capture-media-review-list"></div>
         </details>
         <div id="page-capture-actions" class="page-capture-actions">
-          <small id="page-capture-save-summary"></small>
+          <button id="page-capture-organize" class="quiet compact" type="button" hidden data-i18n="整理设置">整理设置</button>
           <button id="page-capture-cancel" class="button-secondary" type="button" data-i18n="退出">退出</button>
           <button id="page-capture-save-text-only" class="button-secondary" type="button" hidden data-i18n="只保存正文">只保存正文</button>
           <button id="page-capture-save" class="primary" type="button" data-i18n="保存为一个案例">保存为一个案例</button>

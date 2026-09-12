@@ -12,6 +12,8 @@ export const CONTENT_ROLES = Object.freeze({
   promptVideo: "prompt_video",
   imageCase: "image_case",
   videoCase: "video_case",
+  audio: "audio",
+  sourceFile: "source_file",
   reference: "reference"
 });
 
@@ -21,6 +23,8 @@ export const CONTENT_IDS = Object.freeze({
   promptVideo: "content:prompt:video",
   imageCase: "content:image-case",
   videoCase: "content:video-case",
+  audio: "content:audio",
+  sourceFile: "content:source-file",
   reference: "content:reference"
 });
 
@@ -30,6 +34,8 @@ const ROLE_BY_LEGACY_ID = Object.freeze({
   [CONTENT_IDS.promptVideo]: CONTENT_ROLES.promptVideo,
   [CONTENT_IDS.imageCase]: CONTENT_ROLES.imageCase,
   [CONTENT_IDS.videoCase]: CONTENT_ROLES.videoCase,
+  [CONTENT_IDS.audio]: CONTENT_ROLES.audio,
+  [CONTENT_IDS.sourceFile]: CONTENT_ROLES.sourceFile,
   [CONTENT_IDS.reference]: CONTENT_ROLES.reference
 });
 
@@ -39,7 +45,9 @@ const DEFAULT_NODES = Object.freeze([
   { id: CONTENT_IDS.promptVideo, name: "视频提示词", role: CONTENT_ROLES.promptVideo },
   { id: CONTENT_IDS.imageCase, name: "图片案例", role: CONTENT_ROLES.imageCase },
   { id: CONTENT_IDS.videoCase, name: "视频案例", role: CONTENT_ROLES.videoCase },
-  { id: CONTENT_IDS.reference, name: "资料文档", role: CONTENT_ROLES.reference }
+  { id: CONTENT_IDS.reference, name: "资料文档", role: CONTENT_ROLES.reference },
+  { id: CONTENT_IDS.audio, name: "声音", role: CONTENT_ROLES.audio },
+  { id: CONTENT_IDS.sourceFile, name: "源文件", role: CONTENT_ROLES.sourceFile }
 ].map((item, order) => ({
   ...item,
   axis: "content",
@@ -78,7 +86,7 @@ export function normalizeTaxonomy(value) {
       aliases: uniqueNames(item?.aliases)
     }];
   });
-  for (const requiredRole of [CONTENT_ROLES.videoCase, CONTENT_ROLES.reference]) {
+  for (const requiredRole of [CONTENT_ROLES.videoCase, CONTENT_ROLES.reference, CONTENT_ROLES.audio, CONTENT_ROLES.sourceFile]) {
     if (nodes.some((item) => item.role === requiredRole)) continue;
     const defaultNode = DEFAULT_NODES.find((item) => item.role === requiredRole);
     const reserved = nodes.find((item) => item.id === defaultNode.id);
@@ -86,7 +94,7 @@ export function normalizeTaxonomy(value) {
       reserved.role = requiredRole;
       reserved.system = true;
     } else {
-      nodes.push({ ...structuredClone(defaultNode), order: nodes.length });
+      nodes.push({ ...structuredClone(defaultNode), customized: false, order: nodes.length });
     }
   }
   nodes.sort((left, right) => left.order - right.order || left.name.localeCompare(right.name));

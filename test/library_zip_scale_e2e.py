@@ -79,6 +79,8 @@ def main() -> None:
         page.locator("#select-cases").click()
         for source in sources:
             page.locator(f'.case-card[data-entry-id="{source["id"]}"]').click()
+        if not page.locator("#share-export").is_visible():
+            page.locator("#selection-more-menu > summary").click()
         page.locator("#share-export").click()
         page.locator("#share-dialog-export").click()
         expect(page.locator("#feedback")).to_contain_text("分享包已导出", timeout=300000)

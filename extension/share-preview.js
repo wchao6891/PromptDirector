@@ -14,6 +14,8 @@ const CONTENT_LABELS = Object.freeze({
   "content:prompt:video": ["视频提示词", "Video prompt"],
   "content:image-case": ["图片案例", "Visual case"],
   "content:video-case": ["视频案例", "Video case"],
+  "content:audio": ["声音", "Audio"],
+  "content:source-file": ["源文件", "Source file"],
   "content:reference": ["资料文档", "Reference"]
 });
 

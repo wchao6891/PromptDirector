@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import tempfile
-from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
-from e2e_support import launch_context, seed_extension_storage
+from e2e_support import EXTENSION_DIR, launch_context, seed_extension_storage
 
 
-EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
 INITIAL_BATCH_SIZE = 24
 
 
@@ -316,6 +314,7 @@ def main() -> None:
                 library.locator("#detail-close").click()
 
                 library.locator("#pending-filter").check()
+                expect(library.locator(".case-card")).to_have_count(2)
                 first_pending_card = library.locator(".case-card").first
                 first_pending_id = first_pending_card.get_attribute("data-entry-id")
                 assert first_pending_id
@@ -351,10 +350,13 @@ def main() -> None:
                     """() => {
                       const topbar = document.querySelector('.topbar').getBoundingClientRect();
                       const toolbar = document.querySelector('#gallery-heading').getBoundingClientRect();
-                      return {topbarBottom: topbar.bottom, toolbarTop: toolbar.top};
+                      return {topbarBottom: topbar.bottom, toolbarTop: toolbar.top, shellPadding: parseFloat(getComputedStyle(document.querySelector(".gallery-shell")).paddingTop)};
                     }"""
                 )
-                assert abs(selection_geometry["toolbarTop"] - selection_geometry["topbarBottom"]) <= 1, selection_geometry
+                assert abs(selection_geometry["toolbarTop"] - selection_geometry["topbarBottom"] - selection_geometry["shellPadding"]) <= 1, selection_geometry
+                library.evaluate("scrollTo(0, 100)")
+                library.wait_for_function("Math.abs(document.querySelector('#gallery-heading').getBoundingClientRect().top - document.querySelector('.topbar').getBoundingClientRect().bottom) <= 1")
+                library.evaluate("scrollTo(0, 0)")
                 library.screenshot(path="/tmp/prompt-director-132-project-selection.png")
                 library.locator("#search-input").fill("Prompt")
                 wait_for_initial_gallery_batch(library, 103)

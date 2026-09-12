@@ -60,7 +60,7 @@ Try requests like:
 | **A reference you can recognize at a glance** | An image-first case wall, text search and tag filters. Browse the work and choose for yourself. |
 | **A focused collection for each project** | Nested projects, related cases and batch management to keep a creative task's materials together. |
 | **Experience you can reuse** | The Composer reads selected cases and drafts editable prompts, reusable Skills and tag suggestions for your review. |
-| **Room for more than images** | Local images, videos, PDFs, Markdown, TXT, HTML and timestamped video notes. |
+| **Room for more than images** | Local images, videos, audio, DOCX, PDFs, Markdown, TXT, HTML, RTF and timestamped video notes. DOCX supports text, tables and embedded images; other Office files and creative source files are preserved as originals for download. |
 | **A collection you can share and preserve** | Export cases or project subtrees, create full folder backups, recover on another computer and use encrypted folder sync. |
 
 AI analysis is optional and uses your own service. Selected references help communicate the visual direction you want; only selected or explicitly requested original images are sent to a model. You can also use PromptDirector entirely as a visual reference library.

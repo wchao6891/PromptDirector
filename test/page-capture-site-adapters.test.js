@@ -63,6 +63,37 @@ test("Jimeng observer keeps a bounded sanitized feed without request credentials
   }
 });
 
+test("Jimeng observer accepts a user batch above 100 and retains every sanitized item", () => {
+  const injected = (0, eval)(`(${installPageCaptureSiteObserver.toString()})`);
+  const original = {
+    location: globalThis.location,
+    fetch: globalThis.fetch,
+    XMLHttpRequest: globalThis.XMLHttpRequest,
+    __get_explore_result: globalThis.__get_explore_result,
+    __image_generate_model_config__: globalThis.__image_generate_model_config__
+  };
+  globalThis.location = { hostname: "jimeng.jianying.com", href: "https://jimeng.jianying.com/ai-tool/home" };
+  globalThis.fetch = undefined;
+  globalThis.XMLHttpRequest = undefined;
+  globalThis.__get_explore_result = { data: { item_list: Array.from({ length: 180 }, (_, index) => ({
+    common_attr: { id: String(7490123456789000000n + BigInt(index)) },
+    private_token: "must-not-survive", image: { large_images: [] }
+  })) } };
+  try {
+    const result = injected({ maxCandidates: 180, maxMedia: 1 });
+    const state = globalThis.__PROMPTDIRECTOR_JIMENG_CAPTURE__;
+    assert.equal(result.installed, true);
+    assert.equal(state.items.length, 180);
+    assert.equal(state.items[0].common_attr.id, "7490123456789000000");
+    assert.equal("private_token" in state.items[0], false);
+    assert.equal("request_headers" in state.items[0], false);
+  } finally {
+    delete globalThis.__PROMPTDIRECTOR_JIMENG_CAPTURE__;
+    Object.assign(globalThis, original);
+  }
+});
+
+
 test("Jimeng parser rejects lookalike media hosts and remains explicitly partial when page data is absent", () => {
   assert.equal(isTrustedPageCaptureMediaUrl("jimeng", "https://p3-dreamina-sign.byteimg.com/a.webp"), true);
   assert.equal(isTrustedPageCaptureMediaUrl("jimeng", "https://p3-dreamina-sign.byteimg.com.evil.example/a.webp"), false);

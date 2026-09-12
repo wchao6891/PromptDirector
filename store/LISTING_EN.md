@@ -18,7 +18,7 @@ Use it to:
 - identify responsive originals, lazy-loaded originals, and public source details on ordinary pages and common design, gallery, social, publishing, and commerce sites;
 - confirm a locally detected creative-subject region, correct its meaningful text, media, and download blocks on the page, then explicitly confirm which proposed images, GIFs, videos, and documents may be saved;
 - when explicitly started, collect a user-bounded target from the same public list through scrolling or list pagination, without opening item detail pages, and save the result as one combined case or separate cases;
-- save images, videos, PDFs, Markdown, text files, HTML, time notes, and quick notes;
+- import local images, videos, audio, DOCX, PDFs, Markdown, text files, HTML and RTF; keep timestamped notes and quick notes. Read DOCX text, tables and embedded images; preserve other Office documents and creative source files as originals for download;
 - search, filter, edit, and combine cases in an image-first library;
 - browse curated cases and selectively save them into your own local library;
 - organize references into projects, extract reusable creative Skills, and create editable prompts, images, or videos in the composer;
