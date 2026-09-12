@@ -7,25 +7,20 @@ export function windowsCommand(name, env = process.env) {
   if (!env.SystemRoot) throw new Error('Windows 系统目录不可用，无法安全调用系统安装工具。');
   return win32.join(env.SystemRoot, 'System32', name);
 }
-// PowerShell's module discovery and Windows identity APIs need the Windows
-// runtime environment even when an MCP host filters inherited variables.
-export function windowsRuntimeEnvironment(env = process.env) {
-  const names = new Set(['systemroot', 'windir', 'comspec', 'psmodulepath', 'userdomain', 'computername']);
-  return Object.fromEntries(Object.entries(env).filter(([key, value]) => names.has(key.toLowerCase()) && typeof value === 'string'));
-}
 export async function privateWindowsDirectory(root) {
-  // Paths are data in the child environment, never interpolated PowerShell code.
+  // Use Windows .NET ACL APIs directly: PowerShell command autoload can stall
+  // in filtered MCP environments. Paths remain data, never executable code.
   const script = `$ErrorActionPreference='Stop'
 function Trace($stage) { if ($env:PROMPTDIRECTOR_DEBUG) { [Console]::Error.WriteLine(([DateTime]::UtcNow.ToString('o'))+' '+$stage) } }
 Trace 'script-start'
 $p=$env:PROMPTDIRECTOR_PRIVATE_DIRECTORY
-Trace 'get-item'
-$item=Get-Item -LiteralPath $p -Force
+Trace 'directory-info'
+$item=[IO.DirectoryInfo]::new($p)
 Trace 'identity'
 if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Connector directory cannot be a reparse point' }
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
 Trace 'get-acl'
-$acl=Get-Acl -LiteralPath $p
+$acl=$item.GetAccessControl()
 Trace 'acl-read'
 $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier])
 if ($owner.Value -ne $sid.Value) { throw 'Connector directory must belong to current user' }
@@ -39,13 +34,13 @@ if ($acl.AreAccessRulesProtected -and $rules.Count -eq 1) {
      $r.InheritanceFlags -eq $inheritance -and
      $r.PropagationFlags -eq [Security.AccessControl.PropagationFlags]::None) { return }
 }
-$private=New-Object Security.AccessControl.DirectorySecurity
+$private=[Security.AccessControl.DirectorySecurity]::new()
 $private.SetOwner($sid)
 $private.SetAccessRuleProtection($true,$false)
-$rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
+$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
 $private.AddAccessRule($rule)
-Set-Acl -LiteralPath $p -AclObject $private
-$actual=Get-Acl -LiteralPath $p
+$item.SetAccessControl($private)
+$actual=$item.GetAccessControl()
 if (!$actual.AreAccessRulesProtected) { throw 'Private directory permissions were not applied' }
 foreach($r in $actual.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
  if ($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Value -ne $sid.Value) { throw 'Unexpected directory access' }
