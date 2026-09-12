@@ -4,6 +4,7 @@ Native transport is covered separately; this is not native permission acceptance
 import base64
 import hashlib
 import json
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -62,6 +63,26 @@ def main():
             page.wait_for_function("async () => (await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.length === 1")
             assert page.locator('#toggle-agent-connection').count() == 1
             assert page.locator('#agent-connection-help').count() == 1
+            run.seed_storage(page, {'capturePermissionOnboarding': {'version': 1, 'acknowledgedAt': '2026-09-12T00:00:00Z', 'clipboardIncluded': True}})
+            page.evaluate("() => { if (!document.querySelector('#settings-dialog').open) document.querySelector('#open-settings').click(); }")
+            page.locator('[data-settings-tab="general"]').click()
+            # Clipboard is isolated to the test; clicking still runs the actual
+            # instance preparation and builds the same user-facing request.
+            page.evaluate("() => { navigator.clipboard.writeText = async text => { window.copiedAgentRequest = text; }; }")
+            page.locator('#copy-agent-connection').click()
+            page.wait_for_function('() => !!window.copiedAgentRequest')
+            copied = page.evaluate('window.copiedAgentRequest')
+            connection = page.evaluate("async () => (await chrome.runtime.sendMessage({type:'GET_AGENT_CONNECTION'})).connection")
+            assert connection['instanceId'] in copied and 'connector/INSTALL.md' in copied
+            assert connection['enabled'] is False, connection
+            page.locator('#copy-agent-connection').click()
+            assert page.evaluate('window.copiedAgentRequest') == copied
+            page.locator('#copy-agent-connection').scroll_into_view_if_needed()
+            evidence = Path(os.environ.get('PROMPTDIRECTOR_LAB_EVIDENCE_DIR', str(ext)))
+            evidence.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(evidence / 'agent-onboarding.png'))
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.screenshot(path=str(evidence / 'agent-onboarding-mobile.png'))
             print('PASS: actual worker, offscreen document preparation, original bytes, prompt association, search/read, retry and persistent library')
 
 if __name__ == '__main__':

@@ -14,7 +14,7 @@ const privateWorkspaceDirectories = [
   join("docs", "research")
 ];
 
-const privateWorkspaceFiles = ["CONTEXT.md", "context.md"];
+const privateWorkspaceFiles = ["CONTEXT.md", "context.md", "docs/DESIGN.md", "test/LOCAL_EXTENSION_LAB.md", "store/CHROME_WEB_STORE_SUBMISSION.md"];
 
 const presentPrivateDirectories = [];
 for (const path of privateWorkspaceDirectories) {

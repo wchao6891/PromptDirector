@@ -41,7 +41,7 @@
 
 ## 让 Agent 使用案例库
 
-启用可选的 MCP 连接后，Agent 可以搜索案例、读取提示词和原件、按指令采集网页，并把创作材料存回库中。首版支持 **macOS Chrome**，需要单独安装本机连接器；扩展 ZIP 本身不包含连接器。下载 Release 中的 `Agent-Connector` 包并按[连接器安装说明](connector/README.md)操作。所选 Agent 是否支持本地 MCP，以其实际配置能力为准。
+在设置的「Agent 连接」中点击「复制连接指令」，发给支持本机 MCP 的 Agent，由它按[统一安装说明](connector/INSTALL.md)安装连接器、配置并验证；需要时在插件中点击启用授权。支持 **Windows、macOS 和 Linux 上的 Google Chrome**。连接后可搜索案例、读取提示词和原件、按指令采集网页，并把创作材料存回库中。连接器是独立的本机组件，由 Agent 完成安装；纯云端工作台不适用此本机流程。
 
 ## 从精选案例开始
 
@@ -93,6 +93,6 @@
 
 欢迎提交问题、改善交互、完善采集适配、补充测试与文档。[反馈问题](https://github.com/wchao6891/PromptDirector/issues)时，请说明页面类型、用户可见的问题和复现步骤；提供示例前移除 API Key、私人资料和未获授权的素材。提交代码前请运行 `npm run verify`。
 
-参与开发请阅读[开发指南](docs/DEVELOPMENT.md)和[界面规范](docs/DESIGN.md)。
+构建与测试说明见[开发指南](docs/DEVELOPMENT.md)。
 
 代码采用 [Apache License 2.0](LICENSE)。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。代码许可不授予第三方案例素材的使用权。

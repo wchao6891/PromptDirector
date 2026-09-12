@@ -24,7 +24,7 @@ export async function startNativeHost({ root = connectorRoot(), origin, input = 
     for (const socket of sockets) socket.destroy();
     pending.clear();
     if (server) await new Promise(resolve => server.close(resolve));
-    if (ownsSocket) await unlink(paths.socket).catch(error => { if (error.code !== "ENOENT") throw error; });
+    if (ownsSocket && process.platform !== "win32") await unlink(paths.socket).catch(error => { if (error.code !== "ENOENT") throw error; });
   }
   async function initialize(message) {
     if (initializing || server) throw new Error("Duplicate native handshake.");
@@ -42,7 +42,7 @@ export async function startNativeHost({ root = connectorRoot(), origin, input = 
     if (closed) return;
     // Do not unlink an existing live profile endpoint. Only a verified stale
     // socket owned by this user may be removed after an ECONNREFUSED probe.
-    try {
+    if (process.platform !== "win32") try {
       const info = await lstat(paths.socket);
       if (!info.isSocket() || info.uid !== process.getuid()) throw new Error("Unsafe connector endpoint.");
       await new Promise((resolve, reject) => {
@@ -81,8 +81,8 @@ export async function startNativeHost({ root = connectorRoot(), origin, input = 
     });
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(paths.socket, resolve); });
     ownsSocket = true;
-    if (closed) { server.close(); await unlink(paths.socket).catch(() => {}); return; }
-    await chmod(paths.socket, 0o600);
+    if (closed) { server.close(); if (process.platform !== "win32") await unlink(paths.socket).catch(() => {}); return; }
+    if (process.platform !== "win32") await chmod(paths.socket, 0o600);
     send({ type: "ready" });
   }
   const decode = frameDecoder(message => {

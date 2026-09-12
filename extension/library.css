@@ -883,6 +883,8 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .setting-row .field-span { grid-column: 2 / -1; }
 .capture-permission-list { display: flex; flex-wrap: wrap; gap: 8px 32px; }
 .capture-permission-row { display: flex; align-items: center; gap: 12px; min-height: 36px; }
+.agent-connection-row { flex-wrap: wrap; }
+.agent-connection-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .capture-permission-row strong { color: var(--ink); font-size: 12px; font-weight: 500; }
 .capture-permission-row span { color: var(--muted); font-size: 11px; }
 .capture-permission-row span.is-granted { color: var(--success); }

@@ -1,13 +1,13 @@
-# Chrome Web Store submission worksheet
+# Distribution and permissions
 
-This file is the source-of-truth worksheet for the current PromptDirector manifest. Do not submit a package if `npm run check:store` or the full browser suite is red.
+Public distribution formats and the permissions used by PromptDirector.
 
 ## Stable Web Store identity
 
 - Chrome Web Store item public key: stored in the source `manifest.json` for local identity verification only; `package:release` removes `key` from the upload manifest.
 - Expected extension ID: `iahakaahijddcjjldidbclicedibgpjm`.
-- Current upload artifact: `dist/PromptDirector-1.21.0.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
-- Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest and excludes the local program installer. Record the generated ZIP size and SHA-256 from the final release assets.
+- Current upload artifact: `dist/PromptDirector-1.21.1.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
+- Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest and excludes the local program installer.
 
 ## Store listing
 
@@ -27,7 +27,7 @@ This file is the source-of-truth worksheet for the current PromptDirector manife
 
 Help visual creators capture web visuals with their prompts, media, and notes as a searchable, reusable local creative archive.
 
-Chinese Dashboard value:
+中文用途说明：
 
 > 帮助视觉创作者在用户主动操作下，将网页画面、提示词、媒体和笔记保存为可检索、可复用的本地创作资料，并以这些资料创建创作 Skill 和提示词。
 
@@ -86,16 +86,4 @@ Data types handled, including local-only handling:
 - Website content and resources: user-selected text, images, videos, documents, and screenshots.
 - User-generated content: prompts, notes, cases, projects, tags, Skills, and creative requests.
 
-Do not select personally identifiable information, health information, financial or payment information, location, personal communications, or generic user activity; PromptDirector does not intentionally handle these as product data.
-
-## Final local gate
-
-Run, in order:
-
-```text
-npm run verify
-npm run test:e2e
-npm run package:release
-```
-
-Then load the exact release candidate in a clean Chrome profile and visibly verify capture, library search/read-back, Skill creation, Composer, backup/restore, and extension identity before submitting for review.
+See the privacy policy for the data handled by user-triggered operations.

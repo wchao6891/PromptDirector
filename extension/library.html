@@ -310,8 +310,8 @@
             <p id="capture-permission-settings-feedback" class="data-safety-feedback" role="status" aria-live="polite"></p>
           </section>
           <section class="setting-section">
-            <div class="capture-permission-row"><strong data-i18n="Agent 连接">Agent 连接</strong><span id="agent-connection-status" role="status" data-i18n="未连接">未连接</span><button id="toggle-agent-connection" class="button-secondary" type="button" data-i18n="启用">启用</button></div>
-            <p id="agent-connection-help" class="data-safety-feedback" hidden data-i18n="安装本机连接器后启用，允许配对的 Agent 查询资料、读取原件和入库。网页采集需要网站访问权限；断开后停止接收新请求，已提交任务继续处理。">安装本机连接器后启用，允许配对的 Agent 查询资料、读取原件和入库。网页采集需要网站访问权限；断开后停止接收新请求，已提交任务继续处理。</p>
+            <div class="capture-permission-row agent-connection-row"><strong data-i18n="Agent 连接">Agent 连接</strong><span id="agent-connection-status" role="status" data-i18n="未连接">未连接</span><div class="agent-connection-actions"><button id="copy-agent-connection" class="button-secondary" type="button" data-i18n="复制连接指令">复制连接指令</button><button id="toggle-agent-connection" class="button-secondary" type="button" data-i18n="启用">启用</button></div></div>
+            <p id="agent-connection-help" class="data-safety-feedback" hidden data-i18n="复制连接指令发给你的 Agent，由它完成安装和配对。需要浏览器授权时点击启用；断开后停止接收新请求，已提交任务继续处理。">复制连接指令发给你的 Agent，由它完成安装和配对。需要浏览器授权时点击启用；断开后停止接收新请求，已提交任务继续处理。</p>
             <p id="agent-connection-feedback" class="data-safety-feedback" role="status" aria-live="polite"></p>
           </section>
           <section id="data-safety-dialog" class="setting-section settings-data-safety">
