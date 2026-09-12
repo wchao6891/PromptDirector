@@ -24,7 +24,8 @@ function value(result) {
   if (result.isError) throw new Error(text || 'MCP 调用失败');
   return JSON.parse(text);
 }
-export async function verifyConnection({ root = connectorRoot(), instanceId, probe = discoverLibraries } = {}) {
+export async function verifyConnection({ root = connectorRoot(), instanceId, probe = discoverLibraries, onProgress = stage => { if (process.env.PROMPTDIRECTOR_DEBUG) console.error(`[PromptDirector verify] ${stage}`); } } = {}) {
+  onProgress('library-discovery');
   const libraries = await probe({ root, instanceId });
   if (!libraries.length) return { state: 'awaiting_browser', connected: false,
     next: '在已安装 PromptDirector 的 Chrome 中打开设置 → Agent 连接 → 启用。若已启用请断开再启用；浏览器要求重新加载时先保存未完成编辑，然后重试 verify。' };
@@ -34,21 +35,25 @@ export async function verifyConnection({ root = connectorRoot(), instanceId, pro
   const mcp = mcpConfiguration(root, selected);
   const client = new Client({ name: 'promptdirector-setup-check', version: '1' });
   try {
+    onProgress('mcp-start');
     await client.connect(new StdioClientTransport(mcp));
+    onProgress('mcp-tools');
     const listed = await client.listTools();
     const names = listed.tools.map(tool => tool.name);
     for (const required of ['promptdirector_status', 'promptdirector_search_cases', 'promptdirector_read_case', 'promptdirector_read_media']) {
       if (!names.includes(required)) throw new Error(`MCP 缺少所需能力：${required}`);
     }
+    onProgress('library-status');
     const status = value(await client.callTool({ name: 'promptdirector_status', arguments: {} }));
     if (status.instanceId !== selected || !status.enabled || status.status !== 'connected') throw new Error('MCP 返回的资料库与目标不一致或尚未连接。');
+    onProgress('library-search');
     const result = value(await client.callTool({ name: 'promptdirector_search_cases', arguments: { query: '', limit: 3 } }));
     if (!Array.isArray(result.cases) || !Number.isInteger(result.total)) throw new Error('案例搜索未返回有效结果。');
     return { state: 'connector_verified', connected: true, instanceId: selected, mcp,
       extensionVersion: status.extensionVersion, caseCount: result.total, sampleCases: result.cases,
       hostSessionVerified: false,
       next: '连接器已实际查询案例库。还需在当前 Agent 会话发现 promptdirector 工具并调用 status/search_cases；如需重载请使用宿主正常入口。只有当前会话实际调用成功后才报告已连接；需要展示案例时按返回的媒体编号读取原件。' };
-  } finally { await client.close(); }
+  } finally { onProgress('mcp-close'); await client.close(); onProgress('mcp-closed'); }
 }
 export async function connect(options, { installRuntime = install, verify = verifyConnection } = {}) {
   const plan = await setupPlan(options);
