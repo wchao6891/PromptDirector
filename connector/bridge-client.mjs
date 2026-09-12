@@ -4,13 +4,18 @@ import { join } from "node:path";
 import { connectorRoot, instancePaths, readJson, ensurePrivateRoot } from "./paths.mjs";
 import { encodeFrame, frameDecoder } from "./framing.mjs";
 
-export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = 30000 } = {}) {
+export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = 30000, instanceId } = {}) {
   await ensurePrivateRoot(root);
   let instance;
-  try { instance = process.env.PROMPTDIRECTOR_INSTANCE || (await readJson(join(root, "selected.json"))).instanceId; }
+  try { instance = instanceId || process.env.PROMPTDIRECTOR_INSTANCE || (await readJson(join(root, "selected.json"))).instanceId; }
   catch { throw new Error("尚未配对资料库，请在插件启用 Agent 连接后运行连接器配对。"); }
   const paths = instancePaths(root, instance);
-  const record = await readJson(paths.record);
+  let record;
+  try { record = await readJson(paths.record); }
+  catch (error) {
+    if (error.code === 'ENOENT') throw error;
+    throw Object.assign(new Error('资料库配对记录无法读取，请检查本机连接器记录。'), { code: 'invalid_pairing_record' });
+  }
   return new Promise((resolve, reject) => {
     const id = randomUUID();
     const socket = net.connect(paths.socket);
@@ -19,7 +24,7 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
       if (settled) return; settled = true; clearTimeout(timer); socket.destroy();
       if (error) reject(error); else resolve(value);
     };
-    const timer = setTimeout(() => finish(new Error("插件响应超时；写入任务请按原请求编号查询，不要重新提交不同编号。")), timeoutMs);
+    const timer = setTimeout(() => finish(Object.assign(new Error("插件响应超时；写入任务请按原请求编号查询，不要重新提交不同编号。"), { code: "connector_timeout" })), timeoutMs);
     const decode = frameDecoder(message => {
       if (message.type === "ready") {
         if (message.instanceId !== instance || message.protocolVersion !== 1) return finish(new Error("连接的资料库或协议不匹配。"));
@@ -30,7 +35,7 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
     });
     socket.once("connect", () => socket.write(encodeFrame({ type: "authenticate", secret: record.secret })));
     socket.on("data", data => { try { decode(data); } catch (error) { finish(error); } });
-    socket.on("error", () => finish(new Error("未连接到指定资料库，请确认 Chrome 已运行且插件的 Agent 连接已启用。")));
-    socket.on("close", () => finish(new Error("插件连接已断开；重新连接后可用原请求编号查询写入结果。")));
+    socket.on("error", () => finish(Object.assign(new Error("未连接到指定资料库，请确认 Chrome 已运行且插件的 Agent 连接已启用。"), { code: "connector_offline" })));
+    socket.on("close", () => finish(Object.assign(new Error("插件连接已断开；重新连接后可用原请求编号查询写入结果。"), { code: "connector_offline" })));
   });
 }

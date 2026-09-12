@@ -96,8 +96,11 @@ def main() -> None:
         expect(page.locator("#composer-reference-count")).to_have_text("0")
         cover = page.locator('.composer-library-candidate img').first
         expect(cover).to_be_visible()
+        # An img with no src is already complete; wait for the managed fixture
+        # to load and decode, including when the candidate is rendered again.
+        expect(cover).to_have_js_property('naturalWidth', 1)
+        expect(cover).to_have_js_property('naturalHeight', 1)
         expect(cover).to_have_js_property('complete', True)
-        assert cover.evaluate('node => node.naturalWidth') > 0
         assert 'data:image' not in json.dumps(requests[-1]) and 'blob:' not in json.dumps(requests[-1])
         expect(page.locator(".composer-retrieved-source")).to_have_count(0)
         expect(page.locator("#composer-send-note")).to_contain_text("本轮已请求 2 次")

@@ -694,13 +694,15 @@ function openCreativeResultSidePanel(message, sender) {
 
 async function handleMessage(message, interaction = {}) {
   switch (message?.type) {
+    case "PREPARE_AGENT_CONNECTION":
     case "GET_AGENT_CONNECTION":
     case "SET_AGENT_CONNECTION": {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
         throw new Error("Agent 连接只能在插件设置中管理");
       }
       return { ok: true, connection: message.type === "SET_AGENT_CONNECTION"
-        ? await agentConnection.setEnabled(message.enabled === true) : await agentConnection.snapshot() };
+        ? await agentConnection.setEnabled(message.enabled === true)
+        : message.type === "PREPARE_AGENT_CONNECTION" ? await agentConnection.prepare() : await agentConnection.snapshot() };
     }
     case "GET_STATE": {
       return enqueue(async () => ({ ok: true, ...publicLibraryState(await readState()) }));

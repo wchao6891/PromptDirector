@@ -8,7 +8,7 @@ const manifest = JSON.parse(await readFile(join(root, 'extension/manifest.json')
 // Ship reviewable source and pinned dependencies, never a maintainer's runtime
 // directory, pairing records, downloaded originals or node_modules.
 const names = (await readdir(join(root, 'connector'), { withFileTypes: true }))
-  .filter(item => item.isFile() && (item.name.endsWith('.mjs') || ['README.md', 'SKILL.md', 'package.json', 'package-lock.json'].includes(item.name)))
+  .filter(item => item.isFile() && (item.name.endsWith('.mjs') || ['README.md', 'INSTALL.md', 'SKILL.md', 'package.json', 'package-lock.json'].includes(item.name)))
   .map(item => `connector/${item.name}`);
 names.push('extension/manifest.json', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md');
 const files = await Promise.all(names.sort().map(async name => ({ name, data: await readFile(join(root, name)) })));

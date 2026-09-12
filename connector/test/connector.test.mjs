@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { randomUUID, createHash } from 'node:crypto';
@@ -22,7 +23,7 @@ test('native framing preserves split Unicode messages and refuses oversized fram
   assert.throws(() => encodeFrame({ text: '12345' }, 3));
 });
 
-test('real native broker binds one library, authenticates and forwards response', { timeout: 5000 }, async () => {
+test('real native broker binds one library, authenticates and forwards response', { timeout: process.platform === 'win32' ? 30000 : 5000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'pd-'));
   const input = new PassThrough(), output = new PassThrough();
   const extensionId = 'a'.repeat(32), instanceId = randomUUID();
@@ -40,7 +41,7 @@ test('real native broker binds one library, authenticates and forwards response'
     assert.deepEqual(await callExtension('search', { query: '案例' }, { root }), { operation: 'search', input: { query: '案例' } });
     const client = new Client({ name: 'full-path-test', version: '1' });
     try {
-      await client.connect(new StdioClientTransport({ command: process.execPath, args: [new URL('../mcp.mjs', import.meta.url).pathname], env: { ...process.env, PROMPTDIRECTOR_CONNECTOR_HOME: root } }));
+      await client.connect(new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../mcp.mjs', import.meta.url))], env: { ...process.env, PROMPTDIRECTOR_CONNECTOR_HOME: root } }));
       const response = await client.callTool({ name: 'promptdirector_search_cases', arguments: { query: '素材' } });
       const content = JSON.parse(response.content[0].text);
       assert.equal(content.operation, 'search'); assert.equal(content.input.query, '素材');
@@ -51,7 +52,7 @@ test('real native broker binds one library, authenticates and forwards response'
 
 test('SDK client performs real stdio MCP handshake and discovers bounded tools', async () => {
   const client = new Client({ name: 'connector-test', version: '1' });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [new URL('../mcp.mjs', import.meta.url).pathname] });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../mcp.mjs', import.meta.url))] });
   try {
     await client.connect(transport);
     const list = await client.listTools();
@@ -90,13 +91,14 @@ test('file staging resumes exact bytes and keeps each original prompt tied to it
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('installer creates a reviewable private runtime and origin-bound registration in an isolated directory', { timeout: 10000 }, async () => {
+test('installer creates a reviewable private runtime and origin-bound registration in an isolated directory', { timeout: process.platform === 'win32' ? 60000 : 10000 }, async () => {
   const { installationPlan, install, pair } = await import('../install.mjs');
-  const root = await mkdtemp(join(tmpdir(), 'pd-'));
+  const root = await mkdtemp(join(tmpdir(), process.platform === 'win32' ? 'pd 案例 ! 100% ' : 'pd-'));
   const extensionId = 'c'.repeat(32), instanceId = randomUUID();
   try {
     const plan = await installationPlan({ root, nativeDirectory: join(root, 'registration'), extensionId });
-    await install(plan);
+    await install(plan, { register: async () => {} });
+    await install(plan, { register: async () => {} }); // Updating keeps the same runtime and pairing location.
     const manifest = JSON.parse(await readFile(plan.registration, 'utf8'));
     assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${extensionId}/`]);
     assert.equal(manifest.path, plan.launcher);
@@ -104,7 +106,9 @@ test('installer creates a reviewable private runtime and origin-bound registrati
     const { instancePaths } = await import('../paths.mjs');
     await writeFile(instancePaths(root, instanceId).record, JSON.stringify({ instanceId, secret: 'a'.repeat(64) }));
     const paired = await pair(instanceId, root); assert.equal(paired.instanceId, instanceId);
-    const native = spawn(plan.launcher, [`chrome-extension://${extensionId}/`], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const native = process.platform === 'win32'
+      ? spawn(process.env.ComSpec, ['/d', '/s', '/c', `""${plan.launcher}" chrome-extension://${extensionId}/"`], { windowsVerbatimArguments: true, stdio: ['pipe', 'pipe', 'pipe'] })
+      : spawn(plan.launcher, [`chrome-extension://${extensionId}/`], { stdio: ['pipe', 'pipe', 'pipe'] });
     const exited = once(native, 'exit');
     let onReady; const ready = new Promise(resolve => { onReady = resolve; });
     native.stdout.on('data', frameDecoder(message => {

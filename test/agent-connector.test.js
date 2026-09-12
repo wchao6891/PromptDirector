@@ -149,3 +149,20 @@ test('first native permission grant without a worker binding requests manual rel
   assert.equal((await restarted.snapshot()).status, 'connected');
   assert.equal((await restarted.snapshot()).instanceId, instanceId);
 });
+
+
+test('copying connection instructions creates stable identity without granting access', async () => {
+  const store = storage();
+  const event = { addListener() {} };
+  const connection = createAgentConnection({ chromeApi: {
+    storage: { local: store }, runtime: { onStartup: event },
+    alarms: { onAlarm: event }, permissions: { onRemoved: event }
+  }, execute() { assert.fail('copy does not execute library operations'); } });
+  const results = await Promise.all([connection.prepare(), connection.prepare()]);
+  assert.equal(results[0].instanceId, results[1].instanceId);
+  assert.equal(results[0].enabled, false);
+  const { agentConnectionRequest } = await import('../extension/agent-onboarding.js');
+  const request = agentConnectionRequest(results[0].instanceId, 'zh_CN', 'https://github.com/example/project');
+  assert(request.includes(results[0].instanceId)); assert(request.includes('/blob/main/connector/INSTALL.md'));
+  assert.equal((await connection.prepare()).instanceId, results[0].instanceId);
+});

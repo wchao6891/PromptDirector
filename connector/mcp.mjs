@@ -1,3 +1,4 @@
+import packageInfo from './package.json' with { type: 'json' };
 import { isMain } from "./is-main.mjs";
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
@@ -8,7 +9,7 @@ import { receiveMedia, stageFiles } from './transfers.mjs';
 const requestId = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
 const project = z.string().optional();
 export function createServer(call = callExtension) {
-  const server = new McpServer({ name: 'promptdirector', version: '0.1.0' }, {
+  const server = new McpServer({ name: 'promptdirector', version: packageInfo.version }, {
     instructions: '日常用简短自然语言说明结果和必要缺失。案例 ID、任务编号及协议状态在内部保留，仅在用户明确要求诊断时展示。处理中不等于已保存，必须核对最终回执；失败说明影响和下一步，不隐瞒问题。'
   });
   function tool(name, description, inputSchema, readonly, handler) {

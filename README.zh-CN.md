@@ -93,6 +93,6 @@
 
 欢迎提交问题、改善交互、完善采集适配、补充测试与文档。[反馈问题](https://github.com/wchao6891/PromptDirector/issues)时，请说明页面类型、用户可见的问题和复现步骤；提供示例前移除 API Key、私人资料和未获授权的素材。提交代码前请运行 `npm run verify`。
 
-参与开发请阅读[开发指南](docs/DEVELOPMENT.md)和[界面规范](docs/DESIGN.md)。
+构建与测试说明见[开发指南](docs/DEVELOPMENT.md)。
 
 代码采用 [Apache License 2.0](LICENSE)。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。代码许可不授予第三方案例素材的使用权。

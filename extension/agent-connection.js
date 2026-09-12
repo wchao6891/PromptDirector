@@ -6,6 +6,7 @@ export function createAgentConnection({ chromeApi, execute }) {
   let error = "";
   let starting = null;
   let generation = 0;
+  let preparing = null;
   const alarm = "agent-connection-retry";
   const publish = () => { void chromeApi.storage.session?.set({ agentConnectionStatus: { status, error } }).catch(() => {}); };
   const getSettings = async () => (await chromeApi.storage.local.get(AGENT_SETTINGS_KEY))[AGENT_SETTINGS_KEY] || {};
@@ -13,6 +14,17 @@ export function createAgentConnection({ chromeApi, execute }) {
     const settings = await getSettings();
     return { enabled: settings.enabled === true, instanceId: settings.instanceId || "", status, error, protocolVersion: AGENT_PROTOCOL_VERSION };
   };
+
+  async function prepare() {
+    preparing ??= (async () => {
+      const settings = await getSettings();
+      if (!settings.instanceId) await chromeApi.storage.local.set({ [AGENT_SETTINGS_KEY]: {
+        ...settings, enabled: settings.enabled === true, instanceId: crypto.randomUUID()
+      } });
+      return snapshot();
+    })().finally(() => { preparing = null; });
+    return preparing;
+  }
 
   async function connect() {
     if (port) return;
@@ -73,6 +85,7 @@ export function createAgentConnection({ chromeApi, execute }) {
   }
   async function setEnabled(enabled) {
     generation++;
+    await prepare();
     const settings = await getSettings();
     await chromeApi.storage.local.set({ [AGENT_SETTINGS_KEY]: {
       enabled: enabled === true, instanceId: settings.instanceId || crypto.randomUUID()
@@ -84,5 +97,5 @@ export function createAgentConnection({ chromeApi, execute }) {
     } else await start();
     return snapshot();
   }
-  return { start, snapshot, setEnabled };
+  return { start, snapshot, setEnabled, prepare };
 }

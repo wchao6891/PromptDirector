@@ -118,3 +118,19 @@ jobs:
               subprocess.run([sys.executable, f'test/{script}'], env=env, check=True)
           PY
       - run: npm run test:upgrade
+
+  connector-platforms:
+    name: Native connector (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci --prefix connector --ignore-scripts
+      - run: node --test connector/test/*.test.mjs
+        shell: bash
