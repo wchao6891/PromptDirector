@@ -4,6 +4,7 @@ Requires Node.js 22.13 or later. Run commands from the repository root.
 
 ```sh
 npm ci
+npm ci --prefix connector --ignore-scripts
 npm run verify:source
 npm run package
 ```

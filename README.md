@@ -93,4 +93,4 @@ Code is licensed under [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.m
 
 ## Agent access
 
-The optional MCP connector lets an Agent search cases, read original prompts and files, capture requested URLs, and save creative materials. The first connector release supports **macOS Chrome** and requires a separate local installation. Download the `Agent-Connector` asset from Releases and follow the [connector guide](connector/README.md). The extension ZIP alone does not install the connector.
+In settings, select **Copy connection request** under Agent connection and send it to an Agent with local MCP support. The Agent follows the [setup guide](connector/INSTALL.md) to install the connector, configure it and verify access; enable the connection in Chrome when requested. Supports **Google Chrome on Windows, macOS and Linux**. Agents can search cases, read prompts and original files, capture requested URLs and save creative materials. The connector is a separate local component installed by the Agent; cloud-only workspaces cannot use this local setup flow.
