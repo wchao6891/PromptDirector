@@ -369,3 +369,19 @@ test("source selections can be browsed and saved without inventing authorization
   assert.equal(saved.curatedOrigin.license, item.license);
   assert.equal(saved.curatedOrigin.rightsReviewUrl, item.rightsReviewUrl);
 });
+
+
+test('one unknown case author does not hide the entire published preview or invent attribution', () => {
+  const item = catalogItem();
+  const entry = { id: 'known', title: '案例', text: '原始提示词', author: '原作者', rights: '权利归原作者 · 授权未核验', mediaKind: 'image', sourceUrl: 'https://example.com/source', previewImageUrl: item.coverUrl, width: 100, height: 100 };
+  const value = { format: 'prompt-director-curated-preview', version: 1, catalogId: item.id, packageId: item.packageId, packageVersion: item.packageVersion, entries: [entry, { ...entry, id: 'unknown', author: '' }] };
+  const preview = normalizeCuratedPreview(value, item);
+  assert.equal(preview.entries.length, 2);
+  assert.equal(preview.entries[0].author, '原作者');
+  assert.equal(preview.entries[1].author, '');
+  assert.equal(preview.entries[1].rights, entry.rights);
+  for (const field of ['id', 'title', 'text', 'rights', 'mediaKind']) {
+    assert.throws(() => normalizeCuratedPreview({ ...value, entries: [entry, { ...value.entries[1], [field]: '' }] }, item), /必填字段/);
+  }
+  assert.throws(() => normalizeCuratedPreview({ ...value, entries: [entry, { ...value.entries[1], previewImageUrl: 'https://untrusted.example/a.png' }] }, item), /不受信任/);
+});
