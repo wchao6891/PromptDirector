@@ -84,6 +84,15 @@ test("投稿清单和分卷清单使用完整 SHA-256 身份", () => {
   }), /摘要无效/);
 });
 
+test("投稿保留媒体原作者和原作品链接，避免审核时丢失来源", () => {
+  const entry = fixtureState().entries[0];
+  entry.mediaAssets[0].sourceAuthor = "沛棠° · A B | © ✨";
+  entry.mediaAssets[0].originalWorkUrl = "https://example.com/original-work";
+  const result = sanitizeCuratedSubmissionEntry(entry);
+  assert.equal(result.mediaAssets[0].sourceAuthor, "沛棠° · A B | © ✨");
+  assert.equal(result.mediaAssets[0].originalWorkUrl, "https://example.com/original-work");
+});
+
 function fixtureState() {
   return {
     entries: [{

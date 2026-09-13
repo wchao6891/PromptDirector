@@ -15,7 +15,7 @@ test("Jimeng structured payload restores author, prompt, model, time, metrics an
     modelNames: { jimeng_v40: "即梦 4.0" },
     item: {
       common_attr: { id: "7490123456789012345", title: "孟菲斯光线4", create_time: 1786000000 },
-      author: { name: "金戈米良", uid: "creator-7" },
+      author: { name: "金戈 米良° · A | © ✨", uid: "creator-7" },
       aigc_image_params: { text2image_params: { prompt: "平面影像，低饱和度，动态模糊的光线。" } },
       aigc_draft: { content: JSON.stringify({ component_list: [{ abilities: { generate: { core_param: { model: "jimeng_v40" } } } }] }) },
       statistic: { favorite_num: 103, usage_num: 12 },
@@ -24,7 +24,7 @@ test("Jimeng structured payload restores author, prompt, model, time, metrics an
   }, "https://jimeng.jianying.com/ai-tool/work-detail/7490123456789012345");
 
   assert.equal(normalized.contentText, "平面影像，低饱和度，动态模糊的光线。");
-  assert.equal(normalized.sourceFacts.author, "金戈米良");
+  assert.equal(normalized.sourceFacts.author, "金戈 米良° · A | © ✨");
   assert.equal(normalized.sourceFacts.model, "即梦 4.0");
   assert.equal(normalized.sourceFacts.itemId, "7490123456789012345");
   assert.equal(normalized.sourceFacts.dimensions, "2160×3840");
