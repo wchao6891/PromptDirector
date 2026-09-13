@@ -75,7 +75,7 @@ def main():
                 setup.locator("#devMode").click()
             setup.close()
             release_url = f"{target['homepage_url']}/releases/tag/v{target['version']}"
-            download_url = f"{target['homepage_url']}/releases/download/v{target['version']}/PromptDirector-{target['version']}-FIXED-ID-DEV.zip"
+            download_url = f"{target['homepage_url']}/releases/download/v{target['version']}/PromptDirector-{target['version']}.zip"
             context.route("https://**/*", lambda route: route.fulfill(status=200, content_type="application/zip", body=package)
                           if route.request.url == download_url else route.abort())
             worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")

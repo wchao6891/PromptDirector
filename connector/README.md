@@ -56,4 +56,4 @@ npm run check
 
 ## Release 安装包
 
-下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 仅用于校验插件身份；实际扩展请使用同版本 `FIXED-ID-DEV` 包升级。连接器当前为 0.2.0，对应 PromptDirector 1.21.1；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
+从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.2.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 仅用于校验插件身份；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器当前为 0.2.0；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。

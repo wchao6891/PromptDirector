@@ -2,6 +2,11 @@
 
 了解每个版本带来的功能变化与使用改善。下载请前往 [GitHub Releases](https://github.com/wchao6891/PromptDirector/releases/latest)。
 
+## 1.22.1
+
+- GitHub 安装包统一为 `PromptDirector-版本号.zip`，本地更新直接使用同一安装包。
+- 简化安装与更新说明；Agent 连接器提供独立下载入口。
+
 ## 1.22.0
 
 - 支持导入 DOCX 并阅读正文与内嵌图片；音频、设计源文件和其他 Office 文档可作为原文件收藏。

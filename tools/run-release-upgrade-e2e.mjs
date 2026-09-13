@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,7 +54,10 @@ try {
   });
   const nativePreviousDirectory = join(temporaryRoot, "native-previous-release");
   await mkdir(nativePreviousDirectory);
-  execFileSync(python, ["-m", "zipfile", "-e", previousArchive, nativePreviousDirectory], { stdio: "inherit" });
+  // Exercise the shipped updater against a newer version using the exact public
+  // package; historical data migration is exercised separately above.
+  execFileSync(python, ["-m", "zipfile", "-e", currentArchive, nativePreviousDirectory], { stdio: "inherit" });
+  await writeFile(join(nativePreviousDirectory, "manifest.json"), JSON.stringify({ ...manifest, version: baselineTag.slice(1) }));
   execFileSync(python, [join(projectRoot, "test", "local_upgrade_native_e2e.py"), await sourceExtensionDirectory(nativePreviousDirectory), currentArchive], {
     cwd: projectRoot,
     stdio: "inherit",

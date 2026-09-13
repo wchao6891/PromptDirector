@@ -12,7 +12,7 @@
 
 官方仓库：https://github.com/wchao6891/PromptDirector
 
-1. 从官方 Releases 选择最新稳定版本中的 `Agent-Connector.zip` 和 `SHA256SUMS.txt`，下载到用户私有的安装暂存目录，核对 SHA-256 后解压。保留包内 `connector` 与 `extension/manifest.json` 的相邻关系。
+1. 从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.2.0) 选择连接器 ZIP 和 `SHA256SUMS`，下载到用户私有的安装暂存目录，核对 SHA-256 后解压。保留包内 `connector` 与 `extension/manifest.json` 的相邻关系。
 2. 核对包中有 `connector/setup.mjs`。如果发布版未包含统一安装入口，应说明需要更新发布包，不能把旧命令当作新功能运行。开发验收可使用用户明确指定的本地源码目录。
 3. 检查当前 Agent 的 Node.js 运行时是否满足 `connector/package.json` 的 engines 要求。优先使用宿主提供的兼容运行时；否则按 Node.js 官方下载说明为用户当前系统和架构准备运行时，校验官方校验值，不要求用户手动安装 Node.js。保留稳定路径，避免使用即将销毁的沙箱运行时。下载或安装需要宿主审批时按正常流程申请。
 4. 在解压目录运行 `npm ci --prefix connector --ignore-scripts`。下载失败应说明原因，不修改锁定版本、跳过依赖或执行来源不明的安装脚本。

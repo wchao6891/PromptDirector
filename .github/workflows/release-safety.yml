@@ -65,19 +65,23 @@ jobs:
           python -m playwright install --with-deps chromium
       - run: npm run test:local-extension
       - run: npm run package:release
+      - run: node tools/prepare-public-release.mjs
       - run: npm run package:connector
       - run: npm run test:upgrade
       - name: Verify extension and connector archives
         run: |
           PROMPTDIRECTOR_PACKAGE_VERSION="$(node -p 'require("./package.json").version')"
           unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}.zip"
-          unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-FIXED-ID-DEV.zip"
+          unzip -t "dist/store/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-Chrome-Web-Store.zip"
           unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-Agent-Connector.zip"
       - name: Preserve the exact tested packages
         uses: actions/upload-artifact@v7
         with:
           name: promptdirector-tested-packages-${{ github.sha }}
-          path: dist/*.zip
+          path: |
+            dist/PromptDirector-*.zip
+            dist/store/*.zip
+            dist/github/**
           if-no-files-found: error
           retention-days: 14
 
@@ -111,7 +115,7 @@ jobs:
           import json, os, pathlib, subprocess, sys, zipfile
           version = json.loads(pathlib.Path('extension/manifest.json').read_text())['version']
           destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'PromptDirector'
-          with zipfile.ZipFile(f'dist/PromptDirector-{version}-FIXED-ID-DEV.zip') as archive:
+          with zipfile.ZipFile(f'dist/PromptDirector-{version}.zip') as archive:
               archive.extractall(destination)
           env = {**os.environ, 'PROMPTDIRECTOR_E2E_EXTENSION_DIR': str(destination), 'PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK': '1'}
           for script in ['project_tree_e2e.py', 'library_import_resources_e2e.py', 'library_import_ui_e2e.py', 'library_import_interruption_e2e.py']:

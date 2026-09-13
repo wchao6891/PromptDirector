@@ -37,7 +37,7 @@ test("local extension receipt requires model analysis and Composer generation ch
     startedAt: "2026-08-28T00:00:00.000Z",
     finishedAt: "2026-08-28T00:01:00.000Z",
     manifest: { version: "1.19.3" },
-    archive: { name: "PromptDirector-1.19.3-FIXED-ID-DEV.zip", sha256: "archive", fileCount: 10 },
+    archive: { name: "PromptDirector-1.19.3.zip", sha256: "archive", fileCount: 10 },
     runtimeHash: "runtime",
     extensionId: "fixed-extension-id",
     channel: "chromium",

@@ -33,10 +33,6 @@ export function chromeStoreUploadManifest(manifest = {}) {
 
 export function extensionArchiveName(manifest = {}, { release = false } = {}) {
   const version = String(manifest.version ?? "").trim();
-  if (release) {
-    requireStableExtensionIdentity(manifest);
-    return `PromptDirector-${version}.zip`;
-  }
-  const suffix = hasStableExtensionIdentity(manifest) ? "-FIXED-ID-DEV" : "-UNFIXED-ID-DEV";
-  return `PromptDirector-${version}${suffix}.zip`;
+  requireStableExtensionIdentity(manifest);
+  return release ? `PromptDirector-${version}-Chrome-Web-Store.zip` : `PromptDirector-${version}.zip`;
 }

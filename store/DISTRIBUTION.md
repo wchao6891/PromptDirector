@@ -6,7 +6,7 @@ Public distribution formats and the permissions used by PromptDirector.
 
 - Chrome Web Store item public key: stored in the source `manifest.json` for local identity verification only; `package:release` removes `key` from the upload manifest.
 - Expected extension ID: `iahakaahijddcjjldidbclicedibgpjm`.
-- Current upload artifact: `dist/PromptDirector-1.22.0.zip`. The GitHub `FIXED-ID-DEV` artifact is for local installations only.
+- Current upload artifact: `dist/store/PromptDirector-1.22.1-Chrome-Web-Store.zip`. Keep this artifact local for Web Store submission. The sole GitHub extension installation package is `PromptDirector-1.22.1.zip`, with stable identity and the local updater.
 - Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest and excludes the local program installer.
 
 ## Store listing
@@ -87,3 +87,7 @@ Data types handled, including local-only handling:
 - User-generated content: prompts, notes, cases, projects, tags, Skills, and creative requests.
 
 See the privacy policy for the data handled by user-triggered operations.
+
+## Release artifacts
+
+Run `npm run package:distribution` to build both channels. Publish only the versioned directory under `dist/github/`: it contains the user installation ZIP and `SHA256SUMS`. The Web Store upload ZIP stays under `dist/store/` for submission. Agent connector assets use the dedicated `agent-connector-v<connector-version>` release, marked as not latest, and are linked from `connector/INSTALL.md`.

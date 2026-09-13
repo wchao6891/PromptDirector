@@ -13,7 +13,7 @@ export function isExtensionProgramPath(path) {
 }
 
 export async function extensionIdForKey(key) {
-  if (typeof key !== "string" || !key.trim()) throw new Error("请选择 FIXED-ID-DEV 本地安装包");
+  if (typeof key !== "string" || !key.trim()) throw new Error("请选择官网下载的安装包");
   const bytes = Uint8Array.from(atob(key.replace(/\s/gu, "")), char => char.charCodeAt(0));
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   return [...hash.slice(0, 16)].map(byte => String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15))).join("");
@@ -32,7 +32,7 @@ export function localReleasePackageUrl(manifest, releaseUrl, version) {
   if (release.origin + release.pathname !== `${repository}/releases/tag/v${version}`
     && release.origin + release.pathname !== `${repository}/releases/tag/${version}`) throw new Error("更新地址与版本不一致");
   const tag = release.pathname.split("/").at(-1);
-  return `${repository}/releases/download/${tag}/PromptDirector-${version}-FIXED-ID-DEV.zip`;
+  return `${repository}/releases/download/${tag}/PromptDirector-${version}.zip`;
 }
 
 export async function prepareLocalUpgrade(archive, runtime) {
