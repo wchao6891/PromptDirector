@@ -1,3 +1,5 @@
+import { planImageGenerationPrompts, generationPromptConfirmation } from "./image-generation-ingestion.js";
+import { readImageGenerationInfo, embeddedMediaPrompts } from "./image-generation-info.js";
 import { waitForDownload } from "./download-completion.js";
 import { splitArticleCases } from "./article-case-groups.js";
 import { createAgentConnection } from "./agent-connection.js";
@@ -185,6 +187,7 @@ import {
   saveCreativeSkillVersion,
   skillPackageAssetIds
 } from "./creative-skills.js";
+import { commitSkillWithCover } from "./skill-cover-save.js";
 import {
   addEntryMedia,
   addTimeNote,
@@ -580,7 +583,7 @@ async function dispatchAgentOperation(operation, input) {
       return agentTasks.submit(operation, args, requestId);
     }
     case "get_task": {
-      const receipt = await agentTasks.inspect(input.requestId);
+      const receipt = await agentTasks.inspect(input.requestId, input);
       if (receipt.result?.results) receipt.result.results = receipt.result.results.map(item => ({ ...item,
         ...(item.entryId ? { openUrl: chrome.runtime.getURL(`library.html?case=${encodeURIComponent(item.entryId)}`) } : {}) }));
       return receipt;
@@ -832,17 +835,19 @@ async function handleMessage(message, interaction = {}) {
     case "DELETE_ENTRY_VISUAL":
       return enqueue(async () => deleteEntryVisual(message.entryId, message.visualId));
     case "ADD_UPLOADED_VISUAL":
-      return enqueue(async () => addUploadedVisual(message.entryId, message.visual));
+      return enqueue(async () => addUploadedVisual(message.entryId, message.visual, message.generationPromptChoices));
     case "SET_ENTRY_PRIMARY_MEDIA":
       return enqueue(async () => setEntryPrimaryMedia(message.entryId, message.assetId));
     case "DELETE_ENTRY_MEDIA":
       return enqueue(async () => deleteEntryMedia(message.entryId, message.assetId));
     case "ADD_UPLOADED_MEDIA":
-      return enqueue(async () => addUploadedMedia(message.entryId, message.asset, message.posterAsset));
+      return enqueue(async () => addUploadedMedia(message.entryId, message.asset, message.posterAsset, message.generationPromptChoices));
+    case "DISCARD_UNREFERENCED_MEDIA":
+      return enqueue(async () => { await deleteUnreferencedMedia(message.assetIds); return { ok: true }; });
     case "ENSURE_VIDEO_POSTER":
       return enqueue(async () => ensureEntryVideoPoster(message.entryId, message.assetId));
     case "CREATE_MEDIA_CASE":
-      return enqueue(async () => createMediaCase(message.asset, message.posterAsset, message.title, message.text));
+      return enqueue(async () => createMediaCase(message.asset, message.posterAsset, message.title, message.text, message.generationPromptChoices));
     case "CREATE_MEDIA_REFERENCE":
       return enqueue(async () => createMediaReferenceCase(message.asset, message.posterAsset, message.title, message));
     case "CREATE_QUICK_NOTE":
@@ -2075,7 +2080,10 @@ async function commitPageCapture(batchValue, metadata = {}) {
           }
           await saveMediaBlob(assetId, blob);
           savedAssetIds.push(assetId);
+          const generationInfo = await readImageGenerationInfo(blob);
+          if (generationInfo?.warnings.length) warnings.push(...generationInfo.warnings);
           const imageAsset = {
+            ...(generationInfo ? { generationInfo } : {}),
             id: assetId,
             kind: "image",
             storageMode: "managed",
@@ -2103,7 +2111,9 @@ async function commitPageCapture(batchValue, metadata = {}) {
         status: warnings.length ? "partial" : candidate.sourceFacts.status };
       if (duplicate) {
         const repaired = mergePageCaptureRepair(duplicate, { ...candidate, sourceFacts: captureFacts }, repair, mediaAssets, articleAssetIds);
+        const existingAssetIds = new Set((duplicate.mediaAssets ?? []).map(asset => asset.id));
         const entry = normalizeEntryMedia({ ...repaired,
+          mediaPrompts: [...(repaired.mediaPrompts ?? []), ...embeddedMediaPrompts(mediaAssets.filter(asset => !existingAssetIds.has(asset.id)), repaired.mediaPrompts)],
           classification: classifyContent(repaired, state.classificationRules, state.taxonomy)
         });
         entries = entries.map(item => item.id === entry.id ? entry : item);
@@ -2122,6 +2132,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
         continue;
       }
       const mediaPrompts = capturedMediaPrompts(candidate, articleAssetIds);
+      mediaPrompts.push(...embeddedMediaPrompts(mediaAssets, mediaPrompts));
       const entry = normalizeEntryMedia({
         ...base,
         schemaVersion: SCHEMA_VERSION,
@@ -2152,6 +2163,19 @@ async function commitPageCapture(batchValue, metadata = {}) {
         ? { pathIds: [captureMetadata.contentTypeId], status: "confirmed", source: "manual", reason: "保存前人工确认" }
         : entry.classification
     });
+    const promptConflicts = [];
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      if (!affectedIds.includes(entry.id)) continue;
+      const oldIds = new Set((state.entries.find(item => item.id === entry.id)?.mediaAssets ?? []).map(asset => asset.id));
+      const promptPlan = await planImageGenerationPrompts(entry, entry.mediaAssets.filter(asset => !oldIds.has(asset.id)), metadata.generationPromptChoices);
+      entries[index] = promptPlan.entry;
+      promptConflicts.push(...promptPlan.conflicts);
+    }
+    if (promptConflicts.length) {
+      await deleteUnreferencedMedia(savedAssetIds);
+      return generationPromptConfirmation(promptConflicts);
+    }
     const organizerState = organizerAfterCapturePlacement(state.organizerState, entries, affectedIds, captureMetadata);
     await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState });
     metadataCommitted = true;
@@ -2169,7 +2193,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
       warnings: postCommitWarnings
     };
   } catch (error) {
-    if (!metadataCommitted) await Promise.allSettled(savedAssetIds.map((assetId) => deleteMediaBlob(assetId)));
+    if (!metadataCommitted) await deleteUnreferencedMedia(savedAssetIds).catch(() => undefined);
     throw error;
   }
 }
@@ -2329,19 +2353,22 @@ async function deleteEntryVisual(entryId, visualId) {
   });
 }
 
-async function addUploadedVisual(entryId, visualValue) {
+async function addUploadedVisual(entryId, visualValue, choices = {}) {
   const state = await readState();
   const current = findEntry(state, entryId);
   const visualId = String(visualValue?.id ?? "").trim();
   if (!visualId || !await getScreenshotBlob(visualId)) throw new Error("没有读取到待添加的图片");
-  const updated = touchEntry(addEntryVisual(current, {
-    ...visualValue,
-    id: visualId,
-    sourceUrl: current.url,
-    sourceTitle: current.title,
-    capturedAt: new Date().toISOString(),
-    reviewStatus: "verified"
+  if (current.mediaAssets?.some(asset => asset.id === visualId)) return { ok: true, duplicate: true, message: "图片已在案例中", entry: current };
+  let updated = touchEntry(addEntryVisual(current, {
+    ...visualValue, id: visualId, sourceUrl: current.url, sourceTitle: current.title,
+    capturedAt: new Date().toISOString(), reviewStatus: "verified"
   }));
+  if (!current.mediaAssets?.some(asset => asset.id === visualId)) {
+    updated = normalizeEntryVisuals({ ...updated, mediaPrompts: [...(updated.mediaPrompts ?? []), ...embeddedMediaPrompts([{ ...visualValue, kind: "image" }], updated.mediaPrompts)] });
+  }
+  const promptPlan = await planImageGenerationPrompts(updated, current.mediaAssets?.some(item => item.id === visualValue.id) ? [] : [visualValue], choices);
+  if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
+  updated = promptPlan.entry;
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: `图片已加入案例 · 共 ${updated.visuals.length} 张`, entry: updated };
@@ -2442,7 +2469,7 @@ async function ensureEntryVideoPoster(entryId, assetId) {
   }
 }
 
-async function addUploadedMedia(entryId, assetValue, posterValue = null) {
+async function addUploadedMedia(entryId, assetValue, posterValue = null, choices = {}) {
   const state = await readState();
   const current = findEntry(state, entryId);
   const assetId = String(assetValue?.id ?? "").trim();
@@ -2450,6 +2477,7 @@ async function addUploadedMedia(entryId, assetValue, posterValue = null) {
   if (!assetId || (storageMode === "managed" && !await getMediaBlob(assetId))) {
     throw new Error("没有读取到待添加的媒体文件");
   }
+  if (current.mediaAssets?.some(asset => asset.id === assetId)) return { ok: true, duplicate: true, message: "资料已在案例中", entry: current };
   let updated = addEntryMedia(current, {
     ...assetValue,
     id: assetId,
@@ -2463,17 +2491,25 @@ async function addUploadedMedia(entryId, assetValue, posterValue = null) {
     if (!await getMediaBlob(posterValue.id)) throw new Error("没有读取到视频封面");
     updated = addEntryMedia(updated, { ...posterValue, usage: "poster", derivedFromAssetId: assetId, storageMode: "managed" });
   }
+  if (!current.mediaAssets?.some(asset => asset.id === assetId)) {
+    updated = normalizeEntryMedia({ ...updated, mediaPrompts: [...(updated.mediaPrompts ?? []), ...embeddedMediaPrompts([assetValue], updated.mediaPrompts)] });
+  }
   updated = touchEntry(updated);
+  const promptPlan = await planImageGenerationPrompts(updated, current.mediaAssets?.some(item => item.id === assetValue.id) ? [] : [assetValue], choices);
+  if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
+  updated = promptPlan.entry;
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   const contentCount = updated.mediaAssets.filter((item) => item.usage !== "poster").length;
   return { ok: true, message: `资料已加入案例 · 共 ${contentCount} 项`, entry: updated };
 }
 
-async function createMediaCase(assetValue, posterValue, titleValue, textValue = "") {
+async function createMediaCase(assetValue, posterValue, titleValue, textValue = "", choices = {}) {
   const assetId = String(assetValue?.id ?? "").trim();
   if (!assetId || !await getMediaBlob(assetId)) throw new Error("没有读取到待保存的媒体文件");
   const state = await readState();
+  const prior = state.entries.find(entry => entry.mediaAssets?.some(asset => asset.id === assetId));
+  if (prior) return { ok: true, duplicate: true, message: "资料已保存", entry: prior };
   const base = buildEntry({ text: textValue, title: titleValue, url: "", allowEmptyText: true });
   const mediaAssets = [{ ...assetValue, id: assetId, storageMode: "managed", capturedAt: new Date().toISOString(), reviewStatus: "verified" }];
   if (posterValue?.id) {
@@ -2481,15 +2517,19 @@ async function createMediaCase(assetValue, posterValue, titleValue, textValue = 
     mediaAssets.push({ ...posterValue, usage: "poster", derivedFromAssetId: assetId, storageMode: "managed" });
   }
   const classification = classifyImportedMedia({ ...base, mediaAssets }, state.taxonomy);
-  const entry = normalizeEntryMedia({
+  let entry = normalizeEntryMedia({
     ...base,
     schemaVersion: SCHEMA_VERSION,
     mediaAssets,
     primaryMediaId: assetId,
+    mediaPrompts: embeddedMediaPrompts(mediaAssets),
     classification,
     customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
     rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
   });
+  const promptPlan = await planImageGenerationPrompts(entry, mediaAssets, choices, textValue);
+  if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
+  entry = promptPlan.entry;
   const entries = [...state.entries, entry];
   await retireLastSaveUndo();
   await commitLocalChanges({
@@ -2594,7 +2634,7 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
   const targetCompound = normalizeCompoundCases(state.compoundCases, state.entries)
     .find((compound) => compound.id === draft.targetCaseId) ?? null;
   const placement = capturePlacement(draft, placementValue);
-  if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound, placement);
+  if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound, placement, placementValue.generationPromptChoices);
   const text = draftText(draft);
   const sourcePages = mergeSourcePages(draftSourcePages(draft), draft.visuals.map((visual) => {
     const context = sourceContextForUrl(draft, visual.sourceUrl);
@@ -2634,7 +2674,9 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
         reason: "保存前人工确认"
       };
     }
-    for (const visual of draft.visuals) entry = addEntryVisual(entry, visual);
+    const newVisuals = draft.visuals.filter(asset => !entry.mediaAssets.some(item => item.id === asset.id));
+    for (const visual of newVisuals) entry = addEntryVisual(entry, visual);
+    entry = normalizeEntryVisuals({ ...entry, mediaPrompts: [...(entry.mediaPrompts ?? []), ...embeddedMediaPrompts(newVisuals, entry.mediaPrompts)] });
     if (draft.primaryVisualExplicit && draft.primaryVisualId) entry = setPrimaryVisual(entry, draft.primaryVisualId);
   } else {
     created = true;
@@ -2645,6 +2687,7 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
       sourcePages,
       ...(sourceFacts ? { sourceFacts } : {}),
       visuals: draft.visuals,
+      mediaPrompts: embeddedMediaPrompts(draft.visuals),
       primaryVisualId: draft.primaryVisualId,
       classification: draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])
         ? { pathIds: [draft.contentTypeId], status: "confirmed", source: "manual", reason: "保存前人工确认" }
@@ -2655,6 +2698,9 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
       negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
     });
   }
+  const promptPlan = await planImageGenerationPrompts(entry, draft.visuals.filter(asset => !target?.mediaAssets?.some(item => item.id === asset.id)), placementValue.generationPromptChoices);
+  if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
+  entry = promptPlan.entry;
   let entries = target
     ? state.entries.map((item) => item.id === entry.id ? entry : item)
     : [...state.entries, entry];
@@ -2678,7 +2724,7 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
   return { ok: true, message: target ? "内容已加入明确选择的案例" : "多段文字和截图已保存为新案例", entry, draft: nextDraft };
 }
 
-async function commitCaptureIntoCompound(draft, parts, state, targetCompound, placement = {}) {
+async function commitCaptureIntoCompound(draft, parts, state, targetCompound, placement = {}, choices = {}) {
   let entries = [...state.entries];
   let compounds = normalizeCompoundCases(state.compoundCases, entries);
   const memberIds = [...targetCompound.memberEntryIds];
@@ -2703,6 +2749,15 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound, pl
     memberIds.push(created.id);
   }
 
+  const promptConflicts = [];
+  for (let index = 0; index < entries.length; index++) {
+    if (!memberIds.includes(entries[index].id)) continue;
+    const oldIds = new Set((state.entries.find(item => item.id === entries[index].id)?.mediaAssets ?? []).map(asset => asset.id));
+    const plan = await planImageGenerationPrompts(entries[index], (entries[index].mediaAssets ?? []).filter(asset => !oldIds.has(asset.id)), choices);
+    entries[index] = plan.entry;
+    promptConflicts.push(...plan.conflicts);
+  }
+  if (promptConflicts.length) return generationPromptConfirmation(promptConflicts);
   const updated = updateCompoundCase(compounds, entries, targetCompound.id, { memberEntryIds: memberIds });
   compounds = updated.compoundCases;
   const compoundCase = updated.compoundCase;
@@ -3300,15 +3355,26 @@ async function saveComposerToolDraftAction(message) {
 async function createCreativeSkillAction(message) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
   const result = createCreativeSkill(stored[STORAGE_KEYS.creativeSkills], message.skill);
-  await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
+  await commitSkillCoverResult(result, message.cover);
   return { ok: true, message: "Skill 已保存", creativeSkills: result.state, skill: result.skill };
 }
 
 async function saveCreativeSkillVersionAction(message) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
   const result = saveCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.version);
-  await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
-  return { ok: true, message: "Skill 新版本已保存", creativeSkills: result.state, skill: result.skill };
+  await commitSkillCoverResult(result, message.cover);
+  return { ok: true, message: message.version?.coverOnly ? "Skill 已保存" : "Skill 新版本已保存", creativeSkills: result.state, skill: result.skill };
+}
+
+async function commitSkillCoverResult(result, cover) {
+  return commitSkillWithCover(result, cover, {
+    readBlob: getMediaBlob,
+    saveBlob: savePortableAssetBlob,
+    commit: state => commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: state }),
+    cleanup: deleteUnreferencedMedia,
+    decode: async blob => { const bitmap = await createImageBitmap(blob); bitmap.close(); },
+    onCleanupError: error => console.warn("Skill 封面资源清理未完成", error)
+  });
 }
 
 async function restoreCreativeSkillVersionAction(message) {
@@ -3322,7 +3388,7 @@ async function deleteCreativeSkillAction(skillId) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
   const result = deleteCreativeSkill(stored[STORAGE_KEYS.creativeSkills], skillId);
   await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
-  await deleteMediaBlobs(skillPackageAssetIds(result.skill)).catch(() => undefined);
+  await deleteUnreferencedMedia(skillPackageAssetIds(result.skill)).catch(error => console.warn("Skill 资源清理未完成", error));
   return { ok: true, message: "Skill 已删除", creativeSkills: result.state };
 }
 
@@ -3948,6 +4014,7 @@ function importedEntryFromStagedAsset(state, staged, job, item) {
     importBatchId: item.importBatchId || job.importBatchId,
     schemaVersion: SCHEMA_VERSION,
     mediaAssets,
+    mediaPrompts: embeddedMediaPrompts(mediaAssets),
     primaryMediaId: staged.assetId,
     classification: classifyImportedMedia({ ...base, mediaAssets }, state.taxonomy),
     customLabels: uniqueNames(job.options.customLabels), metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
@@ -4888,7 +4955,9 @@ async function saveCreativeOutputToLibrary(message) {
         promptVersionId: run.promptVersionId
       }
     };
-    for (const asset of outputAssets) entry = addEntryMedia(entry, asset, { makePrimary: false });
+    const newAssets = outputAssets.filter(asset => !existing.mediaAssets?.some(item => item.id === asset.id));
+    for (const asset of newAssets) entry = addEntryMedia(entry, asset, { makePrimary: false });
+    entry = normalizeEntryMedia({ ...entry, mediaPrompts: [...(entry.mediaPrompts ?? []), ...embeddedMediaPrompts(newAssets, entry.mediaPrompts)] });
     entries = state.entries.map((item) => item.id === existing.id ? entry : item);
   } else {
     entry = {
@@ -4908,6 +4977,7 @@ async function saveCreativeOutputToLibrary(message) {
       legacyFacetCandidates: [],
       analysisPending: false,
       mediaAssets: outputAssets,
+      mediaPrompts: embeddedMediaPrompts(outputAssets),
       primaryMediaId: output.visual.id,
       creationMeta: {
         creativeRunId: run.id,
@@ -4920,6 +4990,10 @@ async function saveCreativeOutputToLibrary(message) {
     };
     entries = [...state.entries, normalizeEntryMedia(entry)];
   }
+  const promptPlan = await planImageGenerationPrompts(entry, outputAssets.filter(asset => !existing?.mediaAssets?.some(item => item.id === asset.id)), message.generationPromptChoices);
+  if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
+  entry = promptPlan.entry;
+  entries = entries.map(item => item.id === entry.id ? entry : item);
   run = recordCreativeSignal(run, output.visual.id, "saved_to_library");
   const creativeRuns = replaceCreativeRun(state.creativeRuns, run);
   await commitLocalChanges({
@@ -4940,7 +5014,7 @@ async function saveCreativeOutputToLibrary(message) {
     ...(warning ? { warnings: [warning] } : {})
   };
   } catch (error) {
-    if (posterAssetId && !metadataCommitted) await deleteMediaBlob(posterAssetId).catch(() => undefined);
+    if (posterAssetId && !metadataCommitted) await deleteUnreferencedMedia([posterAssetId]).catch(() => undefined);
     throw error;
   }
 }

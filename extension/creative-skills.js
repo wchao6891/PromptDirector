@@ -59,6 +59,12 @@ export function saveCreativeSkillVersion(stateValue, skillId, input = {}, option
   const callName = cleanCallName(input.callName ?? skill.callName);
   assertUniqueCallName(state, callName, skill.id);
   const now = cleanText(options.now) || new Date().toISOString();
+  const current = currentCreativeSkillVersion(skill);
+  if (input.coverOnly === true) {
+    if (callName !== skill.callName || cleanText(input.description ?? skill.description) !== skill.description ||
+        normalizeMarkdown(input.skillMarkdown) !== current.skillMarkdown) throw new Error("Skill 内容已变化，请重新保存");
+    return { state, skill, version: current };
+  }
   const version = normalizeCreativeSkillVersion({
     id: cleanText(options.versionId) || `skill-version:${crypto.randomUUID()}`,
     createdAt: now,

@@ -8,7 +8,8 @@
     <link rel="stylesheet" href="ui-foundation.css" />
     <link rel="stylesheet" href="library.css" />
     <link rel="stylesheet" href="skills-page.css" />
-  </head>
+    <link rel="stylesheet" href="skill-cover.css" />
+</head>
   <body class="skills-page" data-skill-view="list">
     <header class="skills-topbar">
       <a class="skills-brand product-brand" href="library.html" aria-label="返回视觉创作灵感库" data-i18n-aria-label="返回视觉创作灵感库" title="返回视觉创作灵感库" data-i18n-title="返回视觉创作灵感库"><img class="product-brand-mark" src="assets/icons/icon-source.svg" alt="" /><span class="product-brand-copy"><strong class="product-brand-name">PromptDirector</strong><span class="product-brand-tagline" data-i18n="视觉创作灵感库">视觉创作灵感库</span></span></a>
@@ -45,6 +46,7 @@
           </div>
         </header>
         <p id="skill-detail-feedback" class="skill-feedback" role="status"></p>
+        <div id="skill-detail-cover" class="skill-cover-detail" hidden></div>
         <div class="skill-detail-layout">
           <aside class="skill-detail-summary">
             <p id="skill-detail-description"></p>
@@ -117,6 +119,7 @@
                 <label><span data-i18n="调用名">调用名</span><div class="skill-call-name"><b>/</b><input id="skill-call-name" maxlength="80" placeholder="你的 Skill 名称" data-i18n-placeholder="你的 Skill 名称" /></div></label>
                 <label><span data-i18n="说明">说明</span><input id="skill-description" maxlength="240" placeholder="它在什么创作任务中发挥作用" data-i18n-placeholder="它在什么创作任务中发挥作用" /></label>
               </div>
+              <div id="skill-cover-editor"></div>
               <details id="skill-draft-editor" class="skill-draft-editor"><summary data-i18n="查看并编辑 SKILL.md">查看并编辑 SKILL.md</summary><label><span data-i18n="SKILL.md 正文">SKILL.md 正文</span><textarea id="skill-markdown" class="skill-markdown-editor" rows="22"></textarea></label></details>
               <div class="skill-step-actions"><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
               <p id="skill-save-status" class="skill-feedback" role="status"></p>
@@ -142,12 +145,12 @@
 
     <dialog id="skill-import-dialog" class="skill-import-dialog">
       <header><h2 data-i18n="导入外部 Skill">导入外部 Skill</h2><button id="skill-import-close" class="icon-button" type="button" aria-label="关闭" data-i18n-aria-label="关闭" title="关闭" data-i18n-title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
-      <p data-i18n="完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。">完整包会随私人备份保留；PromptDirector 只读取 SKILL.md 和 Markdown references，不执行脚本、程序、MCP 或二进制文件。</p>
+      <p data-i18n="完整包会随私人备份保留；PromptDirector 可展示成果封面并读取方法文档，不执行包内程序。">完整包会随私人备份保留；PromptDirector 可展示成果封面并读取方法文档，不执行包内程序。</p>
       <div><button id="skill-import-zip" type="button" data-i18n="选择 .zip / .skill / .md">选择 .zip / .skill / .md</button><button id="skill-import-folder" class="button-secondary" type="button" data-i18n="选择目录">选择目录</button></div>
     </dialog>
     <dialog id="skill-submission-dialog" class="skill-submission-dialog">
       <header><div><small data-i18n="公开投稿">公开投稿</small><h2 data-i18n="投稿到精选 Skill">投稿到精选 Skill</h2></div><button id="skill-submission-close" class="icon-button" type="button" aria-label="关闭" title="关闭" data-i18n-aria-label="关闭" data-i18n-title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
-      <p data-i18n="投稿与普通导出相互独立。这里只生成可公开审核的纯文本快照，不包含脚本、二进制文件或默认的私人来源记录。">投稿与普通导出相互独立。这里只生成可公开审核的纯文本快照，不包含脚本、二进制文件或默认的私人来源记录。</p>
+      <p data-i18n="投稿包含公开方法和一张成果封面，请确认这些内容可以公开分享。">投稿包含公开方法和一张成果封面，请确认这些内容可以公开分享。</p>
       <div class="skill-submission-fields">
         <label><span data-i18n="公开署名">公开署名</span><input id="skill-submission-author" autocomplete="name" aria-describedby="skill-submission-author-error" /><small id="skill-submission-author-error" class="skill-submission-field-error" hidden></small></label>
         <label class="skill-submission-summary"><span data-i18n="公开摘要">公开摘要</span><textarea id="skill-submission-summary" rows="3" aria-describedby="skill-submission-summary-error"></textarea><small id="skill-submission-summary-error" class="skill-submission-field-error" hidden></small></label>

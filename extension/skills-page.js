@@ -1,3 +1,5 @@
+import { createSkillCoverEditor, showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
+import { readSkillCover } from "./skill-cover.js";
 import { DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS, normalizeAiSettings } from "./deepseek.js";
 import { normalizeComposerSettings, referenceSourcePartsForAsset } from "./composer.js";
 import { requireAiRuntimeProtocolVersion } from "./ai-runtime.js";
@@ -100,6 +102,10 @@ let activeSkillRun = null;
 let visionPreferenceTouched = false;
 let curatedSubmissionSnapshot = null;
 
+const coverEditor = createSkillCoverEditor({
+  host: document.querySelector("#skill-cover-editor"), readFile: getMediaBlob,
+  sources: coverSources, reportError: error => setFeedback(elements.skillSaveStatus, error.message, true)
+});
 bindEvents();
 await refreshState();
 initializeNavigation();
@@ -167,11 +173,20 @@ async function refreshState() {
 }
 
 function renderSkillList() {
+  for (const host of elements.skillList.querySelectorAll(".skill-cover-card")) clearSkillCoverImage(host);
   const query = elements.skillSearch.value.trim().toLocaleLowerCase();
   const skills = creativeSkills.items.filter((skill) => !query || `${skill.callName}\n${skill.description}`.toLocaleLowerCase().includes(query));
   elements.skillSummary.textContent = t("{count} 个 Skill", { count: creativeSkills.items.length });
   elements.skillList.replaceChildren(...skills.map(skillCard));
   elements.skillEmpty.hidden = creativeSkills.items.length !== 0;
+}
+
+function coverSources() {
+  return selectedSkillContentImages(entries, sourceSelectionSnapshots()).map(source => {
+    const entry = entries.find(item => item.id === source.entryId);
+    const asset = entryMediaAssets(entry).find(item => item.id === source.visualId);
+    return { assetId: source.visualId, name: asset?.sourceTitle || "", label: entry?.title || t("成果封面") };
+  });
 }
 
 function skillCard(skill) {
@@ -184,7 +199,9 @@ function skillCard(skill) {
   header.append(title, textEl("span", `v${versionNumber(skill, version.id)}`));
   const footer = el("footer");
   footer.append(textEl("span", skill.sourceLabel || (version.source === "imported" ? t("外部包") : "PromptDirector")), textEl("time", formatDate(skill.updatedAt)));
-  button.append(header, textEl("p", skill.description || t("暂无说明")), footer);
+  const cover = el("div", "skill-cover-card");
+  showSkillCoverImage(cover, () => readSkillCover(skill, getMediaBlob), { alt: skill.callName });
+  button.append(cover, header, textEl("p", skill.description || t("暂无说明")), footer);
   button.addEventListener("click", () => navigateTo("detail", skill.id));
   return button;
 }
@@ -317,6 +334,7 @@ function renderSkillDetail() {
   const skill = activeSkill();
   if (!skill) return navigateTo("list", "", { replace: true });
   const version = currentCreativeSkillVersion(skill);
+  showSkillCoverImage(document.querySelector("#skill-detail-cover"), () => readSkillCover(skill, getMediaBlob), { alt: skill.callName });
   elements.skillDetailTitle.textContent = skill.callName;
   elements.skillDetailCallName.textContent = `/${skill.callName}`;
   elements.skillDetailDescription.textContent = skill.description || t("暂无说明");
@@ -346,6 +364,7 @@ function renderWorkspace(view, skillId = "") {
   visionPreferenceTouched = false;
   finishSkillRun();
   const skill = activeSkill();
+  coverEditor.reset(skill);
   const selectingSources = view === "create" || view === "refine";
   elements.skillBuilder.dataset.mode = view;
   elements.skillSourceSidebar.hidden = !selectingSources;
@@ -861,6 +880,7 @@ function restoreDefaultInstructions() {
 }
 
 function renderVisionPreview() {
+  coverEditor.refresh();
   const images = selectedSkillContentImages(entries, sourceSelectionSnapshots());
   const plan = contactSheetPlan(images);
   const runtime = skillRuntimeSettings?.visionRuntime;
@@ -1043,6 +1063,9 @@ async function saveSkill() {
   if (!callName || !description || !skillMarkdown) throw new Error(t("调用名、说明和 SKILL.md 正文都需要填写"));
   const creating = !activeSkillId;
   elements.skillSave.disabled = true;
+  coverEditor.setDisabled(true);
+  const editableFields = [elements.skillCallName, elements.skillDescription, elements.skillMarkdown];
+  editableFields.forEach(field => { field.readOnly = true; });
   try {
     const evidenceSources = selectedCreativeRunEvidenceSources(creativeRuns, [...selectedEvidenceIds], activeSkillId);
     const hasSelectedEvidence = sourceSelections.size > 0 || evidenceSources.length > 0;
@@ -1061,15 +1084,18 @@ async function saveSkill() {
     const message = activeSkillId ? {
       type: "SAVE_CREATIVE_SKILL_VERSION",
       skillId: activeSkillId,
-      version: { callName, description, skillMarkdown, provenanceMarkdown, reason: "improved", source: activeSkill()?.versions.at(-1)?.source }
+      version: { callName, description, skillMarkdown, provenanceMarkdown, reason: "improved", source: activeSkill()?.versions.at(-1)?.source,
+        coverOnly: activeView === "editor" && callName === activeSkill()?.callName && description === activeSkill()?.description && skillMarkdown === currentCreativeSkillVersion(activeSkill())?.skillMarkdown }
     } : {
       type: "CREATE_CREATIVE_SKILL",
       skill: { callName, description, skillMarkdown, provenanceMarkdown, reason: "created", source: "generated" }
     };
+    if (coverEditor.value() !== undefined) message.cover = coverEditor.value();
     const response = await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || t("Skill 保存失败"));
     creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
     activeSkillId = response.skill.id;
+    coverEditor.reset(response.skill);
     elements.skillDelete.hidden = false;
     elements.skillVersionsStep.hidden = false;
     elements.skillWorkspaceTitle.textContent = response.skill.callName;
@@ -1080,6 +1106,8 @@ async function saveSkill() {
     } else setFeedback(elements.skillSaveStatus, response.message);
   } finally {
     elements.skillSave.disabled = false;
+    coverEditor.setDisabled(false);
+    editableFields.forEach(field => { field.readOnly = false; });
   }
 }
 
@@ -1182,6 +1210,7 @@ async function openCuratedSubmission() {
   elements.skillSubmissionSummary.value = skill.description;
   elements.skillSubmissionRights.checked = false;
   clearCuratedSubmissionErrors();
+  for (const host of elements.skillSubmissionPreview.querySelectorAll(".skill-cover-detail")) clearSkillCoverImage(host);
   elements.skillSubmissionPreview.replaceChildren();
   elements.skillSubmissionFindings.hidden = true;
   elements.skillSubmissionOpen.disabled = true;
@@ -1197,13 +1226,19 @@ async function refreshCuratedSubmission() {
     author: elements.skillSubmissionAuthor.value,
     summary: elements.skillSubmissionSummary.value,
     rightsConfirmed: elements.skillSubmissionRights.checked
-  });
+  }, { readFile: getMediaBlob });
   await chrome.storage.local.set({ [CURATED_SKILL_PUBLISHER_STORAGE_KEY]: elements.skillSubmissionAuthor.value.trim() });
   curatedSubmissionSnapshot = snapshot;
+  for (const host of elements.skillSubmissionPreview.querySelectorAll(".skill-cover-detail")) clearSkillCoverImage(host);
   elements.skillSubmissionPreview.replaceChildren(...snapshot.preview.map((file) => {
     const detail = document.createElement("details");
     detail.open = true;
-    detail.append(textEl("summary", `${file.path} · ${file.byteSize} bytes`), textEl("pre", file.text));
+    detail.append(textEl("summary", `${file.path} · ${file.byteSize} bytes`));
+    if (file.mimeType?.startsWith("image/")) {
+      const cover = el("div", "skill-cover-detail");
+      showSkillCoverImage(cover, () => snapshot.files.get(file.path));
+      detail.append(cover);
+    } else detail.append(textEl("pre", file.text));
     return detail;
   }));
   const list = elements.skillSubmissionFindings.querySelector("ul");
@@ -1212,7 +1247,7 @@ async function refreshCuratedSubmission() {
   elements.skillSubmissionOpen.disabled = snapshot.findings.length > 0;
   setFeedback(elements.skillSubmissionFeedback, snapshot.findings.length
     ? "发现可能的隐私风险。快照没有被改写，请修改本地 Skill 后重新检查。"
-    : `已生成 ${snapshot.preview.length} 个纯文本文件；请逐一核对全文。`, snapshot.findings.length > 0);
+    : t("请核对成果封面和公开方法内容。"), snapshot.findings.length > 0);
 }
 
 async function downloadCuratedSubmission() {

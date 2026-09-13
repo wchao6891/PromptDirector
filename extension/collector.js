@@ -1,3 +1,4 @@
+import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems, savedPageCaptureCandidateIds } from "./capture-additions.js";
 import { createPageCaptureCard } from "./collector-page-capture-view.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
@@ -1587,7 +1588,7 @@ async function savePageCapture(textOnly = false) {
           showFeedback(t("媒体域名权限未获授权；仍会保存正文和可用引用，并逐项显示下载失败原因。"), true);
         }
       }
-      const response = await chrome.runtime.sendMessage({
+      const response = await sendWithGenerationPromptConfirmation({
         type: "COMMIT_PAGE_CAPTURE",
         batch: normalizePageCaptureBatch({ ...pageCaptureBatch, sessionMediaAllowed }),
         ...metadata
@@ -1742,7 +1743,7 @@ async function commitDraft(duplicateAction = "", button) {
   render();
   try {
     const metadata = captureMetadataForCommit();
-    const response = await chrome.runtime.sendMessage({
+    const response = await sendWithGenerationPromptConfirmation({
       type: "COMMIT_CAPTURE_DRAFT",
       duplicateAction,
       ...metadata

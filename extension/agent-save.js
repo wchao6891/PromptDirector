@@ -1,3 +1,5 @@
+import { planImageGenerationPrompts, generationPromptConfirmation } from "./image-generation-ingestion.js";
+import { embeddedMediaPrompts } from "./image-generation-info.js";
 import { agentError, requireWebUrl } from "./agent-protocol.js";
 import { materializeLogicalCases, normalizeCompoundCases } from "./compound-cases.js";
 import { normalizeEntryMedia } from "./media.js";
@@ -51,17 +53,21 @@ export async function saveAgentMaterial(input, requestId, deps) {
       id: `media:${asset.id}`, kind: asset.kind, assetId: asset.id, label: asset.sourceTitle, sourceOrder: index + 1
     }))
   ];
-  const entry = normalizeEntryMedia({ ...base, schemaVersion, mediaAssets,
+  const explicitPrompts = records.filter(record => input.filePrompts?.[record.id]).map(record => ({
+    assetId: record.assetId, text: input.filePrompts[record.id], source: "manual"
+  }));
+  let entry = normalizeEntryMedia({ ...base, schemaVersion, mediaAssets,
     primaryMediaId: mediaAssets.find(asset => asset.usage !== "poster")?.id || "",
     articleDocument: normalizeArticleDocument({ blocks }),
-    mediaPrompts: records.filter(record => input.filePrompts?.[record.id]).map(record => ({
-      assetId: record.assetId, text: input.filePrompts[record.id], source: "manual"
-    })),
+    mediaPrompts: [...explicitPrompts, ...embeddedMediaPrompts(mediaAssets, explicitPrompts)],
     sourcePages: [...(sourceUrl ? [{ url: sourceUrl, title: input.title }] : []), ...sources.filter(s => s.url).map(s => ({ url: s.url, title: s.title }))],
     agentProvenance: { requestId, instanceId, kind: input.kind, sources, note: String(input.note || ""), savedAt: new Date().toISOString() },
     customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [],
     analysisBreakdown: [], rejectedCandidateKeys: [], negativeTerms: [], analysisPending: false });
   entry.classification = classify(entry, state);
+  const promptPlan = await planImageGenerationPrompts(entry, mediaAssets, input.generationPromptChoices);
+  if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
+  entry = promptPlan.entry;
   const entries = [...state.entries, entry];
   const organizerState = place(state.organizerState, entries, [entry.id], { collectionId });
   // Receipt provenance and transfer ownership are committed with the entry.

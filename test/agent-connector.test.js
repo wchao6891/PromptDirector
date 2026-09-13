@@ -166,3 +166,17 @@ test('copying connection instructions creates stable identity without granting a
   assert(request.includes(results[0].instanceId)); assert(request.includes('/blob/main/connector/INSTALL.md'));
   assert.equal((await connection.prepare()).instanceId, results[0].instanceId);
 });
+
+test('large generation prompt conflicts are paged through task receipts without overflowing native messages', async () => {
+  const large = '长提示词🌧'.repeat(120000);
+  const store = storage();
+  const tasks = createAgentTasks({ storage: store, execute: async () => ({ok:false,promptConflicts:[{assetId:'image',name:'image',token:'token',originalText:large,embeddedText:large+'new'}]}) });
+  await tasks.submit('save_material',{},'large-conflict');await turn();
+  const receipt=await tasks.inspect('large-conflict');
+  assert.equal(receipt.state,'failed');assert.ok(JSON.stringify(receipt).length<2000);
+  assert.equal(receipt.result.promptConflicts[0].originalCharacters,large.length);
+  let text='',offset=0;
+  do {const part=await tasks.inspect('large-conflict',{conflictToken:'token',conflictPart:'embeddedText',offset,length:49152});text+=part.content;offset=part.nextOffset;} while(offset!==null);
+  assert.equal(text,large+'new');
+  await assert.rejects(tasks.inspect('large-conflict',{conflictToken:'missing',conflictPart:'embeddedText'}),{code:'invalid_input'});
+});

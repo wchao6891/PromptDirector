@@ -1,4 +1,8 @@
+import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
+import { isSkillCoverPath } from "./skill-cover.js";
+import { sha256Hex } from "./sync-crypto.js";
 import {
+  fetchCuratedSkillCover,
   isTrustedCuratedSkillResponseUrl,
   normalizeCuratedSkillCatalog,
   validateCuratedSkillPackage,
@@ -18,6 +22,12 @@ const elements = Object.fromEntries([
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 const state = { catalog: null, creativeSkills: { version: 1, items: [] }, parsed: new Map(), archives: new Map(), query: "" };
 let toastTimer = 0;
+const covers = new Map();
+function loadCover(item) {
+  if (!item.cover) return null;
+  if (!covers.has(item.id)) covers.set(item.id, fetchCuratedSkillCover(item).catch(error => { covers.delete(item.id); throw error; }));
+  return covers.get(item.id);
+}
 
 elements.returnLibrary.addEventListener("click", () => location.assign(chrome.runtime.getURL("library.html")));
 elements.retryCatalog.addEventListener("click", start);
@@ -30,6 +40,7 @@ await start();
 async function start() {
   hideStatus();
   state.catalog = null;
+  for (const host of elements.skillApp.querySelectorAll(".skill-cover-card")) clearSkillCoverImage(host);
   elements.skillApp.replaceChildren(loading());
   try {
     const [response, local] = await Promise.all([
@@ -55,6 +66,7 @@ async function start() {
 }
 
 function render() {
+  for (const host of elements.skillApp.querySelectorAll(".skill-cover-card")) clearSkillCoverImage(host);
   const query = state.query;
   const items = (state.catalog?.skills ?? []).filter((item) => !query || [item.title, item.callName, item.author, item.summary].join(" ").toLocaleLowerCase().includes(query));
   if (!items.length) {
@@ -77,6 +89,9 @@ function render() {
 
 function card(item) {
   const root = element("article", "ui-skill-card curated-skill-card");
+  const cover = element("div", "skill-cover-card");
+  showSkillCoverImage(cover, () => loadCover(item), { alt: item.title });
+  root.append(cover);
   root.append(
     element("h2", "ui-skill-card-title", item.title),
     element("p", "ui-skill-card-summary", item.summary)
@@ -91,6 +106,7 @@ function card(item) {
 }
 
 async function openDetail(item) {
+  for (const host of elements.skillDetailContent.querySelectorAll(".skill-cover-detail")) clearSkillCoverImage(host);
   elements.skillDetailContent.replaceChildren(element("div", "curated-skill-detail", t("正在校验并读取 Skill…")));
   elements.skillDetailDialog.showModal();
   try {
@@ -123,7 +139,9 @@ function renderDetail(item, parsed) {
   const document = renderMarkdownDocument(parsed.body);
   removeDuplicateTitleHeading(document, item.title);
   markdown.append(document);
-  root.append(header, maintenance, markdown);
+  const cover = element("div", "skill-cover-detail");
+  showSkillCoverImage(cover, () => loadCover(item), { alt: item.title });
+  root.append(cover, header, maintenance, markdown);
   elements.skillDetailContent.replaceChildren(root);
 }
 
@@ -134,6 +152,13 @@ async function loadParsed(item) {
   const archive = await readResponseBlobWithProgress(response);
   await verifyCuratedSkillPackageBlob(archive, item.sha256, item.archiveBytes);
   const parsed = await validateCuratedSkillPackage(item, archive);
+  const cover = await loadCover(item);
+  if (cover) {
+    const root = parsed.root ? `${parsed.root}/` : "";
+    const existing = [...parsed.files].find(([path]) => isSkillCoverPath(path, root));
+    if (existing && await sha256Hex(existing[1]) !== item.cover.sha256) throw new Error(t("精选 Skill 封面校验失败"));
+    if (!existing) parsed.files.set(`${root}${cover.path}`, cover.blob);
+  }
   state.archives.set(item.id, archive);
   state.parsed.set(item.id, parsed);
   return parsed;

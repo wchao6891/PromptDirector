@@ -1,3 +1,4 @@
+import { readImageGenerationInfo } from "./image-generation-info.js";
 import { sha256Blob } from "./blob-digest.js";
 export { sha256Blob } from "./blob-digest.js";
 import { readImageDimensions as readStoredImageDimensions } from "./image-metadata.js";
@@ -207,9 +208,11 @@ async function prepareLocalMediaValue(file, assetId, options) {
       asset: posterAsset(posterId, id, posterBlob, posterDimensions, now, "GIF 首帧")
     };
   }
+  const generationInfo = await readImageGenerationInfo(blob, { signal: options.signal });
   return {
     blob,
-    asset: { ...base, ...dimensions, ...(poster ? { posterAssetId: poster.asset.id } : {}) },
+    ...(generationInfo?.warnings.length ? { warnings: generationInfo.warnings } : {}),
+    asset: { ...base, ...dimensions, ...(generationInfo ? { generationInfo } : {}), ...(poster ? { posterAssetId: poster.asset.id } : {}) },
     ...(poster ? { poster } : {})
   };
 }

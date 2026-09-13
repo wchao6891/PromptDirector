@@ -1,6 +1,15 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "完整包会随私人备份保留；PromptDirector 可展示成果封面并读取方法文档，不执行包内程序。": "Private backups retain the complete package. PromptDirector displays the result cover and reads method documents without executing packaged programs.",
+  "投稿包含公开方法和一张成果封面，请确认这些内容可以公开分享。": "Submissions include the public method and one result cover. Confirm that you can share this content publicly.",
+  "正在读取封面图片，请稍候": "Reading the cover image. Please wait.",
+  "请核对成果封面和公开方法内容。": "Review the result cover and public method content.",
+  "成果封面": "Result cover",
+  "封面读取失败": "Cover could not be loaded",
+  "从来源图片选择": "Choose a source image",
+  "上传图片": "Upload image",
+  "请先为 Skill 添加一张成果封面": "Add a result cover to this Skill first",
   "确认付费": "Confirm charges",
   "已选 {count} 个案例": "{count} cases selected",
   " · 跳过 {count} 个无文字案例": " · Skipping {count} cases without text",

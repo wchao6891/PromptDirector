@@ -77,6 +77,14 @@ Run `scripts/helper.py` before applying the composition guidance.
             "uiPreferences": {"locale": "zh-CN", "theme": "light", "motion": "none"},
         })
 
+        setup.evaluate("""async () => {
+          const { saveMediaBlob } = await import(chrome.runtime.getURL('media-store.js'));
+          const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 48;
+          const context = canvas.getContext('2d'); context.fillStyle = '#406886'; context.fillRect(0, 0, 64, 48);
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+          for (const id of ['skill-image-a1', 'skill-image-a2']) await saveMediaBlob(id, blob);
+        }""")
+
         requests: list[dict] = []
 
         def mock_deepseek(route) -> None:
@@ -315,6 +323,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         composer.locator("#composer-reference-tab-skills").click()
         expect(composer.locator("#composer-projects-panel")).to_be_visible()
         expect(composer.locator(".composer-skill-card")).to_have_count(2)
+        expect(composer.locator(".composer-skill-card .skill-cover-card img")).to_be_visible()
         composer.screenshot(path="/tmp/promptdirector-composer-skills-after.png")
         skill_workspace_layout = composer.evaluate("""() => {
           const body = document.querySelector('.composer-reference-body').getBoundingClientRect();
@@ -326,7 +335,7 @@ Run `scripts/helper.py` before applying the composition guidance.
             mode: document.querySelector('#composer-reference-workspace').dataset.mode,
             panelRatio: panel.width / body.width,
             descriptionClamp: descriptions.map((item) => getComputedStyle(item).webkitLineClamp),
-            maxCardHeight: Math.max(...cards.map((item) => item.getBoundingClientRect().height)),
+            maxCardContentHeight: Math.max(...cards.map((item) => item.getBoundingClientRect().height - (item.querySelector(".skill-cover-card:not([hidden])")?.getBoundingClientRect().height || 0))),
             tabsWidth: tabs.width,
             pageWidth: document.documentElement.scrollWidth,
             viewportWidth: innerWidth
@@ -335,7 +344,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         assert skill_workspace_layout["mode"] == "skills", skill_workspace_layout
         assert skill_workspace_layout["panelRatio"] >= 0.75, skill_workspace_layout
         assert set(skill_workspace_layout["descriptionClamp"]) == {"2"}, skill_workspace_layout
-        assert skill_workspace_layout["maxCardHeight"] < 220, skill_workspace_layout
+        assert skill_workspace_layout["maxCardContentHeight"] < 220, skill_workspace_layout
         assert skill_workspace_layout["tabsWidth"] < 180, skill_workspace_layout
         assert skill_workspace_layout["pageWidth"] <= skill_workspace_layout["viewportWidth"], skill_workspace_layout
         composer.locator("#composer-reference-close").click()

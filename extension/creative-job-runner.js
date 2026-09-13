@@ -1,3 +1,4 @@
+import { readImageGenerationInfo } from "./image-generation-info.js";
 import { applyLibraryToolEvent, settleLibraryToolEvents } from "./composer-library-tools.js";
 import { createLocalComposerLibraryTools } from "./composer-library-host.js";
 import {
@@ -186,7 +187,9 @@ export async function runCreativeJob(job, context = {}) {
       const id = globalThis.crypto.randomUUID();
       await saveScreenshotBlob(id, blob);
       savedIds.push(id);
+      const generationInfo = await readImageGenerationInfo(blob, { signal });
       visuals.push({
+        ...(generationInfo ? { generationInfo } : {}),
         id,
         kind: "image",
         usage: "content",

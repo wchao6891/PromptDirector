@@ -1,5 +1,6 @@
 import { PORTABLE_LIBRARY_LIMITS, portableLibraryLimits } from "./resource-limits.js";
 import { createZipBlob, readZipBlob } from "./zip.js";
+import { isSkillCoverPath, validateSkillCover } from "./skill-cover.js";
 
 const encoder = new TextEncoder();
 const markdownType = "text/markdown";
@@ -80,6 +81,7 @@ export async function exportGeneratedSkillPackage(input = {}) {
 
 export async function exportStoredSkillPackage(skillValue = {}, options = {}) {
   const packageFiles = Array.isArray(skillValue.packageFiles) ? skillValue.packageFiles : [];
+  const hasStoredDocument = packageFiles.some(file => file.path === "SKILL.md" || file.path.endsWith("/SKILL.md"));
   if (!packageFiles.length) {
     const versions = Array.isArray(skillValue.versions) ? skillValue.versions : [];
     const version = versions.find((item) => item.id === skillValue.currentVersionId) ?? versions.at(-1) ?? {};
@@ -92,7 +94,11 @@ export async function exportStoredSkillPackage(skillValue = {}, options = {}) {
     });
   }
   if (typeof options.readFile !== "function") throw new Error("Skill 导出缺少文件读取器");
-  const files = [];
+  const version = (skillValue.versions ?? []).find(item => item.id === skillValue.currentVersionId) ?? skillValue.versions?.at(-1);
+  const files = hasStoredDocument ? [] : [...generatedSkillFiles({
+    portableId: skillValue.portableId, description: skillValue.description,
+    ...version
+  })].map(([name, data]) => ({ name, data }));
   for (const file of packageFiles) {
     const path = normalizePackagePath(file?.path);
     if (!path || path !== file?.path) throw new Error("Skill 包含不安全的文件路径");
@@ -157,6 +163,12 @@ export async function parseSkillFiles(filesValue, limitsValue = {}) {
   const skillBlob = normalized.get(skillPath);
   if (!skillBlob) throw new Error("Skill 包根目录缺少 SKILL.md");
   const parsed = parseSkillMarkdown(await readMarkdown(skillBlob, skillPath));
+  const coverPaths = [...normalized.keys()].filter(path => isSkillCoverPath(path, root ? `${root}/` : ""));
+  if (coverPaths.length > 1) throw new Error("每个 Skill 只能包含一张封面");
+  for (const path of coverPaths) {
+    const cover = await validateSkillCover(normalized.get(path), path, { maxBytes: limits.maxFileBytes });
+    normalized.set(path, cover.blob);
+  }
   const references = [];
   for (const [path, blob] of normalized) {
     const relativePath = root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
