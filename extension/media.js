@@ -1,3 +1,4 @@
+import { normalizeGenerationInfo } from "./image-generation-info.js";
 import { normalizeArticleDocument, removeArticleDocumentAsset } from "./article-document.js";
 import { LOCAL_ASSET_REFERENCE_RECORD_TYPE } from "./local-media.js";
 import { ASSET_IMPORT_FAILURE_CODES } from "./resource-limits.js";
@@ -51,6 +52,7 @@ export function normalizeMediaAsset(value = {}) {
   const durationMs = positiveInteger(value.durationMs);
   const byteSize = positiveInteger(value.byteSize);
   const usage = MEDIA_USAGES.has(value.usage) ? value.usage : "content";
+  const generationInfo = kind === "image" && usage === "content" ? normalizeGenerationInfo(value.generationInfo) : null;
   const capturedAt = validIso(value.capturedAt) || new Date().toISOString();
   return {
     id,
@@ -62,6 +64,7 @@ export function normalizeMediaAsset(value = {}) {
     sourceAuthor: clean(value.sourceAuthor),
     originalWorkUrl: safeHttpUrl(value.originalWorkUrl),
     capturedAt,
+    ...(generationInfo ? { generationInfo } : {}),
     ...(mimeTypeForKind(kind, mimeType, format) || localAssetReference || genericManagedAttachment
       ? { mimeType: mimeType || "application/octet-stream" }
       : {}),
@@ -326,7 +329,8 @@ export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source 
   if (!text && source === "ai-suggestion" && asset.kind === "image" && asset.visionAnalysis) {
     asset.visionAnalysis = { ...asset.visionAnalysis, reconstructionPrompt: "", userEdited: true };
   }
-  entry.mediaPrompts = entry.mediaPrompts.filter((item) => item.assetId !== assetId || (preserveOtherSource && item.source !== source));
+  entry.mediaPrompts = entry.mediaPrompts.filter((item) => item.assetId !== assetId ||
+    (preserveOtherSource && item.source !== source && !(source === "manual" && item.source === "embedded")));
   if (text) entry.mediaPrompts.push({
     assetId,
     text,
@@ -413,11 +417,11 @@ function normalizeTimeNotes(values, assetIds) {
 }
 
 function normalizeMediaPromptSource(value) {
-  return ["webpage", "ai-suggestion"].includes(value) ? value : "manual";
+  return ["webpage", "embedded", "ai-suggestion"].includes(value) ? value : "manual";
 }
 
 function compareMediaPromptSources(a, b) {
-  const sources = ["manual", "webpage", "ai-suggestion"];
+  const sources = ["manual", "webpage", "embedded", "ai-suggestion"];
   return sources.indexOf(a.source) - sources.indexOf(b.source);
 }
 

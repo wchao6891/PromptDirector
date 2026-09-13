@@ -1,3 +1,4 @@
+import { normalizeGenerationInfo } from "./image-generation-info.js";
 import { formatFacetNodePath, normalizeFacetCatalog } from "./facets.js";
 import { entryPalette, visualDescriptions } from "./visuals.js";
 import { matchesSearchQuery, parseSearchQuery } from "./search-query.js";
@@ -121,6 +122,21 @@ export function entrySourceMetadataRows(entry = {}, sourceLabel = "来源") {
       descriptors.push(text);
     }
   }
+  const images = (entry.mediaAssets ?? []).filter(asset => asset.kind === "image" && asset.usage !== "poster");
+  for (const [index, asset] of images.entries()) {
+    const info = normalizeGenerationInfo(asset.generationInfo);
+    if (!info) continue;
+    for (const [branch, candidate] of info.candidates.entries()) {
+      const prefix = [
+        images.length > 1 ? `${english ? "Image" : "图片"} ${index + 1}` : "",
+        info.candidates.length > 1 ? `${english ? "Branch" : "分支"} ${branch + 1}` : ""
+      ].filter(Boolean).join(" · ");
+      const label = name => prefix ? `${prefix} · ${name}` : name;
+      addField(label(english ? "Generator" : "生成工具"), candidate.format === "a1111" ? "A1111" : "ComfyUI");
+      addField(label(english ? "Negative prompt" : "负向提示词"), candidate.negativePrompt);
+      for (const parameter of candidate.parameters) addField(label(parameter.name), parameter.value);
+    }
+  }
   return [
     ...(descriptors.length ? [{ label: sourceLabel, value: descriptors.join(" · ") }] : []),
     ...fields
@@ -158,6 +174,7 @@ export function entrySearchText(entry, catalogValue, nodeByIdValue) {
   ];
   return [
     entry.title, entry.text, entry.url, ...tags, ...(entry.customLabels ?? []), ...(entry.metadataLabels ?? []),
+    ...(entry.mediaPrompts ?? []).map(prompt => prompt.text),
     ...sourceFactValues,
     ...visualDescriptions(entry),
     ...(entry.negativeTerms ?? []), ...(entry.legacyFacetCandidates ?? []),

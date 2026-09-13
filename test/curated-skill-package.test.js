@@ -1,15 +1,20 @@
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  buildCuratedSkillSnapshot,
+  buildCuratedSkillSnapshot as buildSnapshot,
   buildCuratedSkillSubmissionArchive
 } from "../extension/curated-skill-package.js";
 import { currentCreativeSkillVersion, createCreativeSkill, createCreativeSkillsState } from "../extension/creative-skills.js";
 import { readZipBlob } from "../extension/zip.js";
 
+const cover = new Blob([readFileSync(new URL("./fixtures/transfer-media/original.gif", import.meta.url))], { type: "image/gif" });
+const buildCuratedSkillSnapshot = (skill, metadata) => buildSnapshot(skill, metadata, { readFile: async () => cover });
+
 function fixture(overrides = {}) {
   return createCreativeSkill(createCreativeSkillsState(), {
+    packageFiles: [{ path: "assets/cover.gif", assetId: "skill-file:cover", byteSize: cover.size, mimeType: cover.type }],
     callName: "构图方法",
     portableId: "composition-method",
     description: "把主体层级组织成清晰画面。",
@@ -19,14 +24,14 @@ function fixture(overrides = {}) {
   }, { id: "local:one", versionId: "version:one", now: "2026-08-23T00:00:00.000Z" }).skill;
 }
 
-test("curated submission snapshot is text-only, exact-previewable, and excludes private provenance by default", async () => {
+test("curated submission snapshot includes a byte-verified image, is exact-previewable, and excludes private provenance by default", async () => {
   const skill = fixture();
   const snapshot = await buildCuratedSkillSnapshot(skill, {
     author: "Creator One",
     summary: "A reusable composition method.",
     rightsConfirmed: true
   });
-  assert.deepEqual([...snapshot.files.keys()], ["SKILL.md", "references/guide.md"]);
+  assert.deepEqual([...snapshot.files.keys()], ["SKILL.md", "references/guide.md", "assets/cover.gif"]);
   assert.equal(snapshot.findings.length, 0);
   assert.doesNotMatch(await snapshot.files.get("SKILL.md").text(), /私人来源|\/Users\/private/);
   assert.equal(snapshot.manifest.reviewStatus, "pending");
@@ -54,7 +59,7 @@ test("privacy findings are reported without mutating the final preview", async (
   await assert.rejects(() => buildCuratedSkillSubmissionArchive(snapshot), /隐私风险/);
 });
 
-test("submission archive contains a manifest and the reviewed text payload only", async () => {
+test("submission archive contains a manifest and the reviewed method and cover payload", async () => {
   const snapshot = await buildCuratedSkillSnapshot(fixture(), {
     author: "Creator One",
     summary: "A reusable composition method.",
@@ -65,12 +70,12 @@ test("submission archive contains a manifest and the reviewed text payload only"
   assert.deepEqual([...outer.keys()], ["submission.json", "payload.zip"]);
   const manifest = JSON.parse(await outer.get("submission.json").text());
   assert.equal(manifest.format, "prompt-director-curated-skill-submission");
-  assert.equal(manifest.version, 1);
+  assert.equal(manifest.version, 2);
   assert.equal(manifest.license, "CC BY 4.0");
   assert.equal("authorId" in manifest, false);
   assert.equal("skillVersion" in manifest, false);
   const payload = await readZipBlob(outer.get("payload.zip"));
-  assert.deepEqual([...payload.keys()], ["SKILL.md", "references/guide.md"]);
+  assert.deepEqual([...payload.keys()], ["SKILL.md", "references/guide.md", "assets/cover.gif"]);
 });
 
 test("curated submission rejects missing public consent and derives its stable id from the Skill", async () => {
@@ -94,4 +99,10 @@ test("curated submission rejects missing public consent and derives its stable i
   assert.equal(snapshot.manifest.license, "CC BY 4.0");
   assert.equal("authorId" in snapshot.manifest, false);
   assert.equal("skillVersion" in snapshot.manifest, false);
+});
+
+test("new submissions need a cover but historical methods stay valid locally", async () => {
+  const skill = fixture(); skill.packageFiles = [];
+  await assert.rejects(() => buildCuratedSkillSnapshot(skill, { author: "Creator", summary: "Method", rightsConfirmed: true }), /成果封面/);
+  assert.ok(currentCreativeSkillVersion(skill).skillMarkdown);
 });

@@ -1,3 +1,4 @@
+import { normalizeGenerationInfo } from "./image-generation-info.js";
 import {
   LOCAL_ASSET_REFERENCE_RECORD_TYPE,
   normalizeLocalRelativePath
@@ -93,6 +94,7 @@ function normalizeStagedAsset(value) {
       ? { sourceLastModified: nonNegativeIntegerOrNull(value.sourceLastModified) }
       : {}),
     ...(contentHash ? { contentHash } : {}),
+    ...(kind === "image" && normalizeGenerationInfo(value.generationInfo) ? { generationInfo: normalizeGenerationInfo(value.generationInfo) } : {}),
     sourceFormat: requestedSourceFormat || fileExtension(name),
     formatCategory: localReference ? "local-link" : format.category,
     ...(localReference ?? {}),
@@ -144,6 +146,7 @@ export function stagedAssetMediaRecord(value, options = {}) {
     sourceFormat: staged.sourceFormat,
     formatCategory: staged.formatCategory,
     ...(staged.contentHash ? { contentHash: staged.contentHash } : {}),
+    ...(staged.generationInfo ? { generationInfo: staged.generationInfo } : {}),
     ...(staged.sourceLastModified !== undefined ? { sourceLastModified: staged.sourceLastModified } : {}),
     ...(staged.recordType ? { recordType: staged.recordType } : {}),
     ...(staged.linkStatus ? { linkStatus: staged.linkStatus } : {}),

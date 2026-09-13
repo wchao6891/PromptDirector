@@ -1,3 +1,5 @@
+import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
+import { createGenerationInfoViewReader } from "./image-generation-view.js";
 import { downloadMediaCopies, showQuickMenu } from "./library-quick-actions.js";
 import { assetFormatForExtension } from "./asset-formats.js";
 import { docxImageLoader } from "./docx-ingestion.js";
@@ -337,6 +339,7 @@ let reanalysisPreview = null;
 let maintenanceJob = null;
 let maintenancePollTimer = 0;
 let currentDetailId = null;
+const readDetailGenerationInfo = createGenerationInfoViewReader(getMediaBlob);
 let detailRenderGeneration = 0;
 let detailReturnFocus = null;
 let detailQueueMode = "";
@@ -5127,8 +5130,10 @@ async function confirmPromptEditDiscard() {
 async function renderDetail({ resetScroll = false } = {}) {
   const renderGeneration = ++detailRenderGeneration;
   const renderEntryId = currentDetailId;
-  const entry = logicalCases.find((item) => item.id === currentDetailId);
+  let entry = logicalCases.find((item) => item.id === currentDetailId);
   if (!entry) return closeDetail();
+  entry = await readDetailGenerationInfo(entry);
+  if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
   const mediaIdentity = JSON.stringify(entryMediaAssets(entry).filter(asset => asset.usage !== "poster").map(({ id, kind, usage, storageMode, contentHash, sourceUrl, reference, recordType }) =>
     ({ id, kind, usage, storageMode, contentHash, sourceUrl, reference, recordType })));
   const presentation = usesArticleReader(entry) ? "article" : usesPostReader(entry) ? "post" : "case";
@@ -7335,15 +7340,17 @@ async function uploadLocalMediaToEntry(file, entryId) {
     const { blob, asset, poster } = prepared;
     await saveMediaBlob(assetId, blob);
     if (poster) await saveMediaBlob(poster.asset.id, poster.blob);
-    const response = await chrome.runtime.sendMessage({
+    const response = await sendWithGenerationPromptConfirmation({
       type: "ADD_UPLOADED_MEDIA", entryId, asset, posterAsset: poster?.asset
     });
     if (!response?.ok) throw new Error(response?.message || "媒体添加失败");
     showFeedback(response.message);
     await refreshLibrary();
   } catch (error) {
-    await deleteMediaBlob(assetId).catch(() => undefined);
-    if (prepared?.poster?.asset?.id) await deleteMediaBlob(prepared.poster.asset.id).catch(() => undefined);
+    // A lost acknowledgement can follow a successful commit. Cleanup checks
+    // all persisted references in the worker before discarding staged bytes.
+    await chrome.runtime.sendMessage({ type: "DISCARD_UNREFERENCED_MEDIA",
+      assetIds: [assetId, prepared?.poster?.asset?.id].filter(Boolean) }).catch(() => undefined);
     showFeedback(error.message || "媒体添加失败", true);
   }
 }
@@ -7531,6 +7538,7 @@ async function prepareImportFile({ file, handle = null, relativePath, forceImpor
       mimeType: prepared.asset.mimeType,
       byteSize: prepared.blob.size,
       contentHash: duplicate.contentHash,
+      ...(prepared.asset.generationInfo ? { generationInfo: prepared.asset.generationInfo } : {}),
       duplicateAssetId: duplicate.duplicateAssetId,
       keepDuplicate: false,
       ...(prepared.asset.width ? { width: prepared.asset.width } : {}),

@@ -1,4 +1,4 @@
-import { AGENT_JOB_PREFIX, agentError, requireAgentId } from "./agent-protocol.js";
+import { AGENT_JOB_PREFIX, AGENT_CHUNK_BYTES, agentError, requireAgentId, requireInteger } from "./agent-protocol.js";
 
 // Chrome storage may reorder object keys. Compare JSON meaning while retaining
 // array order, so a persisted request can be retried without changing its work.
@@ -53,7 +53,7 @@ export function createAgentTasks({ storage, execute, now = () => new Date().toIS
         return { id, operation, state: "queued", createdAt: task.createdAt };
       });
     },
-    async inspect(id) {
+    async inspect(id, options = {}) {
       const task = await get(id);
       if (!task) throw agentError("task_not_found", "没有找到这个任务，请核对请求编号与所连接的案例库。");
       if (["queued", "running"].includes(task.state) && !running.has(id)) {
@@ -62,6 +62,20 @@ export function createAgentTasks({ storage, execute, now = () => new Date().toIS
         await put(task);
       }
       const { input: _input, ...receipt } = task;
+      const conflicts = receipt.result?.promptConflicts;
+      if (options.conflictToken) {
+        const conflict = conflicts?.find(item => item.token === options.conflictToken);
+        if (!conflict || !["originalText", "embeddedText"].includes(options.conflictPart)) throw agentError("invalid_input", "请指定有效的提示词冲突和内容部分。");
+        const offset = options.offset ?? 0, length = options.length ?? 12000;
+        requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
+        const text = conflict[options.conflictPart];
+        return { id, token: conflict.token, part: options.conflictPart, content: text.slice(offset, offset + length),
+          offset, totalCharacters: text.length, nextOffset: offset + length < text.length ? offset + length : null, untrustedContent: true };
+      }
+      if (conflicts) receipt.result = { ...receipt.result, promptConflicts: conflicts.map(({originalText, embeddedText, ...item}) => ({
+        ...item, originalCharacters: originalText.length, embeddedCharacters: embeddedText.length,
+        readWith: "get_task: conflictToken, conflictPart, offset, length"
+      })) };
       return receipt;
     }
   };

@@ -1,3 +1,4 @@
+import { readImageGenerationInfo } from "./image-generation-info.js";
 import { buildSearchIndex, searchIndexedEntries } from "./search-index.js";
 import { materializeLogicalCases, normalizeCompoundCases } from "./compound-cases.js";
 import { entryMediaAssets } from "./media.js";
@@ -49,12 +50,20 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
       return { cases, total: entries.length, offset, nextOffset: offset + cases.length < entries.length ? offset + cases.length : null,
         projects, basis: "本地文字、标签和媒体元数据；未进行视觉识别。" };
     },
-    async read({ caseId, part = "body", offset = 0, length = 12000 }) {
+    async read({ caseId, assetId, part = "body", offset = 0, length = 12000 }) {
       requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
       const entry = find(await load(), caseId);
       const docs = part === "document" ? await documents([entry]) : new Map();
       const byEntry = new Map([[entry.id, entryMediaAssets(entry).map(asset => docs.get(asset.id) || "").filter(Boolean).join("\n")]]);
-      const text = part === "media_prompts" ? JSON.stringify(entry.mediaPrompts || [])
+      const asset = part === "generation_info" ? entryMediaAssets(entry).find(item => item.id === assetId && item.kind === "image" && item.usage !== "poster") : null;
+      if (part === "generation_info" && !asset) throw agentError("asset_not_in_case", "请指定该案例中的原始图片。");
+      let generationInfo = asset?.generationInfo ?? null;
+      if (part === "generation_info" && !generationInfo) {
+        const original = await readBlob(asset.id);
+        if (original) generationInfo = await readImageGenerationInfo(original);
+      }
+      const text = part === "generation_info" ? JSON.stringify(generationInfo)
+        : part === "media_prompts" ? JSON.stringify(entry.mediaPrompts || [])
         : caseTextPart(entry, part, byEntry);
       return { ...summary(entry), part, content: text.slice(offset, offset + length), offset, totalCharacters: text.length,
         nextOffset: offset + length < text.length ? offset + length : null,

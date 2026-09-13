@@ -2,18 +2,21 @@ import { currentCreativeSkillVersion } from "./creative-skills.js";
 import { generatedSkillFiles } from "./creative-skill-package.js";
 import { sha256Hex } from "./sync-crypto.js";
 import { createZipBlob } from "./zip.js";
+import { readSkillCover } from "./skill-cover.js";
 
 export const CURATED_SKILL_SUBMISSION_FORMAT = "prompt-director-curated-skill-submission";
-export const CURATED_SKILL_SUBMISSION_VERSION = 1;
+export const CURATED_SKILL_SUBMISSION_VERSION = 2;
 
 const PUBLIC_LICENSE = "CC BY 4.0";
 const encoder = new TextEncoder();
 
-export async function buildCuratedSkillSnapshot(skillValue, metadata = {}) {
+export async function buildCuratedSkillSnapshot(skillValue, metadata = {}, options = {}) {
   const skill = structuredClone(skillValue ?? {});
   const version = currentCreativeSkillVersion(skill);
   if (!version) throw new Error("没有可投稿的 Skill 当前版本");
   const manifest = normalizeSubmissionMetadata(metadata, skill);
+  const cover = await readSkillCover(skill, options.readFile);
+  if (!cover) throw new Error("请先为 Skill 添加一张成果封面");
   const files = generatedSkillFiles({
     portableId: manifest.skillId,
     description: skill.description,
@@ -28,7 +31,9 @@ export async function buildCuratedSkillSnapshot(skillValue, metadata = {}) {
     preview.push({ path, text, byteSize: encoder.encode(text).byteLength });
     findings.push(...findPrivacyRisks(text, path));
   }
-  const digestInput = preview.map((item) => `${item.path}\0${item.text}\0`).join("");
+  files.set(cover.path, cover.blob);
+  preview.push({ path: cover.path, mimeType: cover.mimeType, byteSize: cover.blob.size, sha256: await sha256Hex(cover.blob) });
+  const digestInput = preview.map((item) => `${item.path}\0${item.sha256 ?? item.text}\0`).join("");
   const digest = await sha256Hex(digestInput);
   return {
     manifest: { ...manifest, digest, fileCount: files.size },

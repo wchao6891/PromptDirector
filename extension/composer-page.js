@@ -1,3 +1,6 @@
+import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
+import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
+import { readSkillCover } from "./skill-cover.js";
 import { createToolDraftCard } from './composer-tool-draft-ui.js';
 import {
   appendComposerMessage,
@@ -2103,6 +2106,7 @@ function renderProjectFilter() {
 }
 
 function renderSkills() {
+  for (const host of elements.composerProjectList.querySelectorAll(".skill-cover-card")) clearSkillCoverImage(host);
   const skills = creativeSkills.items;
   if (!skills.length) {
     const empty = el("div", "composer-reference-empty");
@@ -2122,7 +2126,9 @@ function renderSkills() {
     const title = el("div", "");
     title.append(rawTextEl("h2", "ui-skill-card-title", skill.callName), rawTextEl("code", "", `/${skill.callName}`));
     header.append(title, rawTextEl("small", "", `v${skill.versions.findIndex((item) => item.id === skill.currentVersionId) + 1}`));
-    card.append(header, rawTextEl("p", "ui-skill-card-summary composer-project-state", skill.description || t("暂无说明")));
+    const cover = el("div", "skill-cover-card");
+    showSkillCoverImage(cover, () => readSkillCover(skill, getMediaBlob), { alt: skill.callName });
+    card.append(cover, header, rawTextEl("p", "ui-skill-card-summary composer-project-state", skill.description || t("暂无说明")));
     const actions = el("div", "ui-skill-card-actions");
     const edit = textEl("button", "button-secondary", "查看与编辑");
     edit.addEventListener("click", () => safely(() => openSkillCenter(skill.id))());
@@ -3180,7 +3186,7 @@ function creativeEvaluationView(evaluation) {
 async function saveCreativeOutput(runId, visualId, button = null) {
   if (button) button.disabled = true;
   try {
-    const response = await chrome.runtime.sendMessage({ type: "SAVE_CREATIVE_OUTPUT_TO_LIBRARY", runId, visualId });
+    const response = await sendWithGenerationPromptConfirmation({ type: "SAVE_CREATIVE_OUTPUT_TO_LIBRARY", runId, visualId });
     if (!response?.ok) throw new Error(response?.message || t("保存失败"));
     creativeRuns = response.creativeRuns ?? creativeRuns;
     if (response.entry) {

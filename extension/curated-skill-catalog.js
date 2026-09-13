@@ -1,6 +1,8 @@
 import { parseSkillArchive } from "./creative-skill-package.js";
 import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
 import { sha256Hex } from "./sync-crypto.js";
+import { isSkillCoverPath, normalizeSkillCoverMetadata, validateSkillCover } from "./skill-cover.js";
+import { CURATED_SKILL_CATALOG_URL } from "./curated-config.js";
 
 export const CURATED_SKILL_CATALOG_FORMAT = "prompt-director-curated-skills";
 export const CURATED_SKILL_CATALOG_VERSION = 1;
@@ -46,12 +48,39 @@ export async function validateCuratedSkillPackage(itemValue, archive) {
   if (parsed.name !== item.skillId) throw new Error("精选 Skill 包身份与目录不一致");
   for (const path of parsed.files.keys()) {
     const relative = parsed.root && path.startsWith(`${parsed.root}/`) ? path.slice(parsed.root.length + 1) : path;
-    if (relative !== "SKILL.md" && !/^references\/[A-Za-z0-9._/-]+\.md$/i.test(relative)) {
+    if (relative !== "SKILL.md" && !isSkillCoverPath(relative) && !/^references\/[A-Za-z0-9._/-]+\.md$/i.test(relative)) {
       throw new Error(`精选 Skill 包包含不允许的文件：${relative}`);
     }
   }
   if (parsed.dependencies.length) throw new Error("精选 Skill 包不能依赖脚本、程序或外部工具");
   return parsed;
+}
+
+export async function fetchCuratedSkillCover(item, fetcher = fetch) {
+  const cover = normalizeSkillCoverMetadata(item.cover);
+  if (!cover) return null;
+  if (cover.byteSize > PORTABLE_LIBRARY_LIMITS.maxFileBytes) throw new Error("精选 Skill 封面超过包文件大小限制");
+  const url = new URL(cover.path, CURATED_SKILL_CATALOG_URL).href;
+  const response = await fetcher(url);
+  if (!response.ok || (response.url && response.url !== url)) throw new Error("精选 Skill 封面下载失败");
+  const declared = Number(response.headers.get("content-length"));
+  if (declared && declared !== cover.byteSize) throw new Error("精选 Skill 封面大小不一致");
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("精选 Skill 封面响应为空");
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > cover.byteSize) throw new Error("精选 Skill 封面大小不一致");
+      chunks.push(part.value);
+    }
+  } finally { await reader.cancel(); }
+  const blob = new Blob(chunks);
+  if (blob.size !== cover.byteSize || await sha256Hex(blob) !== cover.sha256) throw new Error("精选 Skill 封面校验失败");
+  return validateSkillCover(blob, cover.path);
 }
 
 export function isTrustedCuratedSkillResponseUrl(value) {
@@ -75,11 +104,12 @@ function normalizeItem(value = {}) {
   const sha256 = String(value.sha256 ?? "").toLocaleLowerCase("en-US");
   const archiveBytes = positiveInteger(value.archiveBytes);
   const order = positiveInteger(value.order);
+  const cover = normalizeSkillCoverMetadata(value.cover);
   if (!id || !skillId || !/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i.test(version) || !title || !callName || !authorId || !author || !license ||
       !REVIEW_STATUSES.has(reviewStatus) || !reviewedAt || !summary || !downloadUrl || !/^[a-f0-9]{64}$/.test(sha256) || !archiveBytes || !order) {
     throw new Error("精选 Skill 目录条目缺少必填字段或校验值");
   }
-  return { id, skillId, version, title, callName, authorId, author, license, reviewStatus, reviewedAt, summary, downloadUrl, sha256, archiveBytes, order };
+  return { id, skillId, version, title, callName, authorId, author, license, reviewStatus, reviewedAt, summary, downloadUrl, sha256, archiveBytes, order, ...(cover ? { cover } : {}) };
 }
 
 function trustedUrl(value) {

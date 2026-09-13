@@ -145,11 +145,12 @@ function withoutReceiverLocalFields(value, parentKey = "") {
   if (!value || typeof value !== "object") return value;
   const result = {};
   for (const key of Object.keys(value).sort()) {
-    if (RECEIVER_LOCAL_FIELDS.has(key)) continue;
+    if (RECEIVER_LOCAL_FIELDS.has(key) || key === "generationInfo") continue;
     const item = value[key];
     if (item === undefined || item === null) continue;
     if (parentKey === "classification" && ["reason", "classifierVersion"].includes(key)) continue;
-    result[key] = withoutReceiverLocalFields(item, key);
+    result[key] = withoutReceiverLocalFields(key === "mediaPrompts" && Array.isArray(item)
+      ? item.filter(prompt => prompt.source !== "embedded") : item, key);
   }
   return result;
 }

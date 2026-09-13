@@ -1,3 +1,4 @@
+import { normalizeGenerationInfo } from "./image-generation-info.js";
 import { createDefaultFacetCatalog } from "./facets.js";
 import { normalizeSettings } from "./lib.js";
 import { CURRENT_LIBRARY_PACKAGE_VERSION, LIBRARY_PACKAGE_FORMAT, isSupportedLibraryPackageVersion } from "./library-package-format.js";
@@ -40,6 +41,14 @@ export function prepareLibraryPackageDraft(value = {}) {
         reason: "no_usable_content"
       });
       continue;
+    }
+    for (const asset of entry.mediaAssets ?? entry.visuals ?? []) {
+      if (!asset?.generationInfo) continue;
+      const normalized = normalizeGenerationInfo(asset.generationInfo);
+      if (!normalized || generationInfoJson(normalized) !== generationInfoJson(asset.generationInfo)) {
+        diagnostics.push({ code: "generation_info_isolated", severity: "metadata", action: "dropped",
+          entryId, assetId: clean(asset.id), reason: "invalid_generation_info" });
+      }
     }
     seenEntryIds.add(entryId);
     entries.push({ ...entry, id: entryId });
@@ -153,4 +162,9 @@ function hasRecoverableCaseContent(entry = {}) {
 
 function clean(value) {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+}
+
+function generationInfoJson(value) {
+  return JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 }

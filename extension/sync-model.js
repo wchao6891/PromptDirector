@@ -637,6 +637,7 @@ function conflictEntry(payload, record, reason) {
   source.primaryMediaId = visualIds.get(source.primaryMediaId ?? source.primaryVisualId) ?? source.mediaAssets[0]?.id ?? "";
   delete source.visuals;
   delete source.primaryVisualId;
+  source.mediaPrompts = (source.mediaPrompts ?? []).map(prompt => ({ ...prompt, assetId: visualIds.get(prompt.assetId) ?? prompt.assetId }));
   source.timeNotes = (source.timeNotes ?? []).map((note) => ({
     ...note,
     assetId: visualIds.get(note.assetId) ?? note.assetId,

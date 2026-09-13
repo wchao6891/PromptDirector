@@ -36,7 +36,7 @@ export async function captureAgentUrl(input, requestId, { chromeApi, loadState, 
   batch.selections = batch.candidates.map(candidate => ({ candidateId: candidate.id, includeText: true,
     mediaDecision: "confirmed", selectedMediaIds: candidate.media.map(media => media.id) }));
   if ((await chromeApi.tabs.get(tab.id)).url !== finalUrl) throw agentError("page_changed", "采集期间网页地址改变，尚未入库，请重新检查网页。");
-  const result = await commit(batch, { collectionId });
+  const result = await commit(batch, { collectionId, ...(input.generationPromptChoices ? { generationPromptChoices: input.generationPromptChoices } : {}) });
   const successful = (result.results || []).filter(item => ["saved", "partial", "duplicate"].includes(item.status));
   return { ...result, ok: result.ok && successful.length > 0, requestedUrl: url, finalUrl, tabId: tab.id };
 }

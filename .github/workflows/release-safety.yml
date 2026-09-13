@@ -118,7 +118,7 @@ jobs:
           with zipfile.ZipFile(f'dist/PromptDirector-{version}.zip') as archive:
               archive.extractall(destination)
           env = {**os.environ, 'PROMPTDIRECTOR_E2E_EXTENSION_DIR': str(destination), 'PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK': '1'}
-          for script in ['project_tree_e2e.py', 'library_import_resources_e2e.py', 'library_import_ui_e2e.py', 'library_import_interruption_e2e.py']:
+          for script in ['project_tree_e2e.py', 'library_import_resources_e2e.py', 'library_import_ui_e2e.py', 'library_import_interruption_e2e.py', 'image_generation_info_e2e.py', 'skill_cover_e2e.py']:
               subprocess.run([sys.executable, f'test/{script}'], env=env, check=True)
           PY
       - run: npm run test:upgrade
