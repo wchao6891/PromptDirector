@@ -28,6 +28,10 @@ export function createGenerationInfoViewReader(readBlob) {
         mediaAssets.push(asset);
       }
     }
-    return { ...entry, mediaAssets };
+    const byId = new Map(mediaAssets.map(asset => [asset.id, asset]));
+    return { ...entry, mediaAssets,
+      ...(Array.isArray(entry.memberEntries) ? { memberEntries: entry.memberEntries.map(member => ({
+        ...member, mediaAssets: (member.mediaAssets ?? []).map(asset => byId.get(asset.id) ?? asset)
+      })) } : {}) };
   };
 }

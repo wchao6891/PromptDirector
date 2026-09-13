@@ -228,6 +228,9 @@ test('reading legacy-export originals restores parameter visibility without rewr
   assert.equal(view.mediaAssets[0].generationInfo.candidates[0].parameters[1].value, '9');
   assert.deepEqual(view.mediaPrompts, []);
   assert.deepEqual(entry, snapshot);
+  const compound = await read({ ...entry, memberEntries: [snapshot] });
+  assert.deepEqual(compound.memberEntries[0].mediaAssets, compound.mediaAssets);
+  assert.deepEqual(snapshot.mediaAssets, entry.mediaAssets);
   await read({ ...entry, text: 'edited' });
   assert.equal(reads, 1);
   await read({ id: 'other', mediaAssets: [] });
