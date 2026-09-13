@@ -114,7 +114,7 @@ def main() -> None:
                 "id": "curated-portrait-case",
                 "title": "竖版工作流案例",
                 "text": "保留竖版构图和主体比例。",
-                "author": "竖版作者",
+                "author": "",  # Missing attribution must not hide the whole collection.
                 "rights": "权利归原作者",
                 "sourceUrl": "https://example.com/portrait-case",
                 "mediaKind": "image",

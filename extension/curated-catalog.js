@@ -93,7 +93,7 @@ export function normalizeCuratedPreview(value, itemValue) {
     const videoSha256 = hasVideoAsset ? String(entry?.videoSha256 ?? "").toLocaleLowerCase("en-US") : "";
     const videoBytes = hasVideoAsset ? positiveInteger(entry?.videoBytes, "精选视频大小无效") : 0;
     const videoMimeType = hasVideoAsset ? clean(entry?.videoMimeType) : "";
-    if (!id || !title || !text || !author || !rights || !mediaKind) throw new Error("精选预览案例缺少必填字段");
+    if (!id || !title || !text || !rights || !mediaKind) throw new Error("精选预览案例缺少必填字段");
     if (hasVideoAsset && (mediaKind !== "video" || !/^[a-f0-9]{64}$/.test(videoSha256) || videoMimeType !== "video/mp4")) {
       throw new Error("精选视频预览字段无效");
     }
