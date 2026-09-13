@@ -9,7 +9,7 @@ npm run verify:source
 npm run package
 ```
 
-Load `extension/` in Chrome or Edge for source development, or extract the generated `dist/*-FIXED-ID-DEV.zip` and load that directory for packaged testing. Keep the existing fixed extension identity when switching source locations; do not uninstall the extension or delete browser data.
+Load `extension/` in Chrome or Edge for source development, or extract the generated `dist/PromptDirector-<version>.zip` and load that directory for packaged testing. Keep the existing fixed extension identity when switching source locations; do not uninstall the extension or delete browser data.
 
 ## Repository layout
 

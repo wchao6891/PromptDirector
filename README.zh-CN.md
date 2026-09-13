@@ -88,22 +88,17 @@ AI 分析按需开启，使用你自己的服务；选中的参考可以帮助�
 
 ## 安装与更新
 
-**首次安装：下载 `FIXED-ID-DEV` ZIP，解压后在 Chrome / Edge 的扩展管理页加载。**
+**首次安装：下载 `PromptDirector-版本号.zip`，解压后在 Chrome / Edge 的扩展管理页加载。**
 
 <details>
 <summary>展开完整安装与原位更新步骤</summary>
 
 
-从 [GitHub 最新发布页](https://github.com/wchao6891/PromptDirector/releases/latest) 下载名称带 `FIXED-ID-DEV` 的 ZIP。首次安装时，将包内程序文件解压到固定的 `PromptDirector` 文件夹（不带版本号），确保 `manifest.json` 位于该文件夹第一层。在 Chrome 或 Edge 的扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”，然后选择解压后的目录。这个包保留 Chrome Web Store 分配的固定扩展身份，适合本地开发验证。
-
-不带 `FIXED-ID-DEV` 的同版本 ZIP 仅供维护者上传 Chrome Web Store，清单中按商店要求移除了 `key`，不要把它作为本地解压安装包。同一扩展身份下的常规更新不需要导出或重新导入案例；如曾使用其他扩展 ID，请按[扩展身份迁移说明](docs/EXTENSION_ID_MIGRATION.md)恢复资料。
+从 [GitHub 最新发布页](https://github.com/wchao6891/PromptDirector/releases/latest) 下载 `PromptDirector-版本号.zip`。首次安装时，将包内程序文件解压到固定的 `PromptDirector` 文件夹（不带版本号），确保 `manifest.json` 位于该文件夹第一层。在 Chrome 或 Edge 的扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”，然后选择解压后的目录。
 
 ### 已安装？在原位置更新
 
-已具备本地升级功能的版本：在“设置”检查更新，点击“升级本地版”，首次选择 Chrome 当前加载的安装文件夹并授权，之后复用这个安装位置；授权失效时再授权。已有文件夹即使带旧版本号也可继续使用，无需重命名、移动或重新安装。程序更新后重启插件，重新打开设置核对版本；如出现“清理升级临时文件”，点击完成清理。案例和媒体继续使用当前浏览器中的原资料库。
-
-旧版本首次接入：下载新版 `FIXED-ID-DEV` ZIP，将包内程序文件覆盖到 Chrome 当前加载的原目录，再到扩展管理页点击重新加载。保持原插件与固定身份，无需卸载，也无需备份再导入案例。源码工作目录通过 Git 更新。
-
+在“设置”检查更新，点击“升级本地版”，首次选择 Chrome 当前加载的安装文件夹并授权，之后复用这个安装位置；授权失效时再授权。已有文件夹即使带旧版本号也可继续使用，无需重命名、移动或重新安装。插件自动下载、验证并写入新版程序，然后自动重启，重新打开设置核对版本；如出现“清理升级临时文件”，点击完成清理。案例和媒体继续使用当前浏览器中的原资料库。
 
 也可通过 [Chrome Web Store](https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm) 安装，由商店管理后续更新。
 

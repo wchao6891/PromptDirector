@@ -88,20 +88,16 @@ Cases, media, tags and settings are stored in your current browser by default. N
 
 ## Install and update
 
-**For a local installation, download the `FIXED-ID-DEV` ZIP and load its extracted folder in Chrome or Edge.**
+**For a local installation, download `PromptDirector-<version>.zip` and load its extracted folder in Chrome or Edge.**
 
 <details>
 <summary>Full installation and in-place update instructions</summary>
 
-1. Open the [latest GitHub release](https://github.com/wchao6891/PromptDirector/releases/latest) and download the ZIP with `FIXED-ID-DEV` in its name.
+1. Open the [latest GitHub release](https://github.com/wchao6891/PromptDirector/releases/latest) and download `PromptDirector-<version>.zip`.
 2. Extract the extension files into a permanent folder named `PromptDirector`, without a version number. `manifest.json` must be at the folder's top level.
 3. Open Chrome or Edge's extension management page, enable **Developer mode**, select **Load unpacked**, and choose that folder.
 
-The `FIXED-ID-DEV` package keeps the extension's fixed identity. The ZIP without `FIXED-ID-DEV` is for Chrome Web Store submission and omits the manifest key; use the fixed-ID package for local installation. If you previously used a different extension ID, follow the [identity migration guide](docs/EXTENSION_ID_MIGRATION.md).
-
-**Updating an existing local installation:** In Settings, check for updates and select the local upgrade action. On first use, choose and authorize the folder Chrome currently loads. Keep that existing location, even if its name contains an old version. After updating, restart the extension, verify the version in Settings and run the temporary-file cleanup action if shown. Cases and media continue to use the same browser library.
-
-For older versions without the updater, overwrite the program files in the original installation folder with the latest `FIXED-ID-DEV` package, then reload the extension. Keep the existing extension and identity. A routine update does not require uninstalling, exporting or reimporting cases. Source checkouts update through Git.
+**Updating an existing local installation:** In Settings, check for updates and select the local upgrade action. On first use, choose and authorize the folder Chrome currently loads. Keep that existing location, even if its name contains an old version. The extension downloads, verifies and installs the update, then restarts automatically. Verify the version in Settings and run the temporary-file cleanup action if shown. Cases and media continue to use the same browser library.
 
 You can also install through the [Chrome Web Store](https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm), which manages subsequent updates.
 

@@ -11,18 +11,18 @@ import {
 
 const examplePublicKey = Buffer.alloc(128, 7).toString("base64");
 
-test("development packages are visibly marked until the Web Store public key exists", () => {
+test("installation packages require a stable extension identity", () => {
   const manifest = { version: "1.14.0" };
   assert.equal(hasStableExtensionIdentity(manifest), false);
-  assert.equal(extensionArchiveName(manifest), "PromptDirector-1.14.0-UNFIXED-ID-DEV.zip");
+  assert.throws(() => extensionArchiveName(manifest), /正式安装包已阻止/);
   assert.throws(() => requireStableExtensionIdentity(manifest), /正式安装包已阻止/);
 });
 
 test("release packages keep the normal name only with a stable manifest public key", () => {
   const manifest = { version: "1.14.0", key: examplePublicKey };
   assert.equal(hasStableExtensionIdentity(manifest), true);
-  assert.equal(extensionArchiveName(manifest), "PromptDirector-1.14.0-FIXED-ID-DEV.zip");
-  assert.equal(extensionArchiveName(manifest, { release: true }), "PromptDirector-1.14.0.zip");
+  assert.equal(extensionArchiveName(manifest), "PromptDirector-1.14.0.zip");
+  assert.equal(extensionArchiveName(manifest, { release: true }), "PromptDirector-1.14.0-Chrome-Web-Store.zip");
   assert.match(extensionIdFromPublicKey(manifest), /^[a-p]{32}$/);
 });
 

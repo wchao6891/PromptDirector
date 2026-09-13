@@ -30,7 +30,7 @@ async function packageFor(next = { ...manifest, version: nextVersion }) {
 test("local package identity and version are validated before directory writes", async () => {
   const prepared = await prepareLocalUpgrade(await packageFor(), runtime);
   assert.equal(prepared.manifest.version, nextVersion);
-  await assert.rejects(prepareLocalUpgrade(await packageFor({ ...manifest, key: undefined, version: nextVersion }), runtime), /FIXED-ID/);
+  await assert.rejects(prepareLocalUpgrade(await packageFor({ ...manifest, key: undefined, version: nextVersion }), runtime), /官网下载的安装包/);
   await assert.rejects(prepareLocalUpgrade(await packageFor(manifest), runtime), /没有高于/);
   await assert.rejects(prepareLocalUpgrade(await packageFor({ ...manifest, version: nextVersion, permissions: [...manifest.permissions, "management"] }), runtime), /权限/);
   await assert.rejects(prepareLocalUpgrade(await packageFor(), { ...runtime, id: "different" }), /身份不同/);
@@ -40,7 +40,7 @@ test("local package identity and version are validated before directory writes",
 test("program paths exclude user data and dangerous archive paths", () => {
   for (const path of ["cases.json", "media/user.mp4", "../extension/background.js", "assets/../../x.js", "C:/x.js", "a\\b.js", ".git/config"]) assert.equal(isExtensionProgramPath(path), false, path);
   assert.equal(isExtensionProgramPath("vendor/pdfjs/build/pdf.mjs"), true);
-  assert.equal(localReleasePackageUrl(manifest, `${manifest.homepage_url}/releases/tag/v${nextVersion}`, nextVersion), `${manifest.homepage_url}/releases/download/v${nextVersion}/PromptDirector-${nextVersion}-FIXED-ID-DEV.zip`);
+  assert.equal(localReleasePackageUrl(manifest, `${manifest.homepage_url}/releases/tag/v${nextVersion}`, nextVersion), `${manifest.homepage_url}/releases/download/v${nextVersion}/PromptDirector-${nextVersion}.zip`);
   assert.throws(() => localReleasePackageUrl(manifest, `https://evil.example/releases/tag/v${nextVersion}`, nextVersion), /不一致/);
 });
 test("an identical but inactive directory is rejected and the proof file is removed", async t => {

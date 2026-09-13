@@ -70,7 +70,9 @@ for (const file of runtimeFilesForDistribution) {
   if (!isExtensionProgramPath(file.name)) throw new Error(`更新器无法接收发布文件：${file.name}`);
 }
 const archive = await createZipBlob(runtimeFilesForDistribution);
-const outputPath = join(projectRoot, "dist", extensionArchiveName(sourceManifest, { release }));
+const outputDirectory = release ? join(projectRoot, "dist", "store") : join(projectRoot, "dist");
+await mkdir(outputDirectory, { recursive: true });
+const outputPath = join(outputDirectory, extensionArchiveName(sourceManifest, { release }));
 await writeFile(outputPath, new Uint8Array(await archive.arrayBuffer()));
 process.stdout.write(`${outputPath}\n${runtimeFilesForDistribution.length} 个运行文件，${archive.size} 字节\n`);
 
