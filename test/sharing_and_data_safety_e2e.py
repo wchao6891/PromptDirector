@@ -30,6 +30,8 @@ def main() -> None:
         {"id": "share-image-two", "kind": "image", "storageMode": "managed", "mimeType": "image/png", "width": 1, "height": 1, "palette": {"colors": ["#123456", "#345678"]}}
     ]
     entries[1]["primaryMediaId"] = "share-image-two"
+    entries[1]["mediaAssets"][0]["sourceAuthor"] = "沛棠° · A B | © ✨"
+    entries[1]["mediaAssets"][0]["originalWorkUrl"] = "https://example.com/original-work"
     entries[1]["note"] = "不应公开的私人笔记"
     entries[1]["metadataLabels"] = ["作者：测试作者", "权利：本人原创", "秘密：sk-private"]
     trashed_entry = base_entry("trash-one", "回收站案例", "需要跨电脑恢复。", "content:prompt:image", 3)
@@ -230,6 +232,9 @@ def main() -> None:
                 submission_library = json.loads(payload.read("library.json"))
                 assert len(submission_library["entries"]) == 1
                 assert submission_library["entries"][0]["title"] == "分享案例二"
+                asset = submission_library["entries"][0]["mediaAssets"][0]
+                assert asset["sourceAuthor"] == "沛棠° · A B | © ✨"
+                assert asset["originalWorkUrl"] == "https://example.com/original-work"
                 serialized = json.dumps(submission_library, ensure_ascii=False)
                 assert "不应公开的私人笔记" not in serialized
                 assert "sk-private" not in serialized

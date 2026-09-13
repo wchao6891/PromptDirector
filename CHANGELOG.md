@@ -2,6 +2,11 @@
 
 了解每个版本带来的功能变化与使用改善。下载请前往 [GitHub Releases](https://github.com/wchao6891/PromptDirector/releases/latest)。
 
+## 1.22.2
+
+- 修复精选投稿导出遗漏原作者署名与原作品链接的问题，保留姓名中的空格和特殊符号。
+- 现有案例无需重新采集；更新后重新导出投稿包即可保留已存储的来源信息。
+
 ## 1.22.1
 
 - GitHub 安装包统一为 `PromptDirector-版本号.zip`，本地更新直接使用同一安装包。

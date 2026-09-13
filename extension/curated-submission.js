@@ -115,6 +115,8 @@ function sanitizeMediaAsset(asset) {
     storageMode: "managed",
     sourceUrl,
     sourceTitle: clean(asset.sourceTitle),
+    sourceAuthor: clean(asset.sourceAuthor),
+    originalWorkUrl: firstHttpsUrl([asset.originalWorkUrl]),
     capturedAt: validIso(asset.capturedAt),
     mimeType: clean(asset.mimeType),
     width: positiveInteger(asset.width),
