@@ -1,5 +1,7 @@
 """Reference choices through real UI and durable jobs; a local provider records exact payloads."""
 import json
+import os
+import tempfile
 import threading
 from pathlib import Path
 from playwright.sync_api import expect
@@ -69,7 +71,8 @@ def main():
             assert sum(p['type']=='video_url' for p in content)==int(videos), body
             assert '视频原始提示词和逆推文字' in json.dumps(body,ensure_ascii=False)
             assert '图片原始提示词' in json.dumps(body,ensure_ascii=False)
-        screenshots=Path(__import__('os').environ.get('PROMPTDIRECTOR_E2E_ARTIFACT_DIR','/private/tmp/pd-b4-ui'));screenshots.mkdir(exist_ok=True)
+        screenshots = Path(os.environ.get('PROMPTDIRECTOR_E2E_ARTIFACT_DIR', Path(tempfile.gettempdir()) / 'promptdirector-reference-inputs'))
+        screenshots.mkdir(parents=True, exist_ok=True)
         page.emulate_media(reduced_motion='reduce')
         for width in [1280,900,640,390]:
             page.set_viewport_size({'width':width,'height':900})
