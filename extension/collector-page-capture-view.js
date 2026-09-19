@@ -97,7 +97,7 @@ export function createPageCaptureCard(candidate, {
   if (!listMode) {
     const locate = captureIconButton("search", "在网页中定位", onLocate, "page-capture-inspect");
     locate.disabled = busy || !candidate.region?.marker;
-    actions.append(locate);
+    if (candidate.region?.marker) actions.append(locate);
   }
   const details = document.createElement("details");
   details.className = "page-capture-preview-details";
@@ -130,7 +130,7 @@ export function createPageCaptureCard(candidate, {
       text.textContent = item.text;
       const add = document.createElement("button");
       add.type = "button";
-      add.textContent = t(item.partial ? "补入已显示内容" : "补入当前案例");
+      add.textContent = t("补入当前案例");
       add.disabled = busy;
       add.addEventListener("click", () => onIncludeSupplement(item));
       section.append(text, add);

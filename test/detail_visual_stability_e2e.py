@@ -24,7 +24,9 @@ def main():
           const recorder = new MediaRecorder(stream, {mimeType:'video/webm'});
           const done = new Promise(resolve => recorder.onstop=resolve);
           recorder.ondataavailable=e=>chunks.push(e.data); recorder.start();
-          await new Promise(resolve => setTimeout(resolve,800)); recorder.stop(); await done;
+          let frame=0;
+          const paint=setInterval(()=>{ctx.fillStyle=frame++%2?'#305070':'#406080';ctx.fillRect(0,0,320,180)},40);
+          await new Promise(resolve => setTimeout(resolve,800)); clearInterval(paint); recorder.stop(); await done;
           stream.getTracks().forEach(t=>t.stop());
           const {saveMediaBlob}=await import(chrome.runtime.getURL('media-store.js'));
           await saveMediaBlob('stable-media',new Blob(chunks,{type:'video/webm'}),{checkCapacity:false});
@@ -40,6 +42,14 @@ def main():
         page.locator('.case-card[data-entry-id="stable-video"]').click()
         player = page.locator("video.detail-video")
         expect(player).to_be_visible()
+        player.evaluate("v=>{v.muted=true;v.loop=true}")
+        page.get_by_role("button",name="播放视频",exact=True).click()
+        try:
+            page.wait_for_function("()=>document.querySelector('video.detail-video')?.readyState>=2")
+        except Exception:
+            print(player.evaluate("v=>({src:v.src,error:v.error?.message,code:v.error?.code,ready:v.readyState,network:v.networkState,paused:v.paused})"),flush=True)
+            print(page.locator('#feedback').text_content(),flush=True)
+            raise
         player.evaluate("async v=>{await new Promise(r=>v.readyState>=2?r():v.addEventListener('loadeddata',r,{once:true})); v.loop=true;v.muted=true;await v.play();window.stablePlayer=v;window.stableUrl=v.src;}")
         page.wait_for_function("() => !!window.releaseTaskQuery")
         page.evaluate("() => window.releaseTaskQuery()")
@@ -103,6 +113,9 @@ def main():
             page = s.open_page("library.html", wait_until="networkidle")
             page.locator('.case-card[data-entry-id="playable-mp4"]').click()
             mp4_player = page.locator("video.detail-video")
+            mp4_player.evaluate("v=>{v.muted=true;v.loop=true}")
+            page.get_by_role("button",name="播放视频",exact=True).click()
+            page.wait_for_function("()=>document.querySelector('video.detail-video')?.readyState>=2")
             mp4_player.evaluate("async v=>{if(v.readyState<2)await new Promise(r=>v.addEventListener('loadeddata',r,{once:true}));window.mp4Player=v;window.mp4Url=v.src;v.muted=true;v.loop=true;}")
             before = mp4_player.bounding_box()
             frame = mp4_player.evaluate("async v=>{const frame=new Promise(r=>v.requestVideoFrameCallback((now,data)=>r({width:data.width,height:data.height})));await v.play();return frame;}")

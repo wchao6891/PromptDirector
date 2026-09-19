@@ -40,7 +40,8 @@ def main():
         assert result['ok'] and result['results'][0]['status']=='partial', result
         entries=page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries")
         assert len(entries)==1 and any(asset['kind']=='video' for asset in entries[0]['mediaAssets']),entries
-        assert entries[0]['sourceFacts']['captureWarnings'], entries
+        assert 'captureWarnings' not in entries[0]['sourceFacts'], entries
+        assert result['results'][0]['warnings'], result
         expect(page.locator('#page-capture')).to_be_hidden()
         expect(page.locator('#feedback')).to_contain_text('已保存')
         assert len(page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries"))==1
@@ -54,7 +55,7 @@ def main():
         expect(page.locator('#feedback')).to_contain_text('模拟保存失败')
         expect(page.locator('#page-capture')).to_be_visible()
         assert len(page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries"))==1
-        print({'case_saved':True,'warning_retained':True,'saved_sidebar_cleared':True,'unsaved_content_preserved':True})
+        print({'case_saved':True,'diagnostics_not_in_case':True,'saved_sidebar_cleared':True,'unsaved_content_preserved':True})
 
 
 if __name__=='__main__':main()

@@ -1,4 +1,5 @@
-import { primaryImageAsset } from "./media.js";
+import { entryMediaAssets, primaryMediaAsset } from "./media.js";
+import { originalMediaPrompt } from "./prompt-sources.js";
 
 function clean(value) {
   return String(value ?? "").trim();
@@ -18,23 +19,20 @@ function revisionFromUpdatedAt(value, fallback = 1) {
 
 export function canonicalTextAnalysisInput(entryValue = {}, assetIdValue = "") {
   const entry = entryValue && typeof entryValue === "object" ? entryValue : {};
-  const primaryImage = primaryImageAsset(entry);
+  const primary = primaryMediaAsset(entry);
   const requestedAssetId = clean(assetIdValue);
-  const selectedImage = requestedAssetId
-    ? (Array.isArray(entry.mediaAssets) ? entry.mediaAssets : [])
-      .find((item) => item?.id === requestedAssetId && item?.kind === "image" && item?.usage !== "poster")
-    : primaryImage;
-  const selectedAssetId = clean(selectedImage?.id);
-  const mediaPrompt = selectedAssetId
-    ? (Array.isArray(entry.mediaPrompts) ? entry.mediaPrompts : [])
-      .find((item) => String(item?.assetId ?? "").trim() === selectedAssetId)
-    : null;
+  const selected = requestedAssetId
+    ? entryMediaAssets(entry).find((item) => item?.id === requestedAssetId && item?.usage !== "poster")
+    : primary;
+  const selectedAssetId = clean(selected?.id);
+  const mediaPrompt = selectedAssetId ? originalMediaPrompt(entry, selectedAssetId)
+    || entry.mediaPrompts?.find(item => item.assetId === selectedAssetId && item.source === "ai-suggestion") : null;
   const mediaText = clean(mediaPrompt?.text);
   if (mediaText) {
     return {
       text: mediaText,
       textRevision: revisionFromUpdatedAt(mediaPrompt?.updatedAt, revisionFromValue(mediaPrompt?.textRevision, 1)),
-      source: "media_prompt",
+      source: mediaPrompt.source === "ai-suggestion" ? "ai_prompt" : "media_prompt",
       assetId: selectedAssetId
     };
   }

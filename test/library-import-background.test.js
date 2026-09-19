@@ -34,8 +34,7 @@ test("multi-package import previews and commits one batch transaction", () => {
 
   assert.match(background, /case "PREVIEW_LIBRARY_IMPORT_BATCH"/);
   assert.match(background, /case "APPLY_LIBRARY_IMPORT_BATCH"/);
-  assert.match(preview, /planLibraryTransferBatch/);
-  assert.match(preview, /canApply: *result\.canApply/);
+  assert.match(preview, /return previewLibraryTransferBatch/);
   assert.match(apply, /sourceValue *= *packages\.map/);
   assert.match(apply, /planLibraryTransferBatch/);
   assert.match(apply, /!result\.canApply/);

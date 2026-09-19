@@ -146,6 +146,7 @@ export function updateLocalAssetReferenceMetadata(entryValue, assetIdValue, meta
 
 export function normalizeEntryMedia(entryValue = {}) {
   const entry = structuredClone(entryValue);
+  if (entry.sourceFacts) delete entry.sourceFacts.captureWarnings;
   const mediaAssets = uniqueMediaAssets(
     Array.isArray(entry.mediaAssets) ? entry.mediaAssets : entry.visuals
   );
@@ -174,6 +175,7 @@ export function normalizeEntryMedia(entryValue = {}) {
   const contentAssets = mediaAssets.filter((item) => item.usage !== "poster");
   const requestedPrimary = clean(entry.primaryMediaId || entry.primaryVisualId);
   entry.mediaAssets = mediaAssets;
+  if (!mediaAssets.some(asset => asset.kind === "image" && asset.id === entry.coverVisualId)) delete entry.coverVisualId;
   entry.primaryMediaId = contentAssets.some((item) => item.id === requestedPrimary) ? requestedPrimary : contentAssets[0]?.id || "";
   const articleDocument = normalizeArticleDocument(entry.articleDocument);
   if (articleDocument) entry.articleDocument = articleDocument;
@@ -214,6 +216,21 @@ export function primaryMediaAsset(entryValue = {}) {
     assets.find((item) => item.usage !== "poster") ?? null;
 }
 
+export function caseCoverAsset(entryValue = {}) {
+  const assets = entryMediaAssets(entryValue);
+  const selected = assets.find(asset => asset.kind === "image" && asset.id === entryValue.coverVisualId);
+  const primary = primaryMediaAsset(entryValue);
+  return selected || (primary?.kind === "image" ? primary : primary?.kind === "video" ? posterAssetForVideo(entryValue, primary) : null)
+    || assets.find(asset => asset.kind === "image") || null;
+}
+
+export function setCaseCover(entryValue, assetId) {
+  const entry = normalizeEntryMedia(entryValue);
+  const asset = entry.mediaAssets.find(item => item.id === assetId && item.kind === "image");
+  if (!asset) throw new Error("没有找到这张图片");
+  return { ...entry, coverVisualId: asset.id };
+}
+
 export function primaryImageAsset(entryValue = {}) {
   const assets = entryMediaAssets(entryValue);
   const primary = assets.find((item) => item.id === entryValue?.primaryMediaId && item.kind === "image" && item.usage !== "poster");
@@ -250,6 +267,7 @@ export function removeEntryMedia(entryValue, assetId) {
     if (item.usage === "poster" && item.derivedFromAssetId === id) removedIds.add(item.id);
   }
   entry.mediaAssets = entry.mediaAssets.filter((item) => !removedIds.has(item.id));
+  if (removedIds.has(entry.coverVisualId)) delete entry.coverVisualId;
   entry.mediaAssets = entry.mediaAssets.map((item) => {
     if (!removedIds.has(item.posterAssetId)) return item;
     const next = { ...item };

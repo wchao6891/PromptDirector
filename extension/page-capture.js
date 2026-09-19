@@ -288,6 +288,7 @@ export function applyPageCaptureSelections(batchValue = {}) {
         ? selectedAllText ? candidate.contentHtml : selectedHtml
         : "",
       contentText: hasTextBlockSelection ? selectedText : selection.includeText ? candidate.contentText : "",
+      textBlocks: selection.includeText ? selectedTextBlocks : [],
       excerpt: selection.includeText
         ? selectedAllText ? candidate.excerpt : selectedTextBlocks[0]?.text || ""
         : "",
@@ -654,6 +655,28 @@ export async function collectPageCaptureSnapshot(options = {}) {
   const originalScroll = { x: window.scrollX, y: window.scrollY };
 
   try {
+    if (options.manualContentHtml) {
+      const root = document.createElement("div");
+      root.innerHTML = options.manualContentHtml;
+      maxMedia = Math.max(maxMedia, root.querySelectorAll("img,video,iframe,canvas").length);
+      const candidate = candidateForRoot(root, 0, {
+        adapter: { id: "generic", fields: {} }, metadata: { title: document.title }, structured: [],
+        article: null, siteData: null, canonicalUrl: location.href, pageType: root.querySelector("article,main") ? "article" : root.querySelector("video,iframe") ? "video" : root.querySelector("img") ? "artwork" : "article", maxMedia,
+        contentRoot: root, pageRoot: root
+      });
+      if (candidate) {
+        candidate.title = document.title;
+        candidate.id = `manual:${sessionId}`;
+        candidate.region = null;
+        candidate.textBlocks = candidate.textBlocks.map(block => ({ ...block, kind: "section" }));
+        candidate.contentText = candidate.textBlocks.map(block => block.text).join("\n\n");
+        const ids = new Map(candidate.media.map(item => [item.id, `${candidate.id}:${item.id}`]));
+        candidate.media = candidate.media.map(item => ({ ...item, id: ids.get(item.id) }));
+        candidate.articleDocument.blocks = candidate.articleDocument.blocks.map(block => ({ ...block, assetId: ids.get(block.assetId) || block.assetId }));
+      }
+      return { id: sessionId, sourceUrl: location.href, candidates: candidate ? [candidate] : [], capturedAt };
+    }
+    if (options.xSupplementUrl) return { supplement: await readXSupplement(options.xSupplementUrl) };
     const editedRegion = options.editedRegion && typeof options.editedRegion === "object" ? options.editedRegion : null;
     const editedBaseRoot = editedRegion?.marker
       ? [...document.querySelectorAll?.("[data-promptdirector-capture-region]") || []]
@@ -708,7 +731,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         siteStatus: siteData.completeness === "complete" ? "complete" : "partial"
       };
     }
-    if (siteData?.adapter === "jimeng" && siteData.pageKind === "detail" && !pageSelection) {
+    if (["jimeng", "youtube", "bilibili", "midjourney"].includes(siteData?.adapter) && siteData.pageKind === "detail" && !pageSelection) {
       return {
         id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id,
         candidates: Array.isArray(siteData.candidates) ? siteData.candidates.slice(0, 1) : [],
@@ -716,8 +739,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       };
     }
     if (adapter.id === "x" && !pageSelection) {
-      const posts = [...document.querySelectorAll('article[data-testid="tweet"]')];
-      const current = posts.find(post => ownPostLinks(post).some(link => sameUrl(link.href, canonicalUrl)));
+      const posts = [...document.querySelectorAll('article')].filter(post => ownPostLinks(post).length);
+      const current = posts.find(post => ownPostLinks(post).some(link => xPostIdentity(link.href) === xPostIdentity(canonicalUrl)));
       if (current || !wholePage) {
         const roots = current ? [current] : posts;
         const candidates = roots.slice(0, maxCandidates).flatMap((root, index) => {
@@ -1202,8 +1225,58 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function ownPostLinks(root) {
-    return [...root.querySelectorAll('a[href*="/status/"]')].filter(link =>
-      link.querySelector("time") && !link.closest('[role="link"][data-testid="quoteTweet"], [data-testid="quoteTweet"], [role="link"][tabindex="0"]'));
+    const links = [...root.querySelectorAll('a[href*="/status/"]')].filter(link => !xQuoteContainer(link));
+    const dated = links.filter(link => link.querySelector("time"));
+    return dated.length ? dated : links.filter(link => {
+      const url = safeHttpUrl(link.href);
+      return url && /^\/[^/]+\/status\/\d+\/?$/u.test(new URL(url).pathname)
+        && cleanText(link.textContent) && !link.querySelector('svg,img') && !link.hasAttribute('aria-label');
+    });
+  }
+
+  function xPostIdentity(value) {
+    try {
+      const url = new URL(value);
+      return /(^|\.)(x|twitter)\.com$/u.test(url.hostname)
+        ? /^\/(?:[^/]+\/status|i\/web\/status)\/(\d+)(?:\/|$)/u.exec(url.pathname)?.[1] || "" : "";
+    } catch { return ""; }
+  }
+
+  function xPostTextNodes(root) {
+    const classic = [...root.querySelectorAll('[data-testid="tweetText"]')];
+    // The public X post layout uses a directional, pre-wrapped text container.
+    return classic.length ? classic : [...root.querySelectorAll('div[dir="auto"].whitespace-pre-wrap')];
+  }
+
+  function xExpandButtons(root) {
+    return [...root.querySelectorAll('[data-testid="tweet-text-show-more-link"],button')].filter(button =>
+      !xQuoteContainer(button) && (button.dataset.testid === "tweet-text-show-more-link"
+        || xPostTextNodes(root).some(node => node.contains(button)) && /^(?:Show more|显示更多|顯示更多)$/iu.test(button.textContent.trim())));
+  }
+
+  async function readXSupplement(sourceUrl) {
+    const postId = xPostIdentity(sourceUrl);
+    if (!postId || xPostIdentity(location.href) !== postId) throw new Error("评论页面已改变，请重新选择评论");
+    return new Promise((resolve, reject) => {
+      const clicked = new WeakSet();
+      const finish = (value, error) => { observer.disconnect(); clearTimeout(timer); error ? reject(error) : resolve(value); };
+      const check = () => {
+        if (xPostIdentity(location.href) !== postId) return finish(null, new Error("评论页面已改变，请重新选择评论"));
+        const root = [...document.querySelectorAll('article')].find(post => ownPostLinks(post).some(link => xPostIdentity(link.href) === postId));
+        if (!root) return;
+        const buttons = xExpandButtons(root);
+        if (buttons.length) {
+          for (const button of buttons) if (!clicked.has(button)) { clicked.add(button); button.click(); }
+          return;
+        }
+        const content = xPostContent(root, { textOnly: true, includeQuotes: false });
+        if (content?.text) finish({ text: content.text, sourceUrl, partial: false });
+      };
+      const observer = new MutationObserver(check);
+      const timer = setTimeout(() => finish(null, new Error("未能取得评论全文，请检查登录、网络或原评论是否仍可展开；当前草稿已保留")), options.mediaTimeoutMs);
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      check();
+    });
   }
 
   function copyPostInline(source, target) {
@@ -1227,26 +1300,27 @@ export async function collectPageCaptureSnapshot(options = {}) {
     }
   }
 
-  function xPostContent(root) {
-    const texts = [...root.querySelectorAll('[data-testid="tweetText"]')];
+  function xPostContent(root, { textOnly = false, includeQuotes = true } = {}) {
+    const texts = xPostTextNodes(root);
     if (!texts.length && !root.querySelector("video, [data-testid=tweetPhoto]")) return null;
     const fragment = document.createElement("div");
     const content = [];
     for (const node of texts) {
-      const value = cleanBlockText(node.innerText || node.textContent);
-      if (!value) continue;
-      const quote = node.closest('[data-testid="quoteTweet"], [role="link"][tabindex="0"]');
+      const quote = xQuoteContainer(node);
+      if (quote && !includeQuotes) continue;
       const p = document.createElement(quote ? "blockquote" : "p");
       // Keep inline links and paragraph breaks, without nesting tweet divs inside paragraphs.
       copyPostInline(node, p);
+      const value = readBlockText(p);
+      if (!value) continue;
       fragment.append(p);
       content.push({ id: "text:x:" + hashText(value), text: value, html: p.outerHTML,
         kind: quote ? "quote" : "paragraph", relevance: "explicit-creative", sourceOrder: content.length });
     }
-    const media = collectMedia(root, maxMedia).filter(item => item.kind !== "image" ||
+    const media = textOnly ? [] : collectMedia(root, maxMedia).filter(item => item.kind !== "image" ||
       !/profile_images|profile_banners/u.test(item.url));
     return { text: content.map(b => b.text).join("\n\n"), html: fragment.innerHTML, textBlocks: content, media,
-      partial: Boolean(root.querySelector('[data-testid="tweet-text-show-more-link"]')) };
+      partial: xExpandButtons(root).length > 0 };
   }
 
   function candidateForRoot(root, index, context) {
@@ -1286,7 +1360,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       : null;
     const textBlocks = post?.textBlocks || pageSelection?.textBlocks || structuredTextBlocks || collectTextBlocks(root, contentHtml, text);
     const siteMedia = [...(options.feishuDocument?.media || []), ...(Array.isArray(siteData?.media) ? siteData.media : []), ...collectStructuredMedia(structured)];
-    const domMedia = post?.media || (pageSelection || root.isConnected === false ? [] : captureRoots.flatMap(part => collectMedia(part, context.maxMedia)));
+    const domMedia = post?.media || (pageSelection || (root.isConnected === false && !options.manualContentHtml) ? [] : captureRoots.flatMap(part => collectMedia(part, context.maxMedia)));
     const pairedDomIds = new Set();
     const pairedSiteMedia = siteMedia.map((item) => {
       const visible = domMedia.find((candidate) => mediaValuesOverlap(item, candidate));
@@ -1516,6 +1590,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function isPageChrome(element) {
+    if (options.manualContentHtml) return false;
     const semantic = "nav,aside,header,footer,[role=navigation],[role=banner],[role=complementary],[role=contentinfo]";
     const feishu = location.hostname === "feishu.cn" || location.hostname.endsWith(".feishu.cn");
     if (!feishu) return Boolean(element.closest?.(`${semantic},[class*=comment],[class*=recommend],[data-testid*=comment],[data-testid*=recommend]`));
@@ -1909,7 +1984,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
       const url = new URL(value);
       if (url.hostname === "www.tiktok.com" && /^\/player\/v1\/\d+\/?$/u.test(url.pathname)) return true;
       if (["x.com", "twitter.com"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return /^\/[^/]+\/status\/\d+\/video\/\d+\/?$/u.test(url.pathname);
-      return /\.(?:mp4|webm|mov)(?:$|[?#])/iu.test(url.pathname) || ["youtube.com", "youtu.be", "vimeo.com", "bilibili.com", "douyin.com"].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+      const host = url.hostname.replace(/^www\./u, "");
+      if (host === "youtube.com" || host.endsWith(".youtube.com")) return url.pathname === "/watch" && Boolean(url.searchParams.get("v")) || /^\/(?:shorts|embed|live)\/[^/]+/u.test(url.pathname);
+      if (host === "youtu.be") return /^\/[^/]+\/?$/u.test(url.pathname);
+      if (host === "bilibili.com" || host.endsWith(".bilibili.com")) return /^\/video\/(?:BV[\w]+|av\d+)/iu.test(url.pathname);
+      if (host === "vimeo.com" || host.endsWith(".vimeo.com")) return /^\/(?:video\/)?\d+\/?$/u.test(url.pathname);
+      if (host === "douyin.com" || host.endsWith(".douyin.com")) return /^\/video\/\d+/u.test(url.pathname);
+      return /\.(?:mp4|webm|mov)$/iu.test(url.pathname);
     } catch {
       return false;
     }
@@ -2040,12 +2121,19 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return {
       title: firstText(fields.title),
       author: firstText(fields.author),
-      handle: handleFromLink(fields.handle),
+      handle: handleFromLink(fields.handle) || (adapter.id === "x" ? new URL(ownPostLinks(root)[0]?.href || location.href).pathname.split('/')[1] : ""),
       canonicalUrl: adapter.id === "x" ? safeHttpUrl(ownPostLinks(root)[0]?.href) : firstUrl(fields.canonicalUrl),
       model: firstText(fields.model),
       publishedAt: adapter.id === "x" ? cleanText(ownPostLinks(root)[0]?.querySelector("time")?.dateTime) : firstText(fields.publishedAt),
       engagement
     };
+  }
+
+  // Only inspect sources owned by this player. Global network traffic may belong to other works.
+  function collectVideoVariants(player) {
+    const urls = [player.currentSrc, player.getAttribute("src"), player.getAttribute("data-src"), player.getAttribute("data-video-src"),
+      ...[...player.querySelectorAll("source")].flatMap(source => [source.getAttribute("src"), source.getAttribute("data-src")])];
+    return [...new Set(urls.map(safeHttpUrl).filter(Boolean))].map(url => ({ url, sourceKind: "video-element" }));
   }
 
   function collectMedia(root, limit) {
@@ -2066,7 +2154,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       }
       if (element.matches("iframe") && !isSupportedVideoFrame(element)) continue;
       const kind = element.matches("video,iframe") ? "video" : "image";
-      const variants = kind === "image" ? collectImageVariants(element) : [];
+      const variants = kind === "image" ? collectImageVariants(element)
+        : element.matches("video") ? collectVideoVariants(element) : [];
       const imageSource = variants[0] || null;
       const url = imageSource?.url || safeHttpUrl(element.currentSrc || element.src);
       const posterElement = kind === "video" ? companionPosterForPlayer(element, root) : null;
@@ -2083,6 +2172,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         kind,
         url,
         posterUrl,
+        ...(/\.m3u8(?:[?#]|$)/iu.test(url) ? { streamUrl: url } : {}),
         postMediaUrl: xPostMediaUrl(element), isQuoted: Boolean(xQuoteContainer(element)),
         alt: cleanText(element.alt),
         width: imageSource?.declaredWidth || (responsiveCandidate ? 0 : Number(element.naturalWidth || element.videoWidth || element.width) || 0),
@@ -2320,15 +2410,17 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function xQuoteContainer(element) {
-    if (!["x.com", "twitter.com"].includes(location.hostname) || !element.closest('article[data-testid="tweet"]')) return null;
-    return element.closest('[data-testid="quoteTweet"], [role="link"][tabindex="0"]');
+    if (!["x.com", "twitter.com"].includes(location.hostname)) return null;
+    const post = element.closest('article');
+    const quote = element.closest('[data-testid="quoteTweet"], [role="link"][tabindex="0"]');
+    return post && quote && post.contains(quote) && post !== quote ? quote : null;
   }
 
   function xPostMediaUrl(element) {
     const photoUrl = xPostPhotoUrl(element);
     if (photoUrl) return photoUrl;
     if (!["x.com", "twitter.com"].includes(location.hostname) || !element.matches("video")) return "";
-    const post = element.closest('article[data-testid="tweet"]');
+    const post = element.closest('article');
     if (!post) return "";
     const quote = xQuoteContainer(element);
     const link = quote
@@ -2338,7 +2430,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function xPostPhotoUrl(element) {
-    if (!["x.com", "twitter.com"].includes(location.hostname) || !element.closest('article[data-testid="tweet"]')) return "";
+    if (!["x.com", "twitter.com"].includes(location.hostname) || !element.closest('article')) return "";
     const link = element.closest('a[href*="/photo/"]');
     const url = safeHttpUrl(link?.href);
     if (!url) return "";
@@ -2347,6 +2439,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function isExcludedMedia(element) {
+    if (options.manualContentHtml) return false;
     if (options.siteData?.adapter === "krea" && options.siteData?.pageKind === "detail") {
       const link = element.closest?.("a[href]");
       try {
@@ -2356,7 +2449,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       } catch { /* This media is not a link to another Krea work. */ }
     }
     const postPhoto = Boolean(xPostPhotoUrl(element));
-    if (!postPhoto && element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
+    const postVideo = element.matches("video") && Boolean(xPostMediaUrl(element));
+    if (!postPhoto && !postVideo && element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
     const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0 || rect.width < 48 || rect.height < 48) return true;
     const style = typeof globalThis.getComputedStyle === "function" ? globalThis.getComputedStyle(element) : null;

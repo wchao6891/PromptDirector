@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { load } from "cheerio";
 
 const [library, html, css, background, composerHtml, composerCss, i18n] = await Promise.all([
   readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
@@ -128,18 +129,20 @@ test("detail text analysis follows the currently displayed image prompt", () => 
   assert.doesNotMatch(analyzeSingleEntry, /textFingerprint\(entry\.text\)/);
 });
 
-test("composer keeps only primary controls exposed and moves secondary choices into one settings menu", () => {
+test("composer groups direction and reference inputs in their menus and secondary choices in settings", () => {
   assert.match(composerHtml, /class="composer-options-panel"/);
   assert.match(composerHtml, /id="composer-applied-skills"[^>]*hidden/);
   assert.match(composerHtml, /id="composer-attachment-local"/);
   assert.match(composerHtml, /id="composer-reference-tab-skills"/);
   assert.doesNotMatch(composerHtml, /id="composer-skill-manage"|id="composer-attachment-menu"/);
-  assert.ok(composerHtml.indexOf("composer-type-switch") < composerHtml.indexOf("composer-options-panel"));
-  assert.ok(composerHtml.indexOf("composer-reference-open") < composerHtml.indexOf("composer-options-panel"));
-  assert.ok(composerHtml.indexOf("composer-route") > composerHtml.indexOf("composer-options-panel"));
-  assert.ok(composerHtml.indexOf("composer-platform") > composerHtml.indexOf("composer-options-panel"));
-  assert.ok(composerHtml.indexOf("composer-output-language") > composerHtml.indexOf("composer-options-panel"));
-  assert.ok(composerHtml.indexOf("composer-production-review") > composerHtml.indexOf("composer-options-panel"));
-  assert.ok(composerHtml.indexOf("composer-thinking") > composerHtml.indexOf("composer-options-panel"));
+  const $ = load(composerHtml);
+  assert.equal($('#composer-direction .composer-type-switch').length, 1);
+  assert.equal($('#composer-reference-open').closest('.composer-options-panel').length, 0);
+  for (const id of ['composer-send-images', 'composer-send-videos']) {
+    assert.equal($(`#composer-reference-inputs #${id}`).length, 1);
+  }
+  for (const id of ['composer-route', 'composer-platform', 'composer-output-language', 'composer-production-review', 'composer-thinking']) {
+    assert.equal($(`#${id}`).closest('details').attr('id'), 'composer-options');
+  }
   assert.match(composerCss, /\.composer-input-tools\s*\{[^}]*flex-wrap:\s*nowrap/);
 });

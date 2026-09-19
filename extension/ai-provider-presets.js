@@ -104,21 +104,21 @@ export const AI_PROVIDER_PRESETS = Object.freeze([
   }),
   preset({
     id: "custom-text",
-    label: "自定义兼容服务（文字）",
+    label: "自定义兼容服务（对话与识别）",
     category: "custom",
     endpoint: "",
     protocol: "chat_completions",
     discovery: { adapter: "identity" },
-    capabilities: TEXT_CAPABILITIES
+    capabilities: [...TEXT_CAPABILITIES, "imageAnalysis", "videoAnalysis"]
   }),
   preset({
     id: "custom-media",
-    label: "自定义兼容服务（图片与生成）",
+    label: "自定义图片生成服务",
     category: "custom",
     endpoint: "",
     protocol: "chat_completions",
     discovery: { adapter: "identity" },
-    capabilities: ["imageAnalysis", "imageGeneration"]
+    capabilities: [...TEXT_CAPABILITIES, "imageAnalysis", "imageGeneration"]
   })
 ]);
 

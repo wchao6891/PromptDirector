@@ -32,6 +32,8 @@ export function appendCaptureCandidate(candidate, addition, selection) {
     if (item.assetId) {
       const assetId = remapped.get(item.assetId);
       if (assetId && !blocks.some(b => b.assetId === assetId)) blocks.push({ ...item, id: `added:${addition.id}:${item.id}`, assetId });
+    } else if (item.kind === "link" && item.sourceUrl && !blocks.some(block => block.kind === "link" && block.sourceUrl === item.sourceUrl)) {
+      blocks.push({ ...item, id: `added:${addition.id}:${item.id}` });
     } else if (item.text && newTextBlocks.some(b => comparableText(b.text).includes(comparableText(item.text)))) {
       blocks.push({ ...item, id: remapped.get(item.id) || `added:${addition.id}:${item.id}` });
     }
@@ -72,10 +74,25 @@ function comparableText(value) {
   return String(value || "").replace(/\s+/gu, " ").trim();
 }
 
+function candidateSaveResult(batch, candidate, results) {
+  return batch.captureMode === "list" && batch.saveMode === "combined"
+    ? results.length === 1 ? results[0] : null
+    : results.find(item => item.candidateId === candidate.id);
+}
+
+export function persistedPageCaptureCandidates(batch, candidates, results) {
+  return candidates.flatMap(candidate => {
+    const result = candidateSaveResult(batch, candidate, results);
+    if (!result?.entryId || !["saved", "partial", "duplicate"].includes(result.status)) return [];
+    const savedMedia = new Set(result.savedMediaIds || []);
+    return [{ ...candidate, media: candidate.media.filter(media => savedMedia.has(media.id)) }];
+  });
+}
+
 export function savedPageCaptureCandidateIds(batch, candidates, results) {
-  const persisted = results.filter(item => item.entryId && ["saved", "partial", "duplicate"].includes(item.status));
-  if (batch.captureMode === "list" && batch.saveMode === "combined" && persisted.length === 1) {
-    return new Set(candidates.map(candidate => candidate.id));
-  }
-  return new Set(persisted.map(item => item.candidateId));
+  return new Set(candidates.filter(candidate => {
+    const result = candidateSaveResult(batch, candidate, results);
+    return result?.entryId && (["saved", "duplicate"].includes(result.status)
+      || result.status === "partial" && result.pendingMediaIds?.length === 0);
+  }).map(candidate => candidate.id));
 }

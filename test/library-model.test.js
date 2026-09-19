@@ -175,7 +175,15 @@ test("a compound logical case matches search, content filters, and pending state
 });
 
 
-test("saved capture warnings remain readable in source details after the sidebar clears", () => {
+test("developer capture diagnostics never appear in saved case details", () => {
   const rows = entrySourceMetadataRows({sourceFacts:{captureWarnings:["视频文件未保存"]}});
-  assert.ok(rows.some(row => row.label === "采集问题" && row.value === "视频文件未保存"));
+  assert.ok(!rows.some(row => /采集问题|视频文件未保存/.test(row.label + row.value)));
+});
+
+
+test("video introduction already in the case body is not duplicated in source metadata", () => {
+  const rows = entrySourceMetadataRows({ text: "Full introduction\n\nSelected comments", sourceFacts: { description: "Full introduction", engagement: { comments: 3, coins: 2 } } });
+  assert.ok(!rows.some(row => row.label === "作品说明"));
+  assert.ok(rows.some(row => row.label === "评论" && row.value === "3"));
+  assert.ok(rows.some(row => row.label === "投币" && row.value === "2"));
 });

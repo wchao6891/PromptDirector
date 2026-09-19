@@ -488,7 +488,7 @@ export function failUnfinishedAnalysisItems(value, error = {}) {
   return job;
 }
 
-export function stageAnalysisRebuildResults(jobValue, stagingValue, state, results = []) {
+export async function stageAnalysisRebuildResults(jobValue, stagingValue, state, results = []) {
   let job = requireJob(jobValue);
   if (job.mode !== "rebuild") throw new Error("当前任务不是标签系统重建");
   const staging = stagingValue?.jobId === job.id && stagingValue.results && typeof stagingValue.results === "object"
@@ -501,7 +501,7 @@ export function stageAnalysisRebuildResults(jobValue, stagingValue, state, resul
       continue;
     }
     const entry = state.entries?.find((item) => item.id === result.entryId);
-    if (!entry || canonicalTextAnalysisInput(entry, result.assetId).textRevision !== Math.max(1, Number(result.textRevision) || 1)) {
+    if (!await textAnalysisResultIsCurrent(entry, result)) {
       job = failAnalysisItem(job, result.entryId, result.claimId, {
         message: "提示词原文已变化，请重新预览",
         status: 409
@@ -530,10 +530,24 @@ export function stageAnalysisRebuildResults(jobValue, stagingValue, state, resul
     };
     job = succeedAnalysisItem(job, result.entryId, result.claimId, result.usage, state.facetCatalog.revision, result);
   }
+  // Earlier successes can become stale while later requests are still running.
+  if (!job.items.some(item => ["pending", "running"].includes(item.status))) {
+    const entriesById = new Map((state.entries ?? []).map(entry => [entry.id, entry]));
+    for (const item of job.items) {
+      const result = staging.results[item.entryId];
+      if (item.status !== "succeeded" || !result) continue;
+      if (await textAnalysisResultIsCurrent(entriesById.get(item.entryId), result)) continue;
+      item.status = "failed";
+      item.error = "提示词原文已变化，请重新预览";
+      item.statusCode = 409;
+      delete staging.results[item.entryId];
+    }
+  }
+  finishIfSettled(job);
   return { job, staging };
 }
 
-export function finalizeAnalysisRebuild(jobValue, stagingValue, state, analyzedAtValue = new Date().toISOString()) {
+export async function finalizeAnalysisRebuild(jobValue, stagingValue, state, analyzedAtValue = new Date().toISOString()) {
   const job = requireJob(jobValue);
   const summary = analysisBatchSummary(job);
   if (job.mode !== "rebuild" || summary.status !== "completed" || summary.counts.failed) {
@@ -543,14 +557,14 @@ export function finalizeAnalysisRebuild(jobValue, stagingValue, state, analyzedA
     throw new Error("重建暂存结果无效，正式标签库保持不变");
   }
   const analyzedAt = String(analyzedAtValue || new Date().toISOString());
-  const working = applyStagedRebuildItems(job, stagingValue, state, job.items, analyzedAt);
+  const working = await applyStagedRebuildItems(job, stagingValue, state, job.items, analyzedAt);
   return {
     state: working,
     job: { ...job, resultCatalogRevision: working.facetCatalog.revision }
   };
 }
 
-export function finalizePartialAnalysisRebuild(jobValue, stagingValue, state, analyzedAtValue = new Date().toISOString()) {
+export async function finalizePartialAnalysisRebuild(jobValue, stagingValue, state, analyzedAtValue = new Date().toISOString()) {
   const job = requireJob(jobValue);
   const recovery = analysisRebuildRecovery(job, stagingValue);
   if (!recovery.recoverable) {
@@ -558,7 +572,7 @@ export function finalizePartialAnalysisRebuild(jobValue, stagingValue, state, an
   }
   const analyzedAt = String(analyzedAtValue || new Date().toISOString());
   const succeededItems = job.items.filter((item) => item.status === "succeeded");
-  const working = applyStagedRebuildItems(job, stagingValue, state, succeededItems, analyzedAt);
+  const working = await applyStagedRebuildItems(job, stagingValue, state, succeededItems, analyzedAt);
   return {
     state: working,
     job: {
@@ -757,6 +771,14 @@ export async function textFingerprint(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export async function textAnalysisResultIsCurrent(entry, result = {}) {
+  if (!entry) return false;
+  const input = canonicalTextAnalysisInput(entry, result.assetId);
+  if (result.assetId && input.assetId !== result.assetId) return false;
+  if (input.textRevision !== Math.max(1, Number(result.textRevision) || 1)) return false;
+  return !result.fingerprint || result.fingerprint === await textFingerprint(input.text);
+}
+
 function claimedItem(job, entryId, claimId) {
   const item = job.items.find((candidate) =>
     candidate.entryId === entryId &&
@@ -860,7 +882,15 @@ function rebuildAnalysisMeta(staged, job, entry, analyzedAt) {
   };
 }
 
-function applyStagedRebuildItems(job, stagingValue, state, items, analyzedAt) {
+async function applyStagedRebuildItems(job, stagingValue, state, items, analyzedAt) {
+  const entriesById = new Map((state.entries ?? []).map(entry => [entry.id, entry]));
+  for (const item of items) {
+    const staged = stagingValue.results[item.entryId];
+    if (!staged) throw new Error("重建暂存结果不完整，正式标签库保持不变");
+    if (!await textAnalysisResultIsCurrent(entriesById.get(item.entryId), staged)) {
+      throw new Error("提示词原文已变化，正式标签库保持不变，请重新预览");
+    }
+  }
   const prepared = prepareFacetRebuild(state.entries, state.facetCatalog);
   let working = { ...structuredClone(state), entries: prepared.entries, facetCatalog: prepared.catalog };
   for (const item of items) {

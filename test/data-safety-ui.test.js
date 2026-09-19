@@ -87,7 +87,8 @@ test("share-package batch import preserves local configuration and accepts histo
     library.indexOf("async function importSharedLibraryPackage"),
     library.indexOf("function backupMediaPaths")
   );
-  assert.match(action, /PREVIEW_LIBRARY_IMPORT_BATCH/);
+  assert.match(action, /previewLibraryImportInWorker/);
+  assert.match(action, /GET_FOLDER_BACKUP_STATE/);
   assert.match(action, /APPLY_LIBRARY_IMPORT_BATCH/);
   assert.equal((action.match(/preserveLibraryConfiguration:\s*true/g) ?? []).length, 1);
   assert.match(action, /plan:\s*batch\.preview\.plan/);
@@ -122,7 +123,8 @@ test("multi-ZIP import uses one wide preflight with blocking failures and one ba
   assert.match(flow, /for \(const item of batch\.items\)/);
   assert.match(flow, /await inspectLibraryPackageBatchItem\(batch, item\)/);
   assert.match(flow, /batch\.controller\.signal/);
-  assert.match(flow, /PREVIEW_LIBRARY_IMPORT_BATCH/);
+  assert.match(flow, /previewLibraryImportInWorker/);
+  assert.match(flow, /previewController\?\.abort/);
   assert.match(flow, /APPLY_LIBRARY_IMPORT_BATCH/);
   assert.match(flow, /assertStorageCapacity\(estimate, plannedBytes\)/);
   const plan = flow.slice(flow.indexOf("async function refreshLibraryPackageBatchPlan"), flow.indexOf("function libraryPackageMessage"));

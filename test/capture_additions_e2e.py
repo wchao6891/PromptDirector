@@ -29,6 +29,10 @@ def main():
           Object.defineProperty(navigator,'clipboard',{configurable:true,value:{read:async()=>[{types:['text/plain'],getType:async()=>new Blob(['剪贴板补充：保持动作连续。'],{type:'text/plain'})}]}});
           chrome.runtime.sendMessage=async m=>{
             if(m.type==='START_PAGE_CAPTURE')return {ok:true,batch:window.webSnapshot};
+            if(m.type==='PICK_PAGE_CONTENT')return {ok:true,supplement:'comments',batch:{...snapshot,id:'picked-comment',candidates:[{
+              ...snapshot.candidates[0],id:'selected-extra',contentText:'网页高亮补充：使用自然光与清晰构图。',
+              textBlocks:[{id:'selected-extra',text:'网页高亮补充：使用自然光与清晰构图。'}],media:[]
+            }]}};
             if(m.type==='PREVIEW_PAGE_CAPTURE_REGION'||m.type==='CLEAR_PAGE_CAPTURE_MARKERS')return {ok:true};
             if(m.type==='START_SMART_VISUAL_SELECTION')return {ok:true,session:{sessionId:'smart',selectedCount:1,candidateCount:1}};
             if(m.type==='CANCEL_SMART_VISUAL_SELECTION')return {ok:true};
@@ -104,6 +108,29 @@ def main():
         assert all(blobs),blobs
         draft=page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_WORKSPACE'})).draft")
         assert not draft['fragments'] and not draft['visuals'],draft
+        # A later explicit supplement to an already-saved URL must reach the same case
+        # before the collector removes its draft. Repeating it must remain idempotent.
+        for attempt in range(2):
+            page.evaluate("""async attempt=>{
+              const {createCaptureDraft}=await import('./capture-draft.js');
+              await chrome.runtime.sendMessage({type:'UPDATE_CAPTURE_DRAFT',draft:createCaptureDraft({
+                fragments:[{id:'later-'+attempt,text:'第二次补充：必须写回已经保存的案例。',sourceUrl:'https://example.com/post'}]
+              })});
+              window.dispatchEvent(new Event('focus'));
+            }""",attempt)
+            expect(page.locator('#preview-state')).to_be_visible()
+            page.locator('#add-page-capture').click();page.locator('.page-capture-confirm').click()
+            expect(page.locator('.page-capture-excerpt')).to_contain_text('第二次补充')
+            page.locator('#page-capture-save').click()
+            expect(page.locator('#page-capture')).to_be_hidden(timeout=15000)
+            updated=page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
+            assert len(updated)==1 and updated[0]['id']==entry['id'],updated
+            assert updated[0]['text'].count('第二次补充：必须写回已经保存的案例。')==1,updated[0]['text']
+            for text in ['已有的选中文字','网页主帖','网页高亮补充','剪贴板补充']: assert text in updated[0]['text']
+            assert len(updated[0]['mediaAssets'])==2
+            remaining_draft=page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_WORKSPACE'})).draft")
+            assert not remaining_draft['fragments'],remaining_draft
+        print({'recaptureSupplementSavedToSameCase':True,'retryNoDuplicateText':True})
         # Text-only save must leave unsaved image bytes available in the draft.
         page.evaluate('''async()=>{
           const image=await window.makeImage('pending-image','#551133');

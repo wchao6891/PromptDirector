@@ -1,4 +1,5 @@
 import { remapArticleDocumentAssets } from "./article-document.js";
+import { markEntryTextChanged } from "./analysis-revision.js";
 
 export function capturedMediaPrompts(candidate, assetIds, existing = []) {
   const prompts = existing.map(item => ({ ...item }));
@@ -18,6 +19,8 @@ function sourceUrls(media) {
 export function matchingCapturedAsset(entry, candidate, media) {
   const urls = sourceUrls(media);
   const assets = (entry.mediaAssets || []).filter(asset => asset.kind === media.kind && asset.usage !== "poster");
+  const identical = media.contentHash && assets.find(asset => asset.contentHash === media.contentHash && asset.storageMode === "managed");
+  if (identical) return identical;
   const direct = assets.filter(asset => [...sourceUrls(asset)].some(url => urls.has(url))
     && (!media.downloadDataUrl || asset.sourceTitle === media.filename));
   if (direct.length) return direct.find(asset => asset.storageMode === "managed") || direct[0];
@@ -47,7 +50,17 @@ export async function planPageCaptureRepair(entry, candidate, hasBlob) {
     } else pending.push(media);
   }
   const promptsChanged = capturedMediaPrompts(candidate, assetIds, entry.mediaPrompts).length > (entry.mediaPrompts || []).length;
-  return { pending, matched, assetIds, obsoleteReferences, promptsChanged };
+  // Only explicitly appended capture blocks may extend an existing case. A rescan
+  // of the source body must not replace text the user already edited in the library.
+  const textAdditions = [];
+  let knownText = String(entry.text || "");
+  for (const block of candidate.textBlocks || []) {
+    const text = String(block.text || "").trim();
+    if (!block.id?.startsWith("added:") || !text || knownText.includes(text)) continue;
+    textAdditions.push({ ...block, text });
+    knownText += `\n\n${text}`;
+  }
+  return { pending, matched, assetIds, obsoleteReferences, promptsChanged, textAdditions };
 }
 
 export function mergePageCaptureRepair(entry, candidate, plan, capturedAssets, assetIds) {
@@ -77,12 +90,42 @@ export function mergePageCaptureRepair(entry, candidate, plan, capturedAssets, a
     if (!assetId || !assets.some(asset => asset.id === assetId && asset.storageMode === "managed")) return block;
     return { ...block, kind: media.kind, assetId };
   });
+  if (articleDocument) {
+    const sourceBlocks = candidate.articleDocument?.blocks || [];
+    for (const [index, block] of sourceBlocks.entries()) {
+      const assetId = block.assetId && assetIds.get(block.assetId);
+      if (!assetId || articleDocument.blocks.some(item => item.id === block.id || item.assetId === assetId)) continue;
+      const next = sourceBlocks.slice(index + 1).find(item => articleDocument.blocks.some(saved => saved.id === item.id));
+      const position = next ? articleDocument.blocks.findIndex(item => item.id === next.id) : articleDocument.blocks.length;
+      articleDocument.blocks.splice(position, 0, { ...block, assetId });
+    }
+    articleDocument.blocks = articleDocument.blocks.map((block, sourceOrder) => ({ ...block, sourceOrder }));
+  }
+  const textAdditions = plan.textAdditions || [];
+  if (articleDocument) {
+    for (const block of textAdditions) {
+      const source = candidate.articleDocument?.blocks?.find(item => item.id === `${block.id}:source` && item.kind === "link");
+      const content = candidate.articleDocument?.blocks?.find(item => item.id === block.id && item.text === block.text)
+        || { id: block.id, kind: "paragraph", text: block.text };
+      for (const item of [source, content].filter(Boolean)) articleDocument.blocks.push({ ...item,
+        sourceOrder: articleDocument.blocks.reduce((max, current) => Math.max(max, current.sourceOrder ?? 0), -1) + 1
+      });
+    }
+  }
+  const nextText = [entry.text, ...textAdditions.map(block => block.text)].filter(Boolean).join("\n\n");
   return {
-    ...entry,
+    ...(textAdditions.length ? markEntryTextChanged(entry, nextText) : entry),
     mediaAssets: assets,
     mediaPrompts: capturedMediaPrompts(candidate, assetIds, entry.mediaPrompts),
     primaryMediaId: primary?.storageMode === "managed" ? primary.id : preferred?.id || primary?.id || entry.primaryMediaId,
     articleDocument,
     sourceFacts: { ...entry.sourceFacts, ...candidate.sourceFacts }
+  };
+}
+
+export function pageCaptureMediaReceipt(candidate, assetIds, failedMediaIds = new Set()) {
+  return {
+    savedMediaIds: candidate.media.filter(media => assetIds.has(media.id) && !failedMediaIds.has(media.id)).map(media => media.id),
+    pendingMediaIds: candidate.media.filter(media => failedMediaIds.has(media.id)).map(media => media.id)
   };
 }

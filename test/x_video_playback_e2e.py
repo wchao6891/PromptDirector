@@ -61,7 +61,8 @@ def main():
             assert asset['storageMode']=='managed' and asset['byteSize']==len(video_bytes),asset
             library=run.open_page('library.html');library.locator('.case-card').first.click()
             video=library.locator('#detail-drawer video').first
-            video.evaluate('(v)=>{v.muted=true;return v.play();}')
+            video.evaluate('(v)=>{v.muted=true;}')
+            library.get_by_role('button',name='播放视频',exact=True).click()
             library.wait_for_function("()=>{const v=document.querySelector('#detail-drawer video');return v?.ended;}")
             assert video.evaluate('v=>v.webkitAudioDecodedByteCount>0 && v.webkitVideoDecodedByteCount>0')
             library.locator('#detail-close').click()
@@ -81,7 +82,8 @@ def main():
             library.reload();library.locator('.case-card').first.click()
             video=library.locator('.referenced-video-stream video');expect(video).to_be_visible()
             expect(library.locator('.referenced-video-stream iframe')).to_have_count(0)
-            video.evaluate('(v)=>{v.muted=true;return v.play();}')
+            video.evaluate('(v)=>{v.muted=true;}')
+            library.get_by_role('button',name='播放视频',exact=True).click()
             library.wait_for_function("()=>{const v=document.querySelector('.referenced-video-stream video');return v?.currentTime>0.5;}")
             video.evaluate('(v)=>v.currentTime=2')
             library.wait_for_function("()=>document.querySelector('.referenced-video-stream video')?.ended")
@@ -92,6 +94,7 @@ def main():
             assert library.evaluate("()=>window.closedPlayer.paused && !window.closedPlayer.getAttribute('src')")
             run.context.route(CDN+'/stream.m3u8',lambda r:r.fulfill(status=403))
             library.locator('.case-card').first.click()
+            library.get_by_role('button',name='播放视频',exact=True).click()
             expect(library.locator('.referenced-video-stream .media-playback-status')).to_contain_text('视频暂不可播放')
             expect(library.locator('.referenced-video-stream iframe')).to_have_count(0)
             library.locator('#detail-close').click()

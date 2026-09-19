@@ -4,11 +4,6 @@ import { normalizeAppliedSkillSnapshots } from "./creative-skills.js";
 import { currentVideoReconstruction, entryMediaAssets } from "./media.js";
 import { TEMP_REFERENCE_SOURCE_TYPES } from "./temp-references.js";
 import { normalizeLocalRelativePath } from "./local-media.js";
-import {
-  hasCompleteReferenceAnalysis,
-  referenceHasPromptText,
-  referenceHasUsableLegacyDescription
-} from "./reference-readiness.js";
 import { detailPromptSources } from "./prompt-sources.js";
 import { composerAssetAnalysisText, composerSourceText, formatReferenceTime } from "./composer-source-text.js";
 import { AI_PROVIDER_PRESETS } from "./ai-provider-presets.js";
@@ -438,7 +433,6 @@ export function createComposerSession(input = {}) {
   const targetType = input.targetType === "video" ? "video" : "image";
   const snapshots = normalizeReferenceSnapshots(input.referenceSnapshots);
   const assemblySnapshots = normalizeComposerAssemblySnapshots(input.assemblySnapshots, input.assemblySnapshot);
-  const referenceModeAvailability = imageReferenceModeAvailability(snapshots);
   const requestedReferenceMode = ["conditioned", "prompt_only", "text_only"].includes(input.imageReferenceMode)
     ? input.imageReferenceMode
     : "conditioned";
@@ -455,9 +449,8 @@ export function createComposerSession(input = {}) {
       ? "create_image"
       : input.outputMode === "create_video" && targetType === "video" ? "create_video" : "text_prompt",
     generationParameters: normalizeGenerationParameters(input.generationParameters, targetType),
-    imageReferenceMode: requestedReferenceMode === "conditioned" || referenceModeAvailability.canDisableImages
-      ? requestedReferenceMode
-      : "conditioned",
+    imageReferenceMode: requestedReferenceMode,
+    videoReferenceMode: input.videoReferenceMode === "text_only" ? "text_only" : "original",
     productionReviewEnabled: input.productionReviewEnabled !== false,
     libraryRetrievalEnabled: input.libraryRetrievalEnabled !== false,
     libraryTools: normalizeLibraryToolState(input.libraryTools),
@@ -590,6 +583,9 @@ function normalizeComposerAssemblySnapshot(value) {
       imageReferenceMode: ["conditioned", "prompt_only", "text_only"].includes(value.media?.imageReferenceMode)
         ? value.media.imageReferenceMode
         : "conditioned",
+      videoReferenceMode: value.media?.videoReferenceMode === "text_only" ? "text_only" : "original",
+      selectedVideoCount: Math.max(0, Math.floor(Number(value.media?.selectedVideoCount) || 0)),
+      expectedSentVideoCount: Math.max(0, Math.floor(Number(value.media?.expectedSentVideoCount) || 0)),
       selectedImageCount: Math.max(0, Math.floor(Number(value.media?.selectedImageCount) || 0)),
       expectedSentImageCount: Math.max(0, Math.floor(Number(value.media?.expectedSentImageCount) || 0)),
       omittedImageCount: Math.max(0, Math.floor(Number(value.media?.omittedImageCount) || 0)),
@@ -642,22 +638,6 @@ function normalizeRetrievalSnapshot(value) {
     sourceCount: Math.max(0, Math.floor(Number(value.sourceCount) || 0)),
     requestedAt: validIso(value.requestedAt)
   };
-}
-
-export function imageReferenceModeAvailability(referenceSnapshots = []) {
-  const missingAssetIds = [];
-  for (const reference of Array.isArray(referenceSnapshots) ? referenceSnapshots : []) {
-    const promptBacked = referenceHasPromptText(reference);
-    const assets = new Map((Array.isArray(reference?.assets) ? reference.assets : []).map((item) => [item.assetId, item]));
-    for (const imageRef of Array.isArray(reference?.imageRefs) ? reference.imageRefs : []) {
-      if (promptBacked) continue;
-      const assetId = String(imageRef?.visualId ?? "").trim();
-      const asset = assets.get(assetId);
-      if (referenceHasUsableLegacyDescription(reference, asset) || hasCompleteReferenceAnalysis(asset)) continue;
-      if (assetId && !missingAssetIds.includes(assetId)) missingAssetIds.push(assetId);
-    }
-  }
-  return { canDisableImages: missingAssetIds.length === 0, missingAssetIds };
 }
 
 export function normalizeGenerationParameters(value = {}, targetType = "image") {

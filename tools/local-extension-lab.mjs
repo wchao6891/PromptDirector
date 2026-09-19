@@ -11,6 +11,7 @@ const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 export const REQUIRED_MODEL_CHAIN_SCRIPTS = [
   "text_and_image_analysis_e2e.py",
   "composer_generation_e2e.py",
+  "compatible_composer_stream_e2e.py",
   "composer_video_generation_e2e.py",
   "creative_job_recovery_e2e.py",
   "ai_provider_registry_e2e.py",

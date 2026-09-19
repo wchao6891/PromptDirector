@@ -605,3 +605,15 @@ test("media trash restores visual-derived labels and permanent cleanup protects 
   const taken = takeTrashItems(moved.trashState, moved.movedItemIds, { retainedMediaIds: ["image:shared"] });
   assert.deepEqual(taken.cleanup.mediaIds, []);
 });
+
+
+test("removing and restoring a selected case cover preserves its selection without changing primary media", () => {
+  const entry = { id: "cover-entry", text: "text", primaryMediaId: "video", coverVisualId: "cover",
+    mediaAssets: [{ id: "video", kind: "video" }, { id: "cover", kind: "image" }] };
+  const moved = moveMediaToTrash({ entries: [entry], trashState: {} }, entry.id, ["cover"]);
+  assert.equal(moved.entries[0].coverVisualId, undefined);
+  assert.equal(moved.entries[0].primaryMediaId, "video");
+  const restored = restoreTrashItems(moved, moved.movedItemIds);
+  assert.equal(restored.entries[0].coverVisualId, "cover");
+  assert.equal(restored.entries[0].primaryMediaId, "video");
+});

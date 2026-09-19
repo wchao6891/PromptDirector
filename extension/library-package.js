@@ -680,6 +680,18 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   next.taxonomy = taxonomyMerge.taxonomy;
   const { facetIds, nodeIds } = mergeVocabulary(next.facetCatalog, imported.facetCatalog, options);
   const usedEntryIds = new Set(next.entries.map((entry) => entry.id));
+  const entriesById = new Map(next.entries.map((entry) => [entry.id, entry]));
+  const entriesByFingerprint = new Map();
+  const fingerprintById = new Map();
+  function indexEntry(entry) {
+    const fingerprint = caseSemanticFingerprint(normalizeEntryMedia(entry));
+    if (!fingerprint) return;
+    const matches = entriesByFingerprint.get(fingerprint) ?? new Set();
+    matches.add(entry);
+    entriesByFingerprint.set(fingerprint, matches);
+    fingerprintById.set(entry.id, fingerprint);
+  }
+  for (const entry of next.entries) indexEntry(entry);
   const usedVisualIds = new Set([
     ...next.entries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets.map((visual) => visual.id)),
     ...normalizeCreativeRuns(next.creativeRuns).flatMap((run) => run.outputs.map((output) => output.visual.id)),
@@ -697,9 +709,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   for (const source of imported.entries) {
     let idCollision = usedEntryIds.has(source.id);
     const sourceFingerprint = caseSemanticFingerprint(normalizeEntryMedia(source));
-    const identical = sourceFingerprint && next.entries.find((entry) =>
-      caseSemanticFingerprint(normalizeEntryMedia(entry)) === sourceFingerprint
-    );
+    const identical = sourceFingerprint && entriesByFingerprint.get(sourceFingerprint)?.values().next().value;
     if (identical) {
       skippedCount += 1;
       entryIdMap[source.id] = identical.id;
@@ -713,6 +723,12 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     }
     const conflictResolution = clean(options.entryConflictResolutions?.[source.id]);
     if (idCollision && conflictResolution === "use-incoming") {
+      const fingerprint = fingerprintById.get(source.id);
+      const matches = entriesByFingerprint.get(fingerprint);
+      matches?.delete(entriesById.get(source.id));
+      if (matches?.size === 0) entriesByFingerprint.delete(fingerprint);
+      fingerprintById.delete(source.id);
+      entriesById.delete(source.id);
       next.entries = next.entries.filter((entry) => entry.id !== source.id);
       next.organizerState = removeEntriesFromOrganizer(next.organizerState, [source.id]);
       next.compoundCases = removeEntriesFromCompoundCases(next.compoundCases, current.entries, [source.id]);
@@ -720,7 +736,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       idCollision = false;
     }
     if (idCollision && (conflictResolution === "keep-local" || options.skipExistingEntryIds === true)) {
-      const existing = next.entries.find((entry) => entry.id === source.id);
+      const existing = entriesById.get(source.id);
       skippedCount += 1;
       entryIdMap[source.id] = source.id;
       organizerEntryIdMap[source.id] = source.id;
@@ -765,6 +781,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       return { ...visual, id: targetVisualId };
     });
     entry.primaryMediaId = visualIdMap[entry.primaryMediaId] ?? entry.primaryMediaId;
+    if (entry.coverVisualId) entry.coverVisualId = visualIdMap[entry.coverVisualId] ?? entry.coverVisualId;
     entry.articleDocument = remapArticleDocumentAssets(entry.articleDocument, visualIdMap);
     entry.mediaAssets = entry.mediaAssets.map((asset) => ({
       ...asset,
@@ -798,6 +815,8 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       };
     });
     next.entries.push(entry);
+    entriesById.set(targetId, entry);
+    indexEntry(entry);
     usedEntryIds.add(targetId);
     createdEntryIds.push(targetId);
     entryIdMap[source.id] = targetId;
@@ -805,7 +824,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     importedCount += 1;
   }
   for (const targetId of Object.values(entryIdMap)) {
-    const importedEntry = next.entries.find((item) => item.id === targetId);
+    const importedEntry = entriesById.get(targetId);
     if (!importedEntry?.creationMeta?.sourceEntryIds) continue;
     importedEntry.creationMeta.sourceEntryIds = importedEntry.creationMeta.sourceEntryIds.map((id) => organizerEntryIdMap[id] ?? id);
   }
@@ -1184,6 +1203,7 @@ function mergeImportedTrashState(currentValue, importedValue, context = {}) {
       id: remapped.visualIdMap[position.id] ?? position.id
     }));
     item.relationships.primaryMediaId = remapped.visualIdMap[item.relationships.primaryMediaId] ?? item.relationships.primaryMediaId;
+    if (item.relationships.coverVisualId) item.relationships.coverVisualId = remapped.visualIdMap[item.relationships.coverVisualId] ?? item.relationships.coverVisualId;
     return item;
   });
   return {
@@ -1210,6 +1230,7 @@ function remapTrashedEntrySnapshot(entryValue, targetEntryId, usedVisualIds, pre
   });
   entry.id = targetEntryId;
   entry.primaryMediaId = visualIdMap[entry.primaryMediaId] ?? entry.primaryMediaId;
+  if (entry.coverVisualId) entry.coverVisualId = visualIdMap[entry.coverVisualId] ?? entry.coverVisualId;
   entry.articleDocument = remapArticleDocumentAssets(entry.articleDocument, visualIdMap);
   entry.mediaAssets = entry.mediaAssets.map((asset) => ({
     ...asset,

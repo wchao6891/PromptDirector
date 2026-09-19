@@ -77,3 +77,24 @@ test("TikTok player messages require the matching frame and report real playback
   controller.destroy();
   assert.equal(removed, true);
 });
+
+test('YouTube optional API may only appear after permission is granted; request stays in the click turn', async () => {
+  let requested = false;
+  let updated = false;
+  const api = { runtime: { id: 'abcdefghijklmnopabcdefghijklmnop', getManifest: () => ({ homepage_url: 'https://github.com/example/project' }) },
+    permissions: { contains: async () => { throw new Error('must not await before request'); }, request: async () => {
+      requested = true;
+      api.declarativeNetRequest = { updateSessionRules: async () => { updated = true; } };
+      return true;
+    } }
+  };
+  const pending = ensureYouTubePlaybackPermission(api, { request: true });
+  assert.equal(requested, true);
+  assert.equal(await pending, true);
+  assert.equal(updated, true);
+});
+
+test('declining YouTube playback permission leaves optional APIs untouched', async () => {
+  const api = { permissions: { contains: async () => false, request: async () => false } };
+  assert.equal(await ensureYouTubePlaybackPermission(api, { request: true }), false);
+});

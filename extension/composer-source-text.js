@@ -1,5 +1,5 @@
 import { entryMediaAssets } from "./media.js";
-import { detailPromptSources } from "./prompt-sources.js";
+import { detailPromptSources, originalMediaPrompts } from "./prompt-sources.js";
 
 // Only reusable content belongs in a model reference; source metadata stays local.
 export function composerSourceText(entry = {}, documentTextByEntryId) {
@@ -8,7 +8,7 @@ export function composerSourceText(entry = {}, documentTextByEntryId) {
   const values = [
     entry.text,
     documentTextByEntryId?.get?.(entry.id),
-    ...(entry.mediaPrompts ?? []).filter(item => item.source !== "ai-suggestion").map(item => item.text),
+    ...originalMediaPrompts(entry).map(item => item.text),
     ...assets.map(asset => composerAssetAnalysisText(entry, asset)),
     ...(entry.timeNotes ?? []).map(note => {
       const text = String(note.text ?? "").trim();

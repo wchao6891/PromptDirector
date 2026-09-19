@@ -157,7 +157,7 @@ test("composer reference selection is visual while Skill management stays on its
   assert.doesNotMatch(i18nJs, /querySelectorAll\("\[data-i18n-title\]"\).*\.title\s*=/);
 });
 
-test("composer temporary references share one attachment entry and block text-only sends before the draft is consumed", async () => {
+test("composer attachments expose independent original-media choices without a capability veto", async () => {
   const [composerHtml, composerJs] = await Promise.all([
     readFile(new URL("../extension/composer.html", import.meta.url), "utf8"),
     readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8")
@@ -168,19 +168,19 @@ test("composer temporary references share one attachment entry and block text-on
   assert.doesNotMatch(composerHtml, /id="composer-attachment-menu"|id="composer-attachment-library"/);
   assert.match(composerHtml, /id="composer-temp-references"/);
   assert.match(composerHtml, /id="composer-temp-reference-save-all"/);
-  assert.match(composerHtml, /id="composer-image-input-status"/);
-  assert.match(composerHtml, /id="composer-image-input-model"/);
+  assert.doesNotMatch(composerHtml, /id="composer-image-input-status"/);
+  assert.doesNotMatch(composerHtml, /id="composer-image-input-model"/);
   assert.doesNotMatch(composerHtml, /composer-image-blocker/);
   assert.match(composerJs, /type:\s*"ADD_TEMP_REFERENCES"/);
   assert.match(composerJs, /type:\s*"REMOVE_TEMP_REFERENCE"/);
   assert.match(composerJs, /type:\s*"SAVE_TEMP_REFERENCE_AS_CASE"/);
   assert.doesNotMatch(composerJs, /createComposerAnalysisTaskBridge|START_OR_JOIN_ANALYSIS_TASK/);
-  assert.match(composerJs, /composerImageInputModel\.addEventListener\("click", \(event\) => \{\s*event\.stopPropagation\(\);\s*openComposerModelMenu\(\);/);
   assert.match(composerJs, /composerPasteFiles\(event\.clipboardData\)/);
   assert.match(composerJs, /if \(!files\.length\) return;\s*event\.preventDefault\(\)/s);
   const sendTurn = composerJs.slice(composerJs.indexOf("async function sendComposerTurn"), composerJs.indexOf("async function retryComposerTurn"));
-  assert.ok(sendTurn.indexOf("renderImageInputStatus") < sendTurn.indexOf("appendComposerMessage"));
-  assert.ok(sendTurn.indexOf("renderImageInputStatus") < sendTurn.indexOf("composerInstruction.value = \"\""));
+  assert.doesNotMatch(sendTurn, /if \(!service.videoInput\)|if \(!renderImageInputStatus/);
+  assert.match(composerHtml, /id="composer-send-images"/);
+  assert.match(composerHtml, /id="composer-send-videos"/);
   assert.doesNotMatch(composerJs, /removeAllImageTempReferences/);
 });
 
@@ -251,8 +251,8 @@ test("composer keeps one stable creation toolbar and separates result action lev
   assert.ok(footer.indexOf("composer-library-search") < footer.indexOf("composer-type-switch"));
   assert.match(footer, /id="composer-library-search"[^>]+aria-pressed="true"/);
   assert.ok(footer.indexOf("composer-type-switch") < footer.indexOf("composer-reference-open"));
-  assert.ok(footer.indexOf("composer-reference-open") < footer.indexOf("composer-options"));
-  assert.ok(footer.indexOf("composer-options") < footer.indexOf("composer-model-trigger"));
+  assert.ok(footer.indexOf("composer-reference-open") < footer.indexOf('id="composer-options"'));
+  assert.ok(footer.indexOf('id="composer-options"') < footer.indexOf("composer-model-trigger"));
   assert.ok(footer.indexOf("composer-model-trigger") < footer.indexOf("composer-action"));
   assert.match(composerJs, /composer-result-primary-actions/);
   assert.match(composerJs, /composer-result-secondary-actions/);

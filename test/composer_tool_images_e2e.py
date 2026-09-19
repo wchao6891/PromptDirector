@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from playwright.sync_api import expect
+from composer_e2e_support import set_composer_reference_media
 from e2e_support import ai_configuration_fixture, base_entry, extension_session, wait_for_async_condition
 
 PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
@@ -61,6 +62,8 @@ def main():
 
         ordinary = send('写一句产品文案', 1)
         assert 'image_url' not in json.dumps(ordinary)
+        expect(page.locator('#composer-send-images')).not_to_be_checked()
+        set_composer_reference_media(page, images=True)
         mode = 'image'
         sent = send('用A画面的图片做构图参考', 3)
         assert 'image_url' not in json.dumps(sent[:2])

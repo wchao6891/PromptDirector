@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   addEntryMedia,
+  caseCoverAsset,
+  setCaseCover,
   addTimeNote,
   currentVideoReconstruction,
   editCurrentVideoReconstruction,
@@ -459,4 +461,21 @@ test("an explicitly cleared image prompt does not revive a legacy description on
   assert.deepEqual(mediaDescriptions(entry), []);
   assert.equal(primaryVisionDescription(entry), "");
   assert.equal(entry.mediaAssets[0].visionAnalysis.description, "旧分析文本");
+});
+
+
+test("case covers use available images and preserve the video primary and article reading order", () => {
+  const entry = normalizeEntryMedia({ id: "cover-case", primaryMediaId: "video", text: "Original text",
+    mediaAssets: [{ id: "video", kind: "video", posterAssetId: "poster" }, { id: "poster", kind: "image", usage: "poster", derivedFromAssetId: "video" }, { id: "image", kind: "image" }],
+    articleDocument: { version: 1, blocks: [{ id: "p", kind: "paragraph", text: "Original text" }, { id: "img", kind: "image", assetId: "image" }] } });
+  assert.equal(caseCoverAsset(entry).id, "poster");
+  const chosen = setCaseCover(entry, "image");
+  assert.equal(caseCoverAsset(chosen).id, "image");
+  assert.equal(chosen.primaryMediaId, "video");
+  assert.deepEqual(chosen.articleDocument, entry.articleDocument);
+  assert.equal(caseCoverAsset(removeEntryMedia(chosen, "image")).id, "poster");
+  assert.equal(removeEntryMedia(chosen, "image").coverVisualId, undefined);
+  assert.equal(caseCoverAsset({ mediaAssets: [{ id: "pdf", kind: "document" }, { id: "i", kind: "image" }], primaryMediaId: "pdf" }).id, "i");
+  assert.equal(caseCoverAsset({ text: "text only" }), null);
+  assert.throws(() => setCaseCover(entry, "video"), /没有找到这张图片/);
 });

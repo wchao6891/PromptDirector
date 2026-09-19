@@ -39,8 +39,7 @@ def main():
         expect(panel.locator('.page-capture-item').first).to_be_visible(timeout=10000)
         if '--highlight' not in sys.argv:
             panel.locator('.page-capture-confirm').first.click()
-            panel.locator('.page-capture-tools > summary').click()
-            panel.locator('#page-capture-clear').click()
+            panel.locator('.page-capture-confirm').first.click()
             expect(panel.locator('#page-capture-save')).to_be_disabled()
             scans = panel.evaluate("window.captureMessages.filter(t => t === 'START_PAGE_CAPTURE').length")
             panel.locator('#page-capture-scan').click()
@@ -86,11 +85,11 @@ def main():
         first_media.get_by_role('button', name='恢复', exact=True).click()
         expect(first_media).to_have_class('page-capture-media-review-item media-proposed media-pending')
         panel.locator('#page-capture-media-review > summary').click()
-        panel.locator('.page-capture-tools > summary').click()
-        panel.locator('#page-capture-add-region').click()
-        expect(page.locator('#promptdirector-page-capture-region-editor')).to_be_visible()
-        panel.locator('#page-capture-edit-cancel').click()
-        expect(page.locator('#promptdirector-page-capture-region-editor')).to_have_count(0)
+        page.bring_to_front()
+        panel.locator('#add-selection').evaluate('e=>e.click()')
+        expect(page.locator('#promptdirector-content-picker')).to_be_attached()
+        page.keyboard.press('Escape')
+        expect(page.locator('#promptdirector-content-picker')).to_have_count(0)
         expect(panel.locator('#page-capture-save')).to_be_enabled()
         expect(target).to_have_attribute('data-promptdirector-capture-highlight', 'true')
 
@@ -115,12 +114,11 @@ def main():
             assert panel.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert panel.locator('.page-capture-confirm').first.evaluate('e => getComputedStyle(e).backgroundColor') != panel.locator('#page-capture-save').evaluate('e => getComputedStyle(e).backgroundColor')
         panel.screenshot(path=str(Path(tempfile.gettempdir()) / 'promptdirector-capture-sidebar-implemented.png'))
-        panel.locator('.page-capture-tools > summary').click()
-        panel.locator('#page-capture-clear').click()
+        panel.locator('.page-capture-confirm').first.click()
         expect(page.locator('[data-promptdirector-capture-highlight]')).to_have_count(0)
         assert panel.evaluate("() => chrome.storage.local.get('entries').then(s => s.entries.length)") == 0
         print({'rescan': '--highlight' not in sys.argv, 'selectPreservesScroll': True, 'contentAttachedOutline': True,
-               'innerScrollAndResize': True, 'cancelRegionEdit': True, 'lateResponseIgnored': True,
+               'innerScrollAndResize': True, 'cancelDirectSelection': True, 'lateResponseIgnored': True,
                'saveVisibleAt320And390': True, 'clearRemovesHighlight': True})
 
 

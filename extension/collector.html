@@ -30,7 +30,7 @@
           <header>
             <div>
               <h2 id="capture-permission-title" data-i18n="一次授权，之后直接采集">一次授权，之后直接采集</h2>
-              <p data-i18n="本次统一开启网页读取与截图能力，只在你主动采集时使用；不会自动保存案例。">本次统一开启网页读取与截图能力，只在你主动采集时使用；不会自动保存案例。</p>
+              <p data-i18n="开启网页读取、截图与媒体识别；不会自动保存案例。">开启网页读取、截图与媒体识别；不会自动保存案例。</p>
             </div>
           </header>
           <div class="app-dialog-body">
@@ -82,7 +82,7 @@
           <div class="capture-actions" aria-label="从当前网页采集" data-i18n-aria-label="从当前网页采集">
             <button id="start-page-capture" class="primary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-library"></use></svg><strong data-i18n="网页采集">网页采集</strong></button>
             <button id="start-smart-visuals" class="smart-visuals" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-image"></use></svg><strong data-i18n="选图">选图</strong></button>
-            <button id="start-selection" class="direct-selection" type="button" title="提取选中文字" aria-label="提取选中文字" data-i18n-title="提取选中文字" data-i18n-aria-label="提取选中文字"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-file-text"></use></svg><strong data-i18n="选区">选区</strong></button>
+            <button id="start-selection" class="direct-selection" type="button" title="选取内容" aria-label="选取内容" data-i18n-title="选取内容" data-i18n-aria-label="选取内容"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-file-text"></use></svg><strong data-i18n="选取内容">选取内容</strong></button>
 
             <button id="start-clipboard" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-copy"></use></svg><strong data-i18n="剪贴板">剪贴板</strong></button>
             <div id="other-capture-methods" class="other-capture-methods">
@@ -110,17 +110,6 @@
           <label id="page-capture-combined-title-row" hidden><span data-i18n="合并案例标题">合并案例标题</span><input id="page-capture-combined-title" autocomplete="off" placeholder="默认使用列表页标题" data-i18n-placeholder="默认使用列表页标题" /></label>
         </section>
         <div id="page-capture-list" class="page-capture-list"></div>
-        <details id="page-capture-tools" class="page-capture-tools" hidden>
-          <summary data-i18n="调整内容">调整内容</summary>
-          <div class="page-capture-bulk-actions">
-            <button id="page-capture-add-region" class="button-secondary compact" type="button" data-i18n="补选">补选</button>
-            <button id="page-capture-exclude-region" class="button-secondary compact" type="button" data-i18n="排除">排除</button>
-
-            <button id="page-capture-reset-region" class="button-secondary compact" type="button" data-i18n="恢复识别">恢复识别</button>
-            <button id="page-capture-clear" class="button-secondary compact" type="button" data-i18n="换一项">换一项</button>
-          </div>
-        </details>
-        <div id="page-capture-edit-status" class="page-capture-edit-status" hidden><p id="page-capture-edit-help"></p><button id="page-capture-edit-cancel" class="button-secondary" type="button" data-i18n="取消调整">取消调整</button></div>
         <details id="page-capture-media-review" class="page-capture-media-review" hidden>
           <summary><strong data-i18n="检查媒体">检查媒体</strong><small id="page-capture-media-review-status"></small></summary>
           <div id="page-capture-media-review-list" class="page-capture-media-review-list"></div>
@@ -189,7 +178,7 @@
         </section>
         <div id="capture-add-more-actions" class="add-more-actions">
           <button id="add-smart-visuals" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-image"></use></svg><span data-i18n="选图">选图</span></button>
-          <button id="add-selection" class="button-secondary" type="button" title="提取选中文字" aria-label="提取选中文字" data-i18n-title="提取选中文字" data-i18n-aria-label="提取选中文字"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-file-text"></use></svg><span data-i18n="选区">选区</span></button>
+          <button id="add-selection" class="button-secondary" type="button" title="选取内容" aria-label="选取内容" data-i18n-title="选取内容" data-i18n-aria-label="选取内容"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-file-text"></use></svg><span data-i18n="选取内容">选取内容</span></button>
           <button id="add-clipboard" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-clipboard"></use></svg><span data-i18n="剪贴板">剪贴板</span></button>
           <button id="add-screenshot" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-maximize-2"></use></svg><span data-i18n="截图">截图</span></button>
           <button id="add-page-capture" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-library"></use></svg><span data-i18n="网页">网页</span></button>

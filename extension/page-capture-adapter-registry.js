@@ -25,7 +25,7 @@ export const PAGE_CAPTURE_ADAPTERS = Object.freeze([
   adapter("krea", "Krea", ["krea.ai"], "verified-declarative", ["a[href^='/feed/']", "[data-testid*=generation]", "[class*=gallery] > *"], {}, ["krea.ai"]),
   adapter("tapnow", "TapNow", ["tapnow.ai"], "generic", ["[data-testid*=work]", "[class*=gallery] > *"]),
   adapter("lovart", "Lovart", ["lovart.ai"], "generic", GENERIC_CARD_SELECTORS),
-  adapter("midjourney", "Midjourney", ["midjourney.com"], "generic", GENERIC_CARD_SELECTORS),
+  adapter("midjourney", "Midjourney", ["midjourney.com"], "verified-declarative", ['a[href^="/jobs/"]'], {}, ["cdn.midjourney.com"]),
   adapter("civitai", "Civitai", ["civitai.com"], "generic", GENERIC_CARD_SELECTORS),
   adapter("runway", "Runway", ["runwayml.com"], "generic", GENERIC_CARD_SELECTORS),
   adapter("kling", "可灵", ["klingai.com", "klingai.kuaishou.com"], "generic", GENERIC_CARD_SELECTORS),

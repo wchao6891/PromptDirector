@@ -10,8 +10,7 @@ import {
 import {
   ComposerServiceError,
   executeComposerTurnWithService,
-  selectedComposerService,
-  composerLibraryToolService
+  selectedComposerService
 } from "./composer-service.js";
 import { applyComposerServiceResult } from "./composer-turn-core.js";
 import { normalizeAiSettings } from "./deepseek.js";
@@ -42,7 +41,6 @@ export async function runCreativeJob(job, context = {}) {
   const videoDialogue = sessionHasVideoReferences(session) && !["create_image", "create_video"].includes(session.outputMode);
   if (videoDialogue) {
     const service = selectedComposerService(session.aiProfile, settings.ai, settings.vision);
-    if (!service.videoInput) throw new ComposerServiceError(`${service.label} 的所选模型未声明视频输入能力，请切换视频模型`, 422, { retryable: false });
     session = createComposerSession({ ...session, activeTurn: createComposerActiveTurn({
       turnId: job.id,
       userMessageId: job.userMessageId,
@@ -78,7 +76,7 @@ export async function runCreativeJob(job, context = {}) {
     const executionSession = createComposerSession(session);
     recordStage("preparing_media");
     await context.progress({ phase: "generation", session, actualStages: [...actualStages] });
-    const preparedImages = session.imageReferenceMode === "text_only" ? [] : await prepareReferenceImages(executionSession, settings);
+    const preparedImages = session.imageReferenceMode === "text_only" ? [] : await prepareReferenceImages(executionSession);
     const preparedVideos = await prepareComposerVideos(executionSession, { signal });
     const imageEdit = await prepareImageEdit(job.request.imageEdit);
     recordStage("media_prepared");
@@ -110,7 +108,7 @@ export async function runCreativeJob(job, context = {}) {
       }
     };
     const toolRuntime = createLocalComposerLibraryTools({
-      session, vision: composerLibraryToolService(session, settings.ai, settings.vision).vision,
+      session, vision: session.imageReferenceMode !== "text_only",
       onEvent: async event => {
         signal?.throwIfAborted();
         if (event.status === "completed" && event.imageIds) pendingImageIds.push(...event.imageIds);
@@ -311,12 +309,7 @@ function readGeneratedVideoMedia(blob, _mimeType, videoAssetId) {
   });
 }
 
-async function prepareReferenceImages(session, settings) {
-  const profile = ["create_image", "create_video"].includes(session.outputMode)
-    ? session.generationAiProfile
-    : session.aiProfile;
-  const service = selectedComposerService(profile, settings.ai, settings.vision);
-  if (!service.vision) return [];
+async function prepareReferenceImages(session) {
   const refs = [...new Map(session.referenceSnapshots
     .flatMap((reference) => reference.imageRefs)
     .map((item) => [item.visualId, item])).values()];

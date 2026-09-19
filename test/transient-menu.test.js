@@ -15,7 +15,7 @@ test("transient menus share outside-click, action, peer-open, and Escape dismiss
   assert.match(source, /!action\.closest\("\.package-preferences"\)/);
   assert.match(library, /bindTransientMenus\(document, "\.package-menu, \.project-menu, \.detail-project-menu, \.selection-menu"\)/);
   assert.doesNotMatch(html, /class="detail-analysis-menu"/);
-  assert.match(composer, /bindTransientMenus\(document, "\.composer-options, \.composer-session-menu"\)/);
+  assert.match(composer, /bindTransientMenus\(document, "\.composer-options, \.composer-session-menu, \.composer-toolbar-menu"\)/);
   assert.doesNotMatch(composer, /\.composer-result-more/);
 });
 

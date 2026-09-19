@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   CLASSIFIER_VERSION,
   classifyContent,
+  classifyCapturedContent,
   classifyImportedMedia,
   classifyImageCase,
   confirmClassification
@@ -258,4 +259,49 @@ test("automatic classification targets a user category by stable creative role",
   });
   const result = classifyContent({ text: "Midjourney prompt: editorial product image --ar 4:5" }, [], taxonomy);
   assert.deepEqual(result.pathIds, ["content:campaign-prompts"]);
+});
+
+
+test("capture defaults use selected media, with video taking priority over prose and images", () => {
+  const image = { id: "image", kind: "image" };
+  const video = { id: "video", kind: "video" };
+  const entry = { text: "图片构图参考：海面，薄雾，孤舟。", mediaAssets: [image, video] };
+  assert.deepEqual(classifyCapturedContent(entry).pathIds, [CONTENT_IDS.promptVideo]);
+  assert.deepEqual(classifyCapturedContent({ ...entry, mediaAssets: [image] }).pathIds, [CONTENT_IDS.promptImage]);
+  assert.deepEqual(classifyCapturedContent({ ...entry, text: "" }).pathIds, [CONTENT_IDS.videoCase]);
+  assert.deepEqual(classifyCapturedContent({ ...entry, text: "", mediaAssets: [image] }).pathIds, [CONTENT_IDS.imageCase]);
+});
+
+test("document capture stays reference even with tutorial text and video illustrations", () => {
+  const entry = { text: "教程：第一步明确主体，第二步检查构图，最后说明为什么这个方法适用于不同场景。",
+    sourceFacts: { pageType: "article", extractionMethod: "dom" }, mediaAssets: [{ id: "v", kind: "video" }] };
+  assert.deepEqual(classifyCapturedContent(entry).pathIds, [CONTENT_IDS.reference]);
+  assert.deepEqual(classifyCapturedContent(confirmClassification(entry, [CONTENT_IDS.promptImage])).pathIds, [CONTENT_IDS.promptImage]);
+});
+
+test("capture respects missing prompt evidence, but per-media original prompts remain usable", () => {
+  const entry = { text: "作品宣传介绍", sourceFacts: { pageType: "artwork", originalPromptAvailable: false },
+    mediaAssets: [{ id: "v", kind: "video" }, { id: "cover", kind: "image", usage: "poster" }] };
+  assert.deepEqual(classifyCapturedContent(entry).pathIds, [CONTENT_IDS.videoCase]);
+  assert.deepEqual(classifyCapturedContent({ ...entry, mediaPrompts: [{ assetId: "v", source: "webpage", text: "镜头跟随人物。" }] }).pathIds, [CONTENT_IDS.promptVideo]);
+  assert.deepEqual(classifyCapturedContent({ ...entry, mediaAssets: [entry.mediaAssets[1]], text: "" }).pathIds, []);
+});
+
+
+test("platform defaults agree across capture and later reclassification, regardless of introductory prose", () => {
+  for (const classify of [classifyContent, classifyCapturedContent]) {
+    for (const host of ["www.youtube.com", "youtu.be", "www.bilibili.com", "www.douyin.com", "www.tiktok.com"]) {
+      assert.deepEqual(classify({ url: `https://${host}/video/123`, text: "Prompt: create a cinematic video. 教程简介" }).pathIds, [CONTENT_IDS.videoCase], host);
+    }
+    for (const host of ["www.pinterest.com", "www.artstation.com", "www.behance.net"]) {
+      assert.deepEqual(classify({ url: `https://${host}/work/123`, text: "Prompt: portrait --ar 4:5" }).pathIds, [CONTENT_IDS.imageCase], host);
+    }
+    assert.deepEqual(classify({ url: "https://higgsfield.ai/asset/123", mediaAssets: [{ id: "v", kind: "video" }], sourceFacts: { originalPromptAvailable: false } }).pathIds, [CONTENT_IDS.promptVideo]);
+    assert.deepEqual(classify({ url: "https://www.midjourney.com/jobs/123" }).pathIds, [CONTENT_IDS.promptImage]);
+    assert.deepEqual(classify({ url: "https://pinterest.com/pin/123", mediaAssets: [{ id: "v", kind: "video" }] }).pathIds, [CONTENT_IDS.videoCase]);
+    assert.deepEqual(classify({ url: "https://youtube.com.evil.example/watch" }).pathIds, []);
+    const entry = { url: "https://www.bilibili.com/video/123" };
+    assert.deepEqual(classify(confirmClassification(entry, [CONTENT_IDS.promptImage])).pathIds, [CONTENT_IDS.promptImage]);
+    assert.deepEqual(classify(entry, [{ hostname: "www.bilibili.com", pathIds: [CONTENT_IDS.reference] }]).pathIds, [CONTENT_IDS.reference]);
+  }
 });

@@ -55,14 +55,49 @@ test('adding a webpage preserves headings and quotes without repeating original 
 });
 
 
-test("saved capture outcomes consume partial and duplicate cases but preserve unsaved candidates", async () => {
+test("partial saves keep incomplete candidates available while completed and duplicate cases close", async () => {
   const { savedPageCaptureCandidateIds } = await import("../extension/capture-additions.js");
   const candidates = ["saved", "partial", "duplicate", "failed"].map(id => ({ id }));
   const results = candidates.map(({ id }) => ({ candidateId: id, status: id, ...(id !== "failed" ? { entryId: `entry:${id}` } : {}) }));
-  assert.deepEqual([...savedPageCaptureCandidateIds({}, candidates, results)], ["saved", "partial", "duplicate"]);
+  assert.deepEqual([...savedPageCaptureCandidateIds({}, candidates, results)], ["saved", "duplicate"]);
   assert.deepEqual([...savedPageCaptureCandidateIds({}, candidates, [])], []);
   assert.deepEqual([...savedPageCaptureCandidateIds({captureMode:"list",saveMode:"combined"}, candidates,
-    [{candidateId:"combined-id",entryId:"saved-entry",status:"partial"}])], candidates.map(item => item.id));
+    [{candidateId:"combined-id",entryId:"saved-entry",status:"partial",pendingMediaIds:["missing"]}])], []);
   assert.deepEqual([...savedPageCaptureCandidateIds({captureMode:"list",saveMode:"combined"}, candidates,
     [{candidateId:"combined-id",status:"failed"}])], []);
+});
+
+test('save payload excludes unselected supplemental blocks so they cannot be appended or consumed', () => {
+  const draft = { id: 'draft', fragments: [{id:'keep',text:'save this'}, {id:'later',text:'keep pending'}], visuals: [] };
+  const addition = draftCaptureAddition(draft);
+  const merged = appendCaptureCandidate(candidate(), addition, selection);
+  const batch = normalizePageCaptureBatch({ candidates: [merged.candidate], selections: [{
+    ...merged.selection, selectedTextBlockIds: ['added:draft:keep']
+  }] });
+  const selected = applyPageCaptureSelections(batch);
+  assert.deepEqual(selected[0].textBlocks.map(block => block.text), ['save this']);
+  assert.deepEqual(savedDraftCaptureItems(draft, selected, new Set(addition.consumed)), [{kind:'text',id:'keep'}]);
+});
+
+test('partial receipt consumes only saved draft images and keeps failed bytes pending', async () => {
+  const { persistedPageCaptureCandidates, savedPageCaptureCandidateIds } = await import('../extension/capture-additions.js');
+  const draft = {id:'draft',fragments:[{id:'text',text:'saved words'}],visuals:[{id:'good'},{id:'failed'}]};
+  const candidates = [{id:'case',textBlocks:[{id:'added:draft:text',text:'saved words'}],media:[
+    {id:'one',localAssetId:'good'},{id:'two',localAssetId:'failed'}]}];
+  const results = [{candidateId:'case',entryId:'entry',status:'partial',savedMediaIds:['one'],pendingMediaIds:['two']}];
+  for (const batch of [{},{captureMode:'list',saveMode:'combined'}]) {
+    assert.deepEqual(savedDraftCaptureItems(draft,persistedPageCaptureCandidates(batch,candidates,results),
+      new Set(['text:text','image:good','image:failed'])),[{kind:'text',id:'text'},{kind:'image',id:'good'}]);
+    assert.deepEqual([...savedPageCaptureCandidateIds(batch,candidates,results)],[]);
+    assert.deepEqual([...savedPageCaptureCandidateIds(batch,candidates,[{...results[0],pendingMediaIds:[]}])],['case']);
+  }
+});
+
+test('directly selected resource links survive appending without becoming duplicate attachments', () => {
+  const addition = { id: 'picked', textBlocks: [], media: [], articleDocument: { blocks: [
+    { id: 'resource', kind: 'link', label: 'Selected archive', sourceUrl: 'https://example.com/resource.zip' }
+  ] } };
+  const first = appendCaptureCandidate(candidate(), addition, selection);
+  const second = appendCaptureCandidate(first.candidate, addition, first.selection);
+  assert.equal(second.candidate.articleDocument.blocks.filter(block => block.kind === 'link' && block.sourceUrl === 'https://example.com/resource.zip').length, 1);
 });

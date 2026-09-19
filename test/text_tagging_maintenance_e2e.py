@@ -100,6 +100,8 @@ def main():
         assert not next(e for e in result['entries'] if e['id']=='tag-outside').get('analysisMeta')
         assert worker.evaluate('testTextCalls')==1
         expect(page.locator('#text-batch-dialog')).not_to_be_visible(timeout=10000)
+        expect(page.locator('.case-card.selected-for-share')).to_have_count(0)
+        expect(page.locator('#share-bar')).to_be_hidden()
         # A mixed-result task retains successes; retry sends only its failed item.
         stale=page.evaluate("async()=>chrome.runtime.sendMessage({type:'CREATE_ANALYSIS_BATCH',mode:'incremental',expectedEntryIds:[]})")
         assert not stale['ok'] and '已变化' in stale['message']

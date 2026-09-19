@@ -148,10 +148,7 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
 .page-capture h2 { margin: 2px 0 0; font-size: 16px; }
 .page-capture small, .page-capture > p { color: var(--muted); font-size: 11px; }
 .page-capture > p { margin: 0; line-height: 1.5; }
-.page-capture-tools { background: var(--paper); }
-.page-capture-tools > summary { padding: 7px 0; color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 800; }
 .page-capture-bulk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.page-capture-tools .page-capture-bulk-actions { padding: 0 0 9px; }
 .page-capture-bulk-actions button { width: auto; }
 .page-capture-list-setup, .page-capture-list-result { border: 1px solid var(--line); border-radius: 6px; padding: 9px; background: var(--paper); }
 .page-capture-list-setup summary { cursor: pointer; font-size: 12px; font-weight: 800; }
@@ -195,7 +192,7 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
 .confirmed .page-capture-selection { border: 5px solid var(--selection-indicator); }
 .page-capture-excerpt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 0 0 0 26px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .page-capture-thumbnails { display: flex; gap: 6px; overflow-x: auto; margin-left: 26px; padding: 2px 0; }
-.page-capture-thumbnails button { flex: 0 0 78px; width: 78px; height: 58px; padding: 0; overflow: hidden; background: var(--raised); }
+.page-capture-thumbnails button { color: inherit; flex: 0 0 78px; width: 78px; height: 58px; padding: 0; overflow: hidden; background: var(--raised); }
 .page-capture-thumbnails img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .page-capture-card-actions { display: flex; align-items: start; flex-wrap: wrap; gap: 6px; margin-left: 26px; }
 .page-capture-card-actions > details { flex: 1; min-width: 0; }
@@ -624,3 +621,7 @@ main { gap: 12px; padding: 12px 12px 82px; }
 
 .add-more-actions > button { display: grid; justify-items: center; align-content: center; gap: 3px; min-height: 48px; }
 .add-more-actions > button .ui-icon { width: 16px; height: 16px; }
+
+.page-capture-text-row { position: relative; padding-right: 26px; }
+.page-capture-text-remove { position: absolute; right: 0; top: 0; border: 0; background: transparent; color: inherit; cursor: pointer; opacity: .55; font-size: 20px; }
+.page-capture-text-remove:hover, .page-capture-text-remove:focus-visible { opacity: 1; }

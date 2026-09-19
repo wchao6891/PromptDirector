@@ -21,6 +21,10 @@ def main():
                          "mimeType": "image/png" if kind == "image" else "video/mp4", "contentHash": "a" * 64}
                 if ai and kind == "image":
                     asset["visionAnalysis"] = {"version": 2, "imageFingerprint": "a" * 64, "reconstructionPrompt": "AI 图片提示词内容"}
+                # Original-source evidence must remain visible even in a plain media category.
+                if original:
+                    entry["classification"]["pathIds"] = [f"content:{kind}-case"]
+                    entry["sourceFacts"] = {"originalPromptAvailable": True}
                 entry["mediaAssets"] = [asset]
                 entry["primaryMediaId"] = asset["id"]
                 if ai and kind == "video":
@@ -46,6 +50,18 @@ def main():
             await saveMediaBlob(asset.id, new Blob([Uint8Array.from(atob(png), x => x.charCodeAt(0))], {type:'image/png'}), {checkCapacity:false});
           }
         }""", {"entries": entries + [multi], "png": PNG})
+        setup.evaluate("""async () => {
+          const {createAgentLibrary}=await import('./agent-library.js');
+          const {caseTextPart}=await import('./composer-library-tools.js');
+          const {canonicalTextAnalysisInput}=await import('./analysis-input.js');
+          const state=await chrome.runtime.sendMessage({type:'GET_STATE'});
+          const library=createAgentLibrary({loadState:async()=>state,libraryUrl:chrome.runtime.getURL('library.html')});
+          for (const entry of state.entries.filter(e=>e.sourceFacts?.originalPromptAvailable)) {
+            const agent=await library.read({caseId:entry.id,part:'original_prompt'});
+            if (agent.content!==entry.text || caseTextPart(entry,'original_prompt')!==entry.text ||
+                canonicalTextAnalysisInput(entry).text!==entry.text) throw new Error('跨入口原始词不一致');
+          }
+        }""")
         page = session.open_page("library.html", wait_until="networkidle")
         for entry in entries:
             kind, original, ai = entry["id"].split("-")

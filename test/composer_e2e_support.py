@@ -19,3 +19,33 @@ def composer_request_payload(body):
             payload['messages'].append({'role':'user','content':content[-1]['text']})
         return payload
     raise AssertionError('Composer execution context not found in native messages')
+
+
+def set_composer_reference_media(page, *, images=None, videos=None):
+    """Choose originals through the visible toolbar menu and wait for the saved state."""
+    from playwright.sync_api import expect
+    menu = page.locator('#composer-reference-inputs')
+    trigger = page.locator('#composer-reference-inputs-trigger')
+    if not menu.evaluate('node => node.open'):
+        trigger.click()
+    for selector, value in [('#composer-send-images', images), ('#composer-send-videos', videos)]:
+        if value is None:
+            continue
+        page.locator(selector).set_checked(value)
+        image = page.locator('#composer-send-images').is_visible() and page.locator('#composer-send-images').is_checked()
+        video = page.locator('#composer-send-videos').is_visible() and page.locator('#composer-send-videos').is_checked()
+        title = '参考输入：' + ('文字' + ('＋原图' if image else '') + ('＋原视频' if video else '') if image or video else '仅文字')
+        expect(trigger).to_have_attribute('title', title)
+    trigger.click()
+
+
+def set_composer_direction(page, direction):
+    from playwright.sync_api import expect
+    menu = page.locator('#composer-direction')
+    trigger = page.locator('#composer-direction-trigger')
+    if not menu.evaluate('node => node.open'):
+        trigger.click()
+    page.locator(f'input[name="composer-type"][value="{direction}"]').check()
+    expect(page.locator('#composer-direction-icon')).to_have_attribute('href', f'assets/ui-icons.svg#icon-{direction}')
+    if menu.evaluate('node => node.open'):
+        trigger.click()

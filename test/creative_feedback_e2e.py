@@ -73,7 +73,7 @@ def main() -> None:
                 expect(collector.locator("#normal-start")).to_be_visible()
                 expect(collector.locator("#normal-start .start-copy")).to_have_count(0)
                 expect(collector.locator("#start-smart-visuals")).to_have_text("选图")
-                expect(collector.locator("#start-selection")).to_have_text("选区")
+                expect(collector.locator("#start-selection")).to_have_text("选取内容")
                 expect(collector.locator("#start-screenshot")).to_have_text("截图")
                 expect(collector.locator("#start-clipboard")).to_have_text("剪贴板")
                 normal_geometry = collector.evaluate(

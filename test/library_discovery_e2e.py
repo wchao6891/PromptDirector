@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import expect
@@ -153,12 +154,14 @@ def main() -> None:
 
         while similar.count() < 60:
             previous_count = similar.count()
-            library.locator("#detail-content").hover(position={"x": 40, "y": 200})
-            library.mouse.wheel(0, library.locator("#detail-content").evaluate("element => element.scrollHeight"))
-            library.wait_for_function(
-                """previous => document.querySelectorAll('.detail-discovery-grid .local-discovery-item').length > previous""",
-                arg=previous_count,
-            )
+            deadline = time.monotonic() + 10
+            # Wheel dispatch does not wait for scrolling or thumbnail reflow.
+            # Keep scrolling like a reader until the next batch is visible.
+            while similar.count() == previous_count and time.monotonic() < deadline:
+                library.locator("#detail-content").hover(position={"x": 40, "y": 200})
+                library.mouse.wheel(0, library.locator("#detail-content").evaluate("element => element.scrollHeight"))
+                library.wait_for_timeout(150)
+            assert similar.count() > previous_count, "Scrolling must reveal the next similar-case batch"
         expect(similar).to_have_count(60)
 
         target = similar.nth(30)

@@ -82,8 +82,15 @@ def main():
         assert len(requests)==2, 'Saving must not call a model'
         skill=page.evaluate("async()=> (await chrome.storage.local.get('creativeSkills')).creativeSkills.items[0]")
         assert skill['callName']=='用户改名的布光'
-        skills=run.open_page(f"skills.html?view=detail&skill={skill['id']}")
-        expect(skills.locator('#skill-detail-title')).to_contain_text('用户改名的布光')
+        session_id=page.evaluate("new URL(location.href).searchParams.get('session')")
+        card.get_by_role('link',name='在 Skill 中心查看').click()
+        expect(page.locator('#skill-detail-title')).to_contain_text('用户改名的布光')
+        expect(page.locator('#skill-context-back')).to_have_attribute('aria-label','返回创作台')
+        page.locator('#skill-context-back').click()
+        expect(page.locator('#composer-instruction')).to_be_editable()
+        assert page.evaluate("new URL(location.href).searchParams.get('session')")==session_id
+        expect(page.get_by_role('link',name='在 Skill 中心查看')).to_be_visible()
+        assert len(requests)==2, 'Opening and returning must not send another model request'
         page.reload();expect(page.get_by_role('link',name='在 Skill 中心查看')).to_be_visible()
         mode='read';send('使用用户改名的布光 Skill 讨论下一步',3)
         read=json.loads([m for m in requests[-1]['messages'] if m['role']=='tool'][-1]['content'])

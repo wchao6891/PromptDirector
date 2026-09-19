@@ -33,9 +33,9 @@ test("privacy policy makes the two independent execution confirmations explicit"
 
 test("privacy policy discloses that composer text-only mode reads and sends zero images", async () => {
   const policy = await privacyPolicy();
-  assert.match(policy, /全程只用案例\/分析文字/);
-  assert.match(policy, /不会读取、分析或发送图片/);
-  assert.match(policy, /图片载荷为零/);
+  assert.match(policy, /新建创作会话默认只使用文字资料/);
+  assert.match(policy, /明确开启原图或视频参考/);
+  assert.match(policy, /未开启时不会因引用案例而读取、分析或发送其媒体原件/);
 });
 
 test("privacy policy accurately declares local-first handling and manifest permissions", async () => {
@@ -66,11 +66,9 @@ test("privacy policy states the Chrome Web Store Limited Use boundary", async ()
 
 test("privacy policy explains corrected article regions and safe download handling", async () => {
   const policy = await privacyPolicy();
-  assert.match(policy, /添加遗漏内容、排除错误内容、整组修正、撤销或恢复自动识别/);
-  assert.match(policy, /正文在主体确认后默认纳入/);
-  assert.match(policy, /正文内已定位媒体默认进入保存方案/);
-  assert.match(policy, /无法确认文章位置的媒体默认不选/);
-  assert.match(policy, /“保存案例”按钮是当前媒体方案的最终授权/);
+  assert.match(policy, /本地识别正文与媒体并展示预览/);
+  assert.match(policy, /直接点选内容、添加遗漏内容、排除错误内容或撤销调整/);
+  assert.match(policy, /“保存案例”按钮是当前内容方案的最终授权/);
   assert.match(policy, /“只保存正文”/);
   assert.match(policy, /PDF、Markdown、SKILL\.md、TXT、HTML 和 RTF/);
   assert.match(policy, /只有属于用户最终保存方案时/);

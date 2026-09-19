@@ -222,7 +222,7 @@ test("collector presents one compact first-use authorization and resumes only th
   ]);
   assert.match(html, /id="capture-permission-onboarding"/);
   assert.match(html, /一次授权，之后直接采集/);
-  assert.match(html, /统一开启网页读取与截图能力/);
+  assert.match(html, /开启网页读取、截图与媒体识别/);
   assert.match(html, /id="capture-permission-clipboard"[^>]*checked/);
   assert.match(html, /仅在你点击“剪贴板”时读取/);
   assert.match(html, /不会自动保存案例/);

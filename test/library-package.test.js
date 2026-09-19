@@ -53,6 +53,7 @@ function catalog() {
 test("webpage prompt provenance survives a portable package and media identity collisions", () => {
   const data = packageData([{ ...entry("remote"), hasScreenshot: false, screenshotPath: undefined,
     mediaAssets: [{ id: "shared-image", kind: "image", storageMode: "managed", sourceUrl: "https://example.com/remote.png", mimeType: "image/png", assetPath: "images/remote.png" }],
+    coverVisualId: "shared-image",
     mediaPrompts: [{ assetId: "shared-image", source: "webpage", text: "Original source prompt", textRevision: 1 }]
   }], catalog());
   const parsed = parseLibraryPackage(data, new Map([["images/remote.png", new Blob(["fixture image"], { type: "image/png" })]]));
@@ -65,6 +66,7 @@ test("webpage prompt provenance survives a portable package and media identity c
   assert.ok(restored);
   assert.notEqual(restored.mediaAssets[0].id, "shared-image");
   assert.equal(restored.mediaPrompts[0].assetId, restored.mediaAssets[0].id);
+  assert.equal(restored.coverVisualId, restored.mediaAssets[0].id);
   assert.equal(restored.mediaPrompts[0].source, "webpage");
   assert.equal(restored.mediaPrompts[0].text, "Original source prompt");
 });

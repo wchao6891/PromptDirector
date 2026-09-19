@@ -118,6 +118,7 @@ def main() -> None:
         library.locator('.case-card[data-entry-id="sidebar-video-a"]').click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-detail-mode", "sidebar")
         expect(library.locator("#detail-navigation")).to_be_visible()
+        library.get_by_role("button",name="播放视频",exact=True).click()
         library.wait_for_function("() => document.querySelector('.detail-video')?.readyState>=2")
 
         snapshots = []

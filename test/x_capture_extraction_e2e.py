@@ -36,6 +36,8 @@ def main():
           adapters: (await import(chrome.runtime.getURL('page-capture-adapter-registry.js'))).PAGE_CAPTURE_ADAPTERS
         })""")
         page=run.context.new_page();page.goto(URL)
+        # User sample: X places the primary video in a NAV carousel.
+        page.locator('article video').first.evaluate('(video)=>{const nav=document.createElement("nav");video.replaceWith(nav);nav.append(video)}')
         snapshot=page.evaluate('async options => ('+scanner['fn']+')(options)', {'adapters':scanner['adapters']})
         assert len(snapshot['candidates'])==1, snapshot
         c=snapshot['candidates'][0]
@@ -91,14 +93,14 @@ def main():
           const query=chrome.tabs.query.bind(chrome.tabs);
           chrome.tabs.query=async q=>q.active?[{id:999,url:'https://x.com/director/status/123'}]:query(q);
           const send=chrome.runtime.sendMessage.bind(chrome.runtime);
-          chrome.runtime.sendMessage=async m=>m.type==='START_PAGE_CAPTURE'?{ok:true,batch:{...window.captureSnapshot,status:'ready'}}:send(m);
+          chrome.runtime.sendMessage=async m=>m.type==='START_PAGE_CAPTURE'?{ok:true,batch:{...window.captureSnapshot,status:'ready'}}:m.type==='READ_PAGE_CAPTURE_SUPPLEMENT'?{ok:true,supplement:{...m.supplement,text:m.supplement.text+' Full author prompt tail.',partial:false}}:send(m);
         }""",snapshot)
         run.seed_storage(setup,{'entries':[],'capturePermissionOnboarding':{'version':1,'acknowledgedAt':'2026-09-07T00:00:00Z','clipboardIncluded':True}})
         setup.locator('#start-page-capture').click()
         expect(setup.locator('.page-capture-confirm')).to_be_visible()
         setup.locator('.page-capture-confirm').click()
         setup.locator('.page-capture-supplements > summary').click()
-        setup.get_by_role('button',name='补入已显示内容',exact=True).click()
+        setup.get_by_role('button',name='补入当前案例',exact=True).click()
         expect(setup.locator('.page-capture-excerpt')).to_contain_text('Author prompt:')
         expect(setup.locator('.page-capture-supplements')).to_have_count(0)
         setup.locator('#page-capture-save-text-only').click()
@@ -107,7 +109,8 @@ def main():
         assert len(entries)==1,entries
         for kept in ['Main filmmaking','Quoted filmmaking','Author prompt:']:
             assert kept in entries[0]['text'],(kept,entries[0]['text'])
-        assert entries[0]['sourceFacts']['status']=='partial',entries[0]['sourceFacts']
+        assert 'Full author prompt tail.' in entries[0]['text']
+        assert entries[0]['sourceFacts']['status']=='complete',entries[0]['sourceFacts']
         # Group additions are independently selectable and undoable in the production sidebar.
         setup.evaluate("candidate=>window.captureSnapshot={candidates:[candidate]}",grouped)
         setup.locator('#start-page-capture').click();setup.locator('.page-capture-confirm').click()

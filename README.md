@@ -19,6 +19,7 @@
 | Where inspiration lives | What you can bring with you |
 | --- | --- |
 | **Jimeng · Higgsfield · LiblibAI · Krea · LibTV** | Work images, videos and publicly available prompts or creative details. Keep the visual and its context together. |
+| **Midjourney** | Save the selected work, public prompt, parameters and video cover; capture loaded previews from Explore. |
 | **HeyBox / 小黑盒 · WeChat articles** | Save a whole article or split clearly structured multi-case posts into selectable image-and-prompt groups. Keep a single HeyBox image gallery with its prompt from the post body. |
 | **Feishu documents** | Capture document bodies, long documents and images within tables, preserving cell placement and merged cells. |
 | **X / Twitter · Xiaohongshu · Weibo · Reddit** | Collect the current post's text and accessible media, including prompts shared by the author. |

@@ -16,7 +16,7 @@ test("gallery cards keep static covers and opt into bounded local hover playback
   assert.match(card, /case-video-duration/);
   const viewer = source.slice(source.indexOf("async function createMediaViewer"), source.indexOf("function createReferencedMediaViewer"));
   assert.match(viewer, /video\.controls\s*=\s*true/);
-  assert.match(viewer, /video\.preload\s*=\s*"metadata"/);
+  assert.match(viewer, /video\.preload\s*=\s*"none"/);
   assert.match(viewer, /video\.autoplay\s*=\s*false/);
 });
 
@@ -45,18 +45,22 @@ test("social video references prefer official embeds and never download a platfo
   const viewer = source.slice(source.indexOf("function createReferencedMediaViewer"), source.indexOf("function renderTimeNotes"));
   assert.match(viewer, /unavailable-video-stage/);
   assert.match(viewer, /referenced-video-embed/);
-  assert.match(viewer, /target = "_blank"/);
+  const gallery = source.slice(source.indexOf("async function createDetailMediaGallery"), source.indexOf("async function createMediaViewer"));
+  assert.match(gallery, /source.target = "_blank"/);
+  assert.doesNotMatch(viewer, /media-reference-fallback/);
   assert.doesNotMatch(viewer, /复制直链|readVideoMedia|saveMediaBlob/);
 });
 
 test("YouTube references request scoped playback permission and keep an honest source fallback", () => {
   const viewer = source.slice(source.indexOf("function createReferencedMediaViewer"), source.indexOf("function renderTimeNotes"));
-  assert.match(viewer, /youtubeWatchUrl/);
+  assert.match(viewer, /officialMediaEmbedUrl\(url, provider\)/);
   assert.match(viewer, /unavailable-video-stage/);
   assert.match(viewer, /posterAssetForVideo/);
   assert.match(viewer, /ensureYouTubePlaybackPermission\(chrome, \{ request: true \}\)/);
   assert.match(viewer, /youtubeMediaController/);
-  assert.match(viewer, /打开来源/);
+  assert.match(viewer, /renderDetail\(\{ rebuildMedia: true \}\)/);
+  assert.match(viewer, /catch \(error\) \{ setupFailed = true/);
+  assert.match(source, /"button-secondary media-reference-fallback", "打开来源"/);
 });
 
 test("PDF uses the local document viewer rather than a blob iframe", () => {
@@ -89,7 +93,7 @@ test("Markdown uses a safe local reading renderer instead of a preformatted text
 
 test("video cards resolve a saved local poster and referenced video details stay content-sized", () => {
   const card = source.slice(source.indexOf("function createCaseCard"), source.indexOf("function renderProjectFilters"));
-  assert.match(card, /posterAssetForVideo/);
+  assert.match(card, /caseCoverAsset\(entry\)/);
   assert.match(card, /dataset\.visualId/);
   assert.match(card, /mainVisual\.storageMode === "managed"\s*\? createLocalVideoCaseCover\(entry, mainVisual\)/);
   const localVideoCover = source.slice(source.indexOf("function createLocalVideoCaseCover"), source.indexOf("function createVideoLinkCover"));
