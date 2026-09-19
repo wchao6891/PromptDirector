@@ -158,15 +158,20 @@ def main() -> None:
             """footer => {
               const rect = footer.getBoundingClientRect();
               const controls = [...footer.querySelectorAll('.composer-input-tools > *, .composer-input-actions > *')]
-                .filter(node => !node.hidden && getComputedStyle(node).display !== 'none')
-                .map(node => node.getBoundingClientRect());
-              const groups = ['.composer-input-tools', '.composer-input-actions'].map(selector => footer.querySelector(selector).getBoundingClientRect());
+                .filter(node => node.getClientRects().length && !node.classList.contains("sr-only"))
+                .map(node => node.getBoundingClientRect()).filter(item => item.width > 0 && item.height > 0);
+              const rows = [];
+              for (const item of controls) {
+                const row = rows.find(row => item.top < row.bottom && item.bottom > row.top);
+                if (row) { row.top = Math.min(row.top, item.top); row.bottom = Math.max(row.bottom, item.bottom); }
+                else rows.push({top:item.top, bottom:item.bottom});
+              }
               const gap = parseFloat(getComputedStyle(footer).rowGap) || 0;
               return {
-                height: rect.height,
-                compact: rect.height <= groups.reduce((sum, item) => sum + item.height, gap) + 1,
-                groupsOverlap: groups[0].left < groups[1].right && groups[0].right > groups[1].left && groups[0].top < groups[1].bottom && groups[0].bottom > groups[1].top,
-                overflow: controls.some(item => item.left < rect.left - 1 || item.right > rect.right + 1)
+                height: rect.height, rows, controls: controls.map(item => ({top:item.top,bottom:item.bottom,width:item.width,height:item.height})),
+                compact: rows.length <= 2 && rect.height <= rows.reduce((sum, item) => sum + item.bottom - item.top, (rows.length-1)*gap) + 1,
+                groupsOverlap: controls.some((item,index) => controls.slice(index+1).some(other => item.left < other.right && item.right > other.left && item.top < other.bottom && item.bottom > other.top)),
+                overflow: controls.some(item => item.left < rect.left - 1 || item.right > rect.right + 1 || item.top < rect.top - 1 || item.bottom > rect.bottom + 1)
               };
             }"""
         )

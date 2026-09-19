@@ -1,9 +1,11 @@
+import { attachDetailSplit } from "./detail-split.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { createGenerationInfoViewReader } from "./image-generation-view.js";
 import { downloadMediaCopies, showQuickMenu } from "./library-quick-actions.js";
 import { assetFormatForExtension } from "./asset-formats.js";
 import { docxImageLoader } from "./docx-ingestion.js";
 import { applyLibraryImportWithReceipt } from "./library-import-client.js";
+import { previewLibraryImportInWorker } from "./library-import-preview.js";
 import { readZipResources } from "./zip-reader.js";
 import { attachArticleEditor } from "./article-editor.js";
 import { renderArticleBlockText } from "./article-text-view.js";
@@ -118,6 +120,7 @@ import {
 } from "./visuals.js";
 import {
   entryMediaAssets,
+  caseCoverAsset,
   entryHasMedia,
   currentVideoReconstruction,
   normalizeEntryMedia,
@@ -239,7 +242,7 @@ const elements = Object.fromEntries([
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-public", "share-dialog-public-panel", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
+  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
   "project-section", "project-root-drop", "collapse-projects", "project-search", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "video-instructions-en", "video-instructions-zh", "video-settings-form", "video-settings-status", "restore-video-default", "video-protocol",
@@ -551,6 +554,7 @@ async function previewDeepSeekAnalysisBatch(mode = "incremental") {
 function renderAnalysisBatch() {
   const job = analysisBatchJob;
   const preview = analysisBatchPreview;
+  const selectionCompleted = selectedTextBatchCompleted();
   const active = Boolean(job && ["running", "paused"].includes(job.status));
   const unfinishedRebuild = Boolean(job?.mode === "rebuild" && ["completed", "partial"].includes(job?.status) && job?.counts.failed && !job.partialApplied);
   const partialRebuildApplied = Boolean(job?.mode === "rebuild" && job?.partialApplied);
@@ -594,7 +598,7 @@ function renderAnalysisBatch() {
       ? t("已选 {count} 个案例", { count: preview.caseCount }) + ((textBatchEntryIds?.length || 0) > preview.caseCount ? t(" · 跳过 {count} 个无文字案例", { count: textBatchEntryIds.length - preview.caseCount }) : "")
       : t("待补全 {count} 个案例", { count: preview.caseCount }))
     : job ? t("完成 {done}/{total} · 失败 {failed}", { done: job.counts.succeeded, total: job.total, failed: job.counts.failed }) : "";
-  elements.previewAnalysisBatch.hidden = active || unfinishedRebuild || Boolean(preview?.caseCount);
+  elements.previewAnalysisBatch.hidden = active || unfinishedRebuild || Boolean(preview?.caseCount) || selectionCompleted;
   elements.startAnalysisBatch.hidden = active || unfinishedRebuild || !preview || preview.mode === "rebuild";
   elements.startAnalysisReanalyze.hidden = active || unfinishedRebuild || !preview || preview.mode !== "rebuild";
   const textAssignment = aiTaskAssignments.textTags ?? {};
@@ -728,7 +732,8 @@ function bindEvents() {
         analysisDiagnostics: uiPreferences.analysisDiagnostics,
         sidebarWidth: uiPreferences.sidebarWidth,
         detailMode: uiPreferences.detailMode,
-        detailSidebarWidth: uiPreferences.detailSidebarWidth
+        detailSidebarWidth: uiPreferences.detailSidebarWidth,
+        detailPanelRatio: uiPreferences.detailPanelRatio
       });
     });
   }
@@ -821,6 +826,8 @@ function bindEvents() {
     void addLabelsToSelection();
   });
   elements.selectionAddLabels.addEventListener("click", addLabelsToSelection);
+  elements.selectionSetClassification.addEventListener("click", setSelectionClassification);
+  elements.selectionContentType.addEventListener("change", updateSelectionBar);
   elements.selectionAddProject.addEventListener("click", addSelectionToProject);
   elements.selectionMoveProject.addEventListener("click", moveSelectionToProject);
   elements.selectionRemoveProject.addEventListener("click", removeSelectionFromProject);
@@ -829,6 +836,7 @@ function bindEvents() {
   elements.textBatchClose.addEventListener("click", () => elements.textBatchDialog.close());
   elements.textBatchDialog.addEventListener("close", () => {
     clearTimeout(textBatchPollTimer);
+    if (selectedTextBatchCompleted()) exitSelectionMode();
     document.getElementById("settings-tasks-panel").prepend(elements.textBatchCard);
     textBatchEntryIds = null;
     textBatchRunningJobId = "";
@@ -1524,10 +1532,11 @@ function createCaseCard(entry) {
   });
 
   const mainVisual = primaryMediaAsset(entry);
-  if (mainVisual?.kind === "image") {
+  const cover = caseCoverAsset(entry);
+  if (cover && mainVisual?.kind !== "video") {
     const wrap = el("div", "case-image-wrap");
-    wrap.classList.toggle("has-alpha-channel", alphaCapableImage(mainVisual));
-    const dimensions = imageDimensions(mainVisual);
+    wrap.classList.toggle("has-alpha-channel", alphaCapableImage(cover));
+    const dimensions = imageDimensions(cover);
     if (dimensions) {
       wrap.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
       wrap.classList.add("case-image-wrap-fixed");
@@ -1535,15 +1544,15 @@ function createCaseCard(entry) {
     const image = document.createElement("img");
     image.className = "case-shot";
     image.alt = translateUiMessage(`${entry.title} 对应画面`);
-    image.dataset.visualId = mainVisual.id;
+    image.dataset.visualId = cover.id;
     image.decoding = "async";
     image.loading = "lazy";
-    const cached = thumbnailUrls.get(mainVisual.id);
+    const cached = thumbnailUrls.get(cover.id);
     if (cached) image.src = cached;
     wrap.append(image);
     card.append(wrap);
   } else if (mainVisual?.kind === "video") {
-    const poster = posterAssetForVideo(entry, mainVisual);
+    const poster = cover;
     if (poster || mainVisual.storageMode === "managed") {
       const wrap = el("div", "case-image-wrap case-video-poster");
       const dimensions = imageDimensions(poster || mainVisual);
@@ -2440,6 +2449,11 @@ function updateSelectionBar() {
   elements.selectionProjectTarget.value = organizerState.collections.some((item) => item.id === selectedProject) ? selectedProject : "";
   const targetCollection = organizerState.collections.find((item) => item.id === elements.selectionProjectTarget.value);
   const selectedEntryIds = expandLogicalCaseIds([...selectedCaseIds], compoundCases);
+  const selectedType = elements.selectionContentType.value;
+  elements.selectionContentType.replaceChildren(option("", t("选择案例类型…")), ...taxonomy.nodes.map(node => option(node.id, node.customized ? node.name : t(node.name))));
+  elements.selectionContentType.value = taxonomy.nodes.some(node => node.id === selectedType) ? selectedType : "";
+  elements.selectionSetClassification.disabled = !selectedEntryIds.length || !elements.selectionContentType.value;
+  elements.selectionClassificationImpact.textContent = t("将修改 {count} 个案例", { count: selectedEntryIds.length });
   const targetEntryIds = new Set(targetCollection?.entryIds ?? []);
   const sourceCollection = organizerState.collections.find((item) => item.id === selectedCollectionId);
   const sourceEntryIds = new Set(sourceCollection?.entryIds ?? []);
@@ -2566,6 +2580,17 @@ async function updateSelectionProjectMembership(mode, button, collectionId = ele
   }
 }
 
+async function setSelectionClassification() {
+  if (!selectedCaseIds.size || !elements.selectionContentType.value) return;
+  const payload = buildLibraryBatchPayload([...selectedCaseIds], compoundCases, {
+    type: LIBRARY_BATCH_ACTIONS.setClassification, contentTypeId: elements.selectionContentType.value
+  });
+  const response = await perform(elements.selectionSetClassification, payload, false);
+  if (!response?.ok) return;
+  exitSelectionMode();
+  await refreshLibrary();
+}
+
 async function addLabelsToSelection() {
   if (!selectedCaseIds.size) return;
   const customLabels = splitInput(elements.selectionLabelInput.value);
@@ -2641,6 +2666,11 @@ async function openSelectedTextBatch() {
   pollSelectedTextBatch();
 }
 
+function selectedTextBatchCompleted() {
+  return Boolean(textBatchRunningJobId && analysisBatchJob?.id === textBatchRunningJobId
+    && analysisBatchJob.status === "completed" && !analysisBatchJob.counts.failed);
+}
+
 function pollSelectedTextBatch() {
   clearTimeout(textBatchPollTimer);
   if (!elements.textBatchDialog.open) return;
@@ -2652,7 +2682,7 @@ function pollSelectedTextBatch() {
         renderAnalysisBatch();
       }
     }
-    if (textBatchRunningJobId && analysisBatchJob?.id === textBatchRunningJobId && analysisBatchJob.status === "completed" && !analysisBatchJob.counts.failed) {
+    if (selectedTextBatchCompleted()) {
       elements.textBatchDialog.close();
       showFeedback("文字打标已完成");
       await refreshLibrary();
@@ -4097,6 +4127,9 @@ function updateLibraryPackageProgress(batch, item, message) {
 
 async function refreshLibraryPackageBatchPlan(batch = pendingLibraryPackageBatch) {
   if (!batch || pendingLibraryPackageBatch !== batch || batch.submitting) return;
+  batch.previewController?.abort();
+  const controller = new AbortController();
+  batch.previewController = controller;
   const revision = ++batch.revision;
   const ready = batch.items.filter((item) => item.status === "ready" && item.inspection);
   batch.preview = null;
@@ -4107,12 +4140,19 @@ async function refreshLibraryPackageBatchPlan(batch = pendingLibraryPackageBatch
   renderLibraryPackageBatch();
   if (!ready.length) return;
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "PREVIEW_LIBRARY_IMPORT_BATCH",
-      packages: ready.map(libraryPackageMessage),
-      preserveLibraryConfiguration: true,
-      conflictResolutions: batch.conflictResolutions
-    });
+    const snapshot = await chrome.runtime.sendMessage({ type: "GET_FOLDER_BACKUP_STATE" });
+    controller.signal.throwIfAborted();
+    if (!snapshot?.ok) throw new Error(snapshot?.message || "无法读取资料库");
+    const response = await previewLibraryImportInWorker({
+      currentState: snapshot,
+      inspections: ready.map(item => ({
+        sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+        state: item.inspection.state,
+        report: item.inspection.report,
+        resourceIndex: item.inspection.resourceIndex
+      })),
+      options: { preserveLibraryConfiguration: true, conflictResolutions: batch.conflictResolutions }
+    }, { signal: controller.signal });
     if (!response?.ok) throw new Error(response?.message || "无法检查案例包");
     if (pendingLibraryPackageBatch !== batch || revision !== batch.revision) return;
     const plannedBytes = plannedLibraryPackageBatchBytes(response.resourceWrites, ready);
@@ -4371,6 +4411,7 @@ function cancelLibraryPackageBatch() {
 }
 
 function finishLibraryPackageBatch() {
+  pendingLibraryPackageBatch?.previewController?.abort();
   pendingLibraryPackageBatch?.controller.abort();
   pendingLibraryPackageBatch = null;
   if (elements.libraryPackageImportDialog.open) elements.libraryPackageImportDialog.close();
@@ -5127,7 +5168,7 @@ async function confirmPromptEditDiscard() {
   return true;
 }
 
-async function renderDetail({ resetScroll = false } = {}) {
+async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) {
   const renderGeneration = ++detailRenderGeneration;
   const renderEntryId = currentDetailId;
   let entry = logicalCases.find((item) => item.id === currentDetailId);
@@ -5139,7 +5180,7 @@ async function renderDetail({ resetScroll = false } = {}) {
   const presentation = usesArticleReader(entry) ? "article" : usesPostReader(entry) ? "post" : "case";
   const mountedBody = elements.detailContent.querySelector(".detail-primary > .detail-body");
   const mountedArticle = mountedBody?.querySelector(":scope > .article-document-reader");
-  if (!resetScroll && usesArticleReader(entry) && elements.detailDrawer.dataset.entryId === entry.id
+  if (!rebuildMedia && !resetScroll && usesArticleReader(entry) && elements.detailDrawer.dataset.entryId === entry.id
     && mountedBody?.dataset.mediaIdentity === mediaIdentity && mountedBody.dataset.presentation === presentation
     && (mountedArticle?.dataset.editing === "true" || mountedArticle?.dataset.articleIdentity === JSON.stringify(normalizeEntryMedia(entry).articleDocument))) {
     const header = mountedBody.querySelector(":scope > .detail-header-section");
@@ -5147,7 +5188,7 @@ async function renderDetail({ resetScroll = false } = {}) {
     refreshActiveDetailAssetSections(entry);
     return;
   }
-  if (!resetScroll && !entry.compoundCase && !usesPostReader(entry) && !usesArticleReader(entry)
+  if (!rebuildMedia && !resetScroll && !entry.compoundCase && !usesPostReader(entry) && !usesArticleReader(entry)
       && elements.detailDrawer.dataset.entryId === entry.id && mountedBody?.dataset.mediaIdentity === mediaIdentity && mountedBody.dataset.presentation === presentation) {
     elements.detailContent.querySelector(".detail-visual-gallery")?.updateEntry?.(entry);
     refreshActiveDetailAssetSections(entry);
@@ -5231,6 +5272,17 @@ async function renderDetail({ resetScroll = false } = {}) {
   elements.detailContent.replaceChildren(content);
   if (resetScroll) elements.detailContent.scrollTop = 0;
   discovery?.mount();
+  if (hasMediaStage) {
+    const dispose = attachDetailSplit(primary, {
+      label: t("调整图文分栏宽度"),
+      readRatio: () => uiPreferences.detailPanelRatio,
+      saveRatio: async detailPanelRatio => {
+        uiPreferences = await updateUiPreferences({ ...uiPreferences, detailPanelRatio });
+      }
+    });
+    const cleanup = () => { dispose(); detailControllerCleanups.delete(cleanup); };
+    detailControllerCleanups.add(cleanup);
+  }
 }
 
 function createDetailBody(entry) {
@@ -5842,7 +5894,13 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     stage.replaceChildren(pendingItem);
     const item = el("figure", `detail-visual-item${asset.id === entry.primaryMediaId ? " is-primary" : ""}`);
     item.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
-    const body = await createMediaViewer(asset, imageUrls[activeIndex], entry);
+    let body;
+    try { body = await createMediaViewer(asset, imageUrls[activeIndex], entry); }
+    catch (error) {
+      console.debug("PromptDirector media viewer initialization", error);
+      body = el("div", "detail-video-wrap");
+      body.append(textEl("p", "media-playback-status", "媒体暂不可用"));
+    }
     if (token !== renderToken || currentDetailId !== ownerEntryId) {
       body.mediaController?.destroy?.();
       body.releaseMedia?.();
@@ -5855,6 +5913,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     }
     activeMediaBody = body;
     const localVideo = body instanceof HTMLVideoElement ? body : body.querySelector?.("video") ?? null;
+    if (localVideo) addVideoPlayButton(localVideo);
     if (asset.kind === "video") {
       const videoSurface = body.matches?.(".detail-video") ? body : body.querySelector?.(".detail-video");
       if (videoSurface && asset.width > 0 && asset.height > 0) videoSurface.style.aspectRatio = `${asset.width} / ${asset.height}`;
@@ -5869,6 +5928,13 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     const position = asset.id === entry.primaryMediaId ? `${t("主要媒体")} · ${activeIndex + 1}/${contentAssets.length}` : `${activeIndex + 1}/${contentAssets.length}`;
     caption.append(rawTextEl("span", "", [position, mediaMetadataText(asset)].filter(Boolean).join(" · ")));
     const actions = el("span", "detail-visual-actions");
+    if (asset.storageMode === "reference" && (asset.reference?.url || asset.sourceUrl)) {
+      const source = textEl("a", "button-secondary media-reference-fallback", "打开来源");
+      source.href = asset.reference?.url || asset.sourceUrl;
+      source.target = "_blank";
+      source.rel = "noopener noreferrer";
+      actions.append(source);
+    }
     const download = textEl("button", "button-secondary", "下载副本");
     const downloadAction = async () => {
       if (download.disabled) return;
@@ -6083,7 +6149,7 @@ function createVideoAnalysisWorkspace(entry, asset, actionTarget) {
   if (!current) header.append(createPromptRulesAction("video"));
 
   if (!running && !["failed", "stopped"].includes(task?.status)) {
-    const run = textEl("button", "video-analysis-run", "逆推视频提示词");
+    const run = textEl("button", "button-secondary video-analysis-run", "逆推视频提示词");
     run.addEventListener("click", async () => {
       try {
         await startVideoAnalysis(entry, asset, run);
@@ -6146,7 +6212,7 @@ function createVideoAnalysisTaskStatus(task) {
       ? "上次执行状态未知，未自动重试；服务商可能已收到请求"
       : attempt?.error || (task.providerMayHaveAccepted ? "已停止等待，未保存结果；服务商可能已收到请求" : "已取消，未发送");
     status.append(rawTextEl("span", "", t(message)));
-    const retry = textEl("button", "video-analysis-run", "逆推视频提示词");
+    const retry = textEl("button", "button-secondary video-analysis-run", "逆推视频提示词");
     retry.addEventListener("click", async () => {
       if (!await confirmAppAction({
         title: "重新发送这次视频分析？",
@@ -6304,12 +6370,13 @@ async function createMediaViewer(asset, imageUrl, entry) {
     const video = document.createElement("video");
     video.className = "detail-video";
     video.controls = true;
-    video.preload = "metadata";
+    video.preload = "none";
     video.autoplay = false;
     video.playsInline = true;
     const poster = posterAssetForVideo(entry, asset);
     if (poster) video.poster = await originalScreenshotUrl(poster.id);
-    video.src = url;
+    video.controls = false;
+    video.preparePlayback = () => { if (!video.getAttribute("src")) video.src = url; };
     wrap.releaseMedia = () => {
       video.pause();
       URL.revokeObjectURL(url);
@@ -6319,6 +6386,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
     error.hidden = true;
     video.addEventListener("error", () => { wrap.classList.add("has-playback-error"); error.hidden = false; });
     wrap.append(video, error);
+    addVideoPlayButton(video);
     return wrap;
   }
   if (asset.kind === "audio") {
@@ -6498,6 +6566,21 @@ async function loadRemoteMarkdownImage(assetId, urlValue) {
   return rememberDetailBlobUrl(blob);
 }
 
+function addVideoPlayButton(video) {
+  if (video.closest(".detail-video-surface")) return;
+  const surface = el("div", "detail-video-surface");
+  video.replaceWith(surface);
+  const button = iconActionButton("play", "播放视频", async () => {
+    try { await video.preparePlayback?.(); video.controls = true; await video.play(); }
+    catch (error) { showFeedback(error.message, true); }
+  });
+  button.classList.add("detail-video-play");
+  const update = () => { button.hidden = !video.paused && !video.ended || Boolean(video.error); };
+  for (const event of ["play", "pause", "ended", "error"]) video.addEventListener(event, update);
+  surface.append(video, button);
+  update();
+}
+
 function rememberDetailBlobUrl(blob) {
   const url = URL.createObjectURL(blob);
   detailMediaUrls.add(url);
@@ -6514,33 +6597,39 @@ async function createReferencedMediaViewer(asset, entry) {
     video.className = "detail-video";
     video.controls = true;
     video.playsInline = true;
-    video.preload = "metadata";
+    video.preload = "none";
+    video.controls = false;
     const poster = posterAssetForVideo(entry, asset);
     const blob = poster ? await getMediaBlob(poster.id) : null;
     if (blob) video.poster = rememberDetailBlobUrl(blob);
-    const status = textEl("p", "media-playback-status", "播放器正在加载…");
-    const source = textEl("a", "button-secondary media-reference-fallback", "打开来源");
-    source.href = url;
-    source.target = "_blank";
-    source.rel = "noopener noreferrer";
-    wrap.append(video, status, source);
+    const status = el("p", "media-playback-status");
+    status.hidden = true;
+    wrap.append(video, status);
     wrap.mediaController = await attachRemoteVideo(video, asset.reference, (message, failed) => {
       status.textContent = t(message);
       status.classList.toggle("error", failed);
-    });
+      status.hidden = !failed;
+    }, { defer: true });
+    addVideoPlayButton(video);
     return wrap;
   }
   const embedUrl = officialMediaEmbedUrl(url, provider);
-  if (provider === "youtube" && embedUrl && !await ensureYouTubePlaybackPermission(chrome, { request: false })) {
+  let youtubeReady = provider !== "youtube";
+  let setupFailed = false;
+  if (provider === "youtube" && embedUrl) {
+    try { youtubeReady = await ensureYouTubePlaybackPermission(chrome, { request: false }); }
+    catch (error) { setupFailed = true; console.debug("PromptDirector YouTube player setup", error); }
+  }
+  if (provider === "youtube" && embedUrl && !youtubeReady) {
     return createPlaybackFallback(entry, asset, {
       providerLabel,
-      reason: "首次在案例库播放 YouTube，需要授权播放器域名。只影响当前扩展发起的播放器，不读取网页内容。",
-      actionLabel: "授权并在案例库播放",
+      reason: setupFailed ? "播放器暂不可用" : "允许连接 YouTube 播放器后即可在这里播放。",
+      actionLabel: setupFailed ? "重试" : "授权并在案例库播放",
       onAction: async (button) => {
         button.disabled = true;
         try {
-          if (!await ensureYouTubePlaybackPermission(chrome, { request: true })) throw new Error("未获得 YouTube 播放权限");
-          await renderDetail();
+          if (!await ensureYouTubePlaybackPermission(chrome, { request: true })) { button.disabled = false; return; }
+          if (currentDetailId === entry.id) await renderDetail({ rebuildMedia: true });
         } catch (error) {
           showFeedback(error.message || "YouTube 播放授权失败", true);
           button.disabled = false;
@@ -6568,13 +6657,7 @@ async function createReferencedMediaViewer(asset, entry) {
             status.classList.toggle("error", failed);
           })
           : basicEmbedController(frame, status, providerLabel);
-    const source = textEl("a", "button-secondary media-reference-fallback", "打开来源");
-    source.href = provider === "youtube" ? youtubeWatchUrl(url) : url;
-    source.target = "_blank";
-    source.rel = "noopener noreferrer";
-    const actions = el("div", "media-playback-actions");
-    actions.append(source);
-    wrap.append(frame, status, actions);
+    wrap.append(frame, status);
     wrap.mediaController = controller;
     return wrap;
   }
@@ -6582,7 +6665,6 @@ async function createReferencedMediaViewer(asset, entry) {
 }
 
 async function createPlaybackFallback(entry, asset, { providerLabel, reason, actionLabel = "", onAction = null }) {
-  const url = asset.reference?.url || asset.sourceUrl;
   const card = el("div", "detail-video-wrap platform-playback-fallback");
   const stage = el("div", "detail-video unavailable-video-stage");
   stage.setAttribute("role", "img");
@@ -6604,13 +6686,6 @@ async function createPlaybackFallback(entry, asset, { providerLabel, reason, act
     actions.append(action);
   }
   actions.append(createLocalMediaUploadControl(entry, { label: "附加本地视频", accept: "video/*" }));
-  if (url) {
-    const open = textEl("a", "button-secondary", "打开来源");
-    open.href = providerLabel === "YouTube" ? youtubeWatchUrl(url) : url;
-    open.target = "_blank";
-    open.rel = "noopener noreferrer";
-    actions.append(open);
-  }
   card.append(stage, status, actions);
   return card;
 }
@@ -8732,6 +8807,58 @@ async function analyzeEntryVisualSet(entry, button) {
   await refreshLibrary();
 }
 
+async function chooseCaseCover(entry) {
+  let selectedId = "";
+  let uploadedFile = null;
+  const result = await showAppDialog({
+    title: "更换封面",
+    renderBody: ({ body, form }) => {
+      const grid = el("div", "case-cover-grid");
+      for (const asset of entryMediaAssets(entry).filter(item => item.kind === "image")) {
+        const pick = el("button", "button-secondary case-cover-option");
+        pick.type = "button";
+        pick.setAttribute("aria-label", asset.sourceTitle || t("选择图片"));
+        pick.setAttribute("aria-pressed", String(caseCoverAsset(entry)?.id === asset.id));
+        pick.dataset.assetId = asset.id;
+        const image = document.createElement("img");
+        image.alt = asset.sourceTitle || "";
+        createThumbnailUrl(asset.id).then(url => { image.src = url; }).catch(() => undefined);
+        pick.append(image);
+        pick.addEventListener("click", () => { selectedId = asset.id; form.requestSubmit(); });
+        grid.append(pick);
+      }
+      const upload = textEl("button", "button-secondary", "上传图片");
+      upload.type = "button";
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.hidden = true;
+      upload.addEventListener("click", () => input.click());
+      input.addEventListener("change", () => { uploadedFile = input.files?.[0]; if (uploadedFile) form.requestSubmit(); });
+      body.append(grid, upload, input);
+    },
+    onReady: ({ form }) => { form.querySelector("footer").hidden = true; },
+    onSubmit: async () => {
+      let uploadedAsset = null;
+      try {
+        if (uploadedFile) {
+          const prepared = await prepareLocalMedia(uploadedFile, crypto.randomUUID());
+          if (prepared.asset.kind !== "image") throw new Error("请选择图片");
+          uploadedAsset = prepared.asset;
+          await saveMediaBlob(uploadedAsset.id, prepared.blob);
+        }
+        const response = await chrome.runtime.sendMessage({ type: "SET_ENTRY_COVER", entryId: entry.id, assetId: selectedId, ...(uploadedAsset ? { asset: uploadedAsset } : {}) });
+        if (!response?.ok) throw new Error(response?.message || "封面更新失败");
+        return response;
+      } catch (error) {
+        if (uploadedAsset) await chrome.runtime.sendMessage({ type: "DISCARD_UNREFERENCED_MEDIA", assetIds: [uploadedAsset.id] }).catch(() => undefined);
+        throw error;
+      }
+    }
+  });
+  if (result?.ok) await refreshLibrary();
+}
+
 function createEntryEditor(entry, options = {}) {
   const section = el("details", `${options.inline ? "entry-editor-inline" : "detail-section"} entry-editor`);
   const summary = textEl("summary", "", "编辑案例");
@@ -8750,6 +8877,9 @@ function createEntryEditor(entry, options = {}) {
   const titleRow = el("div", "entry-edit-row");
   titleRow.append(titleField, saveTitle);
   body.append(textEl("h4", "", "案例标题"), titleRow);
+  const cover = textEl("button", "button-secondary", "更换封面");
+  cover.addEventListener("click", () => chooseCaseCover(entry));
+  body.append(cover);
   const currentAsset = entryMediaAssets(entry).find(asset => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId));
   section.dataset.assetId = currentAsset?.id || "";
   if (!usesArticleReader(entry)) {
@@ -9283,9 +9413,9 @@ function renderAiRoutingSummary() {
         const status = `${providerConnectionLabel(profile)} · ${providerCatalogLabel(profile)}`;
         const configure = document.createElement("button");
         configure.className = "icon-button";
-        configure.title = `${t(profile.credentialConfigured ? "编辑配置" : "配置")} · ${providerDisplayLabel(profile)}`;
+        configure.title = `${t(providerHasSavedConnection(profile) ? "编辑配置" : "配置")} · ${providerDisplayLabel(profile)}`;
         configure.setAttribute("aria-label", configure.title);
-        configure.append(createUiIcon(profile.credentialConfigured ? "pencil" : "plus"));
+        configure.append(createUiIcon(providerHasSavedConnection(profile) ? "pencil" : "plus"));
         configure.type = "button";
         configure.addEventListener("click", () => openAiProviderDialog(profile.id));
         const refresh = document.createElement("button");
@@ -9304,7 +9434,7 @@ function renderAiRoutingSummary() {
       }));
     for (const row of [...group.children]) {
       const profile = aiProviderRegistry.providers[row.dataset.providerId];
-      if (!profile.credentialConfigured && !profile.discovery?.error) moreProviders.append(row);
+      if (!providerHasSavedConnection(profile) && !profile.discovery?.error) moreProviders.append(row);
     }
     return group.childElementCount ? [group] : [];
   });
@@ -9347,12 +9477,16 @@ function renderAiRoutingView() {
   aiRoutingPanels.forEach((panel) => { panel.hidden = panel.dataset.aiRoutingPanel !== activeAiRoutingTab; });
 }
 
+function providerHasSavedConnection(profile = {}) {
+  return profile.credentialConfigured === true || profile.imageGeneration?.credentialConfigured === true;
+}
+
 function providerConnectionReady(profile = {}) {
-  return profile.credentialConfigured === true && profile.consent === true;
+  return providerHasSavedConnection(profile) && profile.consent === true;
 }
 
 function providerConnectionLabel(profile = {}) {
-  if (!profile.credentialConfigured) return t("尚未连接");
+  if (!providerHasSavedConnection(profile)) return t("尚未连接");
   if (!profile.consent) return t("API Key 已保存，尚未确认发送授权");
   return t("已连接");
 }
@@ -9505,7 +9639,8 @@ async function openAiProviderDialog(initialProviderId = "") {
       id: `provider_${key}_apiKey`,
       label: micuImageService
         ? t("图片分析 API Key（米醋 vip_2，只用于看图）")
-        : profile.id === "custom-media" ? t("图片分析 API Key") : "API Key",
+        : profile.id === "custom-media" ? t("已有对话 / 识别 API Key（可选）") : "API Key",
+      advanced: profile.id === "custom-media",
       type: "secret",
       autocomplete: "off",
       placeholder: profile.credentialConfigured ? t("已保存；留空保持不变") : t("粘贴服务商提供的 API Key"),
@@ -9515,13 +9650,13 @@ async function openAiProviderDialog(initialProviderId = "") {
       id: `provider_${key}_imageApiKey`,
       label: micuImageService
         ? t("图片生成 API Key（米醋 vip_2_image，需单独创建）")
-        : t("图片生成 API Key（可与分析 Key 不同）"),
+        : t("图片生成 API Key"),
       type: "secret",
       autocomplete: "off",
       placeholder: profile.imageGeneration?.credentialConfigured
         ? t("已保存{hint}；留空保持不变", { hint: profile.imageGeneration.credentialHint ? t("（尾号 {hint}）", { hint: profile.imageGeneration.credentialHint }) : "" })
-        : micuImageService ? t("粘贴米醋 vip_2_image 分组 Key") : t("留空则复用上方 API Key"),
-      help: micuImageService ? t("留空会保留已保存的生图 Key。模型目录可见不等于已获得 Image2 生图分组授权，最终以米醋生成接口返回为准。") : ""
+        : micuImageService ? t("粘贴米醋 vip_2_image 分组 Key") : t("粘贴图片生成服务提供的 API Key"),
+      help: t("仅用于生成图片；对话和图片、视频识别在“自定义兼容服务（对话与识别）”配置。已有配置保留。")
     });
     if (custom) fields.push(
       { id: `provider_${key}_endpoint`, label: t(profile.id === "custom-media" ? "图片分析接口（高级）" : "接口地址（高级）"), type: "url", value: profile.endpoint, advanced: true },
@@ -9541,7 +9676,8 @@ async function openAiProviderDialog(initialProviderId = "") {
         value: currentModel,
         options: [{ value: "", label: t("不更改这些任务") }, ...group.options],
         placeholder: custom ? t("填写这个兼容接口实际调用的模型") : "",
-        help: t("保存后更新：{tasks}", { tasks: group.taskIds.map(taskDisplayLabel).join("、") })
+        help: t("保存后更新：{tasks}", { tasks: group.taskIds.map(taskDisplayLabel).join("、") }),
+        advanced: profile.id === "custom-media"
       });
     }
     for (const taskId of ["imageGeneration", "videoGeneration"].filter((taskId) => profile.capabilities.includes(taskId))) {
@@ -9559,16 +9695,16 @@ async function openAiProviderDialog(initialProviderId = "") {
         type: catalogRequired || options.length ? "select" : "text",
         value: options.some((option) => option.value === configuredModel) ? configuredModel : "",
         options,
-        advanced: true
+        advanced: profile.id !== "custom-media"
       });
     }
     if (profile.id === "custom-media") fields.push(
-      { id: `provider_${key}_imageProtocol`, label: t("图片生成协议（高级）"), type: "select", value: profile.imageGeneration?.protocol || "none", advanced: true, options: [
+      { id: `provider_${key}_imageProtocol`, label: t("图片生成协议"), type: "select", value: profile.imageGeneration?.protocol || "none", options: [
         { value: "none", label: t("不启用图片生成") },
         { value: "responses_tool", label: t("OpenAI Responses 生图工具") },
         { value: "images_generations", label: "Images Generations / Edits" }
       ] },
-      { id: `provider_${key}_imageEndpoint`, label: t("图片生成接口（高级）"), type: "url", value: profile.imageGeneration?.endpoint || "", advanced: true },
+      { id: `provider_${key}_imageEndpoint`, label: t("图片生成接口"), type: "url", value: profile.imageGeneration?.endpoint || "" },
       { id: `provider_${key}_imageEditsEndpoint`, label: t("多图参考 / 编辑接口（高级）"), type: "url", value: profile.imageGeneration?.editsEndpoint || "", advanced: true },
       { id: `provider_${key}_imageSizes`, label: t("此服务支持的图片尺寸（能力声明，不是本轮输出值）"), type: "text", value: (profile.imageGeneration?.sizes ?? []).join(", "), advanced: true },
       { id: `provider_${key}_imageQualities`, label: t("此服务支持的质量选项（能力声明，不是本轮输出值）"), type: "text", value: (profile.imageGeneration?.qualities ?? []).join(", "), advanced: true }
@@ -9631,7 +9767,7 @@ async function openAiProviderDialog(initialProviderId = "") {
         }
         if (model) model.value = imagePreset.defaultModel;
         controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
-        controls.get(`${prefix}apiKey`).focus();
+        controls.get(`${prefix}imageApiKey`).focus();
       });
       for (const profile of profiles) {
         if (profile.category === "custom" || !connectionAnalysisTaskIds(profile).length) continue;
@@ -9952,6 +10088,7 @@ function modelAssignmentHelp(profile, taskId, selectedValue) {
 
 function taskModelOptions(profile, taskId) {
   if (!profile?.capabilities?.includes(taskId)) return [];
+  if (!profile.credentialConfigured && !(taskId === "imageGeneration" && profile.imageGeneration?.credentialConfigured)) return [];
   const manualModel = profile.catalogRequiredTasks?.includes(taskId) ? "" : profile.models?.[taskId] || "";
   return discoveredModelOptions(profile, taskId, manualModel);
 }
@@ -10197,31 +10334,44 @@ async function startDeepSeekAnalysisBatch() {
   }
 }
 
+let detailOrganizationProgress = null;
+
 async function organizeDetailTags() {
+  if (elements.organizeDetailTags.disabled) return;
   const chunks = createDetailOrganizationChunks(facetCatalog, entries);
   if (!chunks.length) {
     elements.organizeDetailStatus.textContent = t("当前没有需要整理的三级标签组。");
     return;
   }
-  const tagCount = chunks.reduce((sum, chunk) => sum + chunk.d.length, 0);
-  const inputBytes = chunks.reduce((sum, chunk) => sum + new TextEncoder().encode(JSON.stringify(chunk)).length, 0);
+  const settings = await privateAiSettings();
+  const key = JSON.stringify({ chunks, provider: settings.activeProvider, model: settings.analysisModel, compatible: { endpoint: settings.compatible?.endpoint, model: settings.compatible?.model } });
+  const previous = detailOrganizationProgress?.key === key ? detailOrganizationProgress : null;
+  const completed = previous?.results.length || 0;
+  const pending = chunks.slice(completed);
+  const tagCount = pending.reduce((sum, chunk) => sum + chunk.d.length, 0);
+  const inputBytes = pending.reduce((sum, chunk) => sum + new TextEncoder().encode(JSON.stringify(chunk)).length, 0);
   const warning = currentLocale() === "en"
-    ? `Organize ${tagCount} detail tags in ${chunks.length} paid requests (${inputBytes.toLocaleString("en")} serialized input bytes)? Cases and prompts are not sent.`
-    : `将用 ${chunks.length} 次付费请求整理 ${tagCount} 个三级标签，序列化输入共 ${inputBytes.toLocaleString("zh-CN")} 字节；不会发送案例原文。确认继续吗？`;
+    ? `Organize ${tagCount} detail tags in ${pending.length} paid requests (${inputBytes.toLocaleString("en")} serialized input bytes)? Cases and prompts are not sent.`
+    : `将用 ${pending.length} 次付费请求整理 ${tagCount} 个三级标签，序列化输入共 ${inputBytes.toLocaleString("zh-CN")} 字节；不会发送案例原文。确认继续吗？`;
   if (!await confirmAppAction({ title: "整理三级标签？", description: warning, confirmLabel: "确认并开始" })) return;
   elements.organizeDetailTags.disabled = true;
-  const mappings = [];
+  detailOrganizationProgress = previous || { key, results: [] };
+  const mappings = detailOrganizationProgress.results.flatMap(result => result.mappings);
   const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0 };
+  for (const result of detailOrganizationProgress.results) {
+    for (const name of Object.keys(usage)) usage[name] += Math.max(0, Number(result.usage?.[name]) || 0);
+  }
   try {
-    const settings = await privateAiSettings();
-    for (let index = 0; index < chunks.length; index += 1) {
+    for (let index = completed; index < chunks.length; index += 1) {
       elements.organizeDetailStatus.textContent = t("正在整理 {current}/{total}…", { current: index + 1, total: chunks.length });
       const result = await organizeDetailTagsWithDeepSeek(chunks[index], settings);
+      detailOrganizationProgress.results.push(result);
       mappings.push(...result.mappings);
       for (const key of Object.keys(usage)) usage[key] += Math.max(0, Number(result.usage?.[key]) || 0);
     }
     const response = await chrome.runtime.sendMessage({ type: "APPLY_DETAIL_TAG_ORGANIZATION", mappings });
     if (!response?.ok) throw new Error(response?.message || "无法应用三级标签整理结果");
+    detailOrganizationProgress = null;
     elements.organizeDetailStatus.textContent = t("{message} · 输入 {input} / 输出 {output} tokens", { message: translateUiMessage(response.message), input: usage.promptTokens, output: usage.completionTokens });
     await refreshLibrary();
   } catch (error) {

@@ -168,3 +168,38 @@ test("stale SSR work never replaces the current detail ID", () => {
     assert.deepEqual(read().items, []);
   });
 });
+
+test("a visible image detail on the home route owns capture instead of its background feed", () => {
+  inPage({ items: [imageWork("7490123456789012346"), imageWork()] }, doc => {
+    const child = fiberElement({ renderModel: { id: workId } });
+    const detail = { getClientRects: () => [{}], querySelectorAll: () => [child] };
+    const query = doc.querySelector;
+    doc.querySelectorAll = selector => selector === '[data-detail-container-appearance]' ? [detail] : [];
+    doc.querySelector = selector => selector === '[data-detail-container-appearance]' ? detail : query(selector);
+    const result = normalizePageCaptureSitePayload(read());
+    assert.equal(result.pageKind, "detail");
+    assert.deepEqual(result.candidates.map(candidate => candidate.sourceFacts.itemId), [workId]);
+    assert.equal(result.media[0].url, imageUrl);
+  });
+});
+
+test("loading image detail cannot quietly substitute the background list", () => {
+  inPage({ items: [imageWork()] }, doc => {
+    const detail = { getClientRects: () => [{}], querySelectorAll: () => [] };
+    doc.querySelectorAll = selector => selector === '[data-detail-container-appearance]' ? [detail] : [];
+    const result = normalizePageCaptureSitePayload(read());
+    assert.equal(result.pageKind, "detail");
+    assert.deepEqual(result.candidates, []);
+    assert.equal(result.completeness, "partial");
+  });
+});
+
+test("a hidden image detail does not prevent intentional list capture", () => {
+  inPage({ items: [imageWork()] }, doc => {
+    doc.querySelectorAll = selector => selector === '[data-detail-container-appearance]'
+      ? [{ getClientRects: () => [], querySelectorAll: () => [fiberElement({ renderModel: { id: '7490123456789012346' } })] }] : [];
+    const result = normalizePageCaptureSitePayload(read());
+    assert.equal(result.pageKind, "feed");
+    assert.equal(result.candidates.length, 1);
+  });
+});

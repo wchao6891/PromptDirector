@@ -7,6 +7,7 @@ from pathlib import Path
 from playwright.sync_api import expect
 
 from e2e_support import ai_configuration_fixture, extension_session
+from composer_e2e_support import set_composer_reference_media
 
 
 PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -196,18 +197,16 @@ def main() -> None:
         assert mobile_geometry["inputBottom"] <= mobile_geometry["viewportHeight"] + 1, mobile_geometry
         assert mobile_geometry["cardStripOverflow"], mobile_geometry
         composer.set_viewport_size({"width": 1280, "height": 900})
+        expect(composer.locator("#composer-send-images")).not_to_be_checked()
+        set_composer_reference_media(composer, images=True)
+        expect(composer.locator("#composer-image-input-status")).to_have_count(0)
         composer.locator("#composer-instruction").fill("Use the attached composition")
-        composer.locator("#composer-action").click()
-        expect(composer.locator("#composer-image-input-status")).to_be_visible()
-        expect(composer.locator("#composer-image-input-message")).to_contain_text("切换支持看图的模型")
-        expect(composer.locator("#composer-image-blocker")).to_have_count(0)
-        expect(composer.locator("#composer-instruction")).to_have_value("Use the attached composition")
         assert not vision_requests and not composer_requests
         artifact_dir = os.environ.get("PROMPTDIRECTOR_E2E_ARTIFACT_DIR")
         if artifact_dir:
             Path(artifact_dir).mkdir(parents=True, exist_ok=True)
             composer.screenshot(path=str(Path(artifact_dir) / "composer-switch-model.png"), full_page=True)
-        composer.locator("#composer-image-input-model").click()
+        composer.locator("#composer-model-trigger").click()
         expect(composer.locator("#composer-model-menu")).to_be_visible()
         composer.locator("#composer-model-dynamic button", has_text="OpenAI").click()
         expect(composer.locator("#composer-image-input-status")).to_be_hidden()
@@ -237,9 +236,9 @@ def main() -> None:
         })
         expect(composer.locator(".composer-temp-reference-card")).to_have_count(4)
         expect(composer.locator(".composer-temp-reference-card").last).to_contain_text("clip.mp4")
-        composer.locator("#composer-instruction").fill("Read the attached video")
-        composer.locator("#composer-action").click()
-        expect(composer.locator("#composer-feedback")).to_contain_text("请切换视频模型")
+        expect(composer.locator("#composer-send-videos")).not_to_be_checked()
+        set_composer_reference_media(composer, videos=True)
+        set_composer_reference_media(composer, videos=False)
         assert len(composer_requests) == 1, composer_requests
 
         composer.locator(".composer-temp-reference-card").first.get_by_role("button", name="移除临时附件").click()

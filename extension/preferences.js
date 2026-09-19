@@ -5,7 +5,8 @@ export const DEFAULT_UI_PREFERENCES = Object.freeze({
   analysisDiagnostics: false,
   sidebarWidth: 244,
   detailMode: "fullscreen",
-  detailSidebarWidth: 760
+  detailSidebarWidth: 760,
+  detailPanelRatio: null
 });
 
 export const SIDEBAR_WIDTH_LIMITS = Object.freeze({ min: 216, max: 420, default: 244 });
@@ -31,7 +32,8 @@ export function normalizeUiPreferences(value = {}) {
     analysisDiagnostics: value.analysisDiagnostics === true,
     sidebarWidth: normalizeSidebarWidth(value.sidebarWidth),
     detailMode: value.detailMode === "sidebar" ? "sidebar" : "fullscreen",
-    detailSidebarWidth: normalizeDetailSidebarWidth(value.detailSidebarWidth)
+    detailSidebarWidth: normalizeDetailSidebarWidth(value.detailSidebarWidth),
+    detailPanelRatio: typeof value.detailPanelRatio === "number" && Number.isFinite(value.detailPanelRatio) && value.detailPanelRatio > 0 && value.detailPanelRatio < 1 ? value.detailPanelRatio : null
   };
 }
 

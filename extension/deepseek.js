@@ -1,7 +1,9 @@
 import { applyComposerConversation } from './composer-conversation.js';
 import { runComposerToolLoop } from "./composer-tool-loop.js";
+import { readEventStream } from "./event-stream.js";
 import {
   analysisTaxonomyPayload,
+  DETAIL_ORGANIZATION_OUTPUT_TOKENS,
   validateAnalysisTagResponse,
   validateDetailOrganizationResponse
 } from "./tag-taxonomy.js";
@@ -298,7 +300,7 @@ export async function organizeDetailTagsWithDeepSeek(chunk, settingsValue, fetch
     model: settings.analysisModel,
     thinking: { type: "disabled" },
     temperature: 0,
-    max_tokens: 4000,
+    max_tokens: DETAIL_ORGANIZATION_OUTPUT_TOKENS,
     messages: [
       {
         role: "system",
@@ -307,6 +309,7 @@ export async function organizeDetailTagsWithDeepSeek(chunk, settingsValue, fetch
       { role: "user", content: JSON.stringify(chunk) }
     ]
   }, settings), settings, { fetchImpl, timeoutMessage: "AI 整理超时，正式标签库没有改变" });
+  if (result.finishReason === "length") throw new DeepSeekApiError("AI 整理输出被截断，正式标签库没有改变", 422);
   const parsed = parseJsonObject(result.content, "AI 整理结果格式无效，正式标签库没有改变");
   return {
     mappings: validateDetailOrganizationResponse(parsed, chunk),
@@ -539,24 +542,19 @@ async function readComposerResponse(body, settings, options, signal) {
       request: nextBody => fetchDeepSeekStream(nextBody, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart) });
   }
   const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart);
-  return readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey);
+  return readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey, signal);
 }
 
-export async function readDeepSeekSse(response, onDelta = () => undefined, providerLabel = "DeepSeek", apiKey = "") {
+export async function readDeepSeekSse(response, onDelta = () => undefined, providerLabel = "DeepSeek", apiKey = "", signal) {
   if (!response?.body?.getReader) throw new DeepSeekApiError(`${providerLabel} 没有返回流式内容`, 503);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let content = "";
   let usage = normalizeUsage();
   let model = "";
   let finishReason = "";
   let done = false;
-  const consume = (block) => {
-    const data = block.split(/\r?\n/).filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart()).join("\n").trim();
-    if (!data) return;
-    if (data === "[DONE]") { done = true; return; }
+  for await (const data of readEventStream(response, { signal })) {
+    if (!data.trim()) continue;
+    if (data === "[DONE]") { done = true; continue; }
     let event;
     try { event = JSON.parse(data); } catch { throw new DeepSeekApiError(`${providerLabel} 流式结果格式错误，本次结果未保存`, 422); }
     if (event?.error) throw new DeepSeekApiError(`${providerLabel} 流式生成失败：${redactSecret(String(event.error.message ?? "服务返回错误"), apiKey)}`, Number(event.error.status) || 503);
@@ -569,19 +567,6 @@ export async function readDeepSeekSse(response, onDelta = () => undefined, provi
       onDelta(delta, content);
     }
     if (choice?.finish_reason) finishReason = String(choice.finish_reason);
-  };
-  try {
-    for (;;) {
-      const { value, done: readerDone } = await reader.read();
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !readerDone });
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() ?? "";
-      for (const block of blocks) consume(block);
-      if (readerDone) break;
-    }
-    if (buffer.trim()) consume(buffer);
-  } finally {
-    reader.releaseLock?.();
   }
   if (finishReason === "length") throw new DeepSeekApiError(`${providerLabel} 输出被截断，本次结果未保存`, 422);
   if (finishReason === "content_filter") throw new DeepSeekApiError(`${providerLabel} 未能返回此内容，本次结果未保存`, 422);

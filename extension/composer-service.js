@@ -1,5 +1,6 @@
 import { applyComposerConversation } from './composer-conversation.js';
 import { runComposerToolLoop } from "./composer-tool-loop.js";
+import { readEventStream } from "./event-stream.js";
 import {
   DEEPSEEK_ENDPOINT,
   deepSeekErrorDetails,
@@ -213,12 +214,6 @@ export function composerLibraryToolService(session, aiSettings, visionSettings) 
     return { ...service, nativeTools: service.nativeTools && supportsLocalFunctions };
   }
   return service;
-}
-
-export function composerImageInputAvailability(session, service) {
-  const imageCount = session?.imageReferenceMode === "text_only" ? 0
-    : (session?.referenceSnapshots ?? []).reduce((count, reference) => count + (reference.imageRefs?.length ?? 0), 0);
-  return { available: imageCount === 0 || service?.vision === true, imageCount };
 }
 
 export function composerServiceCapabilities(profileValue, visionSettingsValue = {}) {
@@ -569,11 +564,6 @@ export async function planComposerTurnWithService(input, settingsValue, options 
 }
 
 export async function executeComposerTurnWithService(input, settingsValue, preparedImages = [], options = {}) {
-  if ((input.session?.referenceSnapshots ?? []).some((reference) =>
-    (reference.assetRefs ?? []).some((asset) => asset.kind === "video"))) {
-    const selected = selectedComposerService(input.session.aiProfile, settingsValue.ai, settingsValue.vision);
-    if (!selected.videoInput) throw new ComposerServiceError(`${selected.label} 的所选模型未声明视频输入能力，请切换视频模型`, 422, { retryable: false });
-  }
   const planningProfile = normalizeComposerAiProfile(input.session?.aiProfile);
   const toolService = composerLibraryToolService(input.session, settingsValue.ai, settingsValue.vision);
   if (!toolService.nativeTools || !options.toolRuntime?.specs.length) options = { ...options, toolRuntime: undefined };
@@ -597,11 +587,10 @@ export async function executeComposerTurnWithService(input, settingsValue, prepa
     ? normalizeComposerAiProfile(input.session?.generationAiProfile)
     : planningProfile;
   const selected = selectedComposerService(generationMode && input.session?.imageReferenceMode !== "prompt_only" ? executionProfile : planningProfile, settingsValue.ai, settingsValue.vision);
-  if (!composerImageInputAvailability(input.session, selected).available) {
-    throw new ComposerServiceError(`${selected.label} 无法读取参考原图，请切换支持看图的模型`, 422, { retryable: false });
-  }
-  if (!generationMode && !selected.vision && usesProjectedDeepseekSettings(executionProfile, settingsValue.ai)) {
-    assertTextReferencesAvailable(input.session);
+  const sendsOriginals = referenceImageCount(input.session) > 0
+    || (input.session?.videoReferenceMode !== "text_only" && (input.session?.referenceSnapshots ?? [])
+      .some(reference => reference.assetRefs?.some(asset => asset.kind === "video")));
+  if (!generationMode && !selected.vision && !sendsOriginals && usesProjectedDeepseekSettings(executionProfile, settingsValue.ai)) {
     return executeDeepSeekTurn(input, settingsValue.ai, options);
   }
   const visionRuntime = { ...settingsValue.vision };
@@ -949,9 +938,6 @@ function normalizeRemoteVideo(value, expectedServiceId = "") {
 
 async function executeVisualTextTurn(input, service, preparedImages, options) {
   assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
-  if ((options.preparedVideos ?? []).length && service.videoInput !== true) {
-    throw new ComposerServiceError(`${service.label} 的所选模型未声明视频输入能力，请切换视频模型`, 422, { retryable: false });
-  }
   const request = executionRequest(input);
   const route = request.route;
   const automatic = route === "auto";
@@ -1062,7 +1048,7 @@ async function generateImageTurn(input, service, preparedImages, options) {
   const requestState = normalizeImageGenerationRequest(input.session?.generationAiProfile, options.visionSettings ?? {}, input.session?.generationParameters);
   if (requestState.issues.length) throw new ComposerServiceError(requestState.issues.join("；"), 422, { retryable: false });
   const requestParameters = requestState.parameters;
-  const baseContent = multimodalContent(input.session, request, preparedImages, service.protocol);
+  const baseContent = multimodalContent(input.session, request, preparedImages, service.protocol, options.preparedVideos);
   const content = imageEdit ? imageEditContent(baseContent, imageEdit, service.protocol) : baseContent;
   if (service.imageGeneration.protocol === "gemini_interactions") {
     return generateGeminiImageTurn(input, service, request, content, referenceMode, imageEdit, requestParameters, preparedImages, options);
@@ -1155,8 +1141,8 @@ async function generateGeminiImageTurn(input, service, request, conditionedConte
       referenceLimit: { actual: imageBlocks.length, maximum }
     });
   }
-  const interactionInput = imageBlocks.length
-    ? content.map((item) => item.type === "image" ? geminiImageInput(item.dataUrl) : { type: "text", text: item.text })
+  const interactionInput = content.some(item => ["image", "video"].includes(item.type))
+    ? content.map((item) => ["image", "video"].includes(item.type) ? geminiMediaInput(item) : { type: "text", text: item.text })
     : finalPrompt;
   const responseFormat = { type: "image" };
   if (requestParameters.aspectRatio) responseFormat.aspect_ratio = requestParameters.aspectRatio;
@@ -1198,10 +1184,10 @@ async function generateGeminiImageTurn(input, service, request, conditionedConte
   };
 }
 
-function geminiImageInput(dataUrl) {
-  const match = String(dataUrl ?? "").match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i);
-  if (!match) throw new ComposerServiceError("Gemini 参考图数据无效，本次没有发送不完整参考", 422, { retryable: false });
-  return { type: "image", mime_type: match[1].toLocaleLowerCase("en-US"), data: match[2] };
+function geminiMediaInput(item) {
+  const match = String(item.dataUrl ?? "").match(/^data:((?:image|video)\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match || !match[1].startsWith(`${item.type}/`)) throw new ComposerServiceError("Gemini 参考原件数据无效，本次没有发送不完整参考", 422, { retryable: false });
+  return { type: item.type, mime_type: match[1].toLocaleLowerCase("en-US"), data: match[2] };
 }
 
 function geminiInteractionImages(payload) {
@@ -1279,15 +1265,9 @@ async function assembleImagePrompt(input, preparedImages, options) {
     ...input,
     session: { ...input.session, outputMode: "text_prompt" }
   };
-  const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  if (usesProjectedDeepseekSettings(profile, options.aiSettings)) {
-    assertTextReferencesAvailable(input.session);
-    const result = await executeDeepSeekTurn(promptInput, options.aiSettings, { ...options, stream: false });
-    if (result.kind !== "prompt") throw new ComposerServiceError("图片任务没有生成可提交的最终提示词", 422, { retryable: false });
-    return result;
-  }
-  const service = requireVisualService(profile, options.visionSettings, "整理生图提示词");
-  const result = await executeVisualTextTurn(promptInput, service, preparedImages, { ...options, stream: false });
+  const result = await executeComposerTurnWithService(promptInput, {
+    ai: options.aiSettings, vision: options.visionSettings
+  }, preparedImages, { ...options, stream: false });
   if (result.kind !== "prompt") throw new ComposerServiceError("图片任务没有生成可提交的最终提示词", 422, { retryable: false });
   return result;
 }
@@ -1319,11 +1299,11 @@ function multimodalContent(session, request, preparedImages, protocol, preparedV
   const videos = new Map((Array.isArray(preparedVideos) ? preparedVideos : []).map((item) => [item.assetId, item]));
   for (const reference of session?.referenceSnapshots ?? []) {
     if (reference.referenceKind === "video_sources") {
+      if (session?.videoReferenceMode === "text_only") continue;
       content.push({ type: "text", text: `${reference.alias}\n[本地视频参考]` });
       for (const [index, assetRef] of (reference.assetRefs ?? []).filter((item) => item.kind === "video").entries()) {
         const video = videos.get(assetRef.assetId);
         if (!video?.dataUrl) throw new ComposerServiceError(`${reference.alias}/视频${index + 1} 读取失败，本次没有发送不完整参考`, 422, { retryable: true });
-        if (protocol === "responses") throw new ComposerServiceError("当前所选模型接口尚未声明视频输入，请切换视频模型", 422, { retryable: false });
         content.push({ type: "text", text: `${reference.alias}/视频${index + 1}` });
         content.push({ type: "video", dataUrl: video.dataUrl, mimeType: video.mimeType });
       }
@@ -1545,6 +1525,7 @@ function responsesBody(service, instructions, content, stream) {
     instructions,
     input: [{ role: "user", content: content.map((item) => item.type === "image"
       ? { type: "input_image", ...(item.fileId ? { file_id: item.fileId } : { image_url: item.dataUrl }), detail: item.detail }
+      : item.type === "video" ? { type: "input_video", video_url: item.dataUrl }
       : { type: "input_text", text: item.text }) }],
     ...(service.reasoningEffort ? { reasoning: { effort: service.reasoningEffort } } : {})
   };
@@ -1771,13 +1752,6 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
   };
 }
 
-function assertTextReferencesAvailable(session) {
-  const unavailable = (session?.referenceSnapshots ?? []).filter((item) => !String(item.referenceText ?? "").trim() && item.imageRefs?.length);
-  if (unavailable.length) {
-    throw new ComposerServiceError(`${unavailable.map((item) => item.alias).join("、")} 只有原图，DeepSeek 无法读取；请切换 OpenAI、米醋或兼容视觉服务`, 422, { retryable: false });
-  }
-}
-
 function compatibleConfigured(vision) {
   const provider = vision.compatible;
   return Boolean(vision.consent && provider.endpoint && provider.model && (provider.apiKey || isLoopback(provider.endpoint)));
@@ -1979,6 +1953,7 @@ function compatibleReasoningSupported(provider = {}) {
 }
 
 function referenceImageCount(session) {
+  if (session?.imageReferenceMode === "text_only") return 0;
   return (session?.referenceSnapshots ?? []).reduce((total, item) => total + (item.imageRefs?.length || 0), 0);
 }
 
@@ -2170,50 +2145,21 @@ async function readChatSse(response, service, onDelta = () => undefined, signal)
 
 async function readSse(response, applyEvent, service, signal) {
   if (!response?.body?.getReader) throw new ComposerServiceError(`${service.label} 没有返回流式内容`, 503);
-  const reader = response.body.getReader();
-  const onAbort = () => { void reader.cancel(signal.reason).catch(() => undefined); };
-  signal?.addEventListener("abort", onAbort, { once: true });
-  const decoder = new TextDecoder();
   const state = { content: "", usage: emptyUsage(), model: service.model, finishReason: "" };
-  let buffer = "";
-  let ended = false;
   let receivedDone = false;
-  const consumeLine = (line) => {
-    if (!line.startsWith("data:")) return;
-    const data = line.slice(5).trim();
-    if (!data) return;
-    if (data === "[DONE]") { receivedDone = true; return; }
+  for await (const data of readEventStream(response, { signal })) {
+    if (!data.trim()) continue;
+    if (data === "[DONE]") { receivedDone = true; continue; }
     let event;
     try { event = JSON.parse(data); }
     catch { throw new ComposerServiceError(`${service.label} 流式内容不完整，已保留收到的内容，请明确重试`, 502); }
     applyEvent(event, state);
-  };
-  try {
-    while (true) {
-      signal?.throwIfAborted();
-      const { done, value } = await reader.read();
-      signal?.throwIfAborted();
-      if (done) {
-        ended = true;
-        buffer += decoder.decode();
-        if (buffer) consumeLine(buffer);
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() ?? "";
-      for (const line of lines) consumeLine(line);
-    }
-    assertTextCompletion(state.finishReason, service);
-    if ((!state.finishReason && !receivedDone) || !state.content.trim()) {
-      throw new ComposerServiceError(`${service.label} 没有返回完整内容，已保留收到的内容，请明确重试`, 503);
-    }
-    return state;
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-    if (!ended) await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
   }
+  assertTextCompletion(state.finishReason, service);
+  if ((!state.finishReason && !receivedDone) || !state.content.trim()) {
+    throw new ComposerServiceError(`${service.label} 没有返回完整内容，已保留收到的内容，请明确重试`, 503);
+  }
+  return state;
 }
 
 function assertTextCompletion(reason, service, error) {

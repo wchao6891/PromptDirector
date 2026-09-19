@@ -2,6 +2,7 @@ import { expandLogicalCaseIds } from "./compound-cases.js";
 import { uniqueNames } from "./facets.js";
 
 export const LIBRARY_BATCH_ACTIONS = Object.freeze({
+  setClassification: "BATCH_SET_CLASSIFICATION",
   addCustomLabels: "BATCH_ADD_CUSTOM_LABELS",
   setProject: "BATCH_SET_PROJECT",
   moveToTrash: "BATCH_MOVE_TO_TRASH"
@@ -47,6 +48,11 @@ export function expandLibrarySelection(selectedLogicalCaseIds = [], compoundCase
 export function buildLibraryBatchPayload(selectedLogicalCaseIds = [], compoundCases = [], operation = {}) {
   const entryIds = expandLibrarySelection(selectedLogicalCaseIds, compoundCases);
   if (!entryIds.length) throw new Error("请至少选择一个案例");
+
+  if (operation.type === LIBRARY_BATCH_ACTIONS.setClassification) {
+    if (!operation.contentTypeId) throw new Error("请选择案例类型");
+    return { type: operation.type, entryIds, pathIds: [operation.contentTypeId] };
+  }
 
   if (operation.type === LIBRARY_BATCH_ACTIONS.addCustomLabels) {
     return {

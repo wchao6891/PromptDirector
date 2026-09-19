@@ -24,6 +24,19 @@ def write_archive(path: Path, library: str, asset_path: str, size: int, method: 
     return digest.hexdigest()
 
 
+def expect_import_ready(page) -> None:
+    try:
+        expect(page.locator("#library-package-import-confirm")).to_be_enabled(timeout=300000)
+    except AssertionError:
+        # Keep the failure, and expose whether parsing or capacity blocked import.
+        print(json.dumps({
+            "stage": "import_preflight_failed",
+            "dialog": page.locator("#library-package-import-dialog").inner_text(),
+            "storage": page.evaluate("async () => navigator.storage.estimate()"),
+        }, ensure_ascii=False), flush=True)
+        raise
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="promptdirector-zip64-") as temporary, extension_session("promptdirector-zip-scale-") as session:
         root = Path(temporary)
@@ -55,13 +68,13 @@ def main() -> None:
         page.locator('[data-settings-tab="general"]').click()
         page.locator("#library-package-file").set_input_files([str(item["path"]) for item in sources])
         confirm = page.locator("#library-package-import-confirm")
-        expect(confirm).to_be_enabled(timeout=300000)
+        expect_import_ready(page)
         # Cancellation after actual preflight must leave the existing library untouched.
         page.locator("#library-package-import-cancel").click()
         state = page.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert [entry["id"] for entry in state["entries"]] == [sentinel["id"]]
         page.locator("#library-package-file").set_input_files([str(item["path"]) for item in sources])
-        expect(confirm).to_be_enabled(timeout=300000)
+        expect_import_ready(page)
         confirm.click()
         expect(page.locator("#library-package-import-dialog")).to_be_hidden(timeout=300000)
         for source in sources:

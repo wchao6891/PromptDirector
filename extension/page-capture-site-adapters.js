@@ -30,6 +30,8 @@ export function installPageCaptureSiteObserver(options = {}) {
   Object.defineProperty(globalThis, stateKey, { value: state, configurable: true });
 
   const safeText = (value, limit = 10000) => clean(value).slice(0, limit);
+  const safeMultiline = (value, limit = 10000) => String(value ?? "")
+    .replace(/\r\n?/gu, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "").trim().slice(0, limit);
   const safeInteger = (value) => Number.isSafeInteger(Number(value)) ? Number(value) : 0;
   const modelKey = (content) => {
     try {
@@ -53,7 +55,8 @@ export function installPageCaptureSiteObserver(options = {}) {
       common_attr: {
         id,
         title: safeText(item?.common_attr?.title, 500),
-        description: safeText(item?.common_attr?.description),
+        description: safeMultiline(item?.common_attr?.description),
+        cover_url: safeText(item?.common_attr?.cover_url, 5000),
         create_time: safeInteger(item?.common_attr?.create_time)
       },
       author: {
@@ -61,7 +64,13 @@ export function installPageCaptureSiteObserver(options = {}) {
         uid: safeText(item?.author?.uid, 200)
       },
       aigc_image_params: {
-        text2image_params: { prompt: safeText(item?.aigc_image_params?.text2image_params?.prompt, 30000) }
+        text2image_params: { prompt: safeMultiline(item?.aigc_image_params?.text2image_params?.prompt, 30000) },
+        text2video_params: { video_gen_inputs: (item?.aigc_image_params?.text2video_params?.video_gen_inputs || []).map(input => ({
+          prompt: safeMultiline(input.prompt, 30000),
+          unified_edit_input: { meta_list: (input.unified_edit_input?.meta_list || []).filter(part => part.meta_type === "text").map(part => ({
+            meta_type: "text", text: safeMultiline(part.text, 30000)
+          })) }
+        })) }
       },
       model_key: safeText(item?.model_key, 200) || modelKey(item?.aigc_draft?.content),
       statistic: {
@@ -72,7 +81,15 @@ export function installPageCaptureSiteObserver(options = {}) {
         large_images: (Array.isArray(item?.image?.large_images) ? item.image.large_images : [])
           .slice(0, state.maxMedia)
           .map(safeImage)
-      }
+      },
+      ...(item?.video?.origin_video ? { video: {
+        duration: Number(item.video.duration) || 0,
+        origin_video: {
+          video_url: safeText(item.video.origin_video.video_url, 5000),
+          width: safeInteger(item.video.origin_video.width),
+          height: safeInteger(item.video.origin_video.height)
+        }
+      } } : {})
     };
   };
   const ingestModels = (value) => {
@@ -151,6 +168,59 @@ export function collectPageCaptureSitePayload(options = {}) {
   const maxNodes = Number.isSafeInteger(Number(options.maxCandidates)) && Number(options.maxCandidates) > 0 ? Number(options.maxCandidates) : 0;
   const maxTextCharacters = Number.isSafeInteger(Number(options.maxTextCharacters)) && Number(options.maxTextCharacters) > 0 ? Number(options.maxTextCharacters) : 0;
   const host = clean(globalThis.location?.hostname).toLocaleLowerCase("en-US");
+  if (host === "midjourney.com" || host.endsWith(".midjourney.com")) {
+    const pageUrl = new URL(globalThis.location.href);
+    const jobId = /^\/jobs\/([a-f0-9-]+)\/?$/iu.exec(pageUrl.pathname)?.[1];
+    const index = pageUrl.searchParams.get("index") || "0";
+    const elements = [...document.querySelectorAll("img,video")];
+    const mediaFor = (id, selectedIndex, rootElements) => rootElements.flatMap(element => {
+      const source = element.currentSrc || element.src || "";
+      try {
+        const url = new URL(source);
+        if (url.hostname !== "cdn.midjourney.com") return [];
+        const image = url.pathname.startsWith(`/${id}/0_${selectedIndex}.`);
+        const preview = url.pathname.startsWith(`/${id}/0_${selectedIndex}_`);
+        const video = element.tagName === "VIDEO" && url.pathname.startsWith(`/video/${id}/${selectedIndex}.`);
+        if (!image && !preview && !video) return [];
+        return [{ url: url.href, kind: video ? "video" : "image", original: image || video,
+          width: element.naturalWidth || element.videoWidth || 0, height: element.naturalHeight || element.videoHeight || 0,
+          posterUrl: element.poster || "" }];
+      } catch { return []; }
+    }).sort((a,b) => Number(b.original)-Number(a.original) || Number(Boolean(b.posterUrl))-Number(Boolean(a.posterUrl)) || b.width-a.width);
+    if (jobId) {
+      const copyButton = [...document.querySelectorAll("button")].find(button => button.textContent.trim() === "Copy Prompt");
+      let scope = copyButton?.parentElement;
+      while (scope?.parentElement && !scope.querySelector(".notranslate p")) scope = scope.parentElement;
+      const promptNode = scope?.querySelector(".notranslate p");
+      const parameters = [...(scope?.querySelectorAll("button > span:first-child") || [])]
+        .map(node => node.textContent.trim()).filter(text => text.startsWith("--"));
+      const references = new Map();
+      for (const button of scope?.querySelectorAll("button[title]") || []) {
+        const flag = /\((--[a-z]+)\)/iu.exec(button.title)?.[1];
+        const image = button.querySelector("img");
+        if (!flag || !image) continue;
+        const url = /^https?:/u.test(image.alt) ? image.alt : image.currentSrc || image.src;
+        if (!/^https?:/u.test(url)) continue;
+        references.set(flag, [...(references.get(flag) || []), url]);
+      }
+      const prompt = [promptNode?.textContent.trim(), ...new Set(parameters),
+        ...[...references].map(([flag,urls]) => `${flag} ${[...new Set(urls)].join(" ")}`)].filter(Boolean).join(" ");
+      const media = mediaFor(jobId,index,elements).slice(0,1);
+      const author = [...(scope?.querySelectorAll('a[href^="/@"]') || [])].filter(a=>!a.closest("nav")).at(-1)?.textContent.trim() || "";
+      return {adapter:"midjourney",pageKind:"detail",canonicalUrl:pageUrl.href,
+        items:[{jobId,index,prompt,author,media,canonicalUrl:pageUrl.href}]};
+    }
+    const items = [...document.querySelectorAll('a[href^="/jobs/"]')].slice(0,maxNodes).flatMap(link => {
+      const url = new URL(link.href); const id = /^\/jobs\/([a-f0-9-]+)\/?$/iu.exec(url.pathname)?.[1];
+      if (!id) return [];
+      const selectedIndex = url.searchParams.get("index") || "0";
+      const background = getComputedStyle(link).backgroundImage;
+      const urls = [...background.matchAll(/url\(["']?([^"')]+)["']?\)/gu)].map(match=>match[1]);
+      const observed = [...link.querySelectorAll("img,video"), ...urls.reverse().map(src=>({src,tagName:"IMG"}))];
+      return [{jobId:id,index:selectedIndex,canonicalUrl:url.href,media:mediaFor(id,selectedIndex,observed).slice(0,1),prompt:""}];
+    });
+    return {adapter:"midjourney",pageKind:"feed",canonicalUrl:pageUrl.href,items};
+  }
   if ((host === "artstation.com" || host.endsWith(".artstation.com"))
     && /^\/projects\/[^/]+\/?$/u.test(globalThis.location?.pathname || "")) {
     const description = globalThis.document?.querySelector?.(".project-description");
@@ -511,8 +581,7 @@ export function collectPageCaptureSitePayload(options = {}) {
 
   const path = clean(globalThis.location?.pathname);
   const rawLastPart = path.split("/").filter(Boolean).at(-1) || "";
-  const workId = /^\d{8,32}$/u.test(rawLastPart) ? rawLastPart : "";
-  const pageKind = workId ? "detail" : /^\/ai-tool\/(?:home|explore)(?:\/|$)/u.test(path) ? "feed" : "unknown";
+  const routeWorkId = /^\d{8,32}$/u.test(rawLastPart) ? rawLastPart : "";
   // Read only the public work data attached to the current rendered surface.
   const componentProps = function* (element) {
     const key = Object.keys(element || {}).find((name) => name.startsWith("__reactFiber$"));
@@ -522,6 +591,22 @@ export function collectPageCaptureSitePayload(options = {}) {
       if (fiber.memoizedProps) yield fiber.memoizedProps;
     }
   };
+  const visibleDetail = [...globalThis.document?.querySelectorAll?.('[data-detail-container-appearance]') || []]
+    .find(element => element.getClientRects?.().length);
+  const visibleDialog = [...globalThis.document?.querySelectorAll?.('[role="dialog"]') || []]
+    .find(element => element.getClientRects?.().length);
+  const detailSurface = visibleDetail || visibleDialog;
+  let visibleWorkId = "";
+  for (const element of detailSurface ? [detailSurface, ...detailSurface.querySelectorAll?.("img,h1,h2,video") || []] : []) {
+    for (const props of componentProps(element)) {
+      const id = clean(props.renderModel?.id);
+      if (/^\d{8,32}$/u.test(id)) { visibleWorkId = id; break; }
+    }
+    if (visibleWorkId) break;
+  }
+  // A work overlay can keep the feed URL. Its own identity wins over background cards.
+  const workId = visibleWorkId || routeWorkId;
+  const pageKind = workId || visibleDetail ? "detail" : /^\/ai-tool\/(?:home|explore)(?:\/|$)/u.test(path) ? "feed" : "unknown";
   const feedRoot = globalThis.document?.querySelector?.('[aria-label="Explore content"]');
   let currentItems = null;
   for (const props of componentProps(feedRoot)) {
@@ -541,7 +626,15 @@ export function collectPageCaptureSitePayload(options = {}) {
         create_time: item.commonAttr.createTime
       },
       author: { name: clean(item.author?.name), uid: clean(item.author?.uid) },
-      aigc_image_params: { text2image_params: { prompt: String(params?.prompt || "").slice(0, maxTextCharacters) } },
+      aigc_image_params: {
+        text2image_params: { prompt: String(params?.prompt || "").slice(0, maxTextCharacters) },
+        text2video_params: { video_gen_inputs: (item.aigcImageParams?.text2videoParams?.videoGenInputs || []).map(input => ({
+          prompt: String(input.prompt || "").slice(0, maxTextCharacters),
+          unified_edit_input: { meta_list: (input.unifiedEditInput?.metaList || []).filter(part => part.metaType === "text").map(part => ({
+            meta_type: "text", text: String(part.text || "").slice(0, maxTextCharacters)
+          })) }
+        })) }
+      },
       model_key: clean(item.modelInfo?.modelName || params?.modelConfig?.modelName),
       statistic: { favorite_num: item.statistic?.favoriteNum, usage_num: item.statistic?.usageNum },
       image: { large_images: (item.image?.largeImages || []).slice(0, maxMedia).map((image) => ({
@@ -603,6 +696,7 @@ export function collectPageCaptureSitePayload(options = {}) {
   for (const rawItem of scopedItems) {
     const item = publicItem(rawItem);
     const id = clean(item?.common_attr?.id);
+    if (pageKind === "detail" && !workId) continue;
     if (workId && id !== workId) continue;
     if (!workId && maxNodes && byId.size >= maxNodes && !byId.has(id)) break;
     if (/^\d{8,32}$/u.test(id)) byId.set(id, item);
@@ -618,9 +712,7 @@ export function collectPageCaptureSitePayload(options = {}) {
 
   const detailFromDom = () => {
     if (!workId || !globalThis.document?.body) return null;
-    const root = [...globalThis.document.querySelectorAll?.('[role="dialog"]') || []]
-      .find((element) => element.getClientRects?.().length)
-      || globalThis.document.querySelector?.("[data-detail-container-appearance]") || globalThis.document.body;
+    const root = detailSurface || globalThis.document.body;
     for (const heading of root.querySelectorAll?.("h1,h2") || []) {
       for (const props of componentProps(heading)) {
         const data = props.data;
@@ -725,6 +817,36 @@ export function collectPageCaptureSitePayload(options = {}) {
 }
 
 export function normalizePageCaptureSitePayload(value, canonicalUrlValue = "") {
+  if (value?.adapter === "midjourney") {
+    const pageKind = value.pageKind === "feed" ? "feed" : "detail";
+    const candidates = (value.items || []).flatMap(item => {
+      const canonicalUrl = safeHttpUrl(item.canonicalUrl);
+      if (!canonicalUrl) return [];
+      const source = new URL(canonicalUrl);
+      if (!(source.hostname === "midjourney.com" || source.hostname.endsWith(".midjourney.com"))) return [];
+      const jobId = /^\/jobs\/([a-f0-9-]+)\/?$/iu.exec(source.pathname)?.[1];
+      const index = source.searchParams.get("index") || "0";
+      if (!jobId || !/^\d+$/u.test(index)) return [];
+      const itemId = `${jobId}:${index}`;
+      const prompt = cleanMultiline(item.prompt);
+      const media = (item.media || []).flatMap(asset => {
+        const url = safeTrustedMediaUrl("midjourney",asset.url);
+        if (!url || ![ `/${jobId}/0_${index}.`, `/${jobId}/0_${index}_`, `/video/${jobId}/${index}.` ].some(prefix => new URL(url).pathname.startsWith(prefix))) return [];
+        return [{id:`midjourney:${itemId}`,kind:asset.kind === "video" ? "video" : "image",url,
+          posterUrl:safeTrustedMediaUrl("midjourney",asset.posterUrl),width:Number(asset.width)||0,height:Number(asset.height)||0,
+          placement:"inline",sourceKind:asset.original ? "site-original" : "source",captureMethod:"source",originalPrompt:prompt}];
+      });
+      if (!media.length) return [];
+      const pageType = media.some(asset=>asset.kind === "video") ? "video" : "artwork";
+      return [{id:`midjourney:${itemId}`,adapter:"midjourney",pageKind:"detail",pageType,canonicalUrl,
+        title:prompt.slice(0,160) || `Midjourney ${jobId.slice(0,8)}`,contentText:prompt,media,
+        completeness:prompt && media.every(asset=>asset.sourceKind === "site-original") ? "complete" : "partial",
+        sourceFacts:{provider:"midjourney",pageType,itemId,author:clean(item.author),originalPromptAvailable:Boolean(prompt),extractionMethod:"structured"}}];
+    });
+    return { ...(pageKind === "detail" ? candidates[0] : {}), adapter:"midjourney",pageKind,
+      canonicalUrl:safeHttpUrl(value.canonicalUrl || canonicalUrlValue),candidates,
+      completeness:candidates.length && candidates.every(item=>item.completeness === "complete") ? "complete" : "partial" };
+  }
   if (value?.adapter === "artstation") {
     const canonicalUrl = safeHttpUrl(canonicalUrlValue || value.canonicalUrl);
     if (!canonicalUrl) return null;
@@ -752,8 +874,10 @@ export function normalizePageCaptureSitePayload(value, canonicalUrlValue = "") {
   if (value?.adapter !== "jimeng") return null;
   const pageKind = ["feed", "detail"].includes(value?.pageKind) ? value.pageKind : "detail";
   const rawItems = Array.isArray(value?.items) ? value.items : value?.item ? [value.item] : [];
+  const workId = clean(value?.workId);
   const seen = new Set();
   const candidates = rawItems.flatMap((item) => {
+    if (pageKind === "detail" && workId && clean(item?.common_attr?.id) !== workId) return [];
     const candidate = normalizeJimengItem(item, value?.modelNames);
     if (!candidate || seen.has(candidate.sourceFacts.itemId)) return [];
     seen.add(candidate.sourceFacts.itemId);
@@ -780,7 +904,7 @@ export function normalizePageCaptureSitePayload(value, canonicalUrlValue = "") {
       candidates
     });
   }
-  const exact = candidates.find((candidate) => candidate.sourceFacts.itemId === clean(value?.workId)) || candidates[0];
+  const exact = candidates[0];
   return { ...exact, pageKind, candidates: [exact] };
 }
 
@@ -804,6 +928,7 @@ export function isTrustedPageCaptureMediaUrl(adapterId, value) {
     if (adapterId === "jimeng") return JIMENG_IMAGE_HOST_PATTERN.test(url.hostname)
       || /^p\d+-heycan-hgt-sign\.byteimg\.com$/u.test(url.hostname)
       || /^v\d+-artist\.vlabvod\.com$/u.test(url.hostname);
+    if (adapterId === "midjourney") return url.hostname === "cdn.midjourney.com";
     if (adapterId === "libtv") return url.hostname === "libtv-res.liblib.art";
     if (adapterId === "liblibai") return url.hostname === "liblib.cloud" || url.hostname.endsWith(".liblib.cloud");
     if (adapterId === "krea") return url.hostname === "krea.ai" || url.hostname.endsWith(".krea.ai");
@@ -1268,7 +1393,11 @@ function stableTextHash(value) {
 function normalizeJimengItem(item, modelNamesValue = {}) {
   const workId = clean(item?.common_attr?.id);
   if (!/^\d{8,32}$/u.test(workId)) return null;
-  const prompt = cleanMultiline(item?.aigc_image_params?.text2image_params?.prompt);
+  const videoPrompt = (item?.aigc_image_params?.text2video_params?.video_gen_inputs || []).map(input =>
+    cleanMultiline(input.prompt) || (input.unified_edit_input?.meta_list || []).filter(part => part.meta_type === "text")
+      .map(part => cleanMultiline(part.text)).filter(Boolean).join("\n")
+  ).filter(Boolean).join("\n\n");
+  const prompt = videoPrompt || cleanMultiline(item?.aigc_image_params?.text2image_params?.prompt);
   const description = cleanMultiline(item?.common_attr?.description);
   const images = Array.isArray(item?.image?.large_images) ? item.image.large_images : [];
   const modelKey = clean(item?.model_key) || jimengDraftModel(item?.aigc_draft?.content);
@@ -1286,6 +1415,7 @@ function normalizeJimengItem(item, modelNamesValue = {}) {
       id: `jimeng:${workId}:${index + 1}`,
       kind: "image",
       originalPrompt: prompt,
+      placement: "inline",
       url,
       width,
       height,
@@ -1294,14 +1424,17 @@ function normalizeJimengItem(item, modelNamesValue = {}) {
       variants: [{ url, sourceKind, width, height }]
     }];
   });
-  const videoUrl = safeTrustedMediaUrl("jimeng", item?.video?.url);
+  const video = item?.video;
+  const originalVideo = video?.origin_video;
+  const videoUrl = safeTrustedMediaUrl("jimeng", video?.url || originalVideo?.video_url);
   if (videoUrl && /^v\d+-artist\.vlabvod\.com$/u.test(new URL(videoUrl).hostname)) {
-    const sourceKind = item.video.sourceKind === "video-element" ? "video-element" : "site-original";
+    const sourceKind = video.sourceKind === "video-element" ? "video-element" : "site-original";
     media.push({
       id: `jimeng:${workId}:video`, kind: "video", url: videoUrl, originalPrompt: prompt,
-      width: positiveInteger(item.video.width), height: positiveInteger(item.video.height),
-      duration: Number(item.video.duration) || 0,
-      posterUrl: safeTrustedMediaUrl("jimeng", item.video.poster),
+      placement: "inline",
+      width: positiveInteger(video.width || originalVideo?.width), height: positiveInteger(video.height || originalVideo?.height),
+      duration: Number(video.duration) || 0,
+      posterUrl: safeTrustedMediaUrl("jimeng", video.poster || item?.common_attr?.cover_url),
       sourceKind, captureMethod: "source",
       variants: [{ url: videoUrl, sourceKind }]
     });

@@ -16,7 +16,8 @@ test("UI preferences accept only supported locale theme and motion values", () =
     analysisDiagnostics: false,
     sidebarWidth: 244,
     detailMode: "fullscreen",
-    detailSidebarWidth: 760
+    detailSidebarWidth: 760,
+    detailPanelRatio: null
   });
   assert.deepEqual(normalizeUiPreferences({ locale: "en", theme: "dark", motion: "none", analysisDiagnostics: true }), {
     locale: "en",
@@ -25,7 +26,8 @@ test("UI preferences accept only supported locale theme and motion values", () =
     analysisDiagnostics: true,
     sidebarWidth: 244,
     detailMode: "fullscreen",
-    detailSidebarWidth: 760
+    detailSidebarWidth: 760,
+    detailPanelRatio: null
   });
   assert.equal(normalizeUiPreferences({ theme: "light", motion: "reduced" }).theme, "light");
   assert.equal(normalizeUiPreferences({ theme: "system", motion: "reduced" }).theme, "system");

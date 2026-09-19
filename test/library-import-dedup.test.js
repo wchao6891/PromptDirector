@@ -208,3 +208,54 @@ test("managed media without a reliable content hash is preserved as a copy", () 
   assert.equal(second.importedCount, 1);
   assert.equal(second.skippedCount, 0);
 });
+
+test("doubling unique cases does not re-clone every preceding case during import planning", (t) => {
+  const clone = globalThis.structuredClone;
+  let calls = 0;
+  const spy = t.mock.method(globalThis, "structuredClone", (...args) => {
+    calls += 1;
+    return clone(...args);
+  });
+  const measure = (count) => {
+    const source = portablePackage(Array.from({ length: count }, (_, index) =>
+      portableImageEntry(`scale-${index}`, index.toString(16).padStart(64, "0"))));
+    calls = 0;
+    const result = mergeLibraryPackage(emptyLibrary(), source, { preserveLibraryConfiguration: true });
+    assert.equal(result.importedCount, count);
+    assert.equal(result.state.entries.length, count);
+    return calls;
+  };
+  try {
+    // Count expensive copies instead of asserting machine-dependent milliseconds.
+    const small = measure(128);
+    const large = measure(256);
+    assert.ok(large <= small * 2, `doubling cases grew content-copy work from ${small} to ${large}`);
+  } finally {
+    spy.mock.restore();
+  }
+});
+
+test("replacing a local case removes its old identity before later incoming cases are checked", () => {
+  const current = mergeLibraryPackage(emptyLibrary(), portablePackage([portableEntry("local")])).state;
+  const result = mergeLibraryPackage(current, portablePackage([
+    portableEntry("local", { text: "替换后的资料" }),
+    portableEntry("incoming-original")
+  ]), { preserveLibraryConfiguration: true, entryConflictResolutions: { local: "use-incoming" } });
+  assert.equal(result.importedCount, 2);
+  assert.equal(result.skippedCount, 0);
+  assert.equal(result.entryIdMap["incoming-original"], "incoming-original");
+  assert.deepEqual(result.state.entries.map(entry => entry.text), ["替换后的资料", "保留这段创作提示词"]);
+});
+
+test("replacing the first of equivalent local cases keeps the remaining duplicate available", () => {
+  const current = mergeLibraryPackage(emptyLibrary(), portablePackage([
+    portableEntry("first"), portableEntry("second")
+  ])).state;
+  const result = mergeLibraryPackage(current, portablePackage([
+    portableEntry("first", { text: "替换后的资料" }), portableEntry("incoming-original")
+  ]), { preserveLibraryConfiguration: true, entryConflictResolutions: { first: "use-incoming" } });
+  assert.equal(result.importedCount, 1);
+  assert.equal(result.skippedCount, 1);
+  assert.equal(result.entryIdMap["incoming-original"], "second");
+  assert.deepEqual(result.state.entries.map(entry => entry.id), ["second", "first"]);
+});

@@ -169,3 +169,10 @@ test("trash payload expands compound members and empty selection is rejected", (
     /至少选择一个案例/
   );
 });
+
+test('batch classification expands compound members once and requires an explicit type', () => {
+  const compounds=[{id:'compound:one',memberEntryIds:['a','b']}];
+  assert.deepEqual(buildLibraryBatchPayload(['compound:one','a'],compounds,{type:LIBRARY_BATCH_ACTIONS.setClassification,contentTypeId:'content:prompt:video'}),
+    {type:'BATCH_SET_CLASSIFICATION',entryIds:['a','b'],pathIds:['content:prompt:video']});
+  assert.throws(()=>buildLibraryBatchPayload(['a'],[],{type:LIBRARY_BATCH_ACTIONS.setClassification}),/请选择案例类型/);
+});

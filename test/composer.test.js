@@ -18,7 +18,6 @@ import {
   createComposerAssemblySnapshot,
   createComposerSession,
   createReferenceSnapshots,
-  imageReferenceModeAvailability,
   isMeaningfulComposerSession,
   normalizeComposerAiProfile,
   normalizeComposerSessions,
@@ -486,89 +485,12 @@ function completeReconstruction(id, assetId, reconstructionPrompt, createdAt) {
   };
 }
 
-test("image reference modes default to conditioned and unlock text-only modes for prompt-backed or independently analyzed assets", () => {
-  const analyzedReference = {
-    entryId: "case-a",
-    alias: "@参考1",
-    scope: "asset",
-    referenceText: "完整分析",
-    imageRefs: [{ visualId: "image-a", mimeType: "image/webp" }],
-    assets: [{
-      assetId: "image-a",
-      imageFingerprint: "a".repeat(64),
-      analysisVersion: 2,
-      analysisFingerprint: "b".repeat(64),
-      reconstructionPrompt: "可独立生图的文字"
-    }]
-  };
-  const defaultSession = createComposerSession({ referenceSnapshots: [analyzedReference] });
-  assert.equal(defaultSession.imageReferenceMode, "conditioned");
-  assert.deepEqual(imageReferenceModeAvailability(defaultSession.referenceSnapshots), {
-    canDisableImages: true,
-    missingAssetIds: []
-  });
-  assert.equal(createComposerSession({
-    ...defaultSession,
-    imageReferenceMode: "text_only"
-  }).imageReferenceMode, "text_only");
-
-  const promptBackedReference = {
-    entryId: "case-with-prompt",
-    alias: "@参考1",
-    originalText: "雨夜石桥上的巨龙",
-    referenceText: "雨夜石桥上的巨龙",
-    imageRefs: [{ visualId: "prompt-image", mimeType: "image/webp" }],
-    assets: [{ assetId: "prompt-image" }]
-  };
-  assert.deepEqual(imageReferenceModeAvailability([promptBackedReference]), {
-    canDisableImages: true,
-    missingAssetIds: []
-  });
-  assert.equal(createComposerSession({
-    referenceSnapshots: [promptBackedReference],
-    imageReferenceMode: "text_only"
-  }).imageReferenceMode, "text_only");
-
-  const unavailable = imageReferenceModeAvailability([{
-    entryId: "pure-image",
-    alias: "@参考1",
-    imageRefs: [{ visualId: "image-a", mimeType: "image/webp" }],
-    assets: [{ assetId: "image-a", analysisVersion: 1, reconstructionPrompt: "旧描述" }]
-  }]);
-  assert.equal(unavailable.canDisableImages, false);
-  assert.deepEqual(unavailable.missingAssetIds, ["image-a"]);
-  assert.equal(createComposerSession({
-    referenceSnapshots: [{ entryId: "pure-image", alias: "@参考1", imageRefs: [{ visualId: "image-a" }], assets: [] }],
-    imageReferenceMode: "text_only"
-  }).imageReferenceMode, "conditioned");
-
-  const legacyDescription = imageReferenceModeAvailability([{
-    entryId: "legacy-described-image",
-    alias: "@参考旧图",
-    referenceKind: "vision",
-    referenceText: "一座被薄雾包围的古代庭院，青绿色冷光。",
-    imageRefs: [{ visualId: "image-v1", mimeType: "image/webp" }],
-    assets: [{
-      assetId: "image-v1",
-      analysisVersion: 1,
-      imageFingerprint: "a".repeat(64),
-      analysisImageFingerprint: "a".repeat(64),
-      reconstructionPrompt: ""
-    }]
-  }]);
-  assert.deepEqual(legacyDescription, { canDisableImages: true, missingAssetIds: [] });
-
-  const mixed = imageReferenceModeAvailability([
-    promptBackedReference,
-    {
-      entryId: "another-pure-image",
-      alias: "@参考2",
-      imageRefs: [{ visualId: "image-b", mimeType: "image/webp" }],
-      assets: [{ assetId: "image-b" }]
-    }
-  ]);
-  assert.equal(mixed.canDisableImages, false);
-  assert.deepEqual(mixed.missingAssetIds, ["image-b"]);
+test("explicit text-only choice persists even when reference images have no analysis", () => {
+  const session = createComposerSession({ imageReferenceMode: "text_only", videoReferenceMode: "text_only",
+    referenceSnapshots: [{entryId: "image", imageRefs: [{visualId: "original"}]}] });
+  const restored = createComposerSession(JSON.parse(JSON.stringify(session)));
+  assert.equal(restored.imageReferenceMode, "text_only");
+  assert.equal(restored.videoReferenceMode, "text_only");
 });
 
 test("a saved V2 analysis remains eligible for text-only mode when an older asset omitted its duplicate content hash", () => {
@@ -590,10 +512,6 @@ test("a saved V2 analysis remains eligible for text-only mode when an older asse
     }]
   });
   assert.equal(session.imageReferenceMode, "text_only");
-  assert.deepEqual(imageReferenceModeAvailability(session.referenceSnapshots), {
-    canDisableImages: true,
-    missingAssetIds: []
-  });
 });
 
 test("planner payload sends selected and retrieved text without local titles, IDs, or the rest of the library", () => {

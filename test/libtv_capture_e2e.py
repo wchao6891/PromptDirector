@@ -49,7 +49,7 @@ def main():
             entries = collector.evaluate("async ()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
             assert len(entries) == 2, 'Different public works on one feed URL must remain separate'
             assert all(not e['text'] and e['sourceFacts']['description'] == 'Public description, not a prompt' for e in entries)
-            assert all(e['classification']['pathIds'] == ['content:video-case'] for e in entries), entries
+            assert all(e['classification']['pathIds'] == ['content:prompt:video'] for e in entries), entries
             assert all(any(a['kind'] == 'video' and a['storageMode'] == 'managed' for a in e['mediaAssets']) for e in entries)
             assert all(next(a for a in e['mediaAssets'] if a['kind']=='video')['sourceUrl'].startswith(CDN+'/video-') for e in entries), entries
             repeated = collector.evaluate("async batch=>chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch})", batch)

@@ -58,3 +58,35 @@ test('newly recovered article images return to their original body position',asy
   assert.equal(result.articleDocument.blocks[1].assetId,'image');
   assert.equal(result.text,entry.text);
 });
+
+test('explicit supplemental text on a saved page is appended without overwriting user edits', async () => {
+  const entry = { id: 'case', text: 'User edited body', textRevision: 3, title: 'User title', mediaAssets: [],
+    articleDocument: { version: 1, blocks: [{ id: 'old', kind: 'paragraph', text: 'User edited body', sourceOrder: 0 }] } };
+  const selected = { ...candidate, media: [], textBlocks: [
+    { id: 'body', text: 'Changed webpage body must not replace the user edit' },
+    { id: 'added:draft:fragment', text: 'Selected additional prompt' }
+  ] };
+  const plan = await planPageCaptureRepair(entry, selected, async () => true);
+  const result = mergePageCaptureRepair(entry, selected, plan, [], plan.assetIds);
+  assert.equal(result.text, 'User edited body\n\nSelected additional prompt');
+  assert.equal(result.title, 'User title');
+  assert.equal(result.textRevision, 4);
+  assert.deepEqual(result.articleDocument.blocks.map(b => b.text), ['User edited body', 'Selected additional prompt']);
+  const again = await planPageCaptureRepair(result, selected, async () => true);
+  assert.deepEqual(again.textAdditions, []);
+});
+
+test('media receipt distinguishes downloaded originals from failed source-only video references', async () => {
+  const {pageCaptureMediaReceipt} = await import('../extension/page-capture-repair.js');
+  const candidate={media:[{id:'image'},{id:'video'},{id:'embed'},{id:'missing'}]};
+  const result=pageCaptureMediaReceipt(candidate,new Map([['image','a'],['video','b'],['embed','c']]),new Set(['video','missing']));
+  assert.deepEqual(result,{savedMediaIds:['image','embed'],pendingMediaIds:['video','missing']});
+});
+
+test('retry recognizes already stored local supplement by content hash after its draft blob is consumed', async () => {
+  const {planPageCaptureRepair} = await import('../extension/page-capture-repair.js');
+  const plan=await planPageCaptureRepair({mediaAssets:[{id:'stored',kind:'image',storageMode:'managed',contentHash:'same'}]},
+    {media:[{id:'local',localAssetId:'consumed',kind:'image',contentHash:'same'}]},async()=>true);
+  assert.equal(plan.pending.length,0);
+  assert.equal(plan.assetIds.get('local'),'stored');
+});

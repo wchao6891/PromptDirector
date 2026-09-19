@@ -47,7 +47,8 @@ def main() -> None:
             delta = {"content": '{"route":"compose","status":"ready"}\n雾夜角色的银色披风在轮廓光下展开。'}
             finish = "stop"
             if mode in ["search", "read"] and not tool_results:
-                assert {"search_cases", "read_case_text", "use_case_images", "get_plugin_help", "draft_skill"} <= {tool["function"]["name"] for tool in request.get("tools", [])}, request
+                assert {"search_cases", "read_case_text", "get_plugin_help", "draft_skill"} <= {tool["function"]["name"] for tool in request.get("tools", [])}, request
+                assert "use_case_images" not in {tool["function"]["name"] for tool in request.get("tools", [])}, request
                 delta = {"tool_calls": [{"index": 0, "id": "search-1", "type": "function", "function": {
                     "name": "search_cases", "arguments": json.dumps({"query": "雾夜"})}}]}
                 finish = "tool_calls"

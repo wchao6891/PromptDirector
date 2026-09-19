@@ -496,3 +496,28 @@ function fakeChrome(stored, overrides = {}) {
     }
   };
 }
+
+test('returning to a saved clipboard selection does not refill the draft, while explicit capture still works', async () => {
+  const { CAPTURE_SAVED_TEXT_KEY, createTextCandidate } = await import('../extension/capture-text-candidate.js');
+  const candidate = await createTextCandidate({clipboard:'saved text'});
+  const stored = { [CAPTURE_SAVED_TEXT_KEY]: [candidate.textFingerprint] };
+  const workspace = createCaptureWorkspace({chromeApi:fakeChrome(stored,{executeScript:async()=>[{result:'saved text'}]}),
+    captureDraftStorageKey:'captureDraft',ensureOffscreenDocument:async()=>undefined,deleteVisual:async()=>undefined});
+  const automatic=await workspace.dispatch('try-active-selection');
+  assert.equal(automatic.added,false);
+  assert.equal(automatic.reason,'already-saved-selection');
+  assert.equal((await workspace.dispatch('add-active-selection')).added,true);
+});
+
+test('page save clears only persisted fragments and suppresses their automatic return', async () => {
+  const stored = {};
+  const workspace = createCaptureWorkspace({chromeApi:fakeChrome(stored,{executeScript:async()=>[{result:'saved page text'}]}),
+    captureDraftStorageKey:'captureDraft',ensureOffscreenDocument:async()=>undefined,deleteVisual:async()=>undefined});
+  const first = await workspace.dispatch('add-selection', {fragment:{text:'saved page text'}});
+  await workspace.dispatch('add-selection', {fragment:{text:'unsaved text'}});
+  const cleared = await workspace.dispatch('clear-saved-fragments', {fragmentIds:[first.draft.fragments[0].id]});
+  assert.deepEqual(cleared.draft.fragments.map(item=>item.text), ['unsaved text']);
+  await workspace.dispatch('remove-fragment', {fragmentId:cleared.draft.fragments[0].id});
+  assert.equal((await workspace.dispatch('try-active-selection')).added, false);
+  assert.equal((await workspace.dispatch('add-active-selection')).added, true);
+});

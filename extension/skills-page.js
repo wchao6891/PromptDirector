@@ -243,6 +243,7 @@ async function navigateBack() {
   const depth = Number(history.state?.depth) || 0;
   if (activeView === "list") return returnToSource();
   if (depth > 0) return history.back();
+  if (activeView === "detail" && sourcePage === "composer") return returnToSource();
   const fallback = activeView === "editor" || activeView === "refine"
     ? { view: "detail", skillId: activeSkillId }
     : { view: "list", skillId: "" };
@@ -318,7 +319,7 @@ function renderRoute(route) {
 function renderContextBack() {
   const labels = {
     list: sourcePage === "composer" ? t("返回创作台") : t("返回案例库"),
-    detail: t("返回 Skill 列表"),
+    detail: sourcePage === "composer" && !(Number(history.state?.depth) > 0) ? t("返回创作台") : t("返回 Skill 列表"),
     create: t("返回 Skill 列表"),
     editor: t("返回 Skill 详情"),
     refine: t("返回 Skill 详情")

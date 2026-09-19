@@ -106,7 +106,22 @@ def main() -> None:
         expect(library.locator(".detail-visual-thumb")).to_have_count(2)
         library.locator(".detail-visual-thumb").nth(1).click()
         expect(library.locator(".detail-video")).to_be_visible()
+        play=library.get_by_role("button",name="播放视频",exact=True)
+        expect(play).to_be_visible()
+        library.locator('.detail-video').evaluate('(v)=>{v.muted=true;v.loop=true}')
+        assert library.locator('.detail-video').evaluate('(v)=>!v.getAttribute("src") && !v.controls'), 'Opening must not start loading a paused video'
+        bounds=play.bounding_box()
+        library.mouse.move(bounds['x']+bounds['width']/2,bounds['y']+bounds['height']/2)
+        library.mouse.down()
+        library.wait_for_timeout(160)
+        pressed=play.bounding_box()
+        assert abs(pressed['x']-bounds['x'])<1 and abs(pressed['y']-bounds['y'])<1, (bounds,pressed)
+        library.mouse.up()
         library.wait_for_function("() => {const v=document.querySelector('.detail-video');return v.readyState>=2 && v.videoHeight>v.videoWidth}")
+        library.wait_for_function("()=>document.querySelector('.detail-video').currentTime>0")
+        expect(play).to_be_hidden()
+        library.locator('.detail-video').evaluate('(v)=>v.pause()')
+        expect(play).to_be_visible()
         expect(library.get_by_role("button", name="设为主要")).to_be_visible()
         expect(library.get_by_role("button", name="此媒体移入回收站", exact=True)).to_be_visible()
         expect(library.get_by_role("button", name="逆推视频提示词", exact=True)).to_have_count(1)
@@ -129,6 +144,15 @@ def main() -> None:
             Path(evidence_dir).mkdir(parents=True, exist_ok=True)
             library.screenshot(path=str(Path(evidence_dir) / 'video-detail-desktop.png'))
 
+        gallery_box=library.locator('.detail-visual-gallery').bounding_box()
+        assert abs(gallery_box['y']+gallery_box['height']/2-450)<3,gallery_box
+        # A short landscape frame must sit in the middle instead of sticking to the top.
+        library.locator('.detail-video').evaluate("v=>{v.style.aspectRatio='16 / 9';v.style.maxHeight='360px'}")
+        library.wait_for_function("()=>document.querySelector('.detail-video').getBoundingClientRect().height<=360")
+        balanced=library.locator('.detail-visual-gallery').bounding_box()
+        assert balanced['y']>0 and abs(balanced['y']+balanced['height']/2-450)<3,balanced
+        if evidence_dir: library.screenshot(path=str(Path(evidence_dir)/'video-detail-landscape-layout.png'))
+        library.locator('.detail-video').evaluate("v=>{v.style.aspectRatio='180 / 320';v.style.removeProperty('max-height')}")
         desktop = layout_snapshot(library)
         assert desktop["safetyBand"] == 1, desktop
         assert desktop["captionTop"] >= desktop["videoBottom"], desktop
@@ -172,6 +196,7 @@ def main() -> None:
         damaged_card = library.locator('.case-card[data-entry-id="broken-video-layout"]')
         expect(damaged_card).to_contain_text("封面暂不可用，打开查看视频", timeout=35000)
         damaged_card.click()
+        library.get_by_role('button',name='播放视频',exact=True).click()
         expect(library.locator('.media-playback-error')).to_be_visible()
         expect(library.locator('.detail-video')).to_be_hidden()
         print({"damagedVideoReportsFailure": True})

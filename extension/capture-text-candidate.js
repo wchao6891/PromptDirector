@@ -1,3 +1,5 @@
+export const CAPTURE_SAVED_TEXT_KEY = "captureSavedTextFingerprints";
+
 export async function createTextCandidate({ selection, clipboard, page } = {}) {
   const selectedText = normalizeText(selection);
   const clipboardText = normalizeText(clipboard);

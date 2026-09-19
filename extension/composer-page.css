@@ -155,15 +155,24 @@
 .composer-input-box:focus-within { border-color: var(--selection-edge); box-shadow: inset 0 0 0 1px var(--focus-ring), 0 8px 32px color-mix(in srgb, var(--ink) 14%, transparent); }
 .composer-input-box.drag-active { border-color: var(--selection-edge); background: var(--selection); box-shadow: inset 0 0 0 1px var(--focus-ring); }
 .composer-input-box textarea { width: 100%; min-height: 66px; max-height: 220px; resize: none; border: 0; padding: 2px; color: var(--ink); background: transparent; font-size: 14px; line-height: 1.65; outline: 0; }
-.composer-input-footer { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-top: 7px; }
+.composer-input-footer { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-top: 7px; }
 .composer-input-tools { display: flex; min-width: 0; align-items: center; flex-wrap: nowrap; gap: 7px; }
 .composer-attachment-local, .composer-library-search { flex: none; width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
 .composer-library-search[aria-pressed="true"] { border-color: var(--selection-edge); color: var(--accent-ink); background: var(--selection); box-shadow: inset 0 0 0 1px var(--focus-ring); }
-.composer-type-switch { display: flex; flex: none; min-height: 36px; margin: 0; border: 1px solid var(--line); border-radius: 9px; padding: 2px; white-space: nowrap; }
-.composer-type-switch label { cursor: pointer; }
-.composer-type-switch input { position: absolute; opacity: 0; pointer-events: none; }
-.composer-type-switch span { display: block; border-radius: 6px; padding: 5px 9px; color: var(--muted); font-size: 10px; font-weight: 850; }
-.composer-type-switch input:checked + span { color: var(--ink); background: var(--selection); box-shadow: inset 0 0 0 1px var(--selection-edge); }
+.composer-type-switch { display: grid; gap: 2px; min-width: 0; margin: 0; border: 0; padding: 0; white-space: nowrap; }
+.composer-type-switch label { position: relative; cursor: pointer; }
+.composer-type-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.composer-type-switch label > span { display: flex; align-items: center; gap: 8px; min-height: var(--ui-control-height); padding: 7px 8px; border-radius: var(--ui-control-radius); color: var(--ink); font-size: var(--ui-button-size); }
+.composer-type-switch input:hover:not(:disabled) + span { background: var(--hover); }
+.composer-type-switch input:checked + span { background: var(--raised); }
+.composer-type-switch input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.composer-type-switch input:disabled + span { opacity: .48; cursor: not-allowed; }
+.composer-type-switch input:disabled { cursor: not-allowed; }
+.composer-toolbar-menu { position: relative; flex: none; }
+.composer-toolbar-menu > summary { width: 44px; min-height: var(--ui-control-height); padding: 0 6px; gap: 3px; list-style: none; }
+.composer-toolbar-menu > summary::-webkit-details-marker { display: none; }
+.composer-toolbar-menu .composer-menu-chevron { width: 10px; height: 10px; color: var(--muted); }
+.composer-toolbar-menu > summary[data-originals="true"] { border-color: var(--selection-edge); background: var(--raised); }
 .composer-compact-field { display: block; }
 .composer-compact-field input, .composer-compact-field select { min-height: 29px; border-color: var(--line); padding: 4px 8px; font-size: 10px; }
 .composer-compact-field input { width: 142px; }
@@ -194,7 +203,7 @@
 .composer-options { position: relative; flex: none; }
 .composer-options > summary { display: grid; width: 36px; min-height: 36px; place-items: center; padding: 0; color: var(--ink); cursor: pointer; list-style: none; }
 .composer-options > summary::-webkit-details-marker { display: none; }
-.composer-options-panel { position: absolute; z-index: 16; bottom: calc(100% + 9px); left: 0; display: grid; width: min(310px, calc(100vw - 32px)); max-height: min(520px, calc(100dvh - 150px)); overflow: auto; gap: 9px; border: 1px solid var(--line); border-radius: 7px; padding: 11px; background: var(--card); box-shadow: 0 14px 42px color-mix(in srgb, var(--ink) 20%, transparent); }
+.composer-options-panel { position: absolute; z-index: 16; bottom: calc(100% + 9px); right: 0; display: grid; width: min(310px, calc(100vw - 32px)); max-height: min(520px, calc(100dvh - 150px)); overflow: auto; gap: 9px; border: 1px solid var(--line); border-radius: 7px; padding: 11px; background: var(--card); box-shadow: 0 14px 42px color-mix(in srgb, var(--ink) 20%, transparent); }
 .composer-options-panel > strong { padding: 2px 2px 4px; font-size: 11px; }
 .composer-option-field { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 10px; color: var(--muted); font-size: 10px; font-weight: 750; }
 .composer-option-field input, .composer-option-field select { min-height: 34px; border-color: var(--line); padding: 5px 8px; font-size: 11px; }
@@ -213,7 +222,7 @@
 .composer-action { display: grid; flex: none; width: 38px; min-width: 38px; height: 38px; min-height: 38px; place-items: center; border-radius: 50%; padding: 0; font-size: 18px; }
 .composer-action[data-state="stop"] { border-radius: 12px; background: var(--ink); color: var(--card); font-size: 13px; }
 .composer-action[data-state="stopping"] { opacity: .65; }
-.composer-input-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+.composer-input-actions { display: flex; margin-left: auto; flex: none; align-items: center; gap: 8px; }
 .composer-model-control { position: relative; min-width: 0; }
 .composer-model-trigger { display: flex; min-width: 0; max-width: 150px; min-height: 36px; align-items: center; gap: 5px; border-color: var(--line); padding: 5px 9px; font-size: 10px; font-weight: 850; }
 .composer-model-trigger > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -445,8 +454,8 @@
 .composer-input-box { width: min(880px, 100%); border-radius: 7px; padding: 12px 13px 9px; box-shadow: 0 10px 32px color-mix(in srgb, var(--ink) 11%, transparent); }
 .composer-input-box:focus-within { box-shadow: inset 0 0 0 1px var(--focus-ring), 0 10px 32px color-mix(in srgb, var(--ink) 11%, transparent); }
 .composer-input-box textarea { min-height: 62px; }
-.composer-type-switch, .composer-review-toggle { border-radius: 6px; }
-.composer-type-switch span, .composer-review-toggle span { border-radius: 4px; }
+.composer-review-toggle { border-radius: 6px; }
+.composer-review-toggle span { border-radius: 4px; }
 .composer-reference-trigger, .composer-model-trigger { border-radius: 6px; }
 .composer-reference-trigger strong { border-radius: 4px; }
 .composer-action { width: 36px; min-width: 36px; height: 36px; min-height: 36px; border-radius: 6px; }
@@ -464,10 +473,9 @@
   .composer-chat-inner { width: min(100% - 24px, 880px); padding-top: 24px; }
   .composer-input-area { padding: 8px 10px 12px; }
   .composer-input-box { border-radius: 7px; }
-  .composer-input-footer { align-items: center; flex-wrap: wrap; gap: 4px; }
-  .composer-input-tools { flex-wrap: wrap; gap: 4px; overflow: visible; }
+  .composer-input-footer { align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 4px; }
+  .composer-input-tools { display: contents; }
   .composer-input-actions { gap: 4px; margin-left: auto; }
-  .composer-type-switch span { padding-inline: 5px; }
   .composer-model-trigger { max-width: 60px; padding-inline: 5px; }
   .composer-reference-trigger { padding-inline: 5px; }
   .composer-options-panel { position: fixed; right: 10px; bottom: 94px; left: 10px; width: auto; max-height: min(520px, calc(100dvh - 116px)); }
@@ -507,8 +515,6 @@
   .composer-case-option { transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
 }
 
-.composer-image-input-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--danger); font-size: 12px; }
-.composer-image-input-status[hidden] { display: none; }
 
 .composer-tool-events { margin: 0 0 1rem 2.5rem; color: var(--muted); font-size: 12px; }
 .composer-tool-event { margin: .3rem 0; }
@@ -535,3 +541,11 @@
 
 .composer-input-reference-main { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 9px; align-items: center; min-width: 0; border: 0; padding: 0; text-align: left; background: transparent; color: inherit; }
 .composer-input-reference-remove { padding: 4px; min-width: 0; width: 26px; }
+
+#composer-reference-inputs[hidden], .composer-reference-input-choice[hidden] { display: none; }
+.composer-toolbar-menu > .composer-toolbar-panel { position: fixed; inset: auto; width: min(240px, calc(100vw - 2 * var(--ui-popover-viewport-inset))); padding: 8px; gap: 2px; }
+.composer-toolbar-panel > p { margin: 5px 8px; color: var(--muted); font-size: var(--ui-meta-size); line-height: 1.5; }
+.composer-reference-input-choice { display: flex; align-items: center; gap: 9px; min-height: var(--ui-control-height); padding: 7px 8px; border-radius: var(--ui-control-radius); font-size: var(--ui-button-size); cursor: pointer; }
+.composer-reference-input-choice:has(input:enabled):hover { background: var(--hover); }
+.composer-reference-input-choice input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--ui-accent); }
+.composer-reference-input-choice:has(input:disabled) { color: var(--muted); cursor: default; }

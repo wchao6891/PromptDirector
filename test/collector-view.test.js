@@ -113,18 +113,13 @@ test("page capture can correct the confirmed DOM region and previews one ordered
     readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/library.js", import.meta.url), "utf8")
   ]);
-  assert.match(collectorHtml, /id="page-capture-add-region"/);
-  assert.match(collectorHtml, /id="page-capture-exclude-region"/);
+  assert.match(collectorHtml, /选取内容/);
+  assert.doesNotMatch(collectorHtml, /id="page-capture-tools"/);
   assert.match(collectorHtml, /id="page-capture-undo-region"/);
-  assert.match(collectorHtml, /id="page-capture-reset-region"/);
   assert.match(collectorSource, /createPageCaptureArticlePreview/);
-  assert.match(collectorSource, /EDIT_PAGE_CAPTURE_REGION/);
-  assert.match(backgroundSource, /runPageCaptureRegionEditor/);
-  assert.match(backgroundSource, /contentTargetsValue/);
-  assert.match(backgroundSource, /整组选择/);
-  assert.match(backgroundSource, /data-promptdirector-page-edit-include/);
-  assert.match(backgroundSource, /data-promptdirector-page-edit-exclude/);
-  assert.match(backgroundSource, /data-promptdirector-page-edit-hover/);
+  assert.match(collectorSource, /PICK_PAGE_CONTENT/);
+  assert.match(backgroundSource, /pickPageContent/);
+  assert.doesNotMatch(backgroundSource, /整组选择/);
   assert.match(backgroundSource, /case "CLEAR_PAGE_CAPTURE_MARKERS"/);
   assert.match(backgroundSource, /clearPageCapturePageState/);
   assert.match(collectorSource, /await clearPageCaptureMarkers\(\)/);
@@ -194,7 +189,7 @@ test("the collector auto-reads only highlights and reserves clipboard access for
   assert.doesNotMatch(clipboardOnly, /ADD_ACTIVE_SELECTION_TO_DRAFT/);
   assert.match(collectorHtml, /id="start-clipboard"/);
   assert.match(collectorHtml, /id="add-clipboard"/);
-  assert.match(explicitFlow, /ADD_ACTIVE_SELECTION_TO_DRAFT/);
+  assert.match(explicitFlow, /PICK_PAGE_CONTENT/);
   assert.match(explicitFlow, /ensureClipboardReadPermission/);
   assert.match(explicitFlow, /readClipboardContentAfterFocus/);
   assert.match(explicitFlow, /prepareLocalMedia/);
@@ -205,8 +200,8 @@ test("the collector auto-reads only highlights and reserves clipboard access for
   assert.match(backgroundSource, /case "TRY_ACTIVE_SELECTION_TO_DRAFT"/);
   assert.match(backgroundSource, /case "ADD_CLIPBOARD_TEXT_TO_DRAFT"/);
   assert.doesNotMatch(backgroundSource, /lastCommittedClipboardFingerprint/);
-  assert.match(collectorHtml, /id="start-selection"[^>]*>[\s\S]*?<strong[^>]*>选区<\/strong>/);
-  assert.match(collectorHtml, /id="add-selection"[^>]*>[\s\S]*?选区<\/span><\/button>/);
+  assert.match(collectorHtml, /id="start-selection"[^>]*>[\s\S]*?<strong[^>]*>选取内容<\/strong>/);
+  assert.match(collectorHtml, /id="add-selection"[^>]*>[\s\S]*?选取内容<\/span><\/button>/);
   assert.doesNotMatch(collectorHtml, /自动识别已复制文字|id="clipboard-access"|id="enable-clipboard"/);
   assert.doesNotMatch(collectorSource, /querySelectorAll\("button"\)/);
   assert.ok(collectorHtml.indexOf('id="start-smart-visuals"') < collectorHtml.indexOf('id="start-selection"'));

@@ -26,7 +26,7 @@ test("page-session media reads only the exact selected HTTPS URL with browser cr
     assert.equal(prepared.chunkCount, 1);
     assert.equal(calls[0].options.credentials, "include");
     assert.equal(calls[0].options.redirect, "error");
-    assert.equal(calls[0].options.referrerPolicy, "no-referrer");
+    assert.equal(calls[0].options.referrerPolicy, "strict-origin-when-cross-origin");
   } finally {
     delete globalThis.__PROMPTDIRECTOR_PAGE_SESSION_MEDIA__;
     Object.assign(globalThis, original);

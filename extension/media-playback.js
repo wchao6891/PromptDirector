@@ -32,11 +32,13 @@ export async function ensureYouTubePlaybackPermission(chromeApi, { request = fal
     origins: [...YOUTUBE_PLAYBACK_HOSTS]
   };
   const permissions = chromeApi?.permissions;
-  const dnr = chromeApi?.declarativeNetRequest;
-  if (!permissions?.contains || !dnr?.updateSessionRules) return false;
-  let granted = await permissions.contains(permission);
-  if (!granted && request) granted = await permissions.request(permission);
+  if (!permissions?.contains) return false;
+  const granted = request
+    ? await permissions.request(permission)
+    : await permissions.contains(permission);
   if (!granted) return false;
+  const dnr = chromeApi?.declarativeNetRequest;
+  if (!dnr?.updateSessionRules) throw new Error("浏览器暂不支持此播放器，请打开来源观看");
   const rule = buildYouTubePlaybackRule({
     extensionId: chromeApi.runtime?.id,
     homepageUrl: chromeApi.runtime?.getManifest?.().homepage_url
@@ -115,6 +117,8 @@ export function localVideoController(video) {
     video,
     getCurrentTimeMs: async () => Math.max(0, Math.round(video.currentTime * 1000)),
     seekToMs: async (value) => {
+      await video.preparePlayback?.();
+      video.controls = true;
       video.currentTime = Math.max(0, Number(value) || 0) / 1000;
       await video.play().catch(() => undefined);
     }

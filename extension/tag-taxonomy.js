@@ -4,6 +4,7 @@ export const ANALYSIS_TAG_MAX = 10;
 export const ANALYSIS_DETAIL_MAX_LENGTH = 80;
 export const NAV_DETAIL_MIN_CASES = 2;
 export const NAV_DETAIL_LIMIT = 6;
+export const DETAIL_ORGANIZATION_OUTPUT_TOKENS = 4000;
 
 const FACETS = [
   facet("subject", "主体与角色", "Subjects & characters", [
@@ -418,6 +419,10 @@ export function createDetailOrganizationChunks(catalogValue, entries = [], maxBy
     used.forEach((id) => counts.set(id, (counts.get(id) ?? 0) + 1));
   }
   const chunks = [];
+  // UTF-8 bytes conservatively bound token demand for a full mapping response.
+  // Keep the existing request budget; split before sending, never truncate tags.
+  const fits = chunk => serializedBytes(chunk) <= maxBytes
+    && serializedBytes({ m: chunk.d.map(([id, name]) => ({ id, n: name })) }) <= DETAIL_ORGANIZATION_OUTPUT_TOKENS;
   for (const group of catalog.nodes.filter((item) => !item.parentId && item.status !== "archived")) {
     const details = catalog.nodes.filter((item) => item.parentId === group.id && item.status !== "archived");
     if (details.length < 2) continue;
@@ -426,13 +431,13 @@ export function createDetailOrganizationChunks(catalogValue, entries = [], maxBy
     for (const detail of details) {
       const row = [detail.id, detail.name, counts.get(detail.id) ?? 0];
       const candidate = { g: path, d: [...current, row] };
-      if (current.length && serializedBytes(candidate) > maxBytes) {
+      if (current.length && !fits(candidate)) {
         chunks.push({ g: path, d: current });
         current = [row];
       } else {
         current.push(row);
       }
-      if (serializedBytes({ g: path, d: current }) > maxBytes) throw new Error("单个三级标签超过整理输入上限");
+      if (!fits({ g: path, d: current })) throw new Error("单个三级标签超过整理输入上限");
     }
     if (current.length) chunks.push({ g: path, d: current });
   }

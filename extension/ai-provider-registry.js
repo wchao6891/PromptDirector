@@ -12,8 +12,8 @@ export const AI_ASSIGNMENT_TASKS = Object.freeze([
 ]);
 
 const CUSTOM_PROVIDER_LABELS = Object.freeze({
-  "custom-text": "自定义兼容服务（文字）",
-  "custom-media": "自定义兼容服务（图片与生成）"
+  "custom-text": "自定义兼容服务（对话与识别）",
+  "custom-media": "自定义图片生成服务"
 });
 
 const ASSIGNMENT_EVIDENCE = new Set(["declared", "protocol_inferred", "manual_unverified"]);
@@ -154,7 +154,7 @@ export function availableAiModelsForTask(taskId, profileValue = {}) {
     ? clean(profile.models.imageGeneration) || clean(profile.imageGeneration?.model)
     : taskId === "videoGeneration"
       ? clean(profile.models.videoGeneration) || clean(profile.videoGeneration?.model)
-      : clean(profile.models[taskId]);
+      : clean(profile.models[taskId]) || (taskId === "creativePlanning" ? clean(profile.models.imageAnalysis || profile.models.videoAnalysis) : "");
   if (!available.length && !profile.discovery.discoveredAt && configuredModel) {
     return [{
       id: configuredModel,
@@ -274,7 +274,8 @@ function provider(id, value = {}) {
   const capabilities = [...(preset?.capabilities ?? [])];
   return {
     id,
-    label: clean(value?.label) || preset?.label || CUSTOM_PROVIDER_LABELS[id] || "自定义兼容服务",
+    label: ["自定义兼容服务（文字）", "自定义兼容服务（图片与生成）"].includes(clean(value?.label))
+      ? preset?.label : clean(value?.label) || preset?.label || CUSTOM_PROVIDER_LABELS[id] || "自定义兼容服务",
     category: preset?.category ?? "custom",
     endpoint: clean(value?.endpoint) || preset?.endpoint || "",
     protocol: clean(value?.protocol) || preset?.protocol || "native",
@@ -383,8 +384,8 @@ function providerConfiguredForTask(profile, taskId, selectedModel = "") {
   );
   const discovered = profile.discoveredModels.find((item) => item.id === configuredModel);
   const catalogRequired = profile.catalogRequiredTasks.includes(taskId);
-  const savedCredential = dedicatedImageCredential
-    ? Boolean(profile.imageGeneration?.apiKey || profile.imageGeneration?.credentialConfigured)
+  const savedCredential = taskId === "imageGeneration"
+    ? Boolean(profile.imageGeneration?.apiKey || profile.imageGeneration?.credentialConfigured || (!dedicatedImageCredential && profile.credentialConfigured))
     : profile.credentialConfigured;
   return Boolean(
     (catalogRequired
@@ -398,8 +399,13 @@ function providerConfiguredForTask(profile, taskId, selectedModel = "") {
 }
 
 function modelAssignmentEvidence(taskId, model = {}, profile = null) {
+  if (taskId === "creativePlanning" && (model.tasks ?? []).some(task => ["imageAnalysis", "videoAnalysis"].includes(task))) return "protocol_inferred";
   if ((model.tasks ?? []).includes(taskId)) {
     return ASSIGNMENT_EVIDENCE.has(model.confidence) ? model.confidence : "declared";
+  }
+  if (profile?.category === "custom" && ["imageAnalysis", "videoAnalysis"].includes(taskId)
+    && ((model.outputModalities ?? []).includes("text") || (model.tasks ?? []).some(task => MANUAL_ASSIGNMENT_TASKS.has(task)))) {
+    return "manual_unverified";
   }
   if (model.confidence === "manual_unverified"
     && (model.tasks ?? []).length === 0

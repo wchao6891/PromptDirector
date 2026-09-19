@@ -181,6 +181,7 @@ export function moveMediaToTrash(contextValue = {}, entryIdValue, mediaIds = [],
         entryId,
         positions: removedAssets.map((asset) => ({ id: asset.id, index: before.mediaAssets.findIndex((item) => item.id === asset.id) })),
         primaryMediaId: removedIds.has(before.primaryMediaId) ? before.primaryMediaId : "",
+        coverVisualId: removedIds.has(before.coverVisualId) ? before.coverVisualId : "",
         timeNotes: relatedValues(before.timeNotes, removedIds, ["assetId", "frameAssetId"]),
         mediaPrompts: relatedValues(before.mediaPrompts, removedIds, ["assetId"]),
         videoAnalyses: relatedValues(before.videoAnalyses, removedIds, ["assetId"]),
@@ -453,7 +454,8 @@ function restoreMediaItem(item, entries) {
     mediaPrompts: mergeRelated(entry.mediaPrompts, item.relationships?.mediaPrompts, "assetId"),
     videoAnalyses: mergeRelated(entry.videoAnalyses, item.relationships?.videoAnalyses, "id"),
     facetAssignments: mergeRelated(entry.facetAssignments, item.relationships?.facetAssignments, "nodeId"),
-    primaryMediaId: clean(item.relationships?.primaryMediaId) || entry.primaryMediaId
+    primaryMediaId: clean(item.relationships?.primaryMediaId) || entry.primaryMediaId,
+    coverVisualId: entry.coverVisualId || clean(item.relationships?.coverVisualId)
   };
   const originalDocument = item.relationships?.articleDocument ?? null;
   if (originalDocument) next.articleDocument = originalDocument;

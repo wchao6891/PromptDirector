@@ -14,7 +14,6 @@ import {
   createComposerSession,
   createReferenceSnapshots,
   referenceSourcePartsForAsset,
-  imageReferenceModeAvailability,
   isMeaningfulComposerSession,
   isComposerEligibleEntry,
   failComposerAssemblySnapshot,
@@ -45,7 +44,6 @@ import {
   composerGenerationRequiresPromptAssembly,
   composerImageEditCapabilities,
   composerImageAvailability,
-  composerImageInputAvailability,
   composerServiceCapabilities,
   composerServiceCatalog,
   composerLibraryToolService,
@@ -105,10 +103,12 @@ import {
 
 await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".composer-options, .composer-session-menu");
+bindTransientMenus(document, ".composer-options, .composer-session-menu, .composer-toolbar-menu");
 
 const elements = Object.fromEntries([
   "composer-shell", "composer-nav", "composer-nav-open", "composer-nav-close", "composer-new", "composer-session-list",
+  "composer-direction", "composer-direction-trigger", "composer-direction-icon", "composer-reference-inputs-trigger",
+  "composer-reference-inputs", "composer-send-images-field", "composer-send-videos-field", "composer-send-images", "composer-send-videos",
   "composer-title", "composer-save-state", "composer-platform", "composer-output-language", "composer-route", "composer-production-review", "composer-reference-open", "composer-reference-count",
   "composer-applied-skills", "composer-skill-menu", "composer-assembly-open", "composer-timeline", "composer-aliases", "composer-instruction", "composer-action", "composer-feedback", "composer-send-note",
   "composer-attachment-files", "composer-attachment-local", "composer-library-search", "composer-temp-reference-row", "composer-temp-references", "composer-temp-reference-save-all",
@@ -116,7 +116,6 @@ const elements = Object.fromEntries([
   "composer-diagnostic-export", "composer-reference-workspace", "composer-reference-close", "composer-reference-cancel", "composer-reference-tab-cases", "composer-reference-tab-skills", "composer-project-list", "composer-projects-panel", "composer-case-picker", "composer-reference-footer", "composer-workspace-title", "composer-workspace-description",
   "composer-case-selection-count", "composer-reference-search", "composer-reference-project-filter", "composer-case-list", "composer-selection-strip",
   "composer-reference-clear", "composer-reference-apply", "composer-reference-feedback", "composer-assembly-dialog", "composer-assembly-close", "composer-assembly-content",
-  "composer-image-input-status", "composer-image-input-message", "composer-image-input-model"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
 let entries = [];
@@ -201,6 +200,8 @@ function bindEvents() {
   elements.composerCreateImage.addEventListener("change", safely(updateComposerOutputMode));
   elements.composerImageSize.addEventListener("change", safely(updateImageGenerationParameters));
   elements.composerImageQuality.addEventListener("change", safely(updateImageGenerationParameters));
+  elements.composerSendImages.addEventListener("change", safely(updateReferenceInputs));
+  elements.composerSendVideos.addEventListener("change", safely(updateReferenceInputs));
   elements.composerImageReferenceMode.addEventListener("change", safely(updateImageReferenceMode));
   elements.composerVideoDuration.addEventListener("change", safely(updateImageGenerationParameters));
   elements.composerDiagnosticExport.addEventListener("click", safely(exportComposerDiagnostic));
@@ -250,16 +251,30 @@ function bindEvents() {
   elements.composerOutputLanguage.addEventListener("change", safely(updateComposerPreferences));
   elements.composerRoute.addEventListener("change", safely(updateComposerPreferences));
   elements.composerProductionReview.addEventListener("change", safely(updateComposerPreferences));
-  document.querySelectorAll('input[name="composer-type"]').forEach((input) => input.addEventListener("change", safely(updateComposerPreferences)));
+  document.querySelectorAll('input[name="composer-type"]').forEach((input) => input.addEventListener("change", safely(async () => {
+    await updateComposerPreferences();
+    elements.composerDirection.open = false;
+    elements.composerDirectionTrigger.focus();
+  })));
+  document.querySelectorAll(".composer-toolbar-menu").forEach((menu) => {
+    menu.querySelector("summary").addEventListener("click", () => {
+      if (!menu.open) positionComposerInputMenu(menu);
+    });
+  });
+  document.querySelectorAll(".composer-toolbar-menu").forEach((menu) => menu.addEventListener("toggle", () => {
+    if (menu.open) {
+      closeComposerModelMenu();
+      positionComposerInputMenu(menu);
+    }
+  }));
+  window.addEventListener("resize", () => {
+    document.querySelectorAll(".composer-toolbar-menu[open]").forEach(positionComposerInputMenu);
+  });
   elements.composerReferenceOpen.addEventListener("click", openReferenceWorkspace);
   elements.composerReferenceTabCases.addEventListener("click", () => setReferenceWorkspaceMode("references"));
   elements.composerReferenceTabSkills.addEventListener("click", () => setReferenceWorkspaceMode("skills"));
   elements.composerAssemblyOpen.addEventListener("click", openAssemblyDialog);
   elements.composerAssemblyClose.addEventListener("click", () => elements.composerAssemblyDialog.close());
-  elements.composerImageInputModel.addEventListener("click", (event) => {
-    event.stopPropagation();
-    openComposerModelMenu();
-  });
   elements.composerReferenceClose.addEventListener("click", closeReferenceWorkspace);
   elements.composerReferenceCancel.addEventListener("click", closeReferenceWorkspace);
   elements.composerReferenceSearch.addEventListener("input", () => { referenceFocusedEntryId = ""; renderCasePicker(); });
@@ -429,6 +444,8 @@ async function createNewSession(referenceIds = [], focus = true) {
     targetPlatform: composerSettings.lastTargetPlatform,
     outputLanguage: composerSettings.outputLanguage,
     routeMode: "auto",
+    imageReferenceMode: "text_only",
+    videoReferenceMode: "text_only",
     aiProfile: composerProfileForTaskAssignment(composerAiTaskAssignments.creativePlanning, composerSettings.lastAiProfile),
     generationAiProfile: composerProfileForTaskAssignment(
       composerAiTaskAssignments[targetType === "video" ? "videoGeneration" : "imageGeneration"],
@@ -1060,11 +1077,6 @@ async function sendComposerTurn() {
   if (activeOperation) return composerFeedback("另一项创作任务正在运行，请先等待或停止", true);
   const instruction = elements.composerInstruction.value.trim();
   if (!instruction) return composerFeedback("请先输入本轮任务", true);
-  if (sessionHasVideoReferences(composerSession)) {
-    const service = selectedComposerService(composerSession.aiProfile, composerAiSettings, composerVisionSettings);
-    if (!service.videoInput) return composerFeedback(`${service.label} 的所选模型未声明视频输入能力，请切换视频模型`, true);
-  }
-  if (!renderImageInputStatus().available) return;
   const answeringQuestion = composerSession.messages.at(-1)?.type === "question";
   const wasEmpty = composerSession.messages.length === 0 && composerSession.promptVersions.length === 0;
   let working = appendComposerMessage(clearComposerFailure(composerSession), {
@@ -1171,13 +1183,44 @@ async function sendComposerTurn() {
   }
 }
 
-function renderImageInputStatus() {
-  const profile = composerSession.imageReferenceMode === "prompt_only" ? composerSession.aiProfile : activeComposerProfile();
-  const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings);
-  const state = composerImageInputAvailability(composerSession, service);
-  elements.composerImageInputStatus.hidden = state.available;
-  elements.composerImageInputMessage.textContent = state.available ? "" : t("当前模型无法读取参考原图，请切换支持看图的模型。");
-  return state;
+function positionComposerInputMenu(menu) {
+  const panel = menu.querySelector(".composer-toolbar-panel");
+  const anchor = menu.querySelector("summary").getBoundingClientRect();
+  const style = getComputedStyle(menu);
+  const inset = Number.parseFloat(style.getPropertyValue("--ui-popover-viewport-inset"));
+  const gap = Number.parseFloat(style.getPropertyValue("--ui-popover-gap"));
+  const width = Number.parseFloat(getComputedStyle(panel).width);
+  const right = Math.min(document.documentElement.clientWidth, elements.composerShell.getBoundingClientRect().right);
+  panel.style.left = `${Math.max(inset, Math.min(anchor.left, right - width - inset))}px`;
+  panel.style.bottom = `${innerHeight - anchor.top + gap}px`;
+  panel.style.maxHeight = `${Math.max(0, anchor.top - gap - inset)}px`;
+}
+
+function renderReferenceInputs() {
+  const direction = composerSession.targetType === "video" ? "video" : "image";
+  elements.composerDirectionIcon.setAttribute("href", `assets/ui-icons.svg#icon-${direction}`);
+  const directionTitle = t("创作方向：{type}。影响提示词和可选参考，不会直接生成成品。", { type: t(direction === "video" ? "视频" : "图片") });
+  elements.composerDirectionTrigger.title = directionTitle;
+  elements.composerDirectionTrigger.setAttribute("aria-label", directionTitle);
+  document.querySelectorAll('input[name="composer-type"]').forEach(input => { input.disabled = Boolean(activeOperation); });
+  const hasImages = composerSession.referenceSnapshots.some(reference => reference.imageRefs?.length)
+    || libraryRetrievalEnabled && entries.some(entry => entryMediaAssets(entry)
+      .some(asset => asset.kind === "image" && asset.usage !== "poster"));
+  const hasVideos = sessionHasVideoReferences(composerSession);
+  elements.composerReferenceInputs.hidden = !hasImages && !hasVideos;
+  if (elements.composerReferenceInputs.hidden) elements.composerReferenceInputs.open = false;
+  elements.composerSendImagesField.hidden = !hasImages;
+  elements.composerSendVideosField.hidden = !hasVideos;
+  elements.composerSendImages.checked = composerSession.imageReferenceMode !== "text_only";
+  elements.composerSendVideos.checked = composerSession.videoReferenceMode !== "text_only";
+  elements.composerSendImages.disabled = elements.composerSendVideos.disabled = Boolean(activeOperation);
+  const images = hasImages && elements.composerSendImages.checked;
+  const videos = hasVideos && elements.composerSendVideos.checked;
+  const referenceTitle = images && videos ? t("参考输入：文字＋原图＋原视频")
+    : images ? t("参考输入：文字＋原图") : videos ? t("参考输入：文字＋原视频") : t("参考输入：仅文字");
+  elements.composerReferenceInputsTrigger.title = referenceTitle;
+  elements.composerReferenceInputsTrigger.setAttribute("aria-label", referenceTitle);
+  elements.composerReferenceInputsTrigger.dataset.originals = String(images || videos);
 }
 
 async function retryComposerTurn() {
@@ -1339,7 +1382,7 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
   let pendingImageIds = preparedImages.map(image => image.visualId);
   const toolRuntime = createLocalComposerLibraryTools({
     session: operation.session,
-    vision: composerLibraryToolService(operation.session, settingsValue.ai, settingsValue.vision).vision,
+    vision: operation.session.imageReferenceMode !== "text_only",
     onEvent: async event => {
       operation.controller.signal.throwIfAborted();
       if (event.status === "completed" && event.imageIds) pendingImageIds.push(...event.imageIds);
@@ -1691,7 +1734,7 @@ function renderGenerationModelChoices(selectedProfile) {
     button.setAttribute("role", "menuitemradio");
     button.setAttribute("aria-checked", String(candidate.serviceId === selectedProfile.serviceId && candidate.model === selectedProfile.model));
     const copy = document.createElement("span");
-    copy.append(rawTextEl("b", "", provider.label || provider.id), rawTextEl("small", "", candidate.model));
+    copy.append(rawTextEl("b", "", translateUiMessage(provider.label || provider.id)), rawTextEl("small", "", candidate.model));
     button.append(copy, rawTextEl("span", "", "✓"));
     button.addEventListener("click", () => safely(() => updateComposerAiProfile(candidate))());
     return button;
@@ -1738,17 +1781,13 @@ function renderImageGenerationSettings() {
     renderGenerationParameterField(elements.composerImageQualityField, elements.composerImageQuality, capability, secondaryKey, composerSession.generationParameters[secondaryKey], {
       fallbackLabel: "质量"
     });
-    const referenceMode = imageReferenceModeAvailability(composerSession.referenceSnapshots);
     elements.composerImageReferenceModeField.hidden = composerSession.outputMode !== "create_image"
       || !composerSession.referenceSnapshots.some((item) => item.imageRefs?.length);
     elements.composerImageReferenceMode.value = composerSession.imageReferenceMode;
-    elements.composerImageReferenceMode.disabled = Boolean(activeOperation) || !referenceMode.canDisableImages;
+    elements.composerImageReferenceMode.disabled = Boolean(activeOperation);
   }
   const messages = [
     ...state.issues,
-    ...(!videoTask && !imageReferenceModeAvailability(composerSession.referenceSnapshots).canDisableImages
-      ? [`还有 ${imageReferenceModeAvailability(composerSession.referenceSnapshots).missingAssetIds.length} 张参考图既没有案例提示词，也没有有效分析文字，暂时必须带原图`]
-      : []),
     ...(!videoTask && composerSession.referenceSnapshots.some((item) => item.imageRefs?.length)
       ? [t("参考图画幅无需与输出画幅一致。")]
       : []),
@@ -1761,12 +1800,17 @@ function renderImageGenerationSettings() {
 async function updateImageReferenceMode() {
   if (!composerSession || activeOperation || composerSession.outputMode !== "create_image") return;
   const mode = elements.composerImageReferenceMode.value;
-  const availability = imageReferenceModeAvailability(composerSession.referenceSnapshots);
-  if (mode !== "conditioned" && !availability.canDisableImages) {
-    renderImageGenerationSettings();
-    return composerFeedback(`还有 ${availability.missingAssetIds.length} 张参考图既没有案例提示词，也没有有效分析文字，不能关闭原图`, true);
-  }
   composerSession = await saveSession(createComposerSession({ ...composerSession, imageReferenceMode: mode }));
+  renderComposer();
+}
+
+async function updateReferenceInputs() {
+  if (!composerSession || activeOperation) return;
+  composerSession = await saveSession(createComposerSession({ ...composerSession,
+    imageReferenceMode: elements.composerSendImages.checked
+      ? (composerSession.imageReferenceMode === "prompt_only" ? "prompt_only" : "conditioned") : "text_only",
+    videoReferenceMode: elements.composerSendVideos.checked ? "original" : "text_only"
+  }));
   renderComposer();
 }
 
@@ -2621,7 +2665,8 @@ function freezeComposerAssemblySnapshot(session, {
   const profile = generationMode ? session.generationAiProfile : session.aiProfile;
   const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings);
   const selectedImageCount = session.referenceSnapshots.reduce((total, reference) => total + reference.imageRefs.length, 0);
-  const canSendImages = service.vision === true && session.imageReferenceMode !== "text_only";
+  const selectedVideoCount = session.referenceSnapshots.reduce((total, reference) => total + (reference.assetRefs || []).filter(asset => asset.kind === "video").length, 0);
+  const canSendImages = session.imageReferenceMode !== "text_only";
   const expectedSentImageCount = canSendImages ? selectedImageCount : 0;
   const omittedImageCount = selectedImageCount - expectedSentImageCount;
   const taskMethod = session.routeMode === "auto"
@@ -2664,6 +2709,9 @@ function freezeComposerAssemblySnapshot(session, {
     retrievedSources: session.retrievedSources,
     media: {
       imageReferenceMode: session.imageReferenceMode,
+      videoReferenceMode: session.videoReferenceMode,
+      selectedVideoCount,
+      expectedSentVideoCount: session.videoReferenceMode === "text_only" ? 0 : selectedVideoCount,
       selectedImageCount,
       expectedSentImageCount,
       omittedImageCount,
@@ -2701,6 +2749,7 @@ function openAssemblyDialog() {
   const snapshotSkills = snapshot?.skills.map((skill) => `${skill.order}. /${skill.callName} · ${skill.version}\n${skill.instructions}`).join("\n\n");
   const mediaSummary = snapshot ? [
     `手选图片 ${snapshot.media.selectedImageCount} 张；预计发送 ${snapshot.media.expectedSentImageCount} 张`,
+    snapshot.media.selectedVideoCount ? `手选视频 ${snapshot.media.selectedVideoCount} 个；预计发送 ${snapshot.media.expectedSentVideoCount} 个` : "",
     snapshot.media.baseImageIncluded ? `编辑底图已发送${snapshot.media.maskIncluded ? "；局部遮罩已发送" : ""}` : "",
     snapshot.media.omittedImageCount ? `明确未发送 ${snapshot.media.omittedImageCount} 张：${snapshot.media.omittedReason}` : ""
   ].filter(Boolean).join("\n") : "";
@@ -3324,7 +3373,7 @@ function renderSendState() {
   const descriptions = composerSession.referenceSnapshots.filter((item) => item.referenceKind === "vision").length;
   const images = composerSession.referenceSnapshots.reduce((sum, item) => sum + item.imageRefs.length, 0);
   const usage = composerInputUsage(composerSession, elements.composerInstruction.value, composerSettings);
-  renderImageInputStatus();
+  renderReferenceInputs();
   const toolState = composerSession.libraryTools;
   const requestLabel = toolState.requestCount ? `本轮已请求 ${toolState.requestCount} 次 · ${toolState.usage && toolState.usageRequestCount === toolState.requestCount ? `输入 ${toolState.usage.promptTokens} / 输出 ${toolState.usage.completionTokens} tokens` : "用量未知"}` : "按任务执行";
   const retrievalLabel = !libraryRetrievalEnabled ? " · 案例库：关闭" : composerLibraryToolService(composerSession, composerAiSettings, composerVisionSettings).nativeTools ? " · 案例库：按需" : " · 案例库：手动选择";
@@ -3597,9 +3646,6 @@ function relativeTime(value) {
 }
 
 async function prepareSelectedReferenceImages(session) {
-  const profile = ["create_image", "create_video"].includes(session?.outputMode) ? session?.generationAiProfile : session?.aiProfile;
-  const service = selectedComposerService(profile, composerAiSettings, composerVisionSettings);
-  if (!service.vision) return [];
   const temporaryAssetIds = new Set((session?.referenceSnapshots ?? [])
     .filter((reference) => reference.sourceType === TEMP_REFERENCE_SOURCE_TYPES.temporary)
     .flatMap((reference) => reference.assetRefs ?? [])

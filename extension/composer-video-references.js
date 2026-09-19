@@ -13,6 +13,7 @@ export function sessionHasVideoReferences(session) {
 }
 
 export async function prepareComposerVideos(session, options = {}) {
+  if (session?.videoReferenceMode === "text_only") return [];
   const loadVideo = options.loadVideo ?? getMediaBlob;
   const encode = options.encode ?? videoBlobDataUrl;
   const videos = [];

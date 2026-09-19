@@ -1,3 +1,7 @@
+import { collectVideoPagePayload, normalizeVideoPagePayload } from "./video-page-capture.js";
+import { installVideoDiscovery, addDiscoveredVideos } from "./video-discovery.js";
+import { pickPageContent } from "./page-content-picker.js";
+import { CAPTURE_SAVED_TEXT_KEY, createTextCandidate } from "./capture-text-candidate.js";
 import { planImageGenerationPrompts, generationPromptConfirmation } from "./image-generation-ingestion.js";
 import { readImageGenerationInfo, embeddedMediaPrompts } from "./image-generation-info.js";
 import { waitForDownload } from "./download-completion.js";
@@ -19,6 +23,7 @@ import { analysisRequestCounts } from "./analysis-retry-policy.js";
 import { articleDocumentText, finalizeArticleDocumentAssets } from "./article-document.js";
 import {
   classifyContent,
+  classifyCapturedContent,
   classifyImportedMedia,
   confirmClassification,
   createSourceRule
@@ -99,7 +104,8 @@ import {
   retryFailedAnalysisItems,
   stageAnalysisRebuildResults,
   succeedAnalysisItem,
-  textFingerprint
+  textFingerprint,
+  textAnalysisResultIsCurrent
 } from "./analysis-batch.js";
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import { buildAutomaticVisionJob } from "./automatic-vision.js";
@@ -195,6 +201,7 @@ import {
   editCurrentVideoReconstruction,
   entryMediaAssets,
   normalizeEntryMedia,
+  setCaseCover,
   replaceCurrentVideoReconstruction,
   removeTimeNote,
   setEntryMediaPrompt,
@@ -226,7 +233,8 @@ import {
   LIBRARY_TRANSFER_MODES,
   LIBRARY_TRANSFER_SOURCES,
   planLibraryTransfer,
-  planLibraryTransferBatch
+  planLibraryTransferBatch,
+  previewLibraryTransferBatch
 } from "./library-transfer.js";
 import {
   claimLibraryImportTransaction,
@@ -312,7 +320,6 @@ import {
   applyPageCaptureSelections,
   combinePageCaptureCandidates,
   collectPageCaptureSnapshot,
-  mergePageCaptureRegionEdit,
   PAGE_CAPTURE_ADAPTERS,
   PAGE_CAPTURE_PLATFORM_ADAPTERS,
   normalizePageCaptureBatch,
@@ -328,8 +335,9 @@ import {
 import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
 import { downloadPageCaptureVideo } from "./page-capture-video.js";
 import { resolveXVideoSources } from "./x-video-capture.js";
+import { readPageCaptureSupplement } from "./capture-supplement.js";
 import { PAGE_CAPTURE_VIDEO_FRAME_RULES, resolvePageCaptureVideoFrames } from "./page-capture-frames.js";
-import { planPageCaptureRepair, mergePageCaptureRepair, capturedMediaPrompts } from "./page-capture-repair.js";
+import { pageCaptureMediaReceipt, planPageCaptureRepair, mergePageCaptureRepair, capturedMediaPrompts } from "./page-capture-repair.js";
 import { collectPageCaptureDownloads } from "./page-capture-downloads.js";
 import {
   discardPageSessionMedia,
@@ -660,9 +668,12 @@ chrome.commands.onCommand.addListener(async (command) => {
   await showResultToast(tab?.id, response.message, !response.ok);
 });
 
+const discoveredVideosForTab = installVideoDiscovery(chrome);
+
 chrome.action.onClicked.addListener((tab) => {
   if (!Number.isInteger(tab?.windowId)) return;
   chrome.sidePanel.open({ windowId: tab.windowId })
+    .then(() => chrome.runtime.sendMessage({ type: "OPEN_PAGE_CAPTURE", windowId: tab.windowId }).catch(() => undefined))
     .catch((error) => console.error("PromptDirector toolbar side panel open failed", error));
 });
 
@@ -780,16 +791,27 @@ async function handleMessage(message, interaction = {}) {
       return enqueueCapture(async () => captureRuntime.dispatch("cancel-visible-visual-selection", { sessionId: message.sessionId }));
     case "CANCEL_REGION_CAPTURE":
       return captureRuntime.dispatch("cancel-region-capture", { sessionId: message.sessionId });
+    case "GET_DISCOVERED_VIDEOS":
+      return { ok: true, resources: await discoveredVideosForTab(Number(message.tabId)) };
+    case "PICK_PAGE_CONTENT": {
+      const tab = await chrome.tabs.get(Number(message.tabId));
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: clearPageCapturePageState, args: [{ removeRegionMarkers: false, removePreview: true, removeEditor: true }] });
+      const [picked] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPageContent, args: [{ commentLimit: 30, timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs }] });
+      if (!picked?.result?.html) return { ok: false, cancelled: true };
+      const [captured] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageCaptureSnapshot,
+        args: [{ sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
+      return { ok: true, supplement: picked.result.supplement, batch: { ...captured.result, tabId: tab.id } };
+    }
     case "START_PAGE_CAPTURE":
       return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount, message.requestId));
+    case "READ_PAGE_CAPTURE_SUPPLEMENT":
+      return { ok: true, supplement: await readPageCaptureSupplement(message.supplement, chrome) };
     case "CANCEL_PAGE_CAPTURE":
       return cancelPageCapture(message.sessionId);
     case "PREVIEW_PAGE_CAPTURE_REGION":
       return previewPageCaptureRegion(message.tabId, message.preview);
     case "CLEAR_PAGE_CAPTURE_MARKERS":
       return clearPageCaptureMarkers(message.tabId, message.removeRegionMarkers !== false);
-    case "EDIT_PAGE_CAPTURE_REGION":
-      return editPageCaptureRegion(message.tabId, message.candidate, message.mode);
     case "COMMIT_PAGE_CAPTURE":
       return enqueueCapture(async () => enqueue(async () => commitPageCapture(message.batch, message)));
     case "PAGE_CAPTURE_VIEWPORT_FALLBACKS":
@@ -807,6 +829,8 @@ async function handleMessage(message, interaction = {}) {
       }));
     case "REMOVE_CAPTURE_FRAGMENT":
       return enqueueCapture(async () => captureRuntime.dispatch("remove-fragment", { fragmentId: message.fragmentId }));
+    case "CLEAR_SAVED_CAPTURE_FRAGMENTS":
+      return enqueueCapture(async () => captureRuntime.dispatch("clear-saved-fragments", { fragmentIds: message.fragmentIds }));
     case "REORDER_CAPTURE_FRAGMENTS":
       return enqueueCapture(async () => captureRuntime.dispatch("reorder-fragments", { ids: message.ids }));
     case "REMOVE_CAPTURE_VISUAL":
@@ -836,6 +860,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => deleteEntryVisual(message.entryId, message.visualId));
     case "ADD_UPLOADED_VISUAL":
       return enqueue(async () => addUploadedVisual(message.entryId, message.visual, message.generationPromptChoices));
+    case "SET_ENTRY_COVER":
+      return enqueue(async () => setEntryCover(message.entryId, message.assetId, message.asset));
     case "SET_ENTRY_PRIMARY_MEDIA":
       return enqueue(async () => setEntryPrimaryMedia(message.entryId, message.assetId));
     case "DELETE_ENTRY_MEDIA":
@@ -1055,6 +1081,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => updateLocalAssetReferenceAction(message));
     case "BATCH_ADD_CUSTOM_LABELS":
       return enqueue(async () => batchAddCustomLabels(message));
+    case "BATCH_SET_CLASSIFICATION":
+      return enqueue(async () => batchSetClassification(message));
     case "BATCH_SET_PROJECT":
       return enqueue(async () => batchSetProject(message));
     case "CREATE_COLLECTION_FROM_SELECTION":
@@ -1225,8 +1253,8 @@ async function captureWorkspace() {
     : null;
   const suggested = targetEntry?.classification ?? captureDraftClassification(draft, state);
   const partContentTypes = Object.fromEntries(draftParts(draft).map((part) => {
-    const classification = classifyContent({
-      text: part.text, title: part.sourceTitle, url: part.sourceUrl, visuals: part.visuals
+    const classification = classifyCapturedContent({
+      text: part.text, title: part.sourceTitle, url: part.sourceUrl, visuals: part.visuals, mediaPrompts: embeddedMediaPrompts(part.visuals), sourceFacts: sourceFactsForCaptureContext(part.sourceContext)
     }, state.classificationRules, state.taxonomy);
     const id = classification?.pathIds?.[0] || "";
     const contentType = state.taxonomy.nodes.find((item) => item.id === id);
@@ -1436,6 +1464,7 @@ async function collectPageCaptureTab(tab, options) {
     siteData = await readPageCaptureSiteData(tab, { installObserver: false, maxCandidates: options.maxCandidates }) || siteData;
     snapshot = { ...snapshot, candidates: siteData.candidates, siteStatus: siteData.completeness };
   }
+  snapshot = addDiscoveredVideos(snapshot, await discoveredVideosForTab(tab.id));
   snapshot = await resolvePageCaptureVideoFrames(snapshot, tab.id, chrome.scripting);
   snapshot = await resolveXVideoSources(snapshot, tab, chrome, { cancelled: () => Boolean(activePageCapture?.cancelled) });
   return addVisiblePageCaptureFallbacks(snapshot, tab);
@@ -1481,6 +1510,11 @@ async function waitForPageCaptureTab(tabId, expectedUrl) {
 async function readPageCaptureSiteData(tab, { installObserver = true, maxCandidates = PAGE_CAPTURE_LIMITS.maxCandidates } = {}) {
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) return null;
   try {
+    if (/^(?:www\.)?(?:youtube\.com|bilibili\.com)$/u.test(new URL(tab.url).hostname)) {
+      const [video] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: collectVideoPagePayload });
+      const payload = normalizeVideoPagePayload(video?.result, tab.url);
+      if (payload) return payload;
+    }
     if (installObserver) {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -1632,234 +1666,6 @@ async function clearPageCaptureMarkers(tabIdValue, removeRegionMarkers = true) {
   }
 }
 
-async function clearPageCaptureEditorMarkers(tabIdValue) {
-  const tabId = Number(tabIdValue);
-  if (!Number.isInteger(tabId)) return;
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    func: clearPageCapturePageState,
-    args: [{ removeRegionMarkers: false, removePreview: false, removeEditor: true }]
-  });
-}
-
-async function editPageCaptureRegion(tabIdValue, candidateValue, modeValue) {
-  const tabId = Number(tabIdValue);
-  const candidate = normalizePageCaptureCandidate(candidateValue);
-  const mode = modeValue === "exclude" ? "exclude" : "include";
-  if (!Number.isInteger(tabId) || !candidate?.region?.marker) return { ok: false, message: "请先确认一个仍在当前网页中的主体" };
-  const token = crypto.randomUUID();
-  try {
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: runPageCaptureRegionEditor,
-      args: [candidate.region.marker, mode, token, candidate.region.edits || [], candidate.region.contentTargets || []]
-    });
-    if (!result?.result?.ok) return result?.result || { ok: false, message: "网页区域修正已取消" };
-    if (!result.result.changed) return { ok: false, cancelled: true, message: "没有修改主体区域" };
-    const tab = await chrome.tabs.get(tabId);
-    const snapshot = await collectPageCaptureTab(tab, {
-      sessionId: `edit:${token}`,
-      mode: "loaded",
-      maxCandidates: 1,
-      editedRegion: { marker: candidate.region.marker, token, region: { ...candidate.region, edits: result.result.edits || [] } }
-    });
-    const revised = snapshot.candidates?.[0];
-    if (!revised) return { ok: false, message: "修正后的区域没有可保存内容，原结果保持不变" };
-    return {
-      ok: true,
-      candidate: mergePageCaptureRegionEdit(candidate, revised),
-      message: mode === "include" ? "已加入遗漏区域并重建文章预览" : "已排除错误区域并重建文章预览"
-    };
-  } catch (error) {
-    return { ok: false, message: userMessage(error) || "无法修正当前网页区域" };
-  } finally {
-    await clearPageCaptureEditorMarkers(tabId).catch(() => undefined);
-  }
-}
-
-function runPageCaptureRegionEditor(markerValue, modeValue, tokenValue, priorEditsValue, contentTargetsValue) {
-  const overlayId = "promptdirector-page-capture-region-editor";
-  document.getElementById(overlayId)?.dispatchEvent(new Event("promptdirector-cancel"));
-  document.getElementById(overlayId)?.remove();
-  const marker = String(markerValue || "");
-  const mode = modeValue === "exclude" ? "exclude" : "include";
-  const token = String(tokenValue || "");
-  const baseRoot = [...document.querySelectorAll("[data-promptdirector-capture-region]")]
-    .find((element) => element.getAttribute("data-promptdirector-capture-region") === marker);
-  if (!baseRoot || !token) return { ok: false, message: "原网页区域已经变化，请重新扫描" };
-  const includeAttribute = "data-promptdirector-page-edit-include";
-  const excludeAttribute = "data-promptdirector-page-edit-exclude";
-  const hoverAttribute = "data-promptdirector-page-edit-hover";
-  const priorEdits = (Array.isArray(priorEditsValue) ? priorEditsValue : []).filter((edit) => ["include", "exclude"].includes(edit?.mode) && typeof edit?.path === "string");
-  const contentTargets = (Array.isArray(contentTargetsValue) ? contentTargetsValue : []).filter((target) =>
-    typeof target?.path === "string" && ["text", "image", "video", "document", "group"].includes(target?.kind));
-  let edits = priorEdits.map((edit) => ({ mode: edit.mode, path: edit.path }));
-  let groupMode = false;
-  const root = document.createElement("div");
-  root.id = overlayId;
-  root.setAttribute("role", "dialog");
-  root.setAttribute("aria-label", mode === "include" ? "添加遗漏区域" : "排除错误区域");
-  Object.assign(root.style, {
-    position: "fixed", left: "16px", right: "16px", top: "16px", zIndex: "2147483647",
-    display: "flex", alignItems: "center", gap: "8px", padding: "10px 12px",
-    border: "1px solid rgba(255,255,255,.22)", borderRadius: "10px", color: "#fff",
-    background: "rgba(18,20,22,.96)", boxShadow: "0 12px 40px rgba(0,0,0,.42)",
-    font: "600 13px/1.4 -apple-system,BlinkMacSystemFont,sans-serif"
-  });
-  const copy = document.createElement("span");
-  copy.style.flex = "1";
-  copy.textContent = mode === "include"
-    ? "添加遗漏：点击正文、图片、视频或下载区，可连续选择"
-    : "排除错误：点击主体内不需要的段落、图片或区域，可连续选择";
-  const count = document.createElement("span");
-  const makeButton = (label) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    Object.assign(button.style, { border: "1px solid rgba(255,255,255,.25)", borderRadius: "7px", padding: "6px 10px", color: "#fff", background: "rgba(255,255,255,.1)", cursor: "pointer" });
-    return button;
-  };
-  const undo = makeButton("撤销");
-  const group = makeButton("整组选择");
-  const cancel = makeButton("取消");
-  const finish = makeButton("完成");
-  finish.style.background = "#86a31d";
-  root.append(copy, count, group, undo, cancel, finish);
-  const style = document.createElement("style");
-  style.textContent = `[${includeAttribute}="${token}"]{outline:4px solid #8fcf3a!important;outline-offset:3px!important}[${excludeAttribute}="${token}"]{outline:4px solid #ff6b5f!important;outline-offset:3px!important;opacity:.48!important}[${hoverAttribute}="${token}"]{outline:3px dashed #ffd65c!important;outline-offset:2px!important}`;
-  root.append(style);
-  document.documentElement.append(root);
-  const changes = [];
-  const targetSelector = "img,video,iframe,a[download],a[href$='.pdf' i],a[href$='.md' i],a[href$='.txt' i],a[href$='.rtf' i],h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,figure,article,section,div";
-  const updateCount = () => {
-    count.textContent = `本次修改 ${changes.length} 处`;
-    undo.disabled = !changes.length;
-  };
-  const elementPath = (element) => {
-    const parts = [];
-    let current = element;
-    while (current && current.nodeType === 1) {
-      const tag = current.tagName.toLocaleLowerCase("en-US");
-      const siblings = [...(current.parentElement?.children || [])].filter((item) => item.tagName === current.tagName);
-      parts.unshift(`${tag}:nth-of-type(${Math.max(1, siblings.indexOf(current) + 1)})`);
-      if (current === document.body) break;
-      current = current.parentElement;
-    }
-    return parts.join(" > ");
-  };
-  const applyEdits = () => {
-    document.querySelectorAll(`[${includeAttribute}],[${excludeAttribute}]`).forEach((element) => {
-      element.removeAttribute(includeAttribute);
-      element.removeAttribute(excludeAttribute);
-    });
-    for (const edit of edits) {
-      let element = null;
-      try { element = document.querySelector(edit.path); } catch { continue; }
-      if (!element) continue;
-      element.removeAttribute(edit.mode === "include" ? excludeAttribute : includeAttribute);
-      element.setAttribute(edit.mode === "include" ? includeAttribute : excludeAttribute, token);
-    }
-  };
-  const resolvedTargets = contentTargets.flatMap((target) => {
-    try {
-      const element = document.querySelector(target.path);
-      return element ? [{ ...target, element }] : [];
-    } catch {
-      return [];
-    }
-  });
-  const elementDepth = (element) => {
-    let depth = 0;
-    for (let current = element; current?.parentElement; current = current.parentElement) depth += 1;
-    return depth;
-  };
-  const meaningfulFallback = (eventTarget) => {
-    const closest = eventTarget.closest?.(targetSelector);
-    if (!closest) return null;
-    if (!closest.matches?.("div")) return closest;
-    const text = String(closest.innerText || closest.textContent || "").replace(/\s+/gu, " ").trim();
-    const hasMediaOrResource = Boolean(closest.querySelector?.("img,video,iframe,a[download],a[href$='.pdf' i],a[href$='.md' i],a[href$='.txt' i],a[href$='.rtf' i]"));
-    const hasDirectText = [...(closest.childNodes || [])].some((node) => node.nodeType === 3 && String(node.textContent || "").trim());
-    return hasDirectText || hasMediaOrResource || text ? closest : null;
-  };
-  const cleanup = (restore) => {
-    document.removeEventListener("click", onClick, true);
-    document.removeEventListener("keydown", onKeydown, true);
-    document.removeEventListener("pointerover", onPointerOver, true);
-    if (restore) {
-      edits = priorEdits.map((edit) => ({ mode: edit.mode, path: edit.path }));
-      applyEdits();
-    }
-    root.remove();
-  };
-  const targetFor = (eventTarget) => {
-    if (!(eventTarget instanceof Element)) return null;
-    const matching = resolvedTargets.filter((target) => target.element === eventTarget || target.element.contains?.(eventTarget));
-    const leaf = matching.filter((target) => target.kind !== "group").sort((left, right) => elementDepth(right.element) - elementDepth(left.element))[0];
-    const selectedTarget = groupMode
-      ? matching.filter((target) => target.kind === "group" && (!leaf?.groupId || target.id === leaf.groupId))
-        .sort((left, right) => elementDepth(right.element) - elementDepth(left.element))[0]
-      : leaf;
-    const element = selectedTarget?.element || meaningfulFallback(eventTarget);
-    if (!element || root.contains(element) || element.closest("nav,header,footer,[role=navigation],[role=banner],[role=contentinfo]")) return null;
-    if (mode === "exclude" && (!baseRoot.contains(element) || element === baseRoot)) return null;
-    if (mode === "include" && baseRoot.contains(element) && element.getAttribute(excludeAttribute) !== token) return null;
-    return element;
-  };
-  const onPointerOver = (event) => {
-    document.querySelectorAll(`[${hoverAttribute}]`).forEach((element) => element.removeAttribute(hoverAttribute));
-    const element = targetFor(event.target);
-    if (element) element.setAttribute(hoverAttribute, token);
-  };
-  const onClick = (event) => {
-    const element = targetFor(event.target);
-    if (!element) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const edit = { mode, path: elementPath(element) };
-    edits.push(edit);
-    changes.push(edit);
-    applyEdits();
-    updateCount();
-  };
-  const onKeydown = (event) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    cancel.click();
-  };
-  document.addEventListener("click", onClick, true);
-  document.addEventListener("keydown", onKeydown, true);
-  document.addEventListener("pointerover", onPointerOver, true);
-  applyEdits();
-  updateCount();
-  return new Promise((resolve) => {
-    root.addEventListener("promptdirector-cancel", () => cancel.click(), { once: true });
-    group.addEventListener("click", (event) => {
-      event.stopPropagation();
-      groupMode = !groupMode;
-      group.textContent = groupMode ? "整组选择：开" : "整组选择";
-      group.style.background = groupMode ? "#5f7613" : "rgba(255,255,255,.1)";
-    });
-    undo.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (changes.pop()) edits.pop();
-      applyEdits();
-      updateCount();
-    });
-    cancel.addEventListener("click", (event) => {
-      event.stopPropagation();
-      cleanup(true);
-      resolve({ ok: false, cancelled: true, message: "网页区域修正已取消" });
-    });
-    finish.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const changed = changes.length > 0;
-      cleanup(false);
-      resolve({ ok: true, changed, token, edits });
-    });
-  });
-}
-
 async function commitPageCapture(batchValue, metadata = {}) {
   const captureMetadata = createCaptureDraft(metadata);
   let batch = normalizePageCaptureBatch(batchValue);
@@ -1889,15 +1695,17 @@ async function commitPageCapture(batchValue, metadata = {}) {
       const duplicate = entries.find(entry => candidate.sourceFacts.itemId && entry.sourceFacts?.itemId && entry.sourceFacts?.provider === candidate.sourceFacts.provider
         ? entry.sourceFacts.itemId === candidate.sourceFacts.itemId : entry.url === candidate.canonicalUrl);
       const repair = duplicate ? await planPageCaptureRepair(duplicate, candidate, async id => Boolean(await getMediaBlob(id))) : null;
-      const refreshedClassification = duplicate ? classifyContent({ ...duplicate, sourceFacts: candidate.sourceFacts }, state.classificationRules, state.taxonomy) : null;
+      const refreshedClassification = duplicate ? classifyCapturedContent({ ...duplicate, sourceFacts: candidate.sourceFacts }, state.classificationRules, state.taxonomy) : null;
       const classificationChanged = duplicate && JSON.stringify(duplicate.classification?.pathIds) !== JSON.stringify(refreshedClassification.pathIds);
-      if (duplicate && !repair.pending.length && !repair.obsoleteReferences.size && !repair.promptsChanged && duplicate.sourceFacts?.pageType === candidate.pageType && !classificationChanged) {
-        results.push({ candidateId: candidate.id, status: "duplicate", entryId: duplicate.id, title: duplicate.title });
+      if (duplicate && !repair.pending.length && !repair.obsoleteReferences.size && !repair.promptsChanged && !repair.textAdditions.length && duplicate.sourceFacts?.pageType === candidate.pageType && !classificationChanged) {
+        results.push({ candidateId: candidate.id, status: "duplicate", entryId: duplicate.id, title: duplicate.title,
+          ...pageCaptureMediaReceipt(candidate, repair.assetIds) });
         continue;
       }
       const mediaAssets = [];
       const articleAssetIds = new Map(repair?.assetIds);
       const warnings = [];
+      const failedMediaIds = new Set();
       if (candidate.extraction?.pendingMediaCount) {
         warnings.push(`正文仍有 ${candidate.extraction.pendingMediaCount} 项媒体未加载，已保存当前可用内容，请回到来源页面核对`);
       }
@@ -1951,6 +1759,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
             mediaAssets.push(documentAsset);
             articleAssetIds.set(media.id, documentAsset.id);
           } catch (error) {
+            failedMediaIds.add(media.id);
             warnings.push(`${media.filename || media.alt || media.url}：本地副本未保存，已保留来源链接（${userMessage(error)}）`);
           }
           continue;
@@ -1982,6 +1791,10 @@ async function commitPageCapture(batchValue, metadata = {}) {
           try {
             const blob = await downloadPageCaptureVideo(media.url, {
               declaredVideo: ["site-original", "video-element"].includes(media.sourceKind)
+            }).catch(async error => {
+              if (batch.sessionMediaAllowed === false) throw error;
+              try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.url, "video")).blob; }
+              catch (sessionError) { throw new Error(`${userMessage(error)}；${userMessage(sessionError)}`); }
             });
             if (blob) {
               const contentHash = await sha256Blob(blob);
@@ -2020,6 +1833,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
               warnings.push(`${media.alt || candidate.title}：来源未提供直接视频文件，已保留在线来源`);
             }
           } catch (error) {
+            failedMediaIds.add(media.id);
             warnings.push(`${media.alt || candidate.title}：视频本地副本未保存，已保留来源链接（${userMessage(error)}）`);
           }
           if (!videoAsset.posterAssetId && media.posterUrl) {
@@ -2027,6 +1841,10 @@ async function commitPageCapture(batchValue, metadata = {}) {
               const posterBlob = await fetchBoundedMedia(media.posterUrl, {
                 kind: "image", maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
                 maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels, timeoutMs: 60_000
+              }).catch(async error => {
+                if (batch.sessionMediaAllowed === false) throw error;
+                try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.posterUrl)).blob; }
+                catch (sessionError) { throw new Error(`${userMessage(error)}；${userMessage(sessionError)}`); }
               });
               const posterId = crypto.randomUUID();
               await saveMediaBlob(posterId, posterBlob);
@@ -2063,7 +1881,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
               });
               return { blob, metadata };
             },
-            fetchSessionMedia: async (url) => fetchSelectedPageSessionImage(batch, candidate, url),
+            fetchSessionMedia: async (url) => fetchSelectedPageSessionMedia(batch, candidate, url),
             decodeDataUrl: dataUrlToImageBlob
           });
           const blob = resolved.blob;
@@ -2104,20 +1922,23 @@ async function commitPageCapture(batchValue, metadata = {}) {
           articleAssetIds.set(media.id, imageAsset.id);
           if (resolved.usedPixelFallback) warnings.push(`${media.alt || candidate.title}：原图不可用，已保存页面可见画面`);
         } catch (error) {
-          warnings.push(`${media.alt || media.url}：${userMessage(error)}`);
+          failedMediaIds.add(media.id);
+          warnings.push(`${media.alt || media.url || candidate.title}：${userMessage(error)}`);
         }
       }
-      const captureFacts = { ...candidate.sourceFacts, captureWarnings: [...new Set(warnings)],
+      if (warnings.length) console.debug("PromptDirector capture diagnostics", { candidateId: candidate.id, warnings: [...new Set(warnings)] });
+      const captureFacts = { ...candidate.sourceFacts,
         status: warnings.length ? "partial" : candidate.sourceFacts.status };
       if (duplicate) {
         const repaired = mergePageCaptureRepair(duplicate, { ...candidate, sourceFacts: captureFacts }, repair, mediaAssets, articleAssetIds);
         const existingAssetIds = new Set((duplicate.mediaAssets ?? []).map(asset => asset.id));
         const entry = normalizeEntryMedia({ ...repaired,
           mediaPrompts: [...(repaired.mediaPrompts ?? []), ...embeddedMediaPrompts(mediaAssets.filter(asset => !existingAssetIds.has(asset.id)), repaired.mediaPrompts)],
-          classification: classifyContent(repaired, state.classificationRules, state.taxonomy)
+          classification: classifyCapturedContent(repaired, state.classificationRules, state.taxonomy)
         });
         entries = entries.map(item => item.id === entry.id ? entry : item);
-        results.push({ candidateId: candidate.id, status: warnings.length ? "partial" : "saved", repaired: true, entryId: entry.id, title: entry.title, warnings });
+        results.push({ candidateId: candidate.id, status: warnings.length ? "partial" : "saved", repaired: true, entryId: entry.id, title: entry.title, warnings,
+          ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
         continue;
       }
       const articleText = articleDocumentText(candidate.articleDocument);
@@ -2145,21 +1966,24 @@ async function commitPageCapture(batchValue, metadata = {}) {
           ? mediaAssets.find((asset) => asset.kind === "video")
           : mediaAssets.find((asset) => asset.kind === "image" && asset.usage !== "poster"))?.id
           || mediaAssets.find((asset) => asset.usage !== "poster")?.id || "",
-        classification: classifyContent({ ...base, sourceFacts: candidate.sourceFacts, mediaAssets, mediaPrompts }, state.classificationRules, state.taxonomy),
+        classification: classifyCapturedContent({ ...base, sourceFacts: candidate.sourceFacts, mediaAssets, mediaPrompts }, state.classificationRules, state.taxonomy),
         customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
         rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
       });
       entries.push(entry);
-      results.push({ candidateId: candidate.id, status: warnings.length ? "partial" : "saved", entryId: entry.id, title: entry.title, warnings });
+      results.push({ candidateId: candidate.id, status: warnings.length ? "partial" : "saved", entryId: entry.id, title: entry.title, warnings,
+        ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
     }
-    if (!results.some((item) => ["saved", "partial"].includes(item.status))) {
+    const explicitClassification = captureMetadata.contentTypeExplicit && isValidContentPath(state.taxonomy, [captureMetadata.contentTypeId]);
+    const affectedIds = results.filter(item => ["saved", "partial"].includes(item.status)
+      || item.status === "duplicate" && explicitClassification).map(item => item.entryId);
+    if (!affectedIds.length) {
       return { ok: true, message: "所选内容均已存在或无法保存", results };
     }
-    const affectedIds = results.filter(item => ["saved", "partial"].includes(item.status)).map(item => item.entryId);
     entries = entries.map(entry => !affectedIds.includes(entry.id) ? entry : {
       ...entry,
       customLabels: uniqueNames([...(entry.customLabels || []), ...captureMetadata.customLabels]),
-      classification: captureMetadata.contentTypeExplicit && isValidContentPath(state.taxonomy, [captureMetadata.contentTypeId])
+      classification: explicitClassification
         ? { pathIds: [captureMetadata.contentTypeId], status: "confirmed", source: "manual", reason: "保存前人工确认" }
         : entry.classification
     });
@@ -2198,7 +2022,9 @@ async function commitPageCapture(batchValue, metadata = {}) {
   }
 }
 
-async function fetchSelectedPageSessionImage(batch, candidate, value) {
+async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "image") {
+  if (batch.sessionMediaAllowed === false) throw new Error("没有获得页面媒体读取权限");
+  const maxBytes = kind === "video" ? PORTABLE_LIBRARY_LIMITS.maxVideoBytes : PORTABLE_LIBRARY_LIMITS.maxImageBytes;
   if (!Number.isInteger(batch?.tabId)) throw new Error("原网页标签页已经不可用");
   const tab = await chrome.tabs.get(batch.tabId);
   let currentOrigin;
@@ -2222,7 +2048,7 @@ async function fetchSelectedPageSessionImage(batch, candidate, value) {
         token,
         url: value,
         allowedUrls,
-        maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+        maxBytes,
         chunkBytes: PAGE_SESSION_MEDIA_CHUNK_BYTES
       }]
     });
@@ -2242,7 +2068,7 @@ async function fetchSelectedPageSessionImage(batch, candidate, value) {
       const binary = globalThis.atob(String(chunkResult?.result || ""));
       const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
       totalBytes += bytes.byteLength;
-      if (totalBytes > PORTABLE_LIBRARY_LIMITS.maxImageBytes) throw new Error("页面媒体超过本地容量上限");
+      if (totalBytes > maxBytes) throw new Error("页面媒体超过本地容量上限");
       chunks.push(bytes);
     }
     if (totalBytes !== prepared.totalBytes) throw new Error("页面媒体传输不完整");
@@ -2256,8 +2082,8 @@ async function fetchSelectedPageSessionImage(batch, candidate, value) {
     const blob = await boundedMediaBlobFromResponse(new Response(combined, {
       headers: { "content-type": String(prepared.contentType || "application/octet-stream") }
     }), {
-      kind: "image",
-      maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+      kind,
+      maxBytes,
       maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels,
       onMetadata: (value) => { metadata = value; }
     });
@@ -2275,7 +2101,7 @@ async function fetchSelectedPageSessionImage(batch, candidate, value) {
 function pageCaptureMediaFetchCandidatesForSession(candidate, selectedUrl) {
   const urls = new Set();
   for (const media of candidate?.media || []) {
-    for (const url of pageCaptureMediaFetchCandidates(media)) urls.add(url);
+    for (const url of [...pageCaptureMediaFetchCandidates(media), media.posterUrl].filter(Boolean)) urls.add(url);
   }
   return urls.has(selectedUrl) ? [...urls] : [];
 }
@@ -2372,6 +2198,19 @@ async function addUploadedVisual(entryId, visualValue, choices = {}) {
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: `图片已加入案例 · 共 ${updated.visuals.length} 张`, entry: updated };
+}
+
+async function setEntryCover(entryId, assetId, uploadedAsset) {
+  const state = await readState();
+  let current = findEntry(state, entryId);
+  if (uploadedAsset) {
+    if (uploadedAsset.kind !== "image" || !uploadedAsset.id || !await getMediaBlob(uploadedAsset.id)) throw new Error("没有读取到封面图片");
+    current = addEntryMedia(current, { ...uploadedAsset, usage: "poster", storageMode: "managed" });
+    assetId = uploadedAsset.id;
+  }
+  const updated = touchEntry(setCaseCover(current, assetId));
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: state.entries.map(entry => entry.id === entryId ? updated : entry) });
+  return { ok: true, message: "封面已更新", entry: updated };
 }
 
 async function setEntryPrimaryMedia(entryId, assetId) {
@@ -2529,7 +2368,7 @@ async function createMediaCase(assetValue, posterValue, titleValue, textValue = 
   });
   const promptPlan = await planImageGenerationPrompts(entry, mediaAssets, choices, textValue);
   if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
-  entry = promptPlan.entry;
+  entry = { ...promptPlan.entry, classification: classifyImportedMedia(promptPlan.entry, state.taxonomy) };
   const entries = [...state.entries, entry];
   await retireLastSaveUndo();
   await commitLocalChanges({
@@ -2677,6 +2516,7 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
     const newVisuals = draft.visuals.filter(asset => !entry.mediaAssets.some(item => item.id === asset.id));
     for (const visual of newVisuals) entry = addEntryVisual(entry, visual);
     entry = normalizeEntryVisuals({ ...entry, mediaPrompts: [...(entry.mediaPrompts ?? []), ...embeddedMediaPrompts(newVisuals, entry.mediaPrompts)] });
+    entry.classification = classifyCapturedContent(entry, state.classificationRules, state.taxonomy);
     if (draft.primaryVisualExplicit && draft.primaryVisualId) entry = setPrimaryVisual(entry, draft.primaryVisualId);
   } else {
     created = true;
@@ -2717,7 +2557,7 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
     [STORAGE_KEYS.organizerState]: organizerState,
-    ...captureCommitState(draft, nextDraft),
+    ...await captureCommitState(draft, nextDraft),
     ...(created ? { [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id) } : {})
   });
   await notifySaved(entries.length);
@@ -2774,7 +2614,7 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound, pl
     [STORAGE_KEYS.entries]: entries,
     [STORAGE_KEYS.compoundCases]: compounds,
     [STORAGE_KEYS.organizerState]: organizerState,
-    ...captureCommitState(draft, nextDraft)
+    ...await captureCommitState(draft, nextDraft)
   });
   await notifySaved(entries.length);
   return {
@@ -2812,9 +2652,12 @@ function organizerAfterCapturePlacement(organizerValue, entries, entryIds, place
   return normalizeOrganizerState(organizerState, entries.map((entry) => entry.id));
 }
 
-function captureCommitState(_draft, nextDraft) {
+async function captureCommitState(draft, nextDraft) {
+  const texts = [...draft.fragments.map(fragment => fragment.text), draftText(draft)];
+  const candidates = await Promise.all(texts.map(text => createTextCandidate({ clipboard: text })));
   return {
-    [STORAGE_KEYS.captureDraft]: nextDraft
+    [STORAGE_KEYS.captureDraft]: nextDraft,
+    [CAPTURE_SAVED_TEXT_KEY]: [...new Set(candidates.filter(Boolean).map(candidate => candidate.textFingerprint))]
   };
 }
 
@@ -2869,7 +2712,7 @@ function createEntryFromCapturePart(part, draft, state, options = {}) {
       : part.visuals[0]?.id || "",
     classification: draft.contentTypeExplicit && isValidContentPath(state.taxonomy, [draft.contentTypeId])
       ? { pathIds: [draft.contentTypeId], status: "confirmed", source: "manual", reason: "保存前人工确认" }
-      : classifyContent({ text: part.text, title: part.sourceTitle, url: part.sourceUrl, visuals: part.visuals }, state.classificationRules, state.taxonomy),
+      : classifyCapturedContent({ text: part.text, title: part.sourceTitle, url: part.sourceUrl, visuals: part.visuals, mediaPrompts: embeddedMediaPrompts(part.visuals), sourceFacts: sourceFactsForCaptureContext(part.sourceContext) }, state.classificationRules, state.taxonomy),
     customLabels: uniqueNames(draft.customLabels),
     metadataLabels: [],
     facetAssignments: [], analysisCandidates: [], analysisBreakdown: [], rejectedCandidateKeys: [],
@@ -2886,11 +2729,13 @@ function sourceFactsForCaptureContext(context) {
 function captureDraftClassification(draft, state) {
   const text = draftText(draft);
   const firstSource = draftSourcePages(draft)[0];
-  return classifyContent({
+  return classifyCapturedContent({
     text,
+    sourceFacts: sourceFactsForCaptureContext(sourceContextForUrl(draft, firstSource?.url || draft.visuals[0]?.sourceUrl || "")),
     title: draft.title || firstSource?.title || draft.visuals[0]?.sourceTitle || "",
     url: firstSource?.url || draft.visuals[0]?.sourceUrl || "",
-    visuals: draft.visuals
+    visuals: draft.visuals,
+    mediaPrompts: embeddedMediaPrompts(draft.visuals)
   }, state.classificationRules, state.taxonomy);
 }
 
@@ -4016,7 +3861,7 @@ function importedEntryFromStagedAsset(state, staged, job, item) {
     mediaAssets,
     mediaPrompts: embeddedMediaPrompts(mediaAssets),
     primaryMediaId: staged.assetId,
-    classification: classifyImportedMedia({ ...base, mediaAssets }, state.taxonomy),
+    classification: classifyImportedMedia({ ...base, mediaAssets, mediaPrompts: embeddedMediaPrompts(mediaAssets) }, state.taxonomy),
     customLabels: uniqueNames(job.options.customLabels), metadataLabels: [], facetAssignments: [], analysisCandidates: [], analysisBreakdown: [],
     rejectedCandidateKeys: [], negativeTerms: [], legacyFacetCandidates: [], analysisPending: false
   });
@@ -6168,6 +6013,25 @@ async function batchAddCustomLabels(message) {
   return { ok: true, message: `已为 ${updatedCount} 个案例添加标签`, updatedCount, entries };
 }
 
+async function batchSetClassification(message) {
+  const state = await readState();
+  const requested = new Set(uniqueNames(message.entryIds));
+  if (!requested.size || !isValidContentPath(state.taxonomy, message.pathIds)) {
+    return { ok: false, message: "请选择案例和有效的案例类型" };
+  }
+  const available = new Set(state.entries.map(entry => entry.id));
+  if ([...requested].some(id => !available.has(id))) {
+    return { ok: false, message: "部分案例已不存在，请刷新后重新选择" };
+  }
+  const entries = [];
+  for (const entry of state.entries) {
+    if (!requested.has(entry.id)) { entries.push(entry); continue; }
+    entries.push(touchEntry(confirmClassification(entry, message.pathIds, state.taxonomy)));
+  }
+  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+  return { ok: true, message: `已修改 ${requested.size} 个案例的分类`, updatedCount: requested.size };
+}
+
 async function batchSetProject(message) {
   const state = await readState();
   const validIds = new Set(state.entries.map((entry) => entry.id));
@@ -6478,7 +6342,7 @@ async function commitDeepSeekBatchItem(message) {
   }
   const state = await readState();
   const entry = findEntry(state, message.entryId);
-  if (canonicalTextAnalysisInput(entry, message.assetId).textRevision !== Math.max(1, Number(message.textRevision) || 1)) {
+  if (!await textAnalysisResultIsCurrent(entry, message)) {
     return failDeepSeekBatchItem({
       ...message,
       error: { message: "提示词原文已变化，请重新预览", status: 409 }
@@ -6547,7 +6411,7 @@ async function commitDeepSeekBatchItems(message) {
       continue;
     }
     const entry = working.entries.find((item) => item.id === result.entryId);
-    if (!entry || canonicalTextAnalysisInput(entry, result.assetId).textRevision !== Math.max(1, Number(result.textRevision) || 1)) {
+    if (!await textAnalysisResultIsCurrent(entry, result)) {
       job = failAnalysisItem(job, result.entryId, result.claimId, {
         message: "提示词原文已变化，请重新预览",
         status: 409
@@ -6577,7 +6441,7 @@ async function commitDeepSeekBatchItems(message) {
 }
 
 async function commitStagedRebuildResults(jobValue, stagingValue, state, results) {
-  const stagedResult = stageAnalysisRebuildResults(jobValue, stagingValue, state, results);
+  const stagedResult = await stageAnalysisRebuildResults(jobValue, stagingValue, state, results);
   let { job } = stagedResult;
   const { staging } = stagedResult;
   const summary = analysisBatchSummary(job);
@@ -6589,7 +6453,7 @@ async function commitStagedRebuildResults(jobValue, stagingValue, state, results
     return { ok: true, analysisBatchJob: summary };
   }
 
-  const finalized = finalizeAnalysisRebuild(job, staging, domainState(state));
+  const finalized = await finalizeAnalysisRebuild(job, staging, domainState(state));
   const working = finalized.state;
   job = finalized.job;
   const undo = createAnalysisBatchUndo(job, state);
@@ -6678,7 +6542,7 @@ async function applyStagedAnalysisRebuild(jobId) {
   if (staleCount) {
     return { ok: false, message: `${staleCount} 条成功案例的原文已变化，不能安全应用旧缓存` };
   }
-  const finalized = finalizePartialAnalysisRebuild(
+  const finalized = await finalizePartialAnalysisRebuild(
     job,
     stored[STORAGE_KEYS.analysisRebuildStaging],
     domainState(state)
@@ -8273,7 +8137,7 @@ function previewLibraryImport(state, library, options = {}) {
 
 function previewLibraryImportBatch(state, message = {}) {
   const inspections = transferInspectionMessages(message.packages);
-  const result = planLibraryTransferBatch({
+  return previewLibraryTransferBatch({
     currentState: state,
     inspections,
     options: {
@@ -8281,28 +8145,7 @@ function previewLibraryImportBatch(state, message = {}) {
       conflictResolutions: message.conflictResolutions
     }
   });
-  return {
-    ok: true,
-    planToken: result.planToken,
-    plan: result.context,
-    canApply: result.canApply,
-    conflicts: result.conflicts,
-    unresolvedConflicts: result.unresolvedConflicts,
-    packageResults: result.packageResults,
-    resourceWrites: result.resourceWrites,
-    createdEntryIds: result.createdEntryIds,
-    importDiagnostics: result.importDiagnostics,
-    importStats: result.importStats,
-    importedCount: result.importedCount,
-    remappedCount: result.remappedCount,
-    skippedCount: result.skippedCount,
-    importedRunCount: result.importedRunCount,
-    importedOutputCount: result.importedOutputCount,
-    importedSkillCount: result.importedSkillCount,
-    skippedSkillCount: result.skippedSkillCount
-  };
 }
-
 async function applyLibraryImport(state, message) {
   const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
   const claim = claimLibraryImportTransaction(stored[STORAGE_KEYS.libraryImportTransactions], {

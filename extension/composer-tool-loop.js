@@ -1,4 +1,6 @@
 // Provider-native tool messages stay inside a turn. UI records contain no image bytes or provider secrets.
+import { readEventStream } from "./event-stream.js";
+
 export async function runComposerToolLoop({ body, protocol, request, runtime, signal, onDelta = () => {}, maxCharacters, allowImageOutput = false }) {
   const current = structuredClone(body);
   const specs = runtime.specs;
@@ -93,16 +95,12 @@ export async function readToolResponse(response, protocol, onDelta = () => {}, s
   if (!String(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
     return normalizeResponse(await response.json(), protocol, onDelta);
   }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let text = "";
   let terminal = false;
   let payload = protocol === "responses" ? { output: [] } : { choices: [{ message: { role: "assistant", content: "", tool_calls: [] } }] };
   const items = new Map();
-  const consume = block => {
-    const data = block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
-    if (!data || data === "[DONE]") return;
+  for await (const data of readEventStream(response, { signal })) {
+    if (!data.trim() || data === "[DONE]") continue;
     const event = JSON.parse(data);
     if (event.error || ["error", "response.failed", "response.incomplete"].includes(event.type)) throw new Error("工具调用连接失败或输出不完整，已停止本轮");
     if (protocol === "responses") {
@@ -136,30 +134,9 @@ export async function readToolResponse(response, protocol, onDelta = () => {}, s
       if (event.usage) payload.usage = event.usage;
       if (event.model) payload.model = event.model;
     }
-  };
-  const onAbort = () => { void reader.cancel().catch(() => {}); };
-  signal?.addEventListener("abort", onAbort, { once: true });
-  try {
-    for (;;) {
-      signal?.throwIfAborted();
-      const result = await reader.read();
-      buffer += decoder.decode(result.value ?? new Uint8Array(), { stream: !result.done });
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() || "";
-      for (const block of blocks) consume(block);
-      if (result.done) break;
-    }
-    if (buffer.trim()) consume(buffer);
-    signal?.throwIfAborted();
-    if (!terminal) throw new Error("工具调用连接中断，未执行不完整调用");
-    return normalizeResponse(payload, protocol);
-  } catch (error) {
-    await reader.cancel().catch(() => undefined);
-    throw error;
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-    reader.releaseLock();
   }
+  if (!terminal) throw new Error("工具调用连接中断，未执行不完整调用");
+  return normalizeResponse(payload, protocol);
 }
 
 function normalizeResponse(payload, protocol, onDelta) {

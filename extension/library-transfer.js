@@ -530,3 +530,28 @@ function mergeReportStats(sourceValue, inspectedValue) {
 function clean(value) {
   return String(value ?? "").trim();
 }
+
+// Preview and commit share the planner; only commit owns writes and revalidates the token.
+export function previewLibraryTransferBatch(input) {
+  const result = planLibraryTransferBatch(input);
+  return {
+    ok: true,
+    planToken: result.planToken,
+    plan: result.context,
+    canApply: result.canApply,
+    conflicts: result.conflicts,
+    unresolvedConflicts: result.unresolvedConflicts,
+    packageResults: result.packageResults,
+    resourceWrites: result.resourceWrites,
+    createdEntryIds: result.createdEntryIds,
+    importDiagnostics: result.importDiagnostics,
+    importStats: result.importStats,
+    importedCount: result.importedCount,
+    remappedCount: result.remappedCount,
+    skippedCount: result.skippedCount,
+    importedRunCount: result.importedRunCount,
+    importedOutputCount: result.importedOutputCount,
+    importedSkillCount: result.importedSkillCount,
+    skippedSkillCount: result.skippedSkillCount
+  };
+}

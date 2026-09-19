@@ -1,3 +1,4 @@
+import { PAGE_CAPTURE_ADAPTERS } from "./page-capture-adapter-registry.js";
 import {
   CONTENT_ROLES,
   contentTypeForRole,
@@ -6,8 +7,9 @@ import {
 } from "./taxonomy.js";
 import { entryHasMedia, normalizeEntryMedia } from "./media.js";
 import { entryHasVisual } from "./visuals.js";
+import { originalMediaPrompts } from "./prompt-sources.js";
 
-export const CLASSIFIER_VERSION = 6;
+export const CLASSIFIER_VERSION = 7;
 
 const WEIGHT = Object.freeze({ weak: 1, supporting: 2, format: 3, strong: 4, modelBody: 5, decisive: 6 });
 const THRESHOLD = Object.freeze({ tutorial: 6, tutorialTie: 8, imageCaseText: 360 });
@@ -33,10 +35,20 @@ const SIGNALS = Object.freeze({
   imageFormat: /(?:静帧|画幅|摄影图|肖像|构图|妆容|摄影|插画|绘画|\b(?:still image|portrait|photograph|photography|photo|painting|illustration|rendering|composition|aspect ratio)\b|--ar\b|negative prompt)/i
 });
 
-export function classifyContent(entry = {}, rules = [], taxonomy = createDefaultTaxonomy()) {
+export function classifyContent(entry = {}, rules = [], taxonomy = createDefaultTaxonomy(), { capture = false } = {}) {
   const existing = normalizeExistingClassification(entry.classification, taxonomy);
   if (existing && existing.status === "confirmed" && ["manual", "local_import"].includes(existing.source)) {
     return existing;
+  }
+
+  const platformDefault = classifyPlatform(entry, rules, taxonomy);
+  if (platformDefault) return platformDefault;
+  if (capture) {
+    if (entry.sourceFacts?.pageType === "article") return classificationForRole(taxonomy, CONTENT_ROLES.reference, "文档网页按文章资料归类");
+    const hasPrompt = originalMediaPrompts(entry).length > 0
+      || (entry.sourceFacts?.originalPromptAvailable !== false && Boolean(String(entry.text ?? "").trim()));
+    if (entryHasMedia(entry, "video")) return classificationForRole(taxonomy, hasPrompt ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.videoCase, "按已选视频和采集正文归类");
+    if (entryHasMedia(entry, "image")) return classificationForRole(taxonomy, hasPrompt ? CONTENT_ROLES.promptImage : CONTENT_ROLES.imageCase, "按已选图片和采集正文归类");
   }
 
   const facts = entry.sourceFacts;
@@ -48,7 +60,7 @@ export function classifyContent(entry = {}, rules = [], taxonomy = createDefault
     const video = facts.pageType === "video";
     const kind = video ? "video" : "image";
     if (entryHasMedia(entry, kind)) {
-      const hasPrompt = entry.mediaPrompts?.some(item => item.source !== "ai-suggestion" && String(item.text || "").trim())
+      const hasPrompt = originalMediaPrompts(entry).length > 0
         || facts.originalPromptAvailable === true
         || (facts.originalPromptAvailable !== false && scorePromptShape(String(entry.text || ""), "") >= WEIGHT.supporting);
       return classificationForRole(taxonomy, video
@@ -110,11 +122,13 @@ export function classifyImportedMedia(entry = {}, taxonomy = createDefaultTaxono
   const kinds = new Set(normalizeEntryMedia(entry).mediaAssets
     .filter((asset) => asset.usage !== "poster")
     .map((asset) => asset.kind));
+  const hasPrompt = originalMediaPrompts(entry).length > 0
+    || (entry.sourceFacts?.originalPromptAvailable === true && Boolean(String(entry.text ?? "").trim()));
   if (kinds.has("video")) {
-    return classificationForRole(taxonomy, CONTENT_ROLES.videoCase, "本机视频按文件形态归类", "local_import");
+    return classificationForRole(taxonomy, hasPrompt ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.videoCase, hasPrompt ? "本机视频及原始提示词证据" : "本机视频按文件形态归类", "local_import");
   }
   if (kinds.has("image")) {
-    return classificationForRole(taxonomy, CONTENT_ROLES.imageCase, "本机图片按文件形态归类", "local_import");
+    return classificationForRole(taxonomy, hasPrompt ? CONTENT_ROLES.promptImage : CONTENT_ROLES.imageCase, hasPrompt ? "本机图片及原始提示词证据" : "本机图片按文件形态归类", "local_import");
   }
   if (kinds.has("document")) {
     return classificationForRole(taxonomy, CONTENT_ROLES.reference, "本机文档按文件形态归类", "local_import");
@@ -126,6 +140,29 @@ export function classifyImportedMedia(entry = {}, taxonomy = createDefaultTaxono
     return classificationForRole(taxonomy, CONTENT_ROLES.sourceFile, "创作源文件按文件形态归类", "local_import");
   }
   return classification([], "needs_review", "local_import", "无法识别本机资料形态");
+}
+
+// All automatic entry points share platform precedence and content evidence.
+export function classifyCapturedContent(entry = {}, rules = [], taxonomy = createDefaultTaxonomy()) {
+  return classifyContent(entry, rules, taxonomy, { capture: true });
+}
+
+function classifyPlatform(entry, rules, taxonomy) {
+  const host = hostnameFor(entry.url);
+  const platform = PAGE_CAPTURE_ADAPTERS.find(item => item.hosts.some(domain => host === domain || host.endsWith(`.${domain}`)));
+  if (!platform) return null;
+  const rule = (Array.isArray(rules) ? rules : []).find(item => item?.enabled !== false && item.hostname === host && validPath(taxonomy, item.pathIds));
+  if (rule) return classification(rule.pathIds, "confirmed", "source_rule", "来源规则");
+  const videoPlatforms = ["youtube", "bilibili", "douyin", "tiktok"];
+  const imagePlatforms = ["pinterest", "behance", "dribbble", "artstation", "deviantart", "designspiration", "huaban", "zcool", "500px", "flickr", "pexels", "imgur"];
+  const creationPlatforms = ["jimeng", "libtv", "liblibai", "higgsfield", "krea", "tapnow", "lovart", "midjourney", "civitai", "runway", "kling"];
+  if (videoPlatforms.includes(platform.id)) return classificationForRole(taxonomy, CONTENT_ROLES.videoCase, "视频媒体平台默认案例");
+  if (imagePlatforms.includes(platform.id)) return classificationForRole(taxonomy, entryHasMedia(entry, "video") ? CONTENT_ROLES.videoCase : CONTENT_ROLES.imageCase, "视觉媒体平台默认案例");
+  if (creationPlatforms.includes(platform.id)) {
+    const video = entryHasMedia(entry, "video") || entry.sourceFacts?.pageType === "video" || !entryHasMedia(entry, "image") && ["runway", "kling"].includes(platform.id);
+    return classificationForRole(taxonomy, video ? CONTENT_ROLES.promptVideo : CONTENT_ROLES.promptImage, "AIGC创作平台默认提示词");
+  }
+  return null;
 }
 
 export function confirmClassification(entry, pathIds, taxonomy = createDefaultTaxonomy()) {

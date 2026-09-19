@@ -26,7 +26,7 @@ export async function preparePageSessionMedia(value = {}) {
   const response = await globalThis.fetch(url.href, {
     credentials: "include",
     redirect: "error",
-    referrerPolicy: "no-referrer",
+    referrerPolicy: "strict-origin-when-cross-origin",
     cache: "no-store"
   });
   if (!response?.ok) throw new Error(`页面媒体读取失败（HTTP ${response?.status || 0}）`);

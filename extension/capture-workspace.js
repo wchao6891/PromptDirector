@@ -17,7 +17,7 @@ import {
   setDraftPrimaryVisual,
   updateDraftFragment
 } from "./capture-draft.js";
-import { createTextCandidate } from "./capture-text-candidate.js";
+import { CAPTURE_SAVED_TEXT_KEY, createTextCandidate } from "./capture-text-candidate.js";
 import {
   ensureContinuousCapturePermission,
   ensurePagePermission,
@@ -165,6 +165,8 @@ export function createCaptureWorkspace({
         return updateFragment(payload.fragmentId, payload.text);
       case "remove-fragment":
         return removeFragment(payload.fragmentId);
+      case "clear-saved-fragments":
+        return clearSavedFragments(payload.fragmentIds);
       case "reorder-fragments":
         return reorderFragments(payload.ids);
       case "remove-visual":
@@ -235,6 +237,10 @@ export function createCaptureWorkspace({
       });
       if (!candidate) {
         return { ok: true, added: false, reason: "empty-selection", message: "", draft: before };
+      }
+      const saved = await chromeApi.storage.local.get(CAPTURE_SAVED_TEXT_KEY);
+      if (saved[CAPTURE_SAVED_TEXT_KEY]?.includes(candidate.textFingerprint)) {
+        return { ok: true, added: false, reason: "already-saved-selection", message: "", draft: before };
       }
       const response = await addSelection(candidate, sourceContext);
       return { ...response, candidateKind: candidate.kind };
@@ -663,6 +669,19 @@ export function createCaptureWorkspace({
     const draft = removeDraftFragment(await readDraft(), fragmentId);
     await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "高亮文字已移除", draft };
+  }
+
+  async function clearSavedFragments(fragmentIds = []) {
+    const current = await readDraft();
+    const ids = new Set(fragmentIds);
+    const saved = current.fragments.filter(fragment => ids.has(fragment.id));
+    const candidates = await Promise.all(saved.map(fragment => createTextCandidate({ clipboard: fragment.text })));
+    const draft = saved.reduce((value, fragment) => removeDraftFragment(value, fragment.id), current);
+    await chromeApi.storage.local.set({
+      [captureDraftStorageKey]: draft,
+      ...(saved.length ? { [CAPTURE_SAVED_TEXT_KEY]: [...new Set(candidates.filter(Boolean).map(candidate => candidate.textFingerprint))] } : {})
+    });
+    return { ok: true, draft };
   }
 
   async function reorderFragments(ids) {

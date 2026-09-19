@@ -493,7 +493,8 @@ test("custom media keeps its configured image tasks after registry normalization
     imageGeneration: { providerId: "custom-media", model: "image-model" }
   });
   const restored = normalizeAiProviderRegistry(registry);
-  assert.deepEqual(restored.providers["custom-media"].capabilities, ["imageAnalysis", "imageGeneration"]);
+  assert.ok(restored.providers["custom-media"].capabilities.includes("creativePlanning"));
+  assert.ok(availableAiModelChoicesForTask("creativePlanning", restored).some(choice => choice.providerId === "custom-media" && choice.modelId === "vision-model"));
   assert.equal(resolveAiProviderAssignment("imageAnalysis", restored, assignments).model, "vision-model");
   assert.equal(resolveAiProviderAssignment("imageGeneration", restored, assignments).model, "image-model");
 });
@@ -673,4 +674,27 @@ test("connected task choices retain every account-visible model without inventin
     availableAiModelChoicesForTask("creativePlanning", registry).map((choice) => choice.modelId),
     ["account-alpha", "account-beta"]
   );
+});
+
+test('a configured compatible dialogue model can be tried for image or video understanding without a second key', () => {
+  const registry = normalizeAiProviderRegistry({ providers: { 'custom-text': {
+    endpoint: 'https://compatible.example/v1/chat/completions', apiKey: 'one-fixture-key', consent: true,
+    models: { creativePlanning: 'account-model', imageAnalysis: 'account-model', videoAnalysis: 'account-model' },
+    discoveredModels: [{ id: 'account-model', status: 'available', tasks: ['creativePlanning'], inputModalities: ['text'], outputModalities: ['text'], confidence: 'declared' }]
+  } } });
+  for (const task of ['imageAnalysis', 'videoAnalysis']) {
+    const choice = availableAiModelsForTask(task, registry.providers['custom-text']).find(model => model.id === 'account-model');
+    assert.equal(choice.assignmentEvidence, 'manual_unverified');
+    assert.equal(resolveAiProviderAssignment(task, registry, {[task]:{providerId:'custom-text',model:'account-model'}}).model,'account-model');
+  }
+});
+
+test('an image generation connection needs only its own key, including the redacted UI model menu', () => {
+  const registry = normalizeAiProviderRegistry({providers:{'custom-media':{consent:true,
+    models:{imageGeneration:'account-image'},imageGeneration:{protocol:'images_generations',endpoint:'https://generation.example/v1/images/generations',apiKey:'only-image-key',model:'account-image'}}}});
+  const safe=publicAiProviderRegistry(registry);
+  assert.equal(safe.providers['custom-media'].credentialConfigured,false);
+  assert.equal(safe.providers['custom-media'].imageGeneration.credentialConfigured,true);
+  assert.ok(availableAiModelChoicesForTask('imageGeneration',safe).some(choice=>choice.modelId==='account-image'));
+  assert.equal(availableAiModelChoicesForTask('creativePlanning',safe).some(choice=>choice.modelId==='account-image'),false);
 });

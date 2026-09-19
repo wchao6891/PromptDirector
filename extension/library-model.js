@@ -94,8 +94,8 @@ export function entrySourceMetadataRows(entry = {}, sourceLabel = "来源") {
   const seen = new Set();
   const english = sourceLabel === "Source";
   const labels = english
-    ? { provider: "Provider", itemId: "Work ID", author: "Author", handle: "Account", publishedAt: "Published", model: "Model", dimensions: "Dimensions", favorites: "Favorites", likes: "Likes", uses: "Uses", views: "Views", shares: "Shares" }
-    : { provider: "来源", itemId: "作品 ID", author: "作者", handle: "账号", publishedAt: "发布时间", model: "模型", dimensions: "尺寸", favorites: "收藏", likes: "点赞", uses: "使用", views: "浏览", shares: "分享" };
+    ? { provider: "Provider", itemId: "Work ID", author: "Author", handle: "Account", publishedAt: "Published", model: "Model", dimensions: "Dimensions", favorites: "Favorites", likes: "Likes", uses: "Uses", views: "Views", shares: "Shares", comments: "Comments", coins: "Coins", danmaku: "Danmaku" }
+    : { provider: "来源", itemId: "作品 ID", author: "作者", handle: "账号", publishedAt: "发布时间", model: "模型", dimensions: "尺寸", favorites: "收藏", likes: "点赞", uses: "使用", views: "浏览", shares: "分享", comments: "评论", coins: "投币", danmaku: "弹幕" };
   const addField = (label, value) => {
     const text = String(value ?? "").trim();
     const key = `${label}\n${text}`;
@@ -107,8 +107,8 @@ export function entrySourceMetadataRows(entry = {}, sourceLabel = "来源") {
   for (const name of ["provider", "itemId", "author", "handle", "publishedAt", "model", "dimensions"]) {
     addField(labels[name], sourceFacts[name]);
   }
-  if (sourceFacts.description) addField(english ? "Description" : "作品说明", sourceFacts.description);
-  for (const warning of Array.isArray(sourceFacts.captureWarnings) ? sourceFacts.captureWarnings : []) addField(english ? "Capture issue" : "采集问题", warning);
+  const description = String(sourceFacts.description || "").trim();
+  if (description && !String(entry.text || "").includes(description)) addField(english ? "Description" : "作品说明", description);
   for (const [name, amount] of Object.entries(sourceFacts.engagement || {})) {
     if (Number.isFinite(Number(amount)) && Number(amount) >= 0) addField(labels[name] || name, String(amount));
   }

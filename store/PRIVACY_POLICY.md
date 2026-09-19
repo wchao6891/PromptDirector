@@ -1,6 +1,6 @@
 # 提示词导演隐私政策
 
-生效日期：2026 年 9 月 10 日
+生效日期：2026 年 9 月 20 日
 
 提示词导演是一个本地优先的 Chrome 扩展，用于收藏、整理、检索、备份和分享个人创作资料。扩展不提供开发者服务器，不创建账号，不收集使用统计，不投放广告，也不出售用户数据。
 
@@ -17,9 +17,9 @@
 
 - 案例文字、媒体、来源、标签、色卡、创作 Skill、设置和 API Key 默认保存在浏览器扩展的本地存储中。
 - 截图裁剪、压缩、缩略图、色卡提取、资料整理和 ZIP 分享包生成在本机完成。
-- 网页采集先在当前标签页本地提出外层主体区域，并在确认后展示内部有意义的正文、媒体、下载和整组内容块。用户可以在原网页添加遗漏内容、排除错误内容、整组修正、撤销或恢复自动识别。正文在主体确认后默认纳入；正文内已定位媒体默认进入保存方案，无法确认文章位置的媒体默认不选并显示为可能遗漏媒体。底部“保存案例”按钮会显示媒体数量；“保存案例”按钮是当前媒体方案的最终授权，用户也可以选择“只保存正文”。
+- 网页采集在当前标签页本地识别正文与媒体并展示预览。用户可以直接点选内容、添加遗漏内容、排除错误内容或撤销调整。“保存案例”按钮是当前内容方案的最终授权，用户也可以选择“只保存正文”。
 - 用户明确启动同一列表批量采集后，扩展可在当前标签页滚动公开列表，并沿同一来源的列表分页链接继续采集；不会自动进入作品详情页，也不会绕过登录、验证码、付费墙、访问控制或反自动化限制。完成后会返回原列表页，并以实际识别数量和停止原因结束。
-- 预检会显示主体内识别到的公开媒体地址和预览，但不会在最终保存动作前把媒体写入案例或请求媒体域名权限。只有最终保存方案中的媒体会尝试读取原始文件；公开图片失败时，扩展才会让当前网页使用已有登录会话读取该图片。扩展不读取、导出、保存或传输 Cookie、Token 与登录请求头。
+- 预检会显示主体内识别到的公开媒体地址和预览，但不会在最终保存动作前把媒体写入案例或请求媒体域名权限。只有最终保存方案中的媒体会尝试读取原始文件；图片、视频或封面的直接读取失败时，扩展可让当前网页使用已有登录会话读取用户所选媒体。扩展不读取、导出、保存或传输 Cookie、Token 与登录请求头。
 - PDF、Markdown、SKILL.md、TXT、HTML 和 RTF 只有属于用户最终保存方案时，才会从公开 HTTPS 地址读取，并在真实文件类型和容量限制校验通过后保存本地副本；请求不携带登录凭据。读取失败时只保留原始来源链接。压缩包、程序和未知类型文件不会自动下载，也不会作为 Skill 静默导入。
 - API Key 不进入导出 ZIP、Markdown、JSON、分享包、创作草稿、诊断包或日志。
 - 用户主动导出或分享时，扩展在本机生成资料夹或 ZIP 分享包；离线预览只读取包内内容和固定本地脚本，不会上传数据。用户决定分享包中包含哪些资料，并应自行判断分享对象与内容。
@@ -31,7 +31,7 @@
 - AI 功能默认不因安装而自动执行。发送授权是所有真实外部请求的前置条件；已保存 API Key、已选模型或单次付费确认都不能替代发送授权。
 - 对新增的付费媒体分析或生成，扩展还会要求单次付费确认。该确认只授权当前操作，且与发送授权相互独立；两者不能互相替代。
 - 发送时，扩展只发送完成当前任务所必需、且由用户明确选择、提交或按其查询和参考意图读取的内容。根据任务，这可能包括文字提示词、用户创作要求、本次选择的参考图片或视频、画面描述、生成参数或当前会话中用户可见的消息。
-- 图片创作默认可以使用用户选择的原图。若每项参考已有案例提示词或有效画面分析文字，用户可改为“全程只用案例/分析文字”；该模式不会读取、分析或发送图片，图片载荷为零。
+- 新建创作会话默认只使用文字资料。用户可以明确开启原图或视频参考；未开启时不会因引用案例而读取、分析或发送其媒体原件。
 - 创作台仅在用户要求查询或参考案例库时调用本地工具。搜索返回候选片段，参考创作时按需读取文字并展示来源；普通创作不自动查库。用户可以关闭当前会话的资料库检索，关闭状态在刷新后保留。检索不会自动发送案例图片、视频或原始文档文件。
 - 扩展不会发送整库或全部案例，不会将 API Key 作为创作内容发送，也不会为了失败恢复而静默改用另一家付费服务、重新发起付费请求。
 - 图片和视频仅会在用户对相应任务明确选择或提交，并完成上述所需确认后，直接通过 HTTPS 发送给所选第三方 AI 服务或自定义兼容接口。开发者不会接收或中转这些内容。
@@ -43,7 +43,6 @@
 
 本地数据会保留，直到用户在案例库中修改或删除、清除扩展数据，或卸载扩展。用户可在卸载前创建本地备份，并可在 AI 服务连接设置中清除本地 API Key 和发送授权。
 
-When Agent connection is enabled, requested case content and original files are delivered to the paired local Agent. The Agent host may send these materials to its configured model or services according to the user’s instructions and its own settings. PromptDirector does not control that subsequent processing. Downloaded originals and connection receipts remain locally until the user removes them.
 
 ## Chrome Web Store Limited Use
 
@@ -52,6 +51,8 @@ When Agent connection is enabled, requested case content and original files are 
 启用 Agent 连接后，所请求的案例内容和原件会交给配对的本机 Agent。Agent 宿主可能按用户指令及其自身设置将这些材料发送给所配置的模型或服务，这部分处理由宿主管理。本机原件副本和连接回执会保留至用户清理。
 
 ## 权限用途
+
+- `webRequest`：仅在已授权网站上识别媒体响应地址与类型，用于视频数量角标和采集预览。媒体候选保存在浏览器会话中，换页或关闭标签页后清除；不会读取请求凭据、修改请求或上传浏览记录。跨域媒体仍受网站权限约束。
 
 - `activeTab`：仅在用户主动触发的当前标签页操作中访问页面内容；用户明确启动列表批量采集时，可在同一标签页内滚动或沿列表分页继续，并在结束后返回原列表页。
 - `alarms`：安排本地后台任务的延后、轮询或恢复，不用于跟踪用户。
@@ -64,7 +65,7 @@ When Agent connection is enabled, requested case content and original files are 
 - `https://wchao6891.github.io/*`：读取 PromptDirector 官方精选目录、目录指标、封面和只读预览数据。
 - `https://github.com/*`：读取用户明确选择保存的官方精选 Release 包，并打开公开的问题反馈或投稿页面；本地开发版还会读取官方更新版本，并在用户确认后下载程序更新包。
 - `https://objects.githubusercontent.com/*` 与 `https://release-assets.githubusercontent.com/*`：跟随 GitHub Release 的受信下载链读取用户明确选择的精选包及其媒体，或本地开发版的程序更新包；不会读取其他 GitHub 账号数据。
-- 可选的 `<all_urls>`：不在安装时授予。只有用户主动使用需要相应站点权限的采集功能或保存第三方 AI 服务、自定义兼容接口时，扩展才会请求相应域名的运行时权限。启用 Agent 连接时会申请网站访问权限，以便配对的 Agent 按指令在独立标签页采集网址；不会被动监控浏览活动。
+- 可选的 `<all_urls>`：不在安装时授予。只有用户主动使用需要相应站点权限的采集功能或保存第三方 AI 服务、自定义兼容接口时，扩展才会请求相应域名的运行时权限。启用 Agent 连接时会申请网站访问权限，以便配对的 Agent 按指令在独立标签页采集网址；不会记录或上传浏览历史。
 - 可选的 `nativeMessaging`：只在用户启用 Agent 连接时申请，用于与用户安装的本机连接器通信。配对的 Agent 可以按指令搜索案例、读取选定原件、采集网址及回存材料，不能通过该接口读取 AI 服务密钥。断开连接后拒绝新请求，已提交任务继续执行。
 - 可选的 `clipboardRead`：只在用户明确触发需要读取剪贴板内容的功能时请求。
 - 可选的 `declarativeNetRequestWithHostAccess`：只在用户已授予相应站点访问权限、且功能需要按该权限处理网络请求时使用。
@@ -77,7 +78,7 @@ When Agent connection is enabled, requested case content and original files are 
 
 # PromptDirector Privacy Policy
 
-Effective date: September 10, 2026
+Effective date: September 20, 2026
 
 PromptDirector is a local-first Chrome extension for collecting, organizing, searching, backing up, and sharing personal creative references. It has no developer-operated data server or user account system, does not collect analytics, does not show ads, and does not sell user data.
 
@@ -91,9 +92,11 @@ Cases, media, tags, settings, Creative Skills, and API keys are stored in the br
 
 PromptDirector supports seven separately assigned AI tasks: text tagging, Skill extraction, creative planning, image analysis, video analysis, image generation, and video generation. No external AI request runs merely because the extension is installed. A real request requires the configured service, model, required site permission, and the user's sending consent. Paid media analysis or generation also requires a separate confirmation for the current action.
 
-Content selected, submitted, or read in response to the user’s request to search or reference their library is sent directly over HTTPS to the AI provider or compatible endpoint chosen by the user. Composer invokes local case tools only when the user asks to search or reference the library. Search returns brief candidate excerpts; requested reference work reads relevant text and shows sources. Ordinary creation does not automatically search. Explicitly specified images are sent directly without a separate visual-analysis call. Retrieval can be disabled for the conversation; that choice survives a page reload. Retrieval does not automatically send case images, videos, or original document files. PromptDirector does not send the full library or API keys as creative content, or silently retry a paid action through another provider. In text-only creation mode, images are neither read nor transmitted. The developer does not receive or proxy AI request content; each provider handles received data under its own terms and privacy policy.
+Content selected, submitted, or read in response to the user’s request to search or reference their library is sent directly over HTTPS to the AI provider or compatible endpoint chosen by the user. Composer invokes local case tools only when the user asks to search or reference the library. Search returns brief candidate excerpts; requested reference work reads relevant text and shows sources. Ordinary creation does not automatically search. New conversations use text references by default. Original images or videos require an explicit reference-input choice; selected images are sent directly without a separate visual-analysis call. Retrieval can be disabled for the conversation; that choice survives a page reload. Retrieval does not automatically send case images, videos, or original document files. PromptDirector does not send the full library or API keys as creative content, or silently retry a paid action through another provider. In text-only creation mode, images are neither read nor transmitted. The developer does not receive or proxy AI request content; each provider handles received data under its own terms and privacy policy.
 
 ## Sharing, retention, and deletion
+
+When Agent connection is enabled, requested case content and original files are delivered to the paired local Agent. The Agent host may send these materials to its configured model or services according to the user’s instructions and its own settings. PromptDirector does not control that subsequent processing. Downloaded originals and connection receipts remain locally until the user removes them.
 
 Data leaves local storage only when the user explicitly sends it to a configured AI service, exports or migrates it, or creates and distributes a share package. Local data remains until the user edits or deletes it, clears extension storage, or uninstalls the extension. Users can create a local backup before uninstalling and can remove locally saved API keys and consent in AI service settings.
 
@@ -102,6 +105,8 @@ Data leaves local storage only when the user explicitly sends it to a configured
 PromptDirector complies with the Limited Use requirements of the Chrome Web Store User Data Policy. Permissions and user data are used only to provide or improve the disclosed, user-facing single purpose and features. User data is not sold or used for personalized, retargeted, or interest-based advertising. Humans are not allowed to read user data unless the user separately authorizes access to specific content for a support request, or access is required for security or legal obligations.
 
 ## Permission purposes
+
+- `webRequest`: identify media response URLs and types on authorized websites for video counts and capture previews. Candidates stay in the browser session and are cleared on navigation or tab closure. This does not read credentials, modify requests, or upload browsing history; cross-origin media remains subject to site permissions.
 
 - `activeTab`: access the current page only after a user starts capture, visual selection, or another page action.
 - `alarms`: schedule or resume local background work; never for tracking.
@@ -114,7 +119,7 @@ PromptDirector complies with the Limited Use requirements of the Chrome Web Stor
 - `https://wchao6891.github.io/*`: read the official curated catalog, metrics, covers, and read-only previews.
 - `https://github.com/*`: read an official curated Release package selected by the user and open public feedback or submission pages. Local development builds also check official versions and download program updates after user confirmation.
 - `https://objects.githubusercontent.com/*` and `https://release-assets.githubusercontent.com/*`: follow GitHub's trusted Release download chain for user-selected curated packages and media, or local development program updates; no other GitHub account data is read.
-- Optional `<all_urls>`: not granted at installation. Ordinary capture and AI settings request the necessary origins. Enabling Agent connection requests website access so the paired Agent can capture user-requested URLs in a dedicated tab; browsing is not passively monitored.
+- Optional `<all_urls>`: not granted at installation. Ordinary capture and AI settings request the necessary origins. Enabling Agent connection requests website access so the paired Agent can capture user-requested URLs in a dedicated tab; browsing history is not recorded or uploaded.
 - Optional `nativeMessaging`: requested when the user enables Agent connection, to communicate with the locally installed connector. A paired Agent can search cases, read selected originals, capture URLs and save materials. This interface does not expose AI service credentials. Disconnecting rejects new requests; submitted tasks continue.
 - Optional `clipboardRead`: requested only for a user-triggered feature that reads clipboard content.
 - Optional `declarativeNetRequestWithHostAccess`: requested only when a user-granted site permission and the chosen feature require a bounded network rule.

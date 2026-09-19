@@ -292,21 +292,21 @@ test("rebuild stages failures without changing the live library and switches onl
   const originalSnapshot = structuredClone(originalState);
   let job = await createAnalysisBatchJob(originalState.entries, { id: "rebuild", mode: "rebuild", profileFingerprint: "profile" });
   let claimed = claimAnalysisItems(job, 2, (() => { let index = 0; return () => `claim-${++index}`; })());
-  let staged = stageAnalysisRebuildResults(claimed.job, null, originalState, [
+  let staged = await stageAnalysisRebuildResults(claimed.job, null, originalState, [
     { entryId: "a", claimId: "claim-1", textRevision: 1, tags: [{ g: "style.render", t: "赛璐珞" }], model: "model", usage: { totalTokens: 12 } },
     { entryId: "b", claimId: "claim-2", textRevision: 1, error: { message: "busy", status: 503 } }
   ]);
   assert.deepEqual(originalState, originalSnapshot);
   assert.equal(analysisBatchSummary(staged.job).counts.failed, 1);
-  assert.throws(() => finalizeAnalysisRebuild(staged.job, staged.staging, originalState), /尚未全部成功/);
+  await assert.rejects(() => finalizeAnalysisRebuild(staged.job, staged.staging, originalState), /尚未全部成功/);
 
   job = retryFailedAnalysisItems(staged.job);
   claimed = claimAnalysisItems(job, 1, () => "retry-b");
-  staged = stageAnalysisRebuildResults(claimed.job, structuredClone(staged.staging), originalState, [{
+  staged = await stageAnalysisRebuildResults(claimed.job, structuredClone(staged.staging), originalState, [{
     entryId: "b", claimId: "retry-b", textRevision: 1,
     tags: [{ g: "scene.place", t: "庭院" }], model: "model", usage: { totalTokens: 9 }
   }]);
-  const finalized = finalizeAnalysisRebuild(staged.job, staged.staging, originalState, "2026-08-03T00:00:00.000Z");
+  const finalized = await finalizeAnalysisRebuild(staged.job, staged.staging, originalState, "2026-08-03T00:00:00.000Z");
   assert.deepEqual(originalState, originalSnapshot);
   assert.equal(finalized.state.entries[0].facetAssignments.some((item) => item.source === "manual"), true);
   assert.equal(finalized.state.entries.every((entry) => entry.analysisPending === false), true);
@@ -528,7 +528,7 @@ test("a confirmed partial rebuild applies staged successes and leaves failures p
     results: {
       saved: {
         tags: [{ g: "style.render", t: "赛璐珞" }],
-        fingerprint: "fingerprint",
+        fingerprint: await textFingerprint(state.entries[0].text),
         textRevision: 1,
         model: "model",
         usage: { totalTokens: 10 }
@@ -536,7 +536,7 @@ test("a confirmed partial rebuild applies staged successes and leaves failures p
     }
   };
 
-  const finalized = finalizePartialAnalysisRebuild(job, staging, state, "2026-08-03T01:00:00.000Z");
+  const finalized = await finalizePartialAnalysisRebuild(job, staging, state, "2026-08-03T01:00:00.000Z");
   const saved = finalized.state.entries.find((entry) => entry.id === "saved");
   const failed = finalized.state.entries.find((entry) => entry.id === "failed");
   const added = finalized.state.entries.find((entry) => entry.id === "new-after-start");
@@ -820,4 +820,35 @@ test("selected text tagging retags unchanged selections, skips empty text, and n
   const claimed = claimAnalysisItems(job);
   const failed = failAnalysisItem(claimed.job, "selected", claimed.claims[0].claimId, { message: "test failure", status: 422 });
   assert.deepEqual(retryFailedAnalysisItems(failed).items.map(item => [item.entryId, item.status]), [["selected", "pending"]]);
+});
+
+test('a staged result cannot overwrite text edited while other cases were still being analyzed', async () => {
+  const state={facetCatalog:createFixedFacetCatalog(),entries:[{id:'a',text:'原始画面',textRevision:1},{id:'b',text:'原始场景',textRevision:1}]};
+  const job=await createAnalysisBatchJob(state.entries,{id:'staged-edit',mode:'rebuild'});
+  const claimed=claimAnalysisItems(job,2,()=>crypto.randomUUID());
+  const result=async(index)=>({entryId:claimed.claims[index].entryId,claimId:claimed.claims[index].claimId,
+    textRevision:1,fingerprint:await textFingerprint(state.entries[index].text),tags:[{g:'style.render',t:'赛璐珞'}]});
+  const first=await stageAnalysisRebuildResults(claimed.job,null,state,[await result(0)]);
+  state.entries[0].text='用户后来修订的内容';
+  // A restored or replaced record can carry the same revision: fingerprint must also match.
+  const before=structuredClone(state);
+  const second=await stageAnalysisRebuildResults(first.job,first.staging,state,[await result(1)]);
+  assert.equal(analysisBatchSummary(second.job).counts.failed,1);
+  assert.equal(second.job.items.find(i=>i.entryId==='b').status,'succeeded');
+  assert.equal(second.staging.results.a,undefined);
+  assert.ok(second.staging.results.b);
+  assert.deepEqual(state,before);
+  await assert.rejects(async()=>finalizeAnalysisRebuild(second.job,second.staging,state),/尚未全部成功/);
+});
+
+test('applying a completed staged rebuild checks its source again, including unchanged revision numbers', async () => {
+  const state={facetCatalog:createFixedFacetCatalog(),entries:[{id:'a',text:'原始画面',textRevision:1}]};
+  const job=await createAnalysisBatchJob(state.entries,{id:'staged-apply',mode:'rebuild'});
+  const claimed=claimAnalysisItems(job,1,()=> 'claim');
+  const staged=await stageAnalysisRebuildResults(claimed.job,null,state,[{entryId:'a',claimId:'claim',
+    textRevision:1,fingerprint:await textFingerprint('原始画面'),tags:[{g:'style.render',t:'赛璐珞'}]}]);
+  state.entries[0].text='用户替换的新内容';
+  const before=structuredClone(state);
+  await assert.rejects(async()=>finalizeAnalysisRebuild(staged.job,staged.staging,state),/原文已变化/);
+  assert.deepEqual(state,before);
 });

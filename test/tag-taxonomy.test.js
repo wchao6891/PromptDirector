@@ -157,3 +157,12 @@ test("detail organization stays below 16 KiB and merges only within the same gro
   assert.equal(new Set(applied.state.entries.slice(0, 2).map((entry) => entry.facetAssignments[0].nodeId)).size, 1);
   assert.notEqual(applied.state.entries[0].facetAssignments[0].nodeId, applied.state.entries[2].facetAssignments[0].nodeId);
 });
+
+test('detail organization reserves room for every rename mapping, not just its input', () => {
+  const catalog = createFixedFacetCatalog();
+  for (let i=0;i<400;i++) catalog.nodes.push({id:`detail:${i}`,name:'电影写实标签'+i,parentId:'style.render',facetId:'style',status:'active'});
+  const chunks = createDetailOrganizationChunks(catalog);
+  const outputBytes = chunk => new TextEncoder().encode(JSON.stringify({m:chunk.d.map(([id,name])=>({id,n:name}))})).length;
+  assert.ok(chunks.every(chunk=>outputBytes(chunk)<=4000), JSON.stringify(chunks.map(outputBytes)));
+  assert.equal(chunks.reduce((sum,c)=>sum+c.d.length,0),400);
+});

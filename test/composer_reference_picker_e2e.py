@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from playwright.sync_api import expect
+from composer_e2e_support import set_composer_reference_media
 
 from e2e_support import base_entry, extension_session
 
@@ -159,6 +160,7 @@ def main() -> None:
         composer.locator("#composer-options summary").click()
         composer.locator("#composer-create-image").check()
         composer.locator("#composer-options summary").click()
+        set_composer_reference_media(composer, images=True)
         composer.locator("#composer-reference-open").click()
         for number in [1, 2, 4, 5, 6]:
             asset_checkbox(composer, number).check()

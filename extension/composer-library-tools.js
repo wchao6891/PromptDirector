@@ -3,6 +3,7 @@ import { entryMediaAssets } from './media.js';
 import { composerSourceText, composerAssetAnalysisText, formatReferenceTime } from './composer-source-text.js';
 import { buildSearchIndex, searchIndexedEntries } from './search-index.js';
 import { collectionEntryIds } from './organizer.js';
+import { caseOriginalPromptText } from './prompt-sources.js';
 
 // Match the library's page size and the reference picker's preview length.
 const PAGE_SIZE = 24;
@@ -171,7 +172,7 @@ export function caseTextPart(entry, part, documents) {
   const assets = entryMediaAssets(entry);
   switch (part) {
     case 'body': return String(entry.text ?? '');
-    case 'original_prompt': return (entry.mediaPrompts ?? []).filter(item => item.source !== 'ai-suggestion').map(item => item.text).join('\n\n');
+    case 'original_prompt': return caseOriginalPromptText(entry);
     case 'ai_prompt': return assets.map(asset => composerAssetAnalysisText(entry, asset)).filter(Boolean).join('\n\n');
     case 'document': return documents?.get(entry.id) || '';
     case 'time_notes': return (entry.timeNotes ?? []).map(note => {

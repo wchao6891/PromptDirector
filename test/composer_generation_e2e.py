@@ -7,7 +7,7 @@ from threading import Event, Thread
 
 from playwright.sync_api import expect
 
-from composer_e2e_support import composer_request_payload
+from composer_e2e_support import composer_request_payload, set_composer_reference_media, set_composer_direction
 from e2e_support import ai_configuration_fixture, base_entry, extension_session
 
 
@@ -405,7 +405,7 @@ def main() -> None:
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("An eastern courtyard in soft backlight.")
 
         composer.locator("#composer-new").click()
-        composer.locator(".composer-type-switch label", has_text="视频").click()
+        set_composer_direction(composer, "video")
         select_composer_setting(composer, "#composer-route", "compose")
         select_composer_setting(composer, "#composer-output-language", "zh-CN")
         composer.locator("#composer-instruction").fill("生成庭院人物行走视频")
@@ -415,7 +415,7 @@ def main() -> None:
         assert video_execution["instruction"] == "生成庭院人物行走视频"
 
         composer.locator("#composer-new").click()
-        composer.locator(".composer-type-switch label", has_text="图片").click()
+        set_composer_direction(composer, "image")
         select_composer_setting(composer, "#composer-route", "auto")
         composer.locator("#composer-instruction").fill("角色应该是什么气质")
         question_requests_before = len(requests)
@@ -538,6 +538,7 @@ def main() -> None:
         composer.locator("#composer-model-trigger").click()
         composer.locator("#composer-model-dynamic button", has_text="OpenAI").click()
         expect(composer.locator("#composer-model-label")).to_have_text("OpenAI")
+        set_composer_reference_media(composer, images=True)
         composer.locator("#composer-instruction").fill("参考1保持三人构图和中间女性聚焦，参考2只负责画面风格")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_contain_text("三人电影级长焦构图")
@@ -598,8 +599,8 @@ def main() -> None:
         composer.reload()
         expect(composer.locator("#composer-model-trigger")).to_be_visible()
         composer.locator("#composer-model-trigger").click()
-        composer.locator("#composer-model-dynamic button", has_text="自定义兼容服务（文字）").click()
-        expect(composer.locator("#composer-model-label")).to_have_text("自定义兼容服务（文字）")
+        composer.locator("#composer-model-dynamic button", has_text="自定义兼容服务（对话与识别）").click()
+        expect(composer.locator("#composer-model-label")).to_have_text("自定义兼容服务（对话与识别）")
         CreativeServiceHandler.requests.clear()
         CreativeServiceHandler.release_image.clear()
         composer.locator("#composer-options summary").click()

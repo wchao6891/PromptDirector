@@ -28,6 +28,7 @@ def main():
         assert prepared['generationInfo']['candidates'][0]['prompt'] == '雨夜书店'
         saved = page.evaluate("async () => chrome.runtime.sendMessage({type:'CREATE_MEDIA_CASE',asset:window.generationAsset,title:'Generation boundary'})")
         assert saved['ok'], saved
+        assert saved['entry']['classification']['pathIds'] == ['content:prompt:image'], saved
         entry_id = saved['entry']['id']
         page.goto(f'chrome-extension://{session.extension_id}/library.html?case={entry_id}', wait_until='networkidle')
         expect(page.locator('.original-prompt-panel .prompt-text').first).to_contain_text('雨夜书店')

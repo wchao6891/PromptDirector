@@ -6,8 +6,9 @@ export function createToolDraftCard(event,{sessionId,onSaved,busy=false}) {
   card.append(node('p','',draft.kind==='skill'?draft.description:draft.tags.join('、')));
   if(draft.savedId) {
     const link=node('a','button-secondary',draft.kind==='skill'?'在 Skill 中心查看':'查看案例');
-    link.href=draft.kind==='skill'?`skills.html?view=detail&skill=${encodeURIComponent(draft.savedId)}`:`library.html?case=${encodeURIComponent(draft.savedId)}`;
-    link.target='_blank'; card.append(link);
+    link.href=draft.kind==='skill'?`skills.html?source=composer&session=${encodeURIComponent(sessionId)}&view=detail&skill=${encodeURIComponent(draft.savedId)}`:`library.html?case=${encodeURIComponent(draft.savedId)}`;
+    if(draft.kind!=='skill') link.target='_blank';
+    card.append(link);
   } else {
     const button=node('button','button-secondary','查看并保存');
     button.type='button'; button.disabled=busy;

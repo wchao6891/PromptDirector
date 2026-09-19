@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import {
   composerImageEditCapabilities,
   composerImageAvailability,
-  composerImageInputAvailability,
   selectedComposerService,
   composerGenerationRequiresPromptAssembly,
   composerServiceCapabilities,
@@ -455,23 +454,23 @@ test("video generation keeps Zhipu planning separate from the assigned generatio
   assert.equal(result.requestModel, "hailuo-account-model");
 });
 
-test("an assigned provider without creative-planning capability fails instead of using DeepSeek", async () => {
+test("a generation-only model cannot be used as a dialogue model", async () => {
   const providerSettings = visualSettings({
     providerProfiles: {
-      kimi: {
-        id: "kimi",
-        label: "Kimi",
-        endpoint: "https://api.moonshot.cn/v1/chat/completions",
+      openrouter: {
+        id: "openrouter",
+        label: "OpenRouter",
+        endpoint: "https://openrouter.ai/api/v1",
         protocol: "chat_completions",
-        apiKey: "kimi-secret",
+        apiKey: "openrouter-secret",
         consent: true,
-        capabilities: ["videoAnalysis"],
+        capabilities: ["videoGeneration"],
         models: {},
-        discoveredModels: [{ id: "video-only-model", tasks: ["videoAnalysis"] }]
+        discoveredModels: [{ id: "video-only-model", tasks: ["videoGeneration"], confidence: "declared", inputModalities: ["text"], outputModalities: ["video"] }]
       }
     }
   });
-  const session = createComposerSession({ aiProfile: { serviceId: "kimi", model: "video-only-model" } });
+  const session = createComposerSession({ aiProfile: { serviceId: "openrouter", model: "video-only-model" } });
 
   await assert.rejects(() => planComposerTurnWithService({
     session, userMessage: "", composerSettings: settings
@@ -879,7 +878,7 @@ test("GLM Composer sends local video as raw Base64 in the same single multimodal
   assert.equal(request.model, "glm-5.3-flash");
 });
 
-test("DeepSeek Pro refuses a pure-image reference instead of silently composing without seeing it", async () => {
+test("DeepSeek cannot silently drop an explicitly selected original that failed to load", async () => {
   const session = createComposerSession({
     aiProfile: { serviceId: "deepseek", model: "deepseek-v4-pro" },
     referenceSnapshots: [{ entryId: "pure-image", alias: "@参考1", imageRefs: [{ visualId: "one" }] }]
@@ -890,7 +889,7 @@ test("DeepSeek Pro refuses a pure-image reference instead of silently composing 
     composerSettings: settings,
     route: "compose",
     instruction: "按参考图生成"
-  }, { ai: { apiKey: "deepseek-secret", consent: true }, vision: {} }, [], { fetchImpl: async () => { throw new Error("不应调用"); } }), /DeepSeek.*无法读取参考原图.*切换支持看图的模型/);
+  }, { ai: { apiKey: "deepseek-secret", consent: true }, vision: {} }, [], { fetchImpl: async () => { throw new Error("不应调用"); } }), /图片1 读取失败.*没有发送不完整参考/);
 });
 
 test("OpenAI create-image mode sends original images through the Responses image tool", async () => {
@@ -1859,9 +1858,18 @@ test("known image input remains available when a different model is assigned to 
   assert.equal(selectedComposerService({serviceId: "zhipu", model: "account-visual-model"}, {}, {providerProfiles: {zhipu: discovered}}).vision, true);
 });
 
-test("a saved description cannot silently substitute for selected original images", () => {
-  const session = createComposerSession({referenceSnapshots: [{entryId: "image", alias: "@参考1", referenceKind: "vision", referenceText: "Saved description", imageRefs: [{visualId: "original"}]}]});
-  assert.deepEqual(composerImageInputAvailability(session, {vision: false}), {available: false, imageCount: 1});
-  assert.deepEqual(composerImageInputAvailability(session, {vision: true}), {available: true, imageCount: 1});
-  assert.deepEqual(composerImageInputAvailability({...session, imageReferenceMode: "text_only"}, {vision: false}), {available: true, imageCount: 0});
+test('Gemini generation does not silently discard an explicitly selected video reference', async () => {
+  const session=createComposerSession({outputMode:'create_image',imageReferenceMode:'conditioned',videoReferenceMode:'original',
+    aiProfile:{serviceId:'gemini',model:'gemini-planning-model'},generationAiProfile:{serviceId:'gemini',model:'account-nano-banana-model'},
+    referenceSnapshots:[{entryId:'video',alias:'@参考1',referenceKind:'video_sources',referenceText:'原始视频提示词',assetRefs:[{assetId:'video',kind:'video'}]}]});
+  let calls=0;
+  await executeComposerTurnWithService({session,route:'compose',instruction:'参考视频构图'},geminiImageSettings(),[],{
+    preparedVideos:[{assetId:'video',mimeType:'video/mp4',dataUrl:'data:video/mp4;base64,AQID'}],
+    fetchImpl:async(_url,options)=>{
+      calls++;const body=JSON.parse(options.body);
+      assert.deepEqual(body.input.filter(part=>part.type==='video'),[{type:'video',mime_type:'video/mp4',data:'AQID'}]);
+      return response({steps:[{type:'model_output',content:[{type:'image',mime_type:'image/png',data:'aGVsbG8='}]}]});
+    }
+  });
+  assert.equal(calls,1);
 });

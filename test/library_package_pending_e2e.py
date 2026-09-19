@@ -31,7 +31,7 @@ def main():
           window.planGates = [];
           window.capacityGates = [];
           chrome.runtime.sendMessage = async (...args) => {
-            if (args[0]?.type === 'PREVIEW_LIBRARY_IMPORT_BATCH') {
+            if (args[0]?.type === 'GET_FOLDER_BACKUP_STATE') {
               await new Promise(resolve => planGates.push(resolve));
             }
             return send(...args);
