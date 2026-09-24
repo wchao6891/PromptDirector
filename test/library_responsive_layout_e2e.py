@@ -6,13 +6,14 @@ from e2e_support import base_entry, extension_session
 def geometry(page) -> dict:
     return page.evaluate(
         """() => {
-          const viewportWidth = document.documentElement.clientWidth;
+          const viewportWidth = innerWidth;
           const gallery = document.querySelector('.gallery-shell').getBoundingClientRect();
           const list = document.querySelector('#case-list').getBoundingClientRect();
           const cards = [...document.querySelectorAll('#case-list > .case-card')]
             .map(card => card.getBoundingClientRect());
           return {
             viewportWidth,
+            availableWidth: document.documentElement.clientWidth,
             gallery: {left: gallery.left, right: gallery.right, width: gallery.width},
             list: {left: list.left, right: list.right, width: list.width},
             cards: cards.map(card => ({left: card.left, right: card.right, width: card.width})),
@@ -26,7 +27,8 @@ def assert_readable_layout(value: dict) -> None:
     gallery = value["gallery"]
     case_list = value["list"]
     cards = value["cards"]
-    minimum_gallery_width = viewport_width - (270 if viewport_width > 640 else 20)
+    # The approved mobile layout retains a 48px navigation rail.
+    minimum_gallery_width = value["availableWidth"] - (270 if viewport_width > 640 else 68)
     assert gallery["width"] >= minimum_gallery_width, value
     assert case_list["width"] >= gallery["width"] - 40, value
     assert cards, value
@@ -36,13 +38,18 @@ def assert_readable_layout(value: dict) -> None:
 
 def wait_for_readable_layout(page) -> None:
     page.wait_for_function(
-        """() => {
+        """expectedWidth => {
           const gallery = document.querySelector('.gallery-shell')?.getBoundingClientRect();
           const cards = [...document.querySelectorAll('#case-list > .case-card')]
             .map(card => card.getBoundingClientRect());
-          return Boolean(gallery && cards.length)
+          return innerWidth === expectedWidth && Boolean(gallery && cards.length)
+            && (!matchMedia('(max-width: 640px)').matches
+              || document.querySelector('.workspace').classList.contains('filters-collapsed'))
+            && (!document.querySelector('.workspace').classList.contains('filters-collapsed')
+              || document.querySelector('#filter-sidebar').getBoundingClientRect().width === 48)
             && cards.every(card => card.left >= gallery.left - 1 && card.right <= gallery.right + 1);
         }""",
+        arg=page.viewport_size["width"],
         timeout=2000,
     )
 

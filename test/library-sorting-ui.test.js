@@ -19,7 +19,7 @@ test("library exposes four case sorts and allows project management without a mo
 
   assert.doesNotMatch(html, /id="project-sort"|最近创建|项目排序/);
   assert.match(html, /id="collapse-projects"[^>]*aria-label="全部折叠"/);
-  assert.match(html, /id="project-search"/);
+  assert.doesNotMatch(html, /id="project-search"/);
 });
 
 test("sidebar derives an unassigned workspace without persisting smart or import-batch views", () => {

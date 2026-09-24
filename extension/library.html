@@ -7,8 +7,9 @@
     <script src="theme-bootstrap.js"></script>
     <link rel="stylesheet" href="ui-foundation.css" />
     <link rel="stylesheet" href="library.css" />
+    <link rel="stylesheet" href="library-layout.css" />
   </head>
-  <body data-library-state="loading">
+  <body class="modular-library" data-library-state="loading">
     <div id="library-loading" class="library-loading" role="status" aria-live="polite">
       <div class="library-loading-bar"></div>
       <div class="library-loading-body">
@@ -22,10 +23,81 @@
         <img class="brand-mark product-brand-mark" src="assets/icons/icon-source.svg" alt="" />
         <div class="product-brand-copy"><strong class="brand-wordmark product-brand-name">PromptDirector</strong><span class="product-brand-tagline" data-i18n="视觉创作灵感库">视觉创作灵感库</span></div>
       </div>
+        <div id="gallery-heading" class="gallery-heading">
+          <div class="gallery-heading-copy"><div class="browse-location"><nav id="browse-breadcrumb" aria-label="项目路径" data-i18n-aria-label="项目路径"></nav></div><h1 id="library-title"></h1><strong id="result-count"></strong></div>
       <label class="global-search">
         <span class="sr-only" data-i18n="搜索提示词、来源或 AI 标签">搜索提示词、来源或 AI 标签</span>
         <input id="search-input" type="search" placeholder="搜索画面、提示词，或输入 type:video…" data-i18n-placeholder="搜索画面、提示词，或输入 type:video…" />
       </label>
+          <div id="gallery-view-controls" class="gallery-view-controls">
+            <label id="browse-scope"><input id="include-subprojects" type="checkbox"><span data-i18n="包含子项目">包含子项目</span></label>
+            <div class="gallery-view-switch" role="group" aria-label="案例视图" data-i18n-aria-label="案例视图">
+              <button type="button" class="button-secondary gallery-view-button" data-gallery-view="waterfall" aria-pressed="false" aria-label="瀑布流" title="瀑布流" data-i18n-aria-label="瀑布流" data-i18n-title="瀑布流"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-image"></use></svg></button>
+              <button type="button" class="button-secondary gallery-view-button" data-gallery-view="list" aria-pressed="false" aria-label="列表" title="列表" data-i18n-aria-label="列表" data-i18n-title="列表"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-menu"></use></svg></button>
+            </div>
+            <label class="gallery-sort-field"><span class="sr-only" data-i18n="案例排序">案例排序</span><select id="gallery-sort" aria-label="案例排序" data-i18n-aria-label="案例排序"><option value="added-desc" data-i18n="最近加入">最近加入</option><option value="updated-desc" data-i18n="最近更新">最近更新</option><option value="title" data-i18n="标题">标题</option><option id="project-manual-sort-option" value="project-manual" hidden data-i18n="手动排序">手动排序</option></select></label>
+            <button id="manage-case-order" class="icon-button" type="button" aria-label="管理案例顺序" title="管理案例顺序" hidden data-i18n-aria-label="管理案例顺序" data-i18n-title="管理案例顺序"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg></button>
+            <button id="select-cases" class="button-secondary gallery-select-button" type="button" aria-label="管理案例" data-i18n-aria-label="管理案例" title="管理案例" data-i18n-title="管理案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-square-check-big"></use></svg><span data-i18n="管理">管理</span></button>
+          </div>
+          <div id="share-bar" class="share-bar" hidden>
+            <strong id="share-count" data-i18n="已选 0">已选 0</strong>
+            <div id="selection-simple-actions" class="selection-simple-actions">
+              <button id="selection-select-filtered" class="button-secondary" type="button" data-i18n="全选筛选结果">全选筛选结果</button>
+              <div id="selection-selected-actions" class="selection-selected-actions" hidden>
+                <details id="selection-project-menu" class="selection-menu">
+                  <summary aria-label="项目" data-i18n-aria-label="项目" title="项目" data-i18n-title="项目"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-folder"></use></svg><span class="selection-action-label" data-i18n="项目">项目</span></summary>
+                  <div class="project-menu-panel selection-menu-panel selection-project-panel">
+                    <strong id="selection-project-impact" class="selection-project-impact"></strong>
+                    <label><span data-i18n="选择目标项目">选择目标项目</span><select id="selection-project-target" aria-label="选择目标项目" data-i18n-aria-label="选择目标项目"><option value="" data-i18n="选择项目…">选择项目…</option></select></label>
+                    <div class="selection-project-actions">
+                      <button id="selection-move-project" class="project-menu-primary" type="button" disabled data-i18n="移动">移动</button>
+                      <button id="selection-copy-project" class="button-secondary" type="button" disabled data-i18n="复制到项目">复制到项目</button>
+                      <button id="selection-remove-project" class="button-secondary" type="button" disabled data-i18n="移出当前项目">移出当前项目</button>
+                    </div>
+                    <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目并移动">新建项目并移动</button>
+                  </div>
+                </details>
+                <button id="selection-trash" class="button-secondary quiet-danger selection-compact-action" type="button" disabled aria-label="移入回收站" data-i18n-aria-label="移入回收站" title="移入回收站" data-i18n-title="移入回收站"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-trash-2"></use></svg><span class="selection-action-label" data-i18n="删除">删除</span></button>
+                <details id="selection-classification-menu" class="selection-menu">
+                  <summary aria-label="修改分类" data-i18n-aria-label="修改分类" title="修改分类" data-i18n-title="修改分类"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-list-checks"></use></svg><span class="selection-action-label" data-i18n="分类">分类</span></summary>
+                  <div class="project-menu-panel selection-menu-panel">
+                    <strong id="selection-classification-impact"></strong>
+                    <select id="selection-content-type" aria-label="案例类型" data-i18n-aria-label="案例类型"></select>
+                    <button id="selection-set-classification" type="button" class="project-menu-primary" disabled data-i18n="应用分类">应用分类</button>
+                  </div>
+                </details>
+                <details id="selection-label-menu" class="selection-menu">
+                  <summary aria-label="添加标签" data-i18n-aria-label="添加标签" title="添加标签" data-i18n-title="添加标签"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-tag"></use></svg><span class="selection-action-label" data-i18n="标签">标签</span></summary>
+                  <div class="project-menu-panel selection-menu-panel selection-label-panel">
+                    <label class="selection-label-field"><span data-i18n="添加标签">添加标签</span><input id="selection-label-input" type="text" placeholder="输入标签名" data-i18n-placeholder="输入标签名" autocomplete="off" /></label>
+                    <button id="selection-add-labels" class="project-menu-primary" type="button" disabled data-i18n="添加标签">添加标签</button>
+                  </div>
+                </details>
+                <details id="selection-more-menu" class="selection-menu">
+                  <summary aria-label="更多" data-i18n-aria-label="更多" title="更多" data-i18n-title="更多"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-ellipsis"></use></svg><span class="selection-action-label" data-i18n="更多">更多</span></summary>
+                  <div class="project-menu-panel selection-menu-panel selection-more-panel">
+                    <button id="share-export" class="button-secondary" type="button" disabled data-i18n="分享">分享</button>
+                    <button id="selection-combine" class="button-secondary" type="button" disabled data-i18n="组合案例">组合案例</button>
+                    <button id="selection-text-analyze" class="button-secondary" type="button" disabled data-i18n="文字打标">文字打标</button>
+                    <button id="selection-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析图片">批量分析图片</button>
+                    <button id="selection-video-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析视频">批量分析视频</button>
+                    <button id="selection-clear" class="button-secondary" type="button" disabled data-i18n="清空已选">清空已选</button>
+                  </div>
+                </details>
+              </div>
+              <button id="share-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button>
+            </div>
+          </div>
+          <strong id="project-selection-title" hidden></strong>
+          <div id="project-selection-actions" class="project-selection-actions" hidden>
+            <strong id="project-selection-count" class="project-selection-count" hidden></strong>
+            <button id="project-selection-select-filtered" class="button-secondary" type="button" hidden data-i18n="选中当前筛选">选中当前筛选</button>
+            <button id="project-selection-select-all" class="button-secondary" type="button" hidden data-i18n="选中全部可分析">选中全部可分析</button>
+            <button id="project-selection-clear" class="button-secondary" type="button" hidden data-i18n="清空已选">清空已选</button>
+            <button id="project-selection-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button>
+            <button id="project-selection-save" type="button" data-i18n="保存项目案例">保存项目案例</button>
+          </div>
+        </div>
       <div class="top-actions">
         <details id="add-menu" class="package-menu add-menu">
           <summary class="button-secondary" data-i18n="添加">添加</summary>
@@ -51,98 +123,38 @@
           <button id="open-curated" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sparkles"></use></svg><span data-i18n="精选案例">精选案例</span></button>
           <button id="open-skills" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-wand-sparkles"></use></svg><span data-i18n="创作 Skill">创作 Skill</span></button>
         </nav>
-        <section id="project-section" class="project-section">
+        <div id="sidebar-modules" class="sidebar-modules">
+        <section id="project-section" class="project-section sidebar-module" data-sidebar-module="projects">
           <div class="project-tree-tools">
-          <div class="filter-heading"><strong data-i18n="项目">项目</strong><span><button id="create-collection" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-plus"></use></svg><span data-i18n="新建">新建</span></button><button id="collapse-projects" class="icon-button" type="button" aria-label="全部折叠" title="全部折叠" data-i18n-aria-label="全部折叠" data-i18n-title="全部折叠"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg></button></span></div>
-          <input id="project-search" class="project-search" type="search" aria-label="搜索项目" placeholder="搜索项目" data-i18n-aria-label="搜索项目" data-i18n-placeholder="搜索项目" />
+          <div class="filter-heading"><strong data-i18n="项目">项目</strong><span><button id="create-collection" type="button" aria-label="新建项目" title="新建项目" data-i18n-aria-label="新建项目" data-i18n-title="新建项目"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-plus"></use></svg><span data-i18n="新建">新建</span></button><button id="collapse-projects" class="icon-button" type="button" aria-label="全部折叠" title="全部折叠" data-i18n-aria-label="全部折叠" data-i18n-title="全部折叠"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-left"></use></svg></button></span></div>
           </div>
+          <div id="sidebar-projects-body" class="sidebar-module-body">
           <div id="project-root-drop" class="project-root-drop" hidden data-i18n="移到根级">移到根级</div>
           <div id="collection-filters" class="project-list" role="tree" aria-label="项目树" data-i18n-aria-label="项目树"></div>
           <div id="project-move-feedback" class="project-move-feedback" hidden><p id="project-order-status" role="status" aria-live="polite"></p><button id="project-move-undo" class="button-secondary" type="button" data-i18n="撤销">撤销</button><button class="icon-button project-move-dismiss" type="button" aria-label="关闭" data-i18n-aria-label="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></div>
+          </div>
         </section>
-        <section class="sidebar-trash-section">
-          <button id="open-trash" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-trash-2"></use></svg><span data-i18n="回收站">回收站</span><strong id="trash-count" class="workspace-navigation-count" hidden></strong></button>
-        </section>
-        <section class="filter-section">
-          <div class="filter-heading"><strong data-i18n="内容类型">内容类型</strong><button id="manage-facets" type="button" data-i18n="分类与标签">整理</button></div>
+        <section class="filter-section sidebar-module" data-sidebar-module="types">
+          <div class="filter-heading"><strong data-i18n="内容类型">内容类型</strong><button id="manage-facets" class="icon-button" type="button" aria-label="分类与标签" title="分类与标签" data-i18n-aria-label="分类与标签" data-i18n-title="分类与标签"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg></button></div>
+          <div id="sidebar-types-body" class="sidebar-module-body">
           <div id="content-filters" class="filter-options"></div>
           <label class="pending-switch"><input id="pending-filter" type="checkbox" /><span data-i18n="只看待确认">只看待确认</span><strong id="pending-count"></strong></label>
+          </div>
         </section>
-        <section class="filter-section tag-navigation-section">
+        <section class="filter-section tag-navigation-section sidebar-module" data-sidebar-module="tags">
           <div class="filter-heading"><strong data-i18n="属性筛选">属性筛选</strong></div>
-          <div id="facet-filters" class="facet-filters"></div>
+          <div id="sidebar-tags-body" class="sidebar-module-body"><div id="facet-filters" class="facet-filters"></div></div>
+        </section>
+        </div>
+        <section class="sidebar-trash-section">
+          <button id="open-trash" class="workspace-navigation-item" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-trash-2"></use></svg><span data-i18n="回收站">回收站</span><strong id="trash-count" class="workspace-navigation-count" hidden></strong></button>
         </section>
       </aside>
       <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="调整项目侧栏宽度" aria-orientation="vertical" aria-valuemin="216" aria-valuemax="420" aria-valuenow="244" data-i18n-aria-label="调整项目侧栏宽度"></div>
 
       <main class="gallery-shell">
-        <div id="gallery-heading" class="gallery-heading">
-          <div class="gallery-heading-copy"><h1 id="library-title"></h1><strong id="result-count"></strong></div>
-          <div id="gallery-view-controls" class="gallery-view-controls">
-            <label class="gallery-sort-field"><span class="sr-only" data-i18n="案例排序">案例排序</span><select id="gallery-sort" aria-label="案例排序" data-i18n-aria-label="案例排序"><option value="added-desc" data-i18n="最近加入">最近加入</option><option value="updated-desc" data-i18n="最近更新">最近更新</option><option value="title" data-i18n="标题">标题</option><option id="project-manual-sort-option" value="project-manual" hidden data-i18n="手动排序">手动排序</option></select></label>
-            <button id="manage-case-order" class="icon-button" type="button" aria-label="管理案例顺序" title="管理案例顺序" hidden data-i18n-aria-label="管理案例顺序" data-i18n-title="管理案例顺序"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-sliders-horizontal"></use></svg></button>
-            <button id="select-cases" class="button-secondary gallery-select-button" type="button" aria-label="管理案例" data-i18n-aria-label="管理案例" title="管理案例" data-i18n-title="管理案例"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-square-check-big"></use></svg><span data-i18n="管理">管理</span></button>
-          </div>
-          <div id="share-bar" class="share-bar" hidden>
-            <strong id="share-count" data-i18n="已选 0">已选 0</strong>
-            <div id="selection-simple-actions" class="selection-simple-actions">
-              <button id="selection-select-filtered" class="button-secondary" type="button" data-i18n="全选筛选结果">全选筛选结果</button>
-              <div id="selection-selected-actions" class="selection-selected-actions" hidden>
-                <details id="selection-project-menu" class="selection-menu">
-                  <summary aria-label="项目" data-i18n-aria-label="项目"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-folder"></use></svg><span class="selection-action-label" data-i18n="项目">项目</span></summary>
-                  <div class="project-menu-panel selection-menu-panel selection-project-panel">
-                    <strong id="selection-project-impact" class="selection-project-impact"></strong>
-                    <label><span data-i18n="选择目标项目">选择目标项目</span><select id="selection-project-target" aria-label="选择目标项目" data-i18n-aria-label="选择目标项目"><option value="" data-i18n="选择项目…">选择项目…</option></select></label>
-                    <div class="selection-project-actions">
-                      <button id="selection-move-project" class="project-menu-primary" type="button" disabled data-i18n="移动">移动</button>
-                      <button id="selection-add-project" class="button-secondary" type="button" disabled data-i18n="同时加入">同时加入</button>
-                      <button id="selection-remove-project" class="button-secondary" type="button" disabled data-i18n="移出当前项目">移出当前项目</button>
-                    </div>
-                    <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目并移动">新建项目并移动</button>
-                  </div>
-                </details>
-                <button id="selection-trash" class="button-secondary quiet-danger selection-compact-action" type="button" disabled aria-label="移入回收站" data-i18n-aria-label="移入回收站" title="移入回收站" data-i18n-title="移入回收站"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-trash-2"></use></svg><span class="selection-action-label" data-i18n="删除">删除</span></button>
-                <details id="selection-classification-menu" class="selection-menu">
-                  <summary aria-label="修改分类" data-i18n-aria-label="修改分类"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-list-checks"></use></svg><span class="selection-action-label" data-i18n="分类">分类</span></summary>
-                  <div class="project-menu-panel selection-menu-panel">
-                    <strong id="selection-classification-impact"></strong>
-                    <select id="selection-content-type" aria-label="案例类型" data-i18n-aria-label="案例类型"></select>
-                    <button id="selection-set-classification" type="button" class="project-menu-primary" disabled data-i18n="应用分类">应用分类</button>
-                  </div>
-                </details>
-                <details id="selection-label-menu" class="selection-menu">
-                  <summary aria-label="添加标签" data-i18n-aria-label="添加标签"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-tag"></use></svg><span class="selection-action-label" data-i18n="标签">标签</span></summary>
-                  <div class="project-menu-panel selection-menu-panel selection-label-panel">
-                    <label class="selection-label-field"><span data-i18n="添加标签">添加标签</span><input id="selection-label-input" type="text" placeholder="输入标签名" data-i18n-placeholder="输入标签名" autocomplete="off" /></label>
-                    <button id="selection-add-labels" class="project-menu-primary" type="button" disabled data-i18n="添加标签">添加标签</button>
-                  </div>
-                </details>
-                <details id="selection-more-menu" class="selection-menu">
-                  <summary aria-label="更多" data-i18n-aria-label="更多"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-ellipsis"></use></svg><span class="selection-action-label" data-i18n="更多">更多</span></summary>
-                  <div class="project-menu-panel selection-menu-panel selection-more-panel">
-                    <button id="share-export" class="button-secondary" type="button" disabled data-i18n="分享">分享</button>
-                    <button id="selection-combine" class="button-secondary" type="button" disabled data-i18n="组合案例">组合案例</button>
-                    <button id="selection-text-analyze" class="button-secondary" type="button" disabled data-i18n="文字打标">文字打标</button>
-                    <button id="selection-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析图片">批量分析图片</button>
-                    <button id="selection-video-analyze" class="button-secondary" type="button" disabled data-i18n="批量分析视频">批量分析视频</button>
-                    <button id="selection-clear" class="button-secondary" type="button" disabled data-i18n="清空已选">清空已选</button>
-                  </div>
-                </details>
-              </div>
-              <button id="share-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button>
-            </div>
-          </div>
-          <strong id="project-selection-title" hidden></strong>
-          <div id="project-selection-actions" class="project-selection-actions" hidden>
-            <strong id="project-selection-count" class="project-selection-count" hidden></strong>
-            <button id="project-selection-select-filtered" class="button-secondary" type="button" hidden data-i18n="选中当前筛选">选中当前筛选</button>
-            <button id="project-selection-select-all" class="button-secondary" type="button" hidden data-i18n="选中全部可分析">选中全部可分析</button>
-            <button id="project-selection-clear" class="button-secondary" type="button" hidden data-i18n="清空已选">清空已选</button>
-            <button id="project-selection-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button>
-            <button id="project-selection-save" type="button" data-i18n="保存项目案例">保存项目案例</button>
-          </div>
-        </div>
         <p id="feedback" class="ui-feedback-toast" role="status" aria-live="polite"></p>
+        <div class="browse-results">
         <section id="project-folder-list" class="project-folder-list" aria-label="子项目" data-i18n-aria-label="子项目"></section>
         <section id="case-list" class="masonry" aria-live="polite"></section>
         <div id="load-sentinel" class="load-sentinel" aria-hidden="true"></div>
@@ -159,6 +171,7 @@
             </ol>
           </section>
           <section id="empty-filter" hidden><strong data-i18n="没有匹配的案例">没有匹配的案例</strong><p data-i18n="调整筛选条件，或保存新的图片、视频提示词。">调整筛选条件，或保存新的图片、视频提示词。</p></section>
+        </div>
         </div>
       </main>
     </div>

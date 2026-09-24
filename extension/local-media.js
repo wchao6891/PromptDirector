@@ -234,33 +234,58 @@ export async function extractLocalDocumentText(blob, options = {}) {
   }
 }
 
-export async function findExactMediaDuplicate(file, entries = [], options = {}) {
-  const format = detectLocalMediaFile(file);
-  const name = clean(file.name);
-  const storedAssets = (Array.isArray(entries) ? entries : []).flatMap((entry) =>
-    Array.isArray(entry?.mediaAssets) ? entry.mediaAssets : []
-  );
-  const candidates = [
-    ...storedAssets,
-    ...(Array.isArray(options.candidateAssets) ? options.candidateAssets : [])
-  ].filter((asset) =>
-      Number(asset?.byteSize) === file.size &&
-      clean(asset?.mimeType).toLocaleLowerCase("en-US") === format.mimeType &&
-      clean(asset?.sourceTitle ?? asset?.name) === name
-  );
-  const contentHash = await sha256Blob(file);
-  for (const asset of candidates) {
-    let candidateHash = clean(asset.contentHash);
-    if (!candidateHash) {
-      const blob = await options.readBlob?.(asset.id);
-      if (!(blob instanceof Blob)) continue;
-      candidateHash = await sha256Blob(blob);
+export function createExactMediaDuplicateIndex(entries = [], options = {}) {
+  const buckets = new Map();
+  const keyFor = (size, mimeType, name) => JSON.stringify([Number(size), clean(mimeType).toLocaleLowerCase("en-US"), clean(name)]);
+  const add = (asset) => {
+    const key = keyFor(asset.byteSize, asset.mimeType, asset.sourceTitle ?? asset.name);
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { nextOrder: 0, byHash: new Map(), pending: [], cursor: 0 };
+      buckets.set(key, bucket);
     }
-    if (candidateHash === contentHash) {
-      return { contentHash, duplicateAssetId: clean(asset.id) };
-    }
+    const candidate = { id: clean(asset.id), order: bucket.nextOrder++, hash: clean(asset.contentHash) };
+    if (candidate.hash) {
+      if (!bucket.byHash.has(candidate.hash)) bucket.byHash.set(candidate.hash, candidate);
+    } else bucket.pending.push(candidate);
+  };
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    for (const asset of Array.isArray(entry?.mediaAssets) ? entry.mediaAssets : []) add(asset);
   }
-  return { contentHash, duplicateAssetId: "" };
+  for (const asset of options.candidateAssets ?? []) add(asset);
+  return {
+    add,
+    async find(file, { contentHash: preparedHash, signal } = {}) {
+      const format = detectLocalMediaFile(file);
+      signal?.throwIfAborted();
+      // Only the caller that just prepared this exact immutable Blob may reuse
+      // its hash. Background admission independently hashes its stored bytes.
+      const contentHash = preparedHash || await sha256Blob(file);
+      signal?.throwIfAborted();
+      const bucket = buckets.get(keyFor(file.size, format.mimeType, file.name));
+      if (!bucket) return { contentHash, duplicateAssetId: "" };
+      let match = bucket.byHash.get(contentHash);
+      while (bucket.cursor < bucket.pending.length) {
+        const candidate = bucket.pending[bucket.cursor];
+        if (match && candidate.order > match.order) break;
+        signal?.throwIfAborted();
+        const blob = await options.readBlob?.(candidate.id);
+        if (blob instanceof Blob) {
+          const hash = await sha256Blob(blob);
+          signal?.throwIfAborted();
+          const known = bucket.byHash.get(hash);
+          if (!known || candidate.order < known.order) bucket.byHash.set(hash, candidate);
+        }
+        bucket.cursor += 1;
+        match = bucket.byHash.get(contentHash);
+      }
+      return { contentHash, duplicateAssetId: match?.id || "" };
+    }
+  };
+}
+
+export async function findExactMediaDuplicate(file, entries = [], options = {}) {
+  return createExactMediaDuplicateIndex(entries, options).find(file);
 }
 
 export async function chunkedBlobFingerprint(blob, options = {}) {

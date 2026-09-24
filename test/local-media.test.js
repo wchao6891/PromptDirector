@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   chunkedBlobFingerprint,
+  createExactMediaDuplicateIndex,
   createUnsupportedLocalAssetReference,
   detectLocalMediaFile,
   findExactMediaDuplicate,
@@ -254,4 +255,49 @@ test("exact duplicate detection includes earlier files from the same import batc
 
   assert.equal(result.duplicateAssetId, "batch:first");
   assert.equal(result.contentHash, contentHash.contentHash);
+});
+
+
+test("batch duplicate checks index stored metadata once and retain exact filename semantics", async () => {
+  let metadataReads = 0;
+  const entries = Array.from({ length: 1000 }, (_, index) => ({ mediaAssets: [{
+    id: `old:${index}`, get byteSize() { metadataReads += 1; return 4; },
+    mimeType: "image/png", sourceTitle: `old-${index}.png`, contentHash: "a".repeat(64)
+  }] }));
+  const index = createExactMediaDuplicateIndex(entries);
+  for (let i = 0; i < 100; i += 1) {
+    const file = new File(["data"], `new-${i}.png`, { type: "image/png" });
+    const result = await index.find(file);
+    assert.equal(result.duplicateAssetId, "");
+    index.add({ id: `new:${i}`, byteSize: 4, mimeType: "image/png", sourceTitle: file.name, contentHash: result.contentHash });
+  }
+  assert.equal(metadataReads, 1000, "batch growth must not rescan the existing library for each file");
+  assert.equal((await index.find(new File(["data"], "new-42.png", { type: "image/png" }))).duplicateAssetId, "new:42");
+  assert.equal((await index.find(new File(["diff"], "new-42.png", { type: "image/png" }))).duplicateAssetId, "");
+});
+
+test("unhashed stored originals are read only once per import and earlier matches retain priority", async () => {
+  const original = new File(["old!"], "same.png", { type: "image/png" });
+  const hash = (await findExactMediaDuplicate(original)).contentHash;
+  let reads = 0;
+  const index = createExactMediaDuplicateIndex([{ mediaAssets: [
+    { id: "first", byteSize: 4, mimeType: "image/png", sourceTitle: "same.png" },
+    { id: "later", byteSize: 4, mimeType: "image/png", sourceTitle: "same.png", contentHash: hash }
+  ] }], { readBlob: async () => { reads += 1; return original; } });
+  assert.equal((await index.find(original)).duplicateAssetId, "first");
+  for (let i = 0; i < 5; i += 1) await index.find(new File(["new!"], "same.png", { type: "image/png" }));
+  assert.equal(reads, 1);
+});
+
+test("frontend duplicate lookup reuses preparation hash but ordinary admission reads actual incoming bytes", async () => {
+  const file = new File(["data"], "one.png", { type: "image/png" });
+  const hash = (await findExactMediaDuplicate(file)).contentHash;
+  let reads = 0;
+  const stream = file.stream.bind(file);
+  file.stream = () => { reads += 1; return stream(); };
+  const index = createExactMediaDuplicateIndex();
+  assert.equal((await index.find(file, { contentHash: hash })).contentHash, hash);
+  assert.equal(reads, 0);
+  assert.equal((await index.find(file)).contentHash, hash);
+  assert.equal(reads, 1, "background admission must hash its own stored bytes");
 });

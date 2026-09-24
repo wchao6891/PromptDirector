@@ -229,7 +229,11 @@ export function moveEntriesBetweenCollections(stateValue, sourceCollectionId, ta
   if (!state.collections.some((item) => item.id === targetId)) throw new Error("目标项目不存在");
   if (sourceId) {
     if (!state.collections.some((item) => item.id === sourceId)) throw new Error("来源项目不存在");
-    state = setEntriesCollection(state, sourceId, entryIds, false);
+  }
+  state = structuredClone(state);
+  const moved = new Set(uniqueIds(entryIds));
+  for (const collection of state.collections) {
+    if (collection.id !== targetId) collection.entryIds = collection.entryIds.filter(id => !moved.has(id));
   }
   return setEntriesCollection(state, targetId, entryIds, true);
 }

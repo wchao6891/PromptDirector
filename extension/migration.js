@@ -7,6 +7,7 @@ import { normalizeEntryVisuals } from "./visuals.js";
 import { normalizeCompoundCases } from "./compound-cases.js";
 import { isFixedTagTree, migrateLegacyFacetState } from "./tag-taxonomy.js";
 import { normalizeTrashState } from "./trash.js";
+import { needsFolderOwnershipMigration, planFolderOwnership } from "./library-folder-ownership.js";
 
 const LEGACY_CONTENT_IDS = new Set([
   "content:tutorial:image", "content:tutorial:video", "content:tutorial:general"
@@ -40,8 +41,7 @@ export function migrateLibraryState(stored = {}) {
   } else {
     facetCatalog = sourceFacetCatalog;
   }
-  return {
-    state: {
+  const preparedState = {
       ...stored,
       schemaVersion: SCHEMA_VERSION,
       taxonomy,
@@ -51,7 +51,11 @@ export function migrateLibraryState(stored = {}) {
       trashState,
       compoundCases: normalizeCompoundCases(stored.compoundCases, entries),
       organizerState: normalizeOrganizerState(stored.organizerState, entries.map((entry) => entry.id))
-    },
+    };
+  const folderPlan = needsFolderOwnershipMigration(preparedState) ? planFolderOwnership(preparedState) : null;
+  return {
+    state: folderPlan?.state ?? preparedState,
+    folderOwnershipMigrated: Boolean(folderPlan?.changed),
     backup,
     migratedCount: entries.filter((entry, index) => stored.entries?.[index]?.schemaVersion !== SCHEMA_VERSION).length,
     resetPerformed: resetRequired && hasExistingLibrary(stored),
@@ -102,7 +106,7 @@ function applyLegacyTrashFacetMigration(trashState, bindings, migratedEntries) {
 }
 
 export function needsMigration(stored = {}) {
-  return stored.schemaVersion !== SCHEMA_VERSION || !stored.taxonomy || !stored.facetCatalog ||
+  return needsFolderOwnershipMigration(stored) || stored.schemaVersion !== SCHEMA_VERSION || !stored.taxonomy || !stored.facetCatalog ||
     !stored.organizerState || stored.organizerState.version !== ORGANIZER_VERSION || !stored.trashState || !Array.isArray(stored.compoundCases) ||
     !isFixedTagTree(stored.facetCatalog) ||
     (stored.entries ?? []).some((entry) => entry.schemaVersion !== SCHEMA_VERSION);

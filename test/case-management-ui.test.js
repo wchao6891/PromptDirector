@@ -18,7 +18,7 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
     "selection-label-input",
     "selection-add-labels",
     "selection-project-target",
-    "selection-add-project",
+    "selection-copy-project",
     "selection-move-project",
     "selection-remove-project",
     "share-export",
@@ -53,7 +53,7 @@ test("batch project management uses a wide source-aware move surface and one ato
   const panel = html.slice(html.indexOf('id="selection-project-menu"'), html.indexOf('id="share-export"'));
   assert.match(panel, /id="selection-project-impact"/);
   assert.match(panel, /id="selection-move-project"[\s\S]*>移动</);
-  assert.match(panel, /id="selection-add-project"[\s\S]*>同时加入</);
+  assert.match(panel, /id="selection-copy-project"[\s\S]*>复制到项目</);
   assert.match(panel, /id="selection-remove-project"[\s\S]*>移出当前项目</);
   assert.doesNotMatch(panel, /所选项目作为父项目/);
   assert.match(css, /\.project-menu-panel\.selection-project-panel\s*\{[^}]*width:\s*min\(430px/);

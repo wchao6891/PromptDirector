@@ -43,14 +43,15 @@ test("trash restore and irreversible cleanup have separate explicit message cont
   assert.match(cleanup, /永久删除/);
 });
 
-test("free-label and project batch actions are wired with add, remove, and move modes", () => {
+test("project batch actions use independent copies and default moves", () => {
   for (const type of ["UPDATE_ENTRY_CUSTOM_LABELS", "BATCH_ADD_CUSTOM_LABELS", "BATCH_SET_PROJECT"]) {
     assert.match(background, new RegExp(`case "${type}"`));
   }
   const labels = functionBlock("updateEntryCustomLabels", "batchAddCustomLabels");
   assert.match(labels, /customLabels/);
   const projects = functionBlock("batchSetProject", "updateOrganizer");
-  assert.match(projects, /\["remove", "move"\]\.includes\(message\.mode\)/);
+  assert.match(projects, /planCaseCopies/);
+  assert.match(projects, /message\.mode === "remove" \? "remove" : "move"/);
   assert.match(projects, /mode !== "remove"/);
   assert.match(projects, /moveEntriesBetweenCollections/);
   assert.match(projects, /message\.sourceCollectionId/);

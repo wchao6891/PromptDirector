@@ -114,7 +114,7 @@ test("free-tag batch payload expands compounds and normalizes optional labels", 
   assert.deepEqual(withoutLabels.customLabels, []);
 });
 
-test("project batch payload requires explicit add, remove, or move semantics", () => {
+test("project batch payload requires explicit copy, remove, or move semantics with a legacy add alias", () => {
   const added = buildLibraryBatchPayload(["entry:a"], [], {
     type: LIBRARY_BATCH_ACTIONS.setProject,
     collectionId: " collection:campaign ",
@@ -151,7 +151,7 @@ test("project batch payload requires explicit add, remove, or move semantics", (
       type: LIBRARY_BATCH_ACTIONS.setProject,
       collectionId: "collection:campaign"
     }),
-    /明确选择加入、移出或移动/
+    /明确选择复制、移出或移动/
   );
 });
 

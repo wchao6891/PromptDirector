@@ -322,6 +322,7 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
     state: {
       ...finalState,
       libraryReplacementRecoveryPoint: current.libraryReplacementRecoveryPoint,
+      folderOwnershipBackup: current.folderOwnershipBackup,
       creativeJobs: current.creativeJobs,
       importStaging: current.importStaging
     },

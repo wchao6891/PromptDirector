@@ -42,6 +42,7 @@ function durableAssets(state) {
 function localOnlyAssets(state) {
   const recoveryPoint = state.libraryReplacementRecoveryPoint;
   return [
+    ...(state.folderOwnershipBackup?.state ? durableAssets(state.folderOwnershipBackup.state) : []),
     ...creativeJobAssets(state.creativeJobs?.items),
     ...importStagingAssets(state.importStaging?.assets),
     ...(recoveryPoint?.state && typeof recoveryPoint.state === "object"

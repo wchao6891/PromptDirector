@@ -68,7 +68,7 @@ test("vision batch dialog only revives running or paused jobs and otherwise show
   assert.match(previewSelectedVisionBatch, /visionBatchJob && \["running", "paused"\]\.includes\(visionBatchJob\.status\)/);
   assert.match(renderVisionBatchDialog, /const activeJob = visionBatchJob && \["running", "paused"\]\.includes\(visionBatchJob\.status\) \? visionBatchJob : null/);
   assert.match(renderVisionBatchDialog, /const source = activeJob \?\? preview \?\? visionBatchJob \?\? \{\}/);
-  assert.match(renderVisionBatchDialog, /elements\.visionBatchStart\.hidden = Boolean\(activeJob\)/);
+  assert.match(renderVisionBatchDialog, /elements\.visionBatchStart\.hidden = Boolean\(job\)/);
   assert.match(renderVisionBatchDialog, /elements\.visionBatchPause\.hidden = !activeJob \|\| activeJob\.status !== "running"/);
   assert.match(renderVisionBatchDialog, /elements\.visionBatchResume\.hidden = !activeJob \|\| activeJob\.status !== "paused"/);
   assert.match(renderVisionBatchDialog, /elements\.visionBatchCancel\.hidden = !active/);

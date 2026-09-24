@@ -129,7 +129,7 @@ export function prepareLibraryPackageDraft(value = {}) {
     stats: {
       inputCases: lexical.entries.length,
       keptCases: migrated.entries.length,
-      skippedCases: lexical.entries.length - migrated.entries.length,
+      skippedCases: lexical.entries.length - preSalvagedEntries.length,
       droppedAiAssignments,
       droppedMediaDescriptors
     }

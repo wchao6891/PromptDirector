@@ -1,3 +1,5 @@
+import { libraryCaseScopes } from "./library-case-scope.js";
+
 const RECEIVER_LOCAL_FIELDS = new Set([
   "libraryAddedAt",
   "importBatchId",
@@ -25,9 +27,11 @@ export function reconcileLibrarySemanticIdentity(stateValue = {}) {
   const state = stateValue && typeof stateValue === "object" ? structuredClone(stateValue) : {};
   const entries = Array.isArray(state.entries) ? state.entries : [];
   const groups = new Map();
+  const scopes = libraryCaseScopes(state);
   for (const entry of entries) {
-    const fingerprint = caseSemanticFingerprint(entry);
-    if (!fingerprint) continue;
+    const content = caseSemanticFingerprint(entry);
+    if (!content) continue;
+    const fingerprint = JSON.stringify([scopes.get(entry.id), content]);
     const group = groups.get(fingerprint) ?? [];
     group.push(entry);
     groups.set(fingerprint, group);

@@ -159,3 +159,30 @@ test("write plan chooses exactly one honest marker after preflight", async () =>
   assert.equal(complete.files.has("rescue.json"), false);
   assert.equal(rescue.files.has("complete.json"), false);
 });
+
+test("rescue writes readable conflicting originals and the source manifest alongside restorable cases", async () => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join, dirname } = await import("node:path");
+  const original = new Blob(['{"original":true}'], { type: "application/json" });
+  const conflict = new Blob(["conflicting-original"], { type: "image/webp" });
+  const sourceFiles = new Map([["library.json", original], ["images/conflict.webp", conflict]]);
+  const plan = await buildFolderBackupWritePlan({ files: new Map([["library.json", new Blob(['{"restorable":true}'])]]), sourceFiles,
+    report: { status: "partial", diagnostics: [{ reason: "duplicate_asset_id" }] } });
+  assert.equal(plan.mode, "rescue");
+  assert.equal(await plan.files.get("images/conflict.webp").text(), "conflicting-original");
+  assert.equal(plan.files.get("recovery/source-library.json"), original);
+  const directory = await mkdtemp(join(tmpdir(), "pd-backup42-"));
+  try {
+    const written = new Map();
+    for (const [path, blob] of plan.files) {
+      const target = join(directory, path);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, new Uint8Array(await blob.arrayBuffer()));
+      written.set(path, new Blob([await readFile(target)], { type: blob.type }));
+    }
+    await verifyFolderRescueCompletion(plan.marker, written);
+    await writeFile(join(directory, plan.markerPath), JSON.stringify(plan.marker));
+    assert.equal(JSON.parse(await readFile(join(directory, "rescue.json"), "utf8")).files.length, 3);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

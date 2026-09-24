@@ -4,8 +4,11 @@ export const DEFAULT_UI_PREFERENCES = Object.freeze({
   motion: "system",
   analysisDiagnostics: false,
   sidebarWidth: 244,
+  sidebarLayout: { collapsed: false, open: ["projects"], order: ["projects", "types", "tags"] },
   detailMode: "fullscreen",
   detailSidebarWidth: 760,
+  galleryView: "waterfall",
+  includeSubprojects: false,
   detailPanelRatio: null
 });
 
@@ -31,6 +34,9 @@ export function normalizeUiPreferences(value = {}) {
     motion: value.motion === "none" ? "reduced" : (["system", "reduced"].includes(value.motion) ? value.motion : "system"),
     analysisDiagnostics: value.analysisDiagnostics === true,
     sidebarWidth: normalizeSidebarWidth(value.sidebarWidth),
+    sidebarLayout: normalizeSidebarLayout(value.sidebarLayout),
+    galleryView: ["waterfall", "list"].includes(value.galleryView) ? value.galleryView : "waterfall",
+    includeSubprojects: value.includeSubprojects === true,
     detailMode: value.detailMode === "sidebar" ? "sidebar" : "fullscreen",
     detailSidebarWidth: normalizeDetailSidebarWidth(value.detailSidebarWidth),
     detailPanelRatio: typeof value.detailPanelRatio === "number" && Number.isFinite(value.detailPanelRatio) && value.detailPanelRatio > 0 && value.detailPanelRatio < 1 ? value.detailPanelRatio : null
@@ -41,4 +47,12 @@ export function resolveLocale(preferences = DEFAULT_UI_PREFERENCES, browserLocal
   const normalized = normalizeUiPreferences(preferences);
   if (normalized.locale !== "system") return normalized.locale;
   return String(browserLocale).toLocaleLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}
+
+export function normalizeSidebarLayout(value = {}) {
+  const keys = ["projects", "types", "tags"];
+  const layout = value && typeof value === "object" ? value : {};
+  const order = [...new Set([...(Array.isArray(layout.order) ? layout.order : []), ...keys])].filter(key => keys.includes(key));
+  const open = [...new Set(Array.isArray(layout.open) ? layout.open : ["projects"])].filter(key => keys.includes(key));
+  return { collapsed: layout.collapsed === true, open, order };
 }

@@ -29,6 +29,8 @@ import {
   createSourceRule
 } from "./classifier.js";
 import { migrateLibraryState, needsMigration } from "./migration.js";
+import { planCaseCopies } from "./library-folder-ownership.js";
+import { remapEntryMediaIds } from "./library-portable-media.js";
 import {
   CONTENT_TYPE_VISIBILITY,
   CONTENT_ROLES,
@@ -163,7 +165,7 @@ import { deleteLocalAssetHandle } from "./local-asset-store.js";
 import {
   LOCAL_ASSET_REFERENCE_RECORD_TYPE,
   chunkedBlobFingerprint,
-  findExactMediaDuplicate,
+  createExactMediaDuplicateIndex,
   sha256Blob
 } from "./local-media.js";
 import { tempReferenceAssetIds, unreadReferenceImageAssets } from "./temp-references.js";
@@ -441,6 +443,7 @@ const STORAGE_KEYS = Object.freeze({
   facetCatalog: "facetCatalog",
   classificationRules: "classificationRules",
   migrationBackup: "migrationBackup",
+  folderOwnershipBackup: "folderOwnershipBackup",
   classificationResetBackup: "classificationResetBackup",
   facetMigrationBackup: "creativeFacetMigrationBackupV5",
   facetUndo: "facetUndo",
@@ -491,6 +494,7 @@ const SYNCED_STORAGE_KEYS = new Set([
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 let writeQueue = Promise.resolve();
 let captureWriteQueue = Promise.resolve();
+let stateMigration = null;
 let creatingOffscreenDocument = null;
 let visionAnalysisInFlight = false;
 const aiProviderModule = createAiProviderModule();
@@ -2772,7 +2776,7 @@ async function undoLastSave() {
     });
     const visualIds = normalizeEntryMedia(removed).mediaAssets.filter((asset) => asset.storageMode === "managed").map((asset) => asset.id);
     await chrome.storage.local.remove([STORAGE_KEYS.lastSaveUndo, screenshotStorageKey(removed.id)]);
-    await Promise.allSettled(visualIds.map((visualId) => deleteMediaBlob(visualId)));
+    await deleteUnreferencedMedia(visualIds);
     return { ok: true, message: "已撤回刚才保存的案例", removed, count: entries.length };
   }
 
@@ -2783,6 +2787,33 @@ async function undoLastSave() {
     return { ok: false, message: "原案例已经不存在，撤回记录已清理" };
   }
   const updated = restoreScreenshotSaveEntry(current, undo);
+  const retainedByOthers = collectRetainedLocalAssetIds({ ...state,
+    entries: state.entries.filter(entry => entry.id !== current.id) });
+  if (retainedByOthers.has(current.id)) {
+    let detached = updated;
+    let restoredId = "";
+    if (undo.hadScreenshot) {
+      const previous = await getScreenshotBlob(undo.backupEntryId);
+      if (!previous) throw new Error("撤回所需的截图备份不存在，未修改案例");
+      restoredId = `restored-image:${globalThis.crypto.randomUUID()}`;
+      await saveScreenshotBlob(restoredId, previous);
+      detached = remapEntryMediaIds(normalizeEntryMedia(updated), new Map([[current.id, restoredId]]));
+      const asset = detached.mediaAssets.find(item => item.id === restoredId);
+      if (asset) Object.assign(asset, { byteSize: previous.size, mimeType: previous.type,
+        contentHash: await sha256Blob(previous),
+        width: undo.previousMetadata.screenshotWidth || asset.width,
+        height: undo.previousMetadata.screenshotHeight || asset.height });
+    } else detached = removeEntryMedia(normalizeEntryMedia(updated), current.id);
+    try {
+      await commitLocalChanges({ [STORAGE_KEYS.entries]: state.entries.map(entry => entry.id === current.id ? detached : entry) });
+    } catch (error) {
+      if (restoredId) await deleteMediaBlob(restoredId).catch(() => undefined);
+      throw error;
+    }
+    await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+    await discardSaveUndoBackup(undo).catch(() => undefined);
+    return { ok: true, message: "已恢复原案例更新前的截图与图片分析", entry: detached, count: state.entries.length };
+  }
   const replacedScreenshot = await getScreenshotBlob(current.id);
   let restoredScreenshot = null;
   if (undo.hadScreenshot) {
@@ -3061,6 +3092,10 @@ async function readState() {
     stored[STORAGE_KEYS.aiPreferences] = aiConfiguration.preferences;
   }
   const shouldMigrate = needsMigration(stored);
+  if (stateMigration) {
+    await stateMigration;
+    return readState();
+  }
   const migration = shouldMigrate ? migrateLibraryState(stored) : null;
   let state = migration?.state ?? {
     schemaVersion: SCHEMA_VERSION,
@@ -3075,6 +3110,12 @@ async function readState() {
   };
   if (shouldMigrate) {
     const update = storagePayload(state);
+    if (migration.folderOwnershipMigrated && !stored[STORAGE_KEYS.folderOwnershipBackup]) {
+      update[STORAGE_KEYS.folderOwnershipBackup] = { state: Object.fromEntries(
+        ["entries", "organizerState", "compoundCases", "trashState"].map(key => [key, migration.backup[key]])
+      ) };
+      stored[STORAGE_KEYS.folderOwnershipBackup] = update[STORAGE_KEYS.folderOwnershipBackup];
+    }
     if (!stored[STORAGE_KEYS.migrationBackup]) {
       update[STORAGE_KEYS.migrationBackup] = migration?.backup;
     }
@@ -3084,7 +3125,9 @@ async function readState() {
     if (migration.resetPerformed && !stored[STORAGE_KEYS.classificationResetBackup]) {
       update[STORAGE_KEYS.classificationResetBackup] = migration.backup;
     }
-    await commitLocalChanges(update);
+    stateMigration = commitLocalChanges(update);
+    try { await stateMigration; }
+    finally { stateMigration = null; }
     await chrome.storage.local.remove("tagCatalog");
   }
   const recoveredVocabulary = recoverFullyArchivedFacets(state.facetCatalog);
@@ -3157,6 +3200,7 @@ async function readState() {
     importStaging,
     creativeSkills,
     activeCreativeResult,
+    folderOwnershipBackup: stored[STORAGE_KEYS.folderOwnershipBackup],
     libraryReplacementRecoveryPoint: normalizeLibraryReplacementRecoveryPoint(
       stored[STORAGE_KEYS.libraryReplacementRecoveryPoint]
     ),
@@ -3605,7 +3649,7 @@ async function startImportJobAction(message) {
   const keepById = new Map((Array.isArray(message.items) ? message.items : [])
     .map((item) => [String(item?.stagedAssetId ?? "").trim(), item?.keepDuplicate === true]));
   const jobItems = [];
-  const batchAssets = [];
+  const duplicateIndex = createExactMediaDuplicateIndex(state.entries, { readBlob: getMediaBlob });
   for (const value of incoming) {
     const assetId = String(value?.assetId ?? "").trim();
     const name = String(value?.name ?? "").trim();
@@ -3620,10 +3664,7 @@ async function startImportJobAction(message) {
     const blob = assetId ? await getMediaBlob(assetId) : null;
     if (!(blob instanceof Blob)) throw new Error(`没有读取到待导入文件：${name || assetId || "未命名"}`);
     const file = new File([blob], name, { type: blob.type || value?.mimeType });
-    const duplicate = await findExactMediaDuplicate(file, state.entries, {
-      readBlob: getMediaBlob,
-      candidateAssets: batchAssets
-    });
+    const duplicate = await duplicateIndex.find(file);
     const staged = addStagedAsset(staging, {
       ...value,
       mimeType: blob.type || value?.mimeType,
@@ -3632,7 +3673,7 @@ async function startImportJobAction(message) {
       duplicateAssetId: duplicate.duplicateAssetId
     });
     staging = staged.state;
-    batchAssets.push({
+    duplicateIndex.add({
       id: staged.asset.assetId,
       byteSize: staged.asset.byteSize,
       mimeType: staged.asset.mimeType,
@@ -4896,16 +4937,14 @@ async function deleteCreativeOutput(message) {
   if (!located) return { ok: false, message: "没有找到这张创作结果" };
   const run = removeCreativeOutput(located.run, located.output.visual.id);
   const creativeRuns = replaceCreativeRun(state.creativeRuns, run);
-  const usedByCase = state.entries.some((entry) =>
-    entryMediaAssets(entry).some((visual) => visual.id === located.output.visual.id)
-  );
+  const retained = collectRetainedLocalAssetIds({ ...state, creativeRuns }).has(located.output.visual.id);
   if (located.output.visual.kind === "video") {
     await commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns });
-    if (!usedByCase) await deleteMediaBlob(located.output.visual.id);
+    if (!retained) await deleteMediaBlob(located.output.visual.id);
     return { ok: true, message: "生成结果已移除", creativeRuns };
   }
   await commitMetadataThenDeleteImages({
-    imageIds: usedByCase ? [] : [located.output.visual.id],
+    imageIds: retained ? [] : [located.output.visual.id],
     deleteImage: deleteScreenshotBlob,
     commitMetadata: () => commitLocalChanges({ [STORAGE_KEYS.creativeRuns]: creativeRuns })
   });
@@ -6034,12 +6073,23 @@ async function batchSetClassification(message) {
 
 async function batchSetProject(message) {
   const state = await readState();
+  if (message.mode === "copy" || message.mode === "add") {
+    const plan = planCaseCopies(state, uniqueNames(message.entryIds), message.collectionId);
+    await commitLocalChanges({
+      [STORAGE_KEYS.entries]: plan.state.entries,
+      [STORAGE_KEYS.organizerState]: plan.state.organizerState,
+      [STORAGE_KEYS.compoundCases]: plan.state.compoundCases
+    });
+    return { ok: true, message: `已复制 ${plan.copies.length} 个案例`,
+      updatedCount: plan.copies.length, entries: plan.state.entries,
+      organizerState: plan.state.organizerState, compoundCases: plan.state.compoundCases };
+  }
   const validIds = new Set(state.entries.map((entry) => entry.id));
   const requestedEntryIds = uniqueNames(message.entryIds);
   const entryIds = requestedEntryIds.filter((entryId) => validIds.has(entryId));
   if (!entryIds.length) return { ok: false, message: "案例不存在，未更新项目关系" };
   const missingCount = requestedEntryIds.length - entryIds.length;
-  const mode = ["remove", "move"].includes(message.mode) ? message.mode : "add";
+  const mode = message.mode === "remove" ? "remove" : "move";
   let organizerState = normalizeOrganizerState(state.organizerState, [...validIds]);
   if (!organizerState.collections.some((collection) => collection.id === String(message.collectionId ?? "").trim())) {
     return { ok: false, message: "项目不存在" };
@@ -6151,6 +6201,7 @@ async function updateOrganizer(message) {
     const validIds = new Set(state.entries.map((entry) => entry.id));
     const entryIds = (Array.isArray(message.entryIds) ? message.entryIds : []).filter((id) => validIds.has(id));
     organizerState = replaceCollectionEntries(organizerState, message.collectionId, entryIds);
+    organizerState = moveEntriesBetweenCollections(organizerState, null, message.collectionId, entryIds);
   } else if (message.type === "SET_COLLECTION_VISIBILITY") {
     organizerState = setCollectionVisibility(organizerState, message.collectionId, message.visibility);
   }
@@ -7852,6 +7903,7 @@ function publicDomainState(state) {
 
 function publicLibraryState(state) {
   const {
+    folderOwnershipBackup: _folderOwnershipBackup,
     facetUndo: _facetUndo,
     composerSessions: _composerSessions,
     lastSaveUndo,

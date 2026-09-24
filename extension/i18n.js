@@ -1,6 +1,19 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "全部展开": "Expand all",
+  "面板布局": "Panel layout",
+  "恢复默认布局": "Reset layout",
+  "标签筛选": "Tags",
+  "拖动排序，方向键调整位置": "Drag to reorder, or use arrow keys",
+  "仅当前项目、无筛选时可手动排序": "Manual ordering requires a single project without filters",
+  "案例视图": "Case view",
+  "瀑布流": "Masonry",
+  "列表": "List",
+  "项目路径": "Project path",
+  "包含子项目": "Include subprojects",
+  "打开项目": "Open project",
+
   "部分内容未保存，已保留供重试": "Some content could not be saved and has been kept for retry.",
   "播放视频": "Play video",
   "AI 整理输出被截断，正式标签库没有改变": "Tag organization output was truncated; the tag library was not changed.",
@@ -1235,6 +1248,7 @@ const EN = Object.freeze({
   "加入项目…": "Add to project...",
   "选择项目…": "Choose a project...",
   "同时加入": "Add as well",
+  "复制到项目": "Copy to project",
   "移出当前项目": "Remove from current project",
   "移出项目": "Remove from project",
   "新建并移动": "Create and move",

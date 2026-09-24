@@ -7,8 +7,8 @@ const sourcePath = join(projectRoot, "node_modules", "lucide-static", "icon-node
 const outputPath = join(projectRoot, "extension", "assets", "ui-icons.svg");
 const iconNames = [
   "arrow-down", "arrow-left", "arrow-up", "check", "chevron-down", "chevron-left", "chevron-right", "circle-check-big", "clipboard", "copy",
-  "download", "ellipsis", "external-link", "file-text", "folder", "image", "library",
-  "list-checks", "maximize-2", "menu", "moon", "panel-left", "paperclip", "pencil", "play", "plus",
+  "download", "ellipsis", "external-link", "file-text", "audio-lines", "file-box", "folder", "image", "library",
+  "list-checks", "maximize-2", "menu", "moon", "panel-left", "panel-left-close", "grip-vertical", "layers", "paperclip", "pencil", "play", "plus",
   "refresh-cw", "save", "search", "send", "settings", "sliders-horizontal", "sparkles", "square-check-big",
   "square", "sun", "tag", "trash-2", "undo-2", "upload", "video", "wand-sparkles", "x"
 ];

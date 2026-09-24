@@ -20,11 +20,18 @@ export async function buildFolderRescueCompletion(filesValue, metadata = {}) {
   });
 }
 
-export async function buildFolderBackupWritePlan({ files: filesValue, report = {}, metadata = {} } = {}) {
+export async function buildFolderBackupWritePlan({ files: filesValue, sourceFiles, report = {}, metadata = {} } = {}) {
   const files = backupFiles(filesValue);
   if (!(files.get("library.json") instanceof Blob)) throw new Error("备份写入计划缺少 library.json");
   const diagnostics = Array.isArray(report?.diagnostics) ? structuredClone(report.diagnostics) : [];
   const rescue = report?.status === "partial" || diagnostics.length > 0;
+  if (rescue && sourceFiles instanceof Map) {
+    const source = backupFiles(sourceFiles);
+    for (const [path, blob] of source) {
+      if (path === "library.json") files.set("recovery/source-library.json", blob);
+      else if (!files.has(path)) files.set(path, blob);
+    }
+  }
   const marker = rescue
     ? await buildFolderRescueCompletion(files, { ...metadata, issues: diagnostics })
     : await buildFolderBackupCompletion(files, metadata);

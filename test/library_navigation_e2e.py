@@ -96,6 +96,8 @@ def main() -> None:
         expect(library.locator("#content-filters")).not_to_contain_text("全部")
         expect(library.locator("#facet-filters .facet-filter-body .filter-option", has_text="全部")).to_have_count(0)
 
+        library.locator('[data-sidebar-module="tags"] .sidebar-module-toggle').click()
+        expect(library.locator('#sidebar-tags-body')).to_be_visible()
         style = library.locator('.facet-filter[data-facet-id="style"]')
         style.locator(":scope > summary").click()
         facet_row = style.locator('[data-facet-node-id="style.render"]')
@@ -197,7 +199,7 @@ def main() -> None:
         library.locator("#selection-project-menu > summary").click()
         expect(library.locator("#selection-project-target")).to_be_visible()
         library.locator("#selection-project-target").select_option("collection:navigation")
-        expect(library.locator("#selection-add-project")).to_be_enabled()
+        expect(library.locator("#selection-copy-project")).to_be_enabled()
         library.locator("#selection-project-menu > summary").press("Escape")
         library.locator("#selection-more-menu > summary").click()
         expect(library.locator("#selection-combine")).to_be_enabled()
@@ -275,6 +277,8 @@ def main() -> None:
             }"""
         )
         assert drawer["left"] >= -1 and drawer["right"] <= drawer["viewport"] + 1, drawer
+        library.locator('[data-sidebar-module="types"] .sidebar-module-toggle').click()
+        expect(library.locator('#sidebar-types-body')).to_be_visible()
         library.locator('[data-content-filter-id="content:prompt:image"]').click()
         expect(library.locator("#case-list > .case-card")).to_have_count(1)
         overflow = library.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
@@ -288,6 +292,7 @@ def main() -> None:
         library.screenshot(path=str(screenshots / "promptdirector-step2-library-mobile.png"), full_page=True)
         library.evaluate("document.querySelector('#toggle-filters').click()")
         expect(library.locator(".workspace")).to_have_class("workspace filters-collapsed")
+        library.locator('#toolbar-more > summary').click()
         library.locator("#select-cases").click()
         expect(library.locator("#selection-selected-actions")).to_be_hidden()
         mobile_empty_bar = library.locator("#share-bar").evaluate(

@@ -590,3 +590,13 @@ html[data-motion="reduced"] *::after {
   animation-iteration-count: 1 !important;
   transition-duration: .01ms !important;
 }
+
+/* Controls are clicked, while document text and editing fields remain selectable. */
+button, summary, label, nav a, [role="button"], [role="tab"], [role="menuitem"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea, [contenteditable]:not([contenteditable="false"]) {
+  -webkit-user-select: text;
+  user-select: text;
+}

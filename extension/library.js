@@ -1,3 +1,5 @@
+import { createLibraryLayout } from "./library-layout.js";
+import { renderBrowseNavigation, appendCaseRowDetails } from "./library-browse-view.js";
 import { attachDetailSplit } from "./detail-split.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { createGenerationInfoViewReader } from "./image-generation-view.js";
@@ -191,7 +193,7 @@ import {
   LOCAL_ASSET_REFERENCE_RECORD_TYPE,
   createUnsupportedLocalAssetReference,
   extractLocalDocumentText,
-  findExactMediaDuplicate,
+  createExactMediaDuplicateIndex,
   prepareLocalMedia as prepareSharedLocalMedia,
   sha256Blob
 } from "./local-media.js";
@@ -242,8 +244,8 @@ const elements = Object.fromEntries([
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-public", "share-dialog-public-panel", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-add-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
-  "project-section", "project-root-drop", "collapse-projects", "project-search", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
+  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-copy-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
+  "project-section", "project-root-drop", "collapse-projects", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "video-instructions-en", "video-instructions-zh", "video-settings-form", "video-settings-status", "restore-video-default", "video-protocol",
   "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
@@ -272,7 +274,7 @@ const managerPanels = {
   vocabulary: elements.managerVocabulary
 };
 const workspace = document.querySelector(".workspace");
-const galleryMasonry = createStableMasonry(elements.caseList, {
+let galleryMasonry = createStableMasonry(elements.caseList, {
   layoutDependencies: [document.querySelector(".topbar")],
   onLayout: () => scheduleLoadCheck()
 });
@@ -366,6 +368,7 @@ let maintenanceCheckPromise = null;
 let maintenanceCheckedJob = "";
 let visionBatchJob = null;
 let activeMediaBatchKind = "image";
+let visionBatchSelection = null;
 let canUndoAnalysisBatch = false;
 let analysisBatchPreview = null;
 let analysisDiagnostics = [];
@@ -434,9 +437,9 @@ function projectComboboxCollections() {
 }
 
 const mobileLayout = matchMedia("(max-width: 640px)");
-if (mobileLayout.matches) workspace.classList.add("filters-collapsed");
+
 mobileLayout.addEventListener("change", (event) => {
-  if (event.matches) workspace.classList.add("filters-collapsed");
+
   renderFilterToggleState();
   applyDetailViewPreferences();
 });
@@ -476,6 +479,14 @@ window.addEventListener("focus", () => {
   if (externalLibraryRefreshPending) scheduleExternalLibraryRefresh();
 });
 
+const libraryLayout = createLibraryLayout({
+  preferences: uiPreferences,
+  persist: async sidebarLayout => {
+    try { uiPreferences = await updateUiPreferences({ ...uiPreferences, sidebarLayout }); }
+    catch (error) { showFeedback(error.message, true); }
+  },
+  onToggle: renderFilterToggleState
+});
 bindEvents();
 const libraryTopbar = document.querySelector(".topbar");
 const libraryToolbarObserver = new ResizeObserver(() => {
@@ -508,7 +519,7 @@ openRequestedSettings();
 window.addEventListener("pagehide", saveLibraryReturnSnapshot);
 
 window.addEventListener("unload", () => {
-  galleryMasonry.destroy();
+  galleryMasonry?.destroy();
   if (mediaHydrationFrame) cancelAnimationFrame(mediaHydrationFrame);
   if (maintenancePollTimer) clearTimeout(maintenancePollTimer);
   if (importPollTimer) clearTimeout(importPollTimer);
@@ -703,6 +714,14 @@ function bindEvents() {
     activeAiRoutingTab = button.dataset.aiRoutingTab || "tasks";
     renderAiRoutingView();
   }));
+  for (const button of document.querySelectorAll("[data-gallery-view]")) {
+    button.addEventListener("click", async () => {
+      await saveBrowsePreference({ galleryView: button.dataset.galleryView });
+    });
+  }
+  document.querySelector("#include-subprojects").addEventListener("change", async (event) => {
+    await saveBrowsePreference({ includeSubprojects: event.target.checked });
+  });
   elements.createCollection.addEventListener("click", () => createProjectCollection(elements.createCollection));
   elements.gallerySort.addEventListener("change", () => {
     caseSortMode = elements.gallerySort.value;
@@ -713,10 +732,8 @@ function bindEvents() {
   elements.collapseProjects.addEventListener("click", () => {
     projectTreeController().cancel();
     expandedProjectIds.clear();
-    elements.projectSearch.value = "";
     renderProjectFilters();
   });
-  elements.projectSearch.addEventListener("input", renderProjectFilters);
   elements.projectSelectionSelectFiltered.addEventListener("click", () => selectVisionCases("filtered"));
   elements.projectSelectionSelectAll.addEventListener("click", () => selectVisionCases("all"));
   elements.projectSelectionClear.addEventListener("click", clearVisionSelection);
@@ -726,6 +743,7 @@ function bindEvents() {
   for (const select of [elements.uiLocale, elements.uiTheme, elements.uiMotion]) {
     select.addEventListener("change", async () => {
       await updateUiPreferences({
+        ...uiPreferences,
         locale: elements.uiLocale.value,
         theme: elements.uiTheme.value,
         motion: elements.uiMotion.value,
@@ -738,13 +756,10 @@ function bindEvents() {
     });
   }
   elements.showAnalysisDiagnostics.addEventListener("change", updateAnalysisDiagnosticsPreference);
-  elements.toggleFilters.addEventListener("click", () => {
-    workspace.classList.toggle("filters-collapsed");
-    renderFilterToggleState();
-  });
   bindSidebarResize();
   elements.workspaceLibrary.addEventListener("click", clearFilters);
   elements.workspaceUnassigned.addEventListener("click", openUnassignedView);
+  bindCaseDrop(elements.workspaceUnassigned);
   elements.openCurated.addEventListener("click", () => {
     navigateWithinPromptDirector("curated.html");
   });
@@ -779,6 +794,16 @@ function bindEvents() {
     await runDataSafetyAction(elements.disconnectSyncFolder, { type: "DISCONNECT_SYNC_FOLDER" });
   });
   elements.visionBatchClose.addEventListener("click", () => elements.visionBatchDialog.close());
+  elements.visionBatchDialog.addEventListener("close", () => {
+    const job = visionBatchJob;
+    const sameSelection = visionBatchSelection?.caseIds.length === selectedCaseIds.size
+      && visionBatchSelection.caseIds.every((id) => selectedCaseIds.has(id));
+    if (sameSelection && job?.id === visionBatchSelection.jobId && job.status === "completed"
+      && job.counts?.succeeded > 0 && !job.counts.failed && !job.counts.pending && !job.counts.running) {
+      exitSelectionMode();
+    }
+    visionBatchSelection = null;
+  });
   elements.visionBatchDialog.addEventListener("click", (event) => {
     if (event.target === elements.visionBatchDialog) elements.visionBatchDialog.close();
   });
@@ -828,7 +853,7 @@ function bindEvents() {
   elements.selectionAddLabels.addEventListener("click", addLabelsToSelection);
   elements.selectionSetClassification.addEventListener("click", setSelectionClassification);
   elements.selectionContentType.addEventListener("change", updateSelectionBar);
-  elements.selectionAddProject.addEventListener("click", addSelectionToProject);
+  elements.selectionCopyProject.addEventListener("click", copySelectionToProject);
   elements.selectionMoveProject.addEventListener("click", moveSelectionToProject);
   elements.selectionRemoveProject.addEventListener("click", removeSelectionFromProject);
   elements.selectionNewProject.addEventListener("click", createProjectFromSelection);
@@ -851,6 +876,7 @@ function bindEvents() {
     updateSelectionBar();
   });
   elements.openTrash.addEventListener("click", openTrashDialog);
+  bindCaseDrop(elements.openTrash, { toTrash: true });
   elements.trashClose.addEventListener("click", () => elements.trashDialog.close());
   elements.trashRestoreAll.addEventListener("click", restoreAllTrashItems);
   elements.trashEmpty.addEventListener("click", emptyTrashFromDialog);
@@ -1217,7 +1243,7 @@ function renderGallery() {
     : logicalCases.filter((entry) => (entry.memberEntryIds ?? [entry.id])
       .some((entryId) => isEntryVisibleInLibrary(organizerState, entryId)));
   const projectEntryIds = selectedCollectionId && selectionMode !== "project"
-    ? new Set(selectionMode === "vision"
+    ? new Set(selectionMode === "vision" || uiPreferences.includeSubprojects
       ? collectionEntryIds(organizerState, selectedCollectionId, { subtree: true })
       : organizerState.collections.find((item) => item.id === selectedCollectionId)?.entryIds ?? [])
     : null;
@@ -1284,6 +1310,7 @@ function renderGalleryResults({ refreshNavigation }) {
     ? organizerState.collections.find((item) => item.id === selectedCollectionId)
     : null;
   const childProjects = project ? projectChildren(project.id) : [];
+  syncBrowseView(project);
   visibleEntries = sortLibraryCases(visibleEntries, {
     mode: caseSortMode,
     projectEntryIds: project?.entryIds ?? []
@@ -1291,7 +1318,8 @@ function renderGalleryResults({ refreshNavigation }) {
   renderedCount = 0;
   imageObserver.disconnect();
   reconcileInitialCaseCards();
-  renderProjectFolderCards(childProjects);
+  const folderProjects = project && uiPreferences.includeSubprojects ? [] : childProjects;
+  renderProjectFolderCards(folderProjects);
   if (refreshNavigation) {
     renderProjectFilters();
     elements.workspaceLibrary.setAttribute("aria-current", selectedCollectionId || unassignedViewActive ? "false" : "page");
@@ -1301,8 +1329,7 @@ function renderGalleryResults({ refreshNavigation }) {
   }
   syncStructuredFilterControls();
   renderActiveFilters();
-  galleryMasonry.reset();
-  galleryMasonry.append([...elements.caseList.children]);
+  layoutBrowseCards();
   observePendingCardMedia([...elements.caseList.children]);
   scheduleVisibleMediaHydration();
   renderedCount = elements.caseList.children.length;
@@ -1312,50 +1339,106 @@ function renderGalleryResults({ refreshNavigation }) {
     loadObserver.observe(elements.loadSentinel);
     scheduleLoadCheck(generation);
   });
-  elements.emptyState.hidden = visibleEntries.length > 0 || childProjects.length > 0;
+  elements.emptyState.hidden = visibleEntries.length > 0 || folderProjects.length > 0;
   elements.emptyLibrary.hidden = logicalCases.length > 0;
   elements.emptyFilter.hidden = logicalCases.length === 0;
   renderEmptyFilter();
   elements.libraryTitle.textContent = unassignedViewActive
     ? t("未归项目")
     : project?.name || libraryTitleForLocale(settings.libraryTitle, currentLocale());
+  elements.libraryTitle.title = elements.libraryTitle.textContent;
   elements.resultCount.textContent = project
-    ? `${visibleEntries.length} 个直接案例 · ${childProjects.length} 个子项目`
+    ? `${translateUiMessage(`${visibleEntries.length} 个案例`)} · ${childProjects.length} ${t("子项目")}`
     : translateUiMessage(`${visibleEntries.length} 个案例`);
   elements.pendingCount.textContent = String(pendingCount);
+}
+
+async function saveBrowsePreference(change) {
+  const controls = [...document.querySelectorAll("[data-gallery-view], #include-subprojects")];
+  controls.forEach((control) => { control.disabled = true; });
+  try {
+    uiPreferences = await updateUiPreferences({ ...uiPreferences, ...change });
+    caseOrderManagementActive = false;
+  } catch (error) {
+    showFeedback(error.message, true);
+  } finally {
+    controls.forEach((control) => { control.disabled = false; });
+    renderGallery();
+  }
+}
+
+function navigateBrowseProject(id) {
+  unassignedViewActive = false;
+  selectedCollectionId = id;
+  caseOrderManagementActive = false;
+  renderGallery();
+}
+
+function syncBrowseView(project) {
+  const view = uiPreferences.galleryView;
+  document.querySelector(".gallery-shell").dataset.view = view;
+  for (const button of document.querySelectorAll("[data-gallery-view]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.galleryView === view));
+  }
+  document.querySelector(".browse-location").hidden = !project;
+  document.querySelector("#browse-scope").hidden = !project;
+  document.querySelector("#include-subprojects").checked = uiPreferences.includeSubprojects;
+  document.querySelector("#include-subprojects").disabled = ["project", "vision", "combine"].includes(selectionMode);
+  renderBrowseNavigation({
+    breadcrumb: document.querySelector("#browse-breadcrumb"),
+    path: collectionPath(organizerState, selectedCollectionId),
+    disabled: ["project", "vision", "combine"].includes(selectionMode), selectedId: selectedCollectionId,
+    rootLabel: t("案例库"), navigate: navigateBrowseProject
+  });
+  if (view !== "waterfall") {
+    galleryMasonry?.destroy();
+    galleryMasonry = null;
+  } else if (!galleryMasonry) {
+    galleryMasonry = createStableMasonry(elements.caseList, {
+      layoutDependencies: [document.querySelector(".topbar")], onLayout: () => scheduleLoadCheck()
+    });
+  }
+}
+
+function clearBrowseCardPositions(cards) {
+  elements.caseList.style.removeProperty("height");
+  for (const card of cards) {
+    for (const property of ["width", "left", "top"]) card.style.removeProperty(property);
+  }
+}
+
+function layoutBrowseCards() {
+  if (galleryMasonry) {
+    galleryMasonry.reset();
+    galleryMasonry.append([...elements.caseList.children]);
+  } else clearBrowseCardPositions(elements.caseList.children);
 }
 
 function renderProjectFolderCards(childProjects) {
   if (!elements.projectFolderList) return;
   const cards = childProjects.map((collection) => {
-    const button = el("button", "project-folder-card");
+    const button = el("button", "project-folder-card button-secondary");
     button.type = "button";
+    button.disabled = ["project", "vision", "combine"].includes(selectionMode);
     button.dataset.collectionId = collection.id;
-    button.setAttribute("aria-label", `进入子项目 ${collection.name}`);
+    button.setAttribute("aria-label", `${t("打开项目")} ${collection.name}`);
+    button.title = collection.name;
     const directCases = collection.entryIds.length;
     const nestedProjects = collectionSubtreeIds(organizerState, collection.id).length - 1;
     const copy = el("span", "project-folder-copy");
     copy.append(
       rawTextEl("span", "project-folder-name", collection.name),
-      rawTextEl("span", "project-folder-meta", `${directCases} 个直接案例${nestedProjects ? ` · ${nestedProjects} 个下级项目` : ""}`)
+      rawTextEl("span", "project-folder-meta", `${translateUiMessage(`${directCases} 个案例`)}${nestedProjects ? ` · ${nestedProjects} ${t("子项目")}` : ""}`)
     );
-    button.append(createUiIcon("folder"), copy, createUiIcon("chevron-right"));
-    button.lastElementChild.classList.add("project-folder-arrow");
-    button.addEventListener("click", () => {
-      unassignedViewActive = false;
-      selectedCollectionId = collection.id;
-      expandedProjectIds.add(collection.parentId);
-      caseOrderManagementActive = false;
-      renderGallery();
-      window.scrollTo({ top: 0, behavior: uiPreferences.motion === "reduced" ? "auto" : "smooth" });
-    });
+    button.append(createUiIcon("folder"), copy);
+    button.addEventListener("click", () => navigateBrowseProject(collection.id));
     return button;
   });
   elements.projectFolderList.replaceChildren(...cards);
 }
 
 function projectManualOrderAvailable() {
-  return Boolean(selectedCollectionId && !selectionMode &&
+  return Boolean(selectedCollectionId && (!uiPreferences.includeSubprojects || !projectChildren(selectedCollectionId).length) && !selectionMode &&
     !selectedContentId && !selectedFacets.size && !elements.pendingFilter.checked && !elements.searchInput.value.trim());
 }
 
@@ -1366,11 +1449,13 @@ function syncGallerySortControl() {
   elements.projectManualSortOption.disabled = !available;
   if (!available && caseSortMode === "project-manual") caseSortMode = "added-desc";
   elements.gallerySort.value = caseSortMode;
-  elements.manageCaseOrder.hidden = !available;
-  elements.selectCases.hidden = caseOrderManagementActive;
+  elements.manageCaseOrder.hidden = false;
+  elements.manageCaseOrder.disabled = !available;
+  elements.selectCases.hidden = false;
+  elements.selectCases.disabled = caseOrderManagementActive;
   const label = caseOrderManagementActive ? "完成案例排序" : "管理案例顺序";
   elements.manageCaseOrder.setAttribute("aria-label", label);
-  elements.manageCaseOrder.title = label;
+  elements.manageCaseOrder.title = t(available ? label : "仅当前项目、无筛选时可手动排序");
   elements.manageCaseOrder.replaceChildren(createUiIcon(caseOrderManagementActive ? "circle-check-big" : "sliders-horizontal"));
 }
 
@@ -1453,7 +1538,8 @@ function renderNextBatch(generation = galleryGeneration) {
   const fragment = document.createDocumentFragment();
   fragment.append(...cards);
   elements.caseList.append(fragment);
-  galleryMasonry.append([...elements.caseList.children].slice(renderedCount));
+  if (galleryMasonry) galleryMasonry.append([...elements.caseList.children].slice(renderedCount));
+  else clearBrowseCardPositions(cards);
   observePendingCardMedia(cards);
   scheduleVisibleMediaHydration();
   renderedCount += next.length;
@@ -1504,6 +1590,12 @@ function createCaseCard(entry) {
   let suppressSelectionClick = false;
   bindCaseSelectionSweep(card, entry, (value) => { suppressSelectionClick = value; });
   bindCaseOrderDrag(card, entry, (value) => { suppressSelectionClick = value; });
+  card.draggable = !selectionMode && !caseOrderManagementActive;
+  card.addEventListener("dragstart", (event) => {
+    if (selectionMode || caseOrderManagementActive || !event.dataTransfer) return;
+    event.dataTransfer.setData("application/x-promptdirector-case", entry.id);
+    event.dataTransfer.effectAllowed = "move";
+  });
   const open = () => {
     if (suppressSelectionClick) {
       suppressSelectionClick = false;
@@ -1592,6 +1684,9 @@ function createCaseCard(entry) {
   card.addEventListener("contextmenu", event => {
     event.preventDefault(); event.stopPropagation();
     showCaseQuickMenu(entry, card, { x: event.clientX, y: event.clientY });
+  });
+  appendCaseRowDetails(card, entry, {
+    typeLabel: entryContentTypeIds(entry).map(contentLabel).join(" · "), locale: currentLocale()
   });
   card.append(textEl("span", "share-check", "✓"));
   return card;
@@ -1940,35 +2035,32 @@ function renderProjectFilters() {
     ?.closest(".project-row")?.dataset.collectionId;
   const fragment = document.createDocumentFragment();
   const subtreeEntryIdsByProject = collectionSubtreeEntryIdsById(organizerState);
-  const pathLabelsByProject = collectionPathLabelsById(organizerState);
   const childrenByParent = indexProjectChildren();
-  const query = elements.projectSearch.value.trim();
   const projectOrderingUnavailable = Boolean(selectionMode);
   if (selectedCollectionId !== lastProjectSelection) {
     lastProjectSelection = selectedCollectionId;
     for (const ancestor of collectionPath(organizerState, selectedCollectionId).slice(0, -1)) expandedProjectIds.add(ancestor.id);
   }
   elements.collapseProjects.disabled = !expandedProjectIds.size;
-  const visibleCollections = projectTreeRows(childrenByParent, expandedProjectIds, query, pathLabelsByProject);
+  const visibleCollections = projectTreeRows(childrenByParent, expandedProjectIds);
   for (const [projectIndex, { collection, depth }] of visibleCollections.entries()) {
     const children = childrenByParent.get(collection.id) ?? [];
     const siblings = childrenByParent.get(collection.parentId) ?? [];
     const row = el("div", "project-row");
     row.dataset.collectionId = collection.id;
-    row.style.setProperty("--project-depth", String(query ? 0 : depth));
+    bindCaseDrop(row, { collectionId: collection.id });
+    row.style.setProperty("--project-depth", String(depth));
     row.setAttribute("role", "treeitem");
-    row.setAttribute("aria-level", String(query ? 1 : depth + 1));
-    row.setAttribute("aria-setsize", String(query ? visibleCollections.length : siblings.length));
-    row.setAttribute("aria-posinset", String(query ? projectIndex + 1 : siblings.findIndex((item) => item.id === collection.id) + 1));
-    if (children.length && !query) row.setAttribute("aria-expanded", String(expandedProjectIds.has(collection.id)));
+    row.setAttribute("aria-level", String(depth + 1));
+    row.setAttribute("aria-setsize", String(siblings.length));
+    row.setAttribute("aria-posinset", String(siblings.findIndex((item) => item.id === collection.id) + 1));
+    if (children.length) row.setAttribute("aria-expanded", String(expandedProjectIds.has(collection.id)));
     row.classList.toggle("project-draggable", !projectOrderingUnavailable);
-    row.classList.toggle("project-search-result", Boolean(query));
     row.tabIndex = -1;
-    row.setAttribute("aria-label", query ? pathLabelsByProject.get(collection.id) : collection.name);
+    row.setAttribute("aria-label", collection.name);
     const disclosure = el("button", "project-disclosure");
     disclosure.type = "button";
     disclosure.tabIndex = -1;
-    disclosure.hidden = Boolean(query);
     disclosure.setAttribute("aria-label", expandedProjectIds.has(collection.id) ? `折叠 ${collection.name}` : `展开 ${collection.name}`);
     disclosure.classList.toggle("is-placeholder", !children.length);
     if (children.length) disclosure.append(createUiIcon(expandedProjectIds.has(collection.id) ? "chevron-down" : "chevron-right"));
@@ -1991,18 +2083,28 @@ function renderProjectFilters() {
       caseOrderManagementActive = false;
       unassignedViewActive = false;
       selectedCollectionId = selectedCollectionId === collection.id ? "" : collection.id;
-      if (query) elements.projectSearch.value = "";
       renderGallery();
     });
     if (collection.visibility === COLLECTION_VISIBILITY.projectOnly) {
       meta.append(textEl("span", "project-visibility", "仅项目"));
     }
     const name = rawTextEl("span", "project-filter-name", collection.name);
-    if (query) {
-      const label = el("span", "project-search-label");
-      label.append(name, rawTextEl("small", "project-search-path", pathLabelsByProject.get(collection.id)));
-      filter.append(label, meta);
-    } else filter.append(name, meta);
+    filter.append(name, meta);
+    const menu = createProjectMenu(collection);
+    bindProjectTreeNavigation(row, collection);
+    row.append(disclosure, filter, menu);
+    fragment.append(row);
+  }
+  elements.collectionFilters.replaceChildren(fragment);
+  if (openProjectId) {
+    const menu = elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(openProjectId)}"] .project-menu`);
+    if (menu && !menu.hidden) menu.open = true;
+  }
+  projectTreeController().sync();
+}
+
+function createProjectMenu(collection) {
+  const projectOrderingUnavailable = Boolean(selectionMode);
     const menu = el("details", "project-menu");
     menu.hidden = ["project", "vision", "combine"].includes(selectionMode);
     const summary = el("summary", "");
@@ -2037,17 +2139,7 @@ function renderProjectFilters() {
     removeWithEntries.addEventListener("click", () => deleteProjectCollectionWithEntries(collection, removeWithEntries));
     actions.append(manage, move, analyze, share, visibility, rename, remove, removeWithEntries);
     menu.append(summary, actions);
-    bindProjectTreeNavigation(row, collection);
-    row.append(disclosure, filter, menu);
-    fragment.append(row);
-  }
-  if (!visibleCollections.length && query) fragment.append(textEl("p", "project-search-empty", "没有匹配的项目"));
-  elements.collectionFilters.replaceChildren(fragment);
-  if (openProjectId) {
-    const menu = elements.collectionFilters.querySelector(`[data-collection-id="${CSS.escape(openProjectId)}"] .project-menu`);
-    if (menu && !menu.hidden) menu.open = true;
-  }
-  projectTreeController().sync();
+  return menu;
 }
 
 function projectChildren(parentId = null) {
@@ -2079,6 +2171,44 @@ function projectTreeController() {
   });
 }
 
+function bindCaseDrop(row, { collectionId = null, toTrash = false } = {}) {
+  const isCaseDrag = event => event.dataTransfer?.types.includes("application/x-promptdirector-case");
+  row.addEventListener("dragover", event => {
+    if (!isCaseDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    row.classList.add("case-drop-target");
+  });
+  row.addEventListener("dragleave", event => {
+    if (!row.contains(event.relatedTarget)) row.classList.remove("case-drop-target");
+  });
+  row.addEventListener("drop", async event => {
+    row.classList.remove("case-drop-target");
+    if (!isCaseDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const id = event.dataTransfer.getData("application/x-promptdirector-case");
+    if (!logicalCases.some(entry => entry.id === id)) return;
+    try {
+      const memberIds = expandLogicalCaseIds([id], compoundCases);
+      const source = organizerState.collections.find(collection => collection.entryIds.some(entryId => memberIds.includes(entryId)));
+      // 未归项目是移出当前归属，不创建项目，也不删除案例。
+      if (!toTrash && !collectionId && !source) return;
+      const response = await chrome.runtime.sendMessage(buildLibraryBatchPayload([id], compoundCases, toTrash ? {
+        type: LIBRARY_BATCH_ACTIONS.moveToTrash
+      } : {
+        type: LIBRARY_BATCH_ACTIONS.setProject,
+        mode: collectionId ? "move" : "remove",
+        collectionId: collectionId || source.id
+      }));
+      if (!response?.ok) throw new Error(response?.message || "移动失败");
+      await refreshLibrary();
+      showFeedback(response.message);
+    } catch (error) { showFeedback(error.message, true); }
+  });
+  row.addEventListener("dragend", () => row.classList.remove("case-drop-target"));
+}
+
 function bindProjectTreeNavigation(row, collection) {
   row.addEventListener("keydown", (event) => {
     if (event.target.closest(".project-menu")) return;
@@ -2090,14 +2220,14 @@ function bindProjectTreeNavigation(row, collection) {
         : event.key === "End" ? rows.at(-1)
         : rows[index + (event.key === "ArrowDown" ? 1 : -1)];
       target?.querySelector(".project-filter")?.focus();
-    } else if (event.key === "ArrowRight" && !elements.projectSearch.value.trim()) {
+    } else if (event.key === "ArrowRight") {
       event.preventDefault();
       if (projectChildren(collection.id).length && !expandedProjectIds.has(collection.id)) {
         expandedProjectIds.add(collection.id);
         renderProjectFilters();
         queueMicrotask(() => focusProjectRow(collection.id));
       } else if (projectChildren(collection.id).length) focusProjectRow(projectChildren(collection.id)[0].id);
-    } else if (event.key === "ArrowLeft" && !elements.projectSearch.value.trim()) {
+    } else if (event.key === "ArrowLeft") {
       event.preventDefault();
       if (expandedProjectIds.has(collection.id)) {
         expandedProjectIds.delete(collection.id);
@@ -2464,11 +2594,11 @@ function updateSelectionBar() {
   elements.selectionProjectImpact.textContent = sourceKind === "project"
     ? t("来源：{project}", { project: sourceCollection.name })
     : sourceKind === "unassigned" ? t("来源：未归项目") : t("案例库");
-  elements.selectionMoveProject.hidden = sourceKind === "library";
+  elements.selectionMoveProject.hidden = false;
   elements.selectionMoveProject.disabled = moveUnavailable;
   elements.selectionMoveProject.title = moveUnavailable && targetCollection?.id === sourceCollection?.id ? t("请选择其他项目") : "";
-  elements.selectionAddProject.hidden = sourceKind === "unassigned";
-  elements.selectionAddProject.disabled = projectActionUnavailable;
+  elements.selectionCopyProject.hidden = false;
+  elements.selectionCopyProject.disabled = projectActionUnavailable;
   elements.selectionRemoveProject.hidden = sourceKind !== "project";
   elements.selectionRemoveProject.disabled = !selectedCaseIds.size || removableCount === 0;
   elements.selectionRemoveProject.title = !selectedCaseIds.size
@@ -2486,7 +2616,7 @@ function updateSelectionBar() {
   elements.selectionCombine.disabled = selectedCaseIds.size < 2;
   elements.selectionCombine.title = selectedCaseIds.size < 2 ? t("至少选择 2 个案例") : "";
   elements.selectionNewProject.disabled = !selectedCaseIds.size;
-  elements.selectionNewProject.textContent = t(sourceKind === "library" ? "新建项目并加入" : "新建项目并移动");
+  elements.selectionNewProject.textContent = t("新建项目并移动");
   const selectionHasAnalyzableImage = [...selectedCaseIds]
     .some((id) => isVisionSelectableEntry(logicalCases.find((entry) => entry.id === id)));
   const selectionHasAnalyzableVideo = [...selectedCaseIds].some((id) => {
@@ -2544,8 +2674,8 @@ function completeSelection() {
   return openShareDialog({ entryIds: [...selectedCaseIds], title: t("分享案例") });
 }
 
-async function addSelectionToProject() {
-  return updateSelectionProjectMembership("add", elements.selectionAddProject);
+async function copySelectionToProject() {
+  return updateSelectionProjectMembership("copy", elements.selectionCopyProject);
 }
 
 async function moveSelectionToProject() {
@@ -2572,6 +2702,7 @@ async function updateSelectionProjectMembership(mode, button, collectionId = ele
     if (!response?.ok) throw new Error(response?.message || (mode === "remove" ? "移出项目失败" : "加入项目失败"));
     organizerState = response.organizerState ?? organizerState;
     rebuildLocalSimilarityIndex();
+    if (mode === "copy") await refreshLibrary();
     showFeedback(response.message || (mode === "remove" ? `已移出项目“${collection.name}”` : `已加入项目“${collection.name}”`));
     exitSelectionMode();
   } catch (error) {
@@ -2626,11 +2757,10 @@ async function moveSelectionToTrash() {
 
 async function createProjectFromSelection() {
   if (!selectedCaseIds.size) return;
-  const moving = Boolean(selectedCollectionId || unassignedViewActive);
   const name = await promptAppText({
     title: t("以所选案例新建项目"),
     label: t("项目名称"),
-    confirmLabel: moving ? t("新建并移动") : t("新建并加入"),
+    confirmLabel: t("新建并移动"),
     selectFirst: true
   });
   if (!name?.trim()) return;
@@ -2640,13 +2770,13 @@ async function createProjectFromSelection() {
     name: name.trim(),
     parentId: null,
     entryIds,
-    mode: moving ? "move" : "add",
+    mode: "move",
     sourceCollectionId: selectedCollectionId || null
   }, false);
   if (!response?.ok || !response.created?.id) return;
   organizerState = response.organizerState ?? organizerState;
   rebuildLocalSimilarityIndex();
-  showFeedback(`已新建项目“${response.created.name}”并${moving ? "移动" : "加入"}所选案例`);
+  showFeedback(`已新建项目“${response.created.name}”并移动所选案例`);
   exitSelectionMode();
 }
 
@@ -3083,6 +3213,12 @@ async function openVisionBatchConfirmation() {
 }
 
 async function previewSelectedVisionBatch() {
+  visionBatchSelection = null;
+  const selectedEntries = new Set(expandLogicalCaseIds([...selectedCaseIds], compoundCases));
+  if (visionBatchJob?.items?.length && ["running", "paused"].includes(visionBatchJob.status)
+    && visionBatchJob.items.every((item) => selectedEntries.has(item.entryId))) {
+    visionBatchSelection = { jobId: visionBatchJob.id, caseIds: [...selectedCaseIds] };
+  }
   if (visionBatchJob && ["running", "paused"].includes(visionBatchJob.status)) {
     const requestedKind = activeMediaBatchKind === "video" ? "video" : "vision";
     if (visionBatchJob.kind !== requestedKind) {
@@ -3183,7 +3319,7 @@ function renderVisionBatchDialog(preview = null) {
   elements.visionBatchProgress.hidden = !job;
   elements.visionBatchProgressBar.max = Math.max(1, requestCount || job?.requestCount || 1);
   elements.visionBatchProgressBar.value = Math.min(processedCount, elements.visionBatchProgressBar.max);
-  elements.visionBatchStart.hidden = Boolean(activeJob);
+  elements.visionBatchStart.hidden = Boolean(job);
   elements.visionBatchStart.disabled = !requestCount;
   elements.visionBatchPause.hidden = !activeJob || activeJob.status !== "running";
   elements.visionBatchResume.hidden = !activeJob || activeJob.status !== "paused";
@@ -3233,6 +3369,7 @@ async function startSelectedVisionBatch() {
     }
     if (!response?.ok) throw new Error(response?.message || (activeMediaBatchKind === "video" ? "无法创建批量视频分析" : "无法创建批量画面分析"));
     visionBatchJob = response.visionBatchJob;
+    visionBatchSelection = { jobId: visionBatchJob.id, caseIds: [...selectedCaseIds] };
     renderVisionBatchDialog();
   } catch (error) {
     showVisionBatchFeedback(error.message, true);
@@ -3483,7 +3620,7 @@ function folderBackupRescueDescription(reportValue = {}) {
   });
   const remaining = Math.max(0, diagnostics.length - visible.length);
   const details = [...visible, ...(remaining ? [`另有 ${remaining} 项问题`] : [])].join("；");
-  return `预检发现 ${diagnostics.length} 项无法完整写入的资源。继续将剔除这些项目并生成明确标识的救援备份，不会写完整备份标记。${details ? ` ${details}` : ""}`;
+  return `预检发现 ${diagnostics.length} 项无法完整写入的资源。继续将备份可恢复的资料，并保留未能自动恢复的可读原件与原始清单。缺失或损坏项会列入报告，不会标记为完整备份。${details ? ` ${details}` : ""}`;
 }
 
 async function createCompleteFolderBackup() {
@@ -3740,6 +3877,7 @@ async function createCompleteFolderBackup() {
     const trashProjectCount = (exportState.trashState?.items ?? []).filter((item) => item.kind === "collection").length;
     const writePlan = await buildFolderBackupWritePlan({
       files: finalFiles,
+      sourceFiles: plannedFiles,
       report: preflight.report,
       metadata: {
       createdAt: new Date().toISOString(),
@@ -3805,6 +3943,8 @@ async function createCompleteFolderBackup() {
         ? "目录选择器未在有效用户操作中打开或未获得权限，请重新点击备份按钮并允许访问"
         : error.message;
       showDataSafetyFeedback(message, true);
+    } else if (stage === "preflight") {
+      showDataSafetyFeedback(`${error.message}；备份检查未完成，尚未创建资料夹或写入文件，资料库未改动`, true);
     } else {
       showDataSafetyFeedback(`${error.message}；未写入完成标记的资料夹不会被认定为完整备份，只能尝试救援恢复`, true);
     }
@@ -4842,6 +4982,8 @@ function contentRoleIconName(role) {
   if ([CONTENT_ROLES.promptVideo, CONTENT_ROLES.videoCase].includes(role)) return "video";
   if ([CONTENT_ROLES.promptImage, CONTENT_ROLES.imageCase].includes(role)) return "image";
   if (role === CONTENT_ROLES.tutorial) return "library";
+  if (role === CONTENT_ROLES.audio) return "audio-lines";
+  if (role === CONTENT_ROLES.sourceFile) return "file-box";
   return "file-text";
 }
 
@@ -4943,6 +5085,10 @@ function syncStructuredFilterControls() {
 }
 
 function renderActiveFilters() {
+  libraryLayout.updateCounts({
+    types: Number(Boolean(selectedContentId)) + Number(elements.pendingFilter.checked),
+    tags: [...selectedFacets.values()].reduce((sum, ids) => sum + ids.size, 0)
+  });
   activeFilterCount = Number(Boolean(selectedContentId)) +
     [...selectedFacets.values()].reduce((count, ids) => count + ids.size, 0) +
     Number(elements.pendingFilter.checked) +
@@ -7536,7 +7682,8 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
   await discardPendingLocalImport();
   const browsingScrollY = window.scrollY;
   const rootName = source === "folder" ? commonImportRoot(fileItems) : "";
-  const draft = { source, rootName, browsingScrollY, customLabels: [], stagedAssets: [], skipped: [] };
+  const draft = { source, rootName, browsingScrollY, customLabels: [], stagedAssets: [], skipped: [],
+    duplicateIndex: createExactMediaDuplicateIndex(entries, { readBlob: getMediaBlob }) };
   pendingLocalImport = draft;
   elements.importDialogTitle.textContent = t("确认导入");
   elements.importSource.hidden = true;
@@ -7586,16 +7733,7 @@ async function prepareImportFile({ file, handle = null, relativePath, forceImpor
       type: prepared.blob.type,
       lastModified: file.lastModified
     });
-    const duplicate = await findExactMediaDuplicate(duplicateProbe, entries, {
-      readBlob: getMediaBlob,
-      candidateAssets: draft.stagedAssets.map((asset) => ({
-        id: asset.assetId,
-        byteSize: asset.byteSize,
-        mimeType: asset.mimeType,
-        sourceTitle: asset.name,
-        contentHash: asset.contentHash
-      }))
-    });
+    const duplicate = await draft.duplicateIndex.find(duplicateProbe, { contentHash: prepared.asset.contentHash });
     await saveMediaBlob(assetId, prepared.blob);
     if (prepared.poster) await saveMediaBlob(prepared.poster.asset.id, prepared.poster.blob);
     if (pendingLocalImport !== draft) {
@@ -7627,6 +7765,8 @@ async function prepareImportFile({ file, handle = null, relativePath, forceImpor
       ...(prepared.warnings?.length ? { warnings: prepared.warnings } : {}),
       ...(prepared.poster ? { posterAssetId: prepared.poster.asset.id, posterAsset: prepared.poster.asset } : {})
     });
+    draft.duplicateIndex.add({ id: assetId, byteSize: prepared.blob.size,
+      mimeType: prepared.asset.mimeType, sourceTitle: file.name, contentHash: duplicate.contentHash });
   } catch (error) {
     await deleteMediaBlob(assetId).catch(() => undefined);
     if (prepared?.poster?.asset?.id) await deleteMediaBlob(prepared.poster.asset.id).catch(() => undefined);
@@ -10718,7 +10858,8 @@ async function deleteCaseIncrementally(button, entryId) {
     selectedCaseIds.delete(entryId);
     for (const asset of normalizeEntryMedia(deletingEntry ?? {}).mediaAssets) clearMediaAssetCache(asset.id);
     if (visibleCard) {
-      galleryMasonry.remove(visibleCard);
+      if (galleryMasonry) galleryMasonry.remove(visibleCard);
+      else visibleCard.remove();
       indexedGalleryEntries = indexedGalleryEntries.filter((item) => item.id !== entryId);
       visibleEntries = visibleEntries.filter((item) => item.id !== entryId);
       renderedCount = elements.caseList.children.length;
@@ -11681,31 +11822,24 @@ function revealCaseProject(project) {
   workspace.classList.remove("filters-collapsed");
   renderFilterToggleState();
   if (project) {
-    elements.projectSearch.value = "";
     for (const ancestor of collectionPath(organizerState, project.id).slice(0, -1)) expandedProjectIds.add(ancestor.id);
     renderProjectFilters();
   }
-  const sidebar = elements.filterSidebar;
+  libraryLayout.openModule("projects");
   const target = project
     ? [...elements.collectionFilters.querySelectorAll(".project-row")].find(row => row.dataset.collectionId === project.id)
     : elements.workspaceUnassigned;
   if (!target) return;
   target.classList.add("project-located");
-  const section = project ? document.getElementById("project-section") : sidebar;
-  const tools = project ? section.querySelector(".project-tree-tools") : null;
-  const toolsHeight = tools?.getBoundingClientRect().height || 0;
-  const sidebarTop = sidebar.getBoundingClientRect().top;
-  const targetTop = target.getBoundingClientRect().top - sidebarTop + sidebar.scrollTop;
-  const sectionBottom = section.getBoundingClientRect().bottom - sidebarTop + sidebar.scrollTop;
-  const space = document.createElement("div");
-  space.className = "project-location-space";
-  space.setAttribute("aria-hidden", "true");
-  space.style.height = `${Math.max(0, targetTop + sidebar.clientHeight - toolsHeight - sectionBottom)}px`;
-  section.append(space);
-  const stickyTop = tools ? parseFloat(getComputedStyle(tools).top) || 0 : 0;
-  sidebar.scrollTop = Math.max(0, targetTop - toolsHeight - stickyTop);
-  // Correct for the sticky header's actual position without scrolling the page.
-  if (tools) sidebar.scrollTop += target.getBoundingClientRect().top - tools.getBoundingClientRect().bottom;
+  if (project) {
+    const scroller = document.getElementById("sidebar-projects-body");
+    const space = document.createElement("div");
+    space.className = "project-location-space";
+    space.setAttribute("aria-hidden", "true");
+    space.style.height = `${Math.max(0, scroller.clientHeight - target.offsetHeight)}px`;
+    scroller.append(space);
+    scroller.scrollTop += target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  }
   target.focus({ preventScroll: true });
 }
 

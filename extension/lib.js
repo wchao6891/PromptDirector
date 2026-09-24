@@ -17,6 +17,7 @@ import { entryPalette, normalizeEntryVisuals, primaryVisionDescription } from ".
 import { normalizeCompoundCases } from "./compound-cases.js";
 import { CURRENT_LIBRARY_PACKAGE_VERSION, LIBRARY_PACKAGE_FORMAT } from "./library-package-format.js";
 import { normalizeTrashState } from "./trash.js";
+import { projectPortableMedia } from "./library-portable-media.js";
 
 export const DEFAULT_SETTINGS = Object.freeze({
   libraryTitle: "视觉创作灵感库",
@@ -251,7 +252,7 @@ export function renderLibraryJson(
     payload.creativeRuns = normalizeCreativeRuns(composerState.creativeRuns);
     payload.creativeSkills = normalizeCreativeSkillsState(composerState.creativeSkills);
   }
-  return `${JSON.stringify(payload, null, 2)}\n`;
+  return `${JSON.stringify(projectPortableMedia(payload), null, 2)}\n`;
 }
 
 function renderEntry(entry, index, taxonomy, facetCatalog, locale) {

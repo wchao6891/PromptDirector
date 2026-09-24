@@ -92,8 +92,10 @@ def main() -> None:
             "uiPreferences": {"locale": "zh-CN", "theme": "dark", "motion": "reduced"},
         })
         library = session.open_page("library.html", wait_until="networkidle")
-        expect(library.locator("#case-list > .case-card")).to_have_count(10)
+        expect(library.locator("#case-list > .case-card")).to_have_count(15)
 
+        migrated_members = organizer_members(library)
+        assert len(set(sum(migrated_members.values(), []))) == sum(map(len, migrated_members.values()))
         library.locator(".project-filter", has_text="来源项目").click()
         expect(library.locator("#case-list > .case-card")).to_have_count(4)
         library.locator("#select-cases").click()
@@ -120,12 +122,13 @@ def main() -> None:
         assert panel_geometry["overflow"] is False, panel_geometry
         assert len(panel_geometry["buttons"]) == 3, panel_geometry
         assert all(button["scrollWidth"] <= button["clientWidth"] for button in panel_geometry["buttons"]), panel_geometry
-        library.locator("#selection-add-project").click()
-        expect(library.locator("#feedback")).to_contain_text("加入项目")
+        library.locator("#selection-copy-project").click()
+        expect(library.locator("#feedback")).to_contain_text("已复制")
         after_add = organizer_members(library)
         assert after_add["来源项目"] == ["batch-case-0", "batch-case-1", "batch-case-2", "batch-case-3"], after_add
-        assert after_add["保留项目"] == ["batch-case-0", "batch-case-1", "batch-case-2", "batch-case-3", "batch-case-4"], after_add
-        assert after_add["目标项目"] == ["batch-case-4", *first_selection], after_add
+        assert after_add["保留项目"] == migrated_members["保留项目"], after_add
+        copied_ids = after_add["目标项目"][len(migrated_members["目标项目"]):]
+        assert len(copied_ids) == len(first_selection) and not set(copied_ids) & set(first_selection)
 
         library.locator("#select-cases").click()
         for entry_id in first_selection:
@@ -136,8 +139,8 @@ def main() -> None:
         after_move = organizer_members(library)
         remaining_source = [entry_id for entry_id in organizer["collections"][0]["entryIds"] if entry_id not in first_selection]
         assert after_move["来源项目"] == remaining_source, after_move
-        assert after_move["保留项目"] == ["batch-case-0", "batch-case-1", "batch-case-2", "batch-case-3", "batch-case-4"], after_move
-        assert after_move["目标项目"] == ["batch-case-4", *first_selection], after_move
+        assert after_move["保留项目"] == migrated_members["保留项目"], after_move
+        assert after_move["目标项目"] == [*after_add["目标项目"], *first_selection], after_move
 
         expect(library.locator("#case-list > .case-card")).to_have_count(2)
         library.locator("#select-cases").click()
@@ -156,10 +159,10 @@ def main() -> None:
         after_create = organizer_members(library)
         assert after_create["来源项目"] == [], after_create
         assert after_create["新建移动项目"] == second_selection, after_create
-        assert after_create["保留项目"] == ["batch-case-0", "batch-case-1", "batch-case-2", "batch-case-3", "batch-case-4"], after_create
+        assert after_create["保留项目"] == migrated_members["保留项目"], after_create
 
         library.locator("#workspace-library").click()
-        expect(library.locator("#case-list > .case-card")).to_have_count(10)
+        expect(library.locator("#case-list > .case-card")).to_have_count(17)
         library.locator("#select-cases").click()
         library.locator('.case-card[data-entry-id="batch-case-5"]').click()
         select_target(library, target_id)
@@ -174,7 +177,7 @@ def main() -> None:
         )
         assert aggregate_geometry["width"] >= 360, aggregate_geometry
         assert aggregate_geometry["overflow"] is False, aggregate_geometry
-        assert aggregate_geometry["visibleActions"] == 1, aggregate_geometry
+        assert aggregate_geometry["visibleActions"] == 2, aggregate_geometry
 
         before_failure = organizer_members(library)
         library.evaluate(
@@ -185,7 +188,7 @@ def main() -> None:
                 : window.__caseManagementSendMessage.call(chrome.runtime, message, ...rest);
             }"""
         )
-        library.locator("#selection-add-project").click()
+        library.locator("#selection-copy-project").click()
         expect(library.locator("#feedback")).to_contain_text("模拟项目写入失败")
         assert organizer_members(library) == before_failure
         library.evaluate("() => { chrome.runtime.sendMessage = window.__caseManagementSendMessage; }")
@@ -219,10 +222,10 @@ def main() -> None:
 
         print({
             "sweep_select_and_cancel": True,
-            "batch_add": after_add,
+            "batch_copy": after_add,
             "batch_move": after_move,
             "create_and_move": after_create,
-            "aggregate_count": 10,
+            "aggregate_count": 17,
             "failed_write_unchanged": True,
             "project_panel": panel_geometry,
             "aggregate_panel": aggregate_geometry,

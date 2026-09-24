@@ -84,10 +84,15 @@ def main() -> None:
         library.evaluate(
             "() => chrome.alarms.create('prompt-director-analysis-batch', {when: Date.now() + 50})"
         )
-        expect(dialog.locator("#vision-batch-feedback")).to_contain_text("图片分析服务暂时不可用", timeout=15_000)
+        expect(dialog.locator("#vision-batch-feedback")).to_contain_text("服务暂时不可用", timeout=15_000)
+        expect(dialog.locator("#vision-batch-feedback")).to_contain_text("本次结果未保存")
         expect(dialog.locator("#vision-batch-retry")).to_be_visible(timeout=15_000)
         expect(dialog.locator("#vision-batch-pause")).to_be_hidden(timeout=15_000)
 
+        expect(dialog.locator("#vision-batch-start")).to_be_hidden()
+        dialog.locator("#vision-batch-close").click()
+        expect(library.locator("#share-bar")).to_be_visible()
+        expect(library.locator(".case-card.selected-for-share")).to_have_count(1)
         print({"runner_failure_visible": True, "retry_available": True})
 
 

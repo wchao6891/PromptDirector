@@ -1,3 +1,4 @@
+import { sharedLibraryMediaFiles } from "./library-shared-media.js";
 import {
   hasLibrarySalvageDiagnostics,
   mergeLibraryPackage,
@@ -34,6 +35,8 @@ export async function inspectLibraryTransfer({
 } = {}) {
   if (!SOURCE_TYPES.has(sourceType)) throw new Error("资料检查缺少有效来源类型");
   if (!(files instanceof Map)) throw new Error("资料检查缺少有效资源清单");
+
+  files = await sharedLibraryMediaFiles(library, files, { signal });
 
   const strict = sourceType === LIBRARY_TRANSFER_SOURCES.COMPLETE_BACKUP;
   const sourceDiagnostics = Array.isArray(sourceReport?.diagnostics)
@@ -150,6 +153,7 @@ export function planLibraryTransfer({ currentState = {}, inspection, options = {
     : currentState;
   const result = mergeLibraryPackage(mergeReceiver, inspection.state, {
     preserveLibraryConfiguration: mode === LIBRARY_TRANSFER_MODES.EXACT_REPLACE || preserveLibraryConfiguration,
+    preserveCaseIdentities: mode === LIBRARY_TRANSFER_MODES.EXACT_REPLACE,
     libraryAddedAt,
     importBatchId,
     importReport,

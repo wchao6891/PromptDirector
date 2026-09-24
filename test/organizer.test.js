@@ -51,7 +51,7 @@ test("a case can belong to multiple project collections", () => {
   assert.equal(deleteCollection(state, state.collections[0].id).collections.length, 1);
 });
 
-test("source-aware moves remove only the current source and preserve other project memberships", () => {
+test("folder moves retain exactly one owner regardless of the originating view", () => {
   let state = createCollection({}, "来源").state;
   state = createCollection(state, "保留").state;
   state = createCollection(state, "目标").state;
@@ -61,7 +61,7 @@ test("source-aware moves remove only the current source and preserve other proje
 
   state = moveEntriesBetweenCollections(state, source.id, target.id, ["one"]);
 
-  assert.deepEqual(state.collections.map((item) => item.entryIds), [[], ["one"], ["one"]]);
+  assert.deepEqual(state.collections.map((item) => item.entryIds), [[], [], ["one"]]);
 });
 
 test("moving from unassigned adds the target membership without a source collection", () => {
