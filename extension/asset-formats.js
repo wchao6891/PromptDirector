@@ -49,7 +49,7 @@ const DEFINITIONS = [
   format("ass", "document", "subtitle", ["ass", "ssa"], ["text/x-ssa", "text/plain"], { plainText: true }),
   format("sbv", "document", "subtitle", ["sbv"], ["text/plain"], { plainText: true }),
   format("lrc", "document", "subtitle", ["lrc"], ["text/plain", "application/lrc"], { plainText: true }),
-  format("skill", "attachment", "workflow", ["skill"], ["application/zip", "application/x-zip-compressed"], { extensionRequired: true }),
+  format("skill", "attachment", "workflow", ["skill"], ["application/zip", "application/x-zip-compressed", "application/vnd.openai.codex.skill"], { extensionRequired: true }),
 
   format("photoshop", "attachment", "design-source", ["psd", "psb"], ["image/vnd.adobe.photoshop", "application/x-photoshop"]),
   format("illustrator", "attachment", "design-source", ["ai"], ["application/postscript", "application/illustrator"]),

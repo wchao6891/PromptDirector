@@ -1,3 +1,4 @@
+import { createBlobDigestCache } from "./blob-digest.js";
 import { sharedLibraryMediaFiles } from "./library-shared-media.js";
 import {
   hasLibrarySalvageDiagnostics,
@@ -31,12 +32,13 @@ export async function inspectLibraryTransfer({
   validateImage,
   signal,
   onImageProgress,
-  sourceReport
+  sourceReport,
+  digest = createBlobDigestCache()
 } = {}) {
   if (!SOURCE_TYPES.has(sourceType)) throw new Error("资料检查缺少有效来源类型");
   if (!(files instanceof Map)) throw new Error("资料检查缺少有效资源清单");
 
-  files = await sharedLibraryMediaFiles(library, files, { signal });
+  files = await sharedLibraryMediaFiles(library, files, { signal, digest });
 
   const strict = sourceType === LIBRARY_TRANSFER_SOURCES.COMPLETE_BACKUP;
   const sourceDiagnostics = Array.isArray(sourceReport?.diagnostics)
@@ -46,7 +48,7 @@ export async function inspectLibraryTransfer({
   let inspected;
   if (strict) {
     try {
-      inspected = await parseCompleteFolderBackup(library, files, limits);
+      inspected = await parseCompleteFolderBackup(library, files, limits, { signal, digest });
     } catch (error) {
       let rescued;
       try {

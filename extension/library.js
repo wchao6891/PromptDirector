@@ -1,9 +1,10 @@
+import { createBlobDigestCache } from "./blob-digest.js";
 import { createLibraryLayout } from "./library-layout.js";
 import { renderBrowseNavigation, appendCaseRowDetails } from "./library-browse-view.js";
 import { attachDetailSplit } from "./detail-split.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { createGenerationInfoViewReader } from "./image-generation-view.js";
-import { downloadMediaCopies, showQuickMenu } from "./library-quick-actions.js";
+import { copyFilename, downloadMediaCopies, showQuickMenu } from "./library-quick-actions.js";
 import { assetFormatForExtension } from "./asset-formats.js";
 import { docxImageLoader } from "./docx-ingestion.js";
 import { applyLibraryImportWithReceipt } from "./library-import-client.js";
@@ -194,8 +195,7 @@ import {
   createUnsupportedLocalAssetReference,
   extractLocalDocumentText,
   createExactMediaDuplicateIndex,
-  prepareLocalMedia as prepareSharedLocalMedia,
-  sha256Blob
+  prepareLocalMedia as prepareSharedLocalMedia
 } from "./local-media.js";
 import {
   LOCAL_ASSET_LINK_STATUS,
@@ -804,9 +804,6 @@ function bindEvents() {
     }
     visionBatchSelection = null;
   });
-  elements.visionBatchDialog.addEventListener("click", (event) => {
-    if (event.target === elements.visionBatchDialog) elements.visionBatchDialog.close();
-  });
   for (const checkbox of [elements.visionBatchAllImages, elements.visionBatchReanalyze]) {
     checkbox.addEventListener("change", () => {
       void previewSelectedVisionBatch();
@@ -825,9 +822,6 @@ function bindEvents() {
   elements.shareCancel.addEventListener("click", exitSelectionMode);
   elements.shareExport.addEventListener("click", completeSelection);
   elements.shareDialogClose.addEventListener("click", closeShareDialog);
-  elements.shareDialog.addEventListener("click", (event) => {
-    if (event.target === elements.shareDialog) closeShareDialog();
-  });
   elements.shareDialogPublic.addEventListener("click", () => {
     const expanded = elements.shareDialogPublicPanel.hidden;
     elements.shareDialogPublicPanel.hidden = !expanded;
@@ -880,9 +874,6 @@ function bindEvents() {
   elements.trashClose.addEventListener("click", () => elements.trashDialog.close());
   elements.trashRestoreAll.addEventListener("click", restoreAllTrashItems);
   elements.trashEmpty.addEventListener("click", emptyTrashFromDialog);
-  elements.trashDialog.addEventListener("click", (event) => {
-    if (event.target === elements.trashDialog) elements.trashDialog.close();
-  });
   elements.manageFacets.addEventListener("click", () => {
     elements.managerFeedback.hidden = true;
     activeManagerTab = "content-types";
@@ -890,9 +881,6 @@ function bindEvents() {
     elements.managerDialog.showModal();
   });
   elements.managerClose.addEventListener("click", () => elements.managerDialog.close());
-  elements.managerDialog.addEventListener("click", (event) => {
-    if (event.target === elements.managerDialog) elements.managerDialog.close();
-  });
   managerTabs.forEach((button) => button.addEventListener("click", () => {
     activeManagerTab = button.dataset.managerTab;
     renderManager();
@@ -1641,6 +1629,41 @@ function createCaseCard(entry) {
     image.loading = "lazy";
     const cached = thumbnailUrls.get(cover.id);
     if (cached) image.src = cached;
+    let exportUrl = "";
+    let preparingOriginal;
+    const prepareOriginal = () => {
+      if (exportUrl) { image.src = exportUrl; return; }
+      if (preparingOriginal) return;
+      preparingOriginal = originalScreenshotUrl(cover.id).then(url => {
+        exportUrl = url;
+        if (url && image.isConnected) image.src = url;
+      }).catch(error => console.debug("PromptDirector original image drag", error))
+        .finally(() => { preparingOriginal = null; });
+    };
+    // Resolve only the approached card; never load every original in the library.
+    card.addEventListener("pointerenter", prepareOriginal);
+    card.addEventListener("focusin", prepareOriginal);
+    image.addEventListener("pointerdown", prepareOriginal);
+    card.addEventListener("dragstart", event => {
+      if (selectionMode || caseOrderManagementActive || !event.dataTransfer) return;
+      if (!exportUrl) {
+        event.preventDefault();
+        prepareOriginal();
+        showFeedback("原图正在读取，请稍后再拖动", true);
+        return;
+      }
+      image.src = exportUrl;
+      event.dataTransfer.clearData();
+      event.dataTransfer.setData("application/x-promptdirector-case", entry.id);
+      event.dataTransfer.effectAllowed = "copyMove";
+      event.dataTransfer.setData("DownloadURL", `${cover.mimeType || "application/octet-stream"}:${copyFilename(cover, entry.title, 0)}:${exportUrl}`);
+      event.dataTransfer.setData("text/uri-list", exportUrl);
+      event.dataTransfer.setData("text/plain", exportUrl);
+      const exportedImage = document.createElement("img");
+      exportedImage.src = exportUrl;
+      exportedImage.alt = image.alt;
+      event.dataTransfer.setData("text/html", exportedImage.outerHTML);
+    });
     wrap.append(image);
     card.append(wrap);
   } else if (mainVisual?.kind === "video") {
@@ -3623,6 +3646,21 @@ function folderBackupRescueDescription(reportValue = {}) {
   return `预检发现 ${diagnostics.length} 项无法完整写入的资源。继续将备份可恢复的资料，并保留未能自动恢复的可读原件与原始清单。缺失或损坏项会列入报告，不会标记为完整备份。${details ? ` ${details}` : ""}`;
 }
 
+// Ten updates per second keeps long streaming checks visible without repainting
+// for every chunk/file. Yield even in hidden tabs, where rAF may be suspended.
+function dataSafetyProgress(label) {
+  let lastPaint = -Infinity;
+  return async ({ completed = 0, total, completedBytes, totalBytes } = {}) => {
+    const now = performance.now();
+    if (now - lastPaint < 100 && completed !== total) return;
+    lastPaint = now;
+    const count = total === undefined ? `${completed}` : `${completed} / ${total}`;
+    const bytes = totalBytes === undefined ? "" : ` · ${formatBytes(completedBytes)} / ${formatBytes(totalBytes)}`;
+    showDataSafetyFeedback(`${t(label)} · ${count}${bytes}`);
+    await new Promise(resolve => setTimeout(resolve, 0));
+  };
+}
+
 async function createCompleteFolderBackup() {
   if (dataSafetyOperationActive) return showDataSafetyFeedback("当前操作仍在进行，请等待完成", true);
   if (typeof window.showDirectoryPicker !== "function") return showDataSafetyFeedback("当前浏览器不支持资料夹备份，请使用最新版 Chrome", true);
@@ -3635,6 +3673,8 @@ async function createCompleteFolderBackup() {
     stage = "preflight";
     const response = await chrome.runtime.sendMessage({ type: "GET_FOLDER_BACKUP_STATE" });
     if (!response?.ok) throw new Error(response?.message || "无法读取资料库");
+    const digest = createBlobDigestCache();
+    const mediaProgress = dataSafetyProgress("正在检查媒体");
     const plannedFiles = new Map();
     const preflightDiagnostics = [];
     const resolvedEntries = [];
@@ -3652,7 +3692,9 @@ async function createCompleteFolderBackup() {
       plannedFiles.set(assetPath, blob);
       mediaCount += 1;
       byteSize += blob.size;
-      return portableManagedBackupAsset(asset, blob, assetPath, await sha256Blob(blob), portableFormat);
+      return portableManagedBackupAsset(asset, blob, assetPath, await digest(blob, {
+        onProgress: bytes => mediaProgress({ completed: mediaCount, ...bytes })
+      }), portableFormat);
     };
     const materializeEntry = async (entryValue, scopeId = "") => {
       let entry = normalizeEntryMedia(entryValue);
@@ -3812,7 +3854,10 @@ async function createCompleteFolderBackup() {
     const initialMediaSizes = [...backupMediaPaths(plannedLibrary)].map((path) => plannedFiles.get(path)?.size ?? 0);
     const initialTotalBytes = initialMediaSizes.reduce((sum, size) => sum + size, 0);
     const initialLargestMedia = initialMediaSizes.reduce((largest, size) => Math.max(largest, size), 1);
+    showDataSafetyFeedback(t("正在核对备份资料…"));
     const inspectPlannedBackup = (sourceType, sourceReport) => inspectLibraryTransfer({
+      digest,
+      onImageProgress: dataSafetyProgress("正在检查图片"),
       sourceType,
       library: plannedLibrary,
       files: plannedFiles,
@@ -3875,7 +3920,10 @@ async function createCompleteFolderBackup() {
     const plannedTotalBytes = byteSize;
     const trashCaseCount = (exportState.trashState?.items ?? []).filter((item) => item.kind === "entry").length;
     const trashProjectCount = (exportState.trashState?.items ?? []).filter((item) => item.kind === "collection").length;
+    showDataSafetyFeedback(t("正在准备备份清单…"));
     const writePlan = await buildFolderBackupWritePlan({
+      digest,
+      onProgress: dataSafetyProgress("正在准备备份清单"),
       files: finalFiles,
       sourceFiles: plannedFiles,
       report: preflight.report,
@@ -3909,13 +3957,20 @@ async function createCompleteFolderBackup() {
       showDataSafetyFeedback(`正在写入第 ${writtenCount} / ${writePlan.files.size} 个文件`);
       await writeDirectoryFile(directory, path, blob);
     }
-    const writtenFiles = await readDirectoryFiles(directory);
-    if (writePlan.mode === "rescue") await verifyFolderRescueCompletion(writePlan.marker, writtenFiles);
-    else await verifyFolderBackupCompletion(writePlan.marker, writtenFiles);
+    showDataSafetyFeedback(t("正在读取已写入的文件…"));
+    const writtenFiles = await readDirectoryFiles(directory, "", dataSafetyProgress("正在读取已写入的文件"));
+    // New snapshot and cache: the source digest is never proof of disk writes.
+    const readbackDigest = createBlobDigestCache();
+    const readbackOptions = { digest: readbackDigest, onProgress: dataSafetyProgress("正在校验已写入的文件") };
+    if (writePlan.mode === "rescue") await verifyFolderRescueCompletion(writePlan.marker, writtenFiles, readbackOptions);
+    else await verifyFolderBackupCompletion(writePlan.marker, writtenFiles, readbackOptions);
     const writtenLibraryFile = writtenFiles.get("library.json");
     if (!(writtenLibraryFile instanceof Blob)) throw new Error("无法回读刚写入的 library.json");
     const writtenLibrary = JSON.parse(await writtenLibraryFile.text());
+    showDataSafetyFeedback(t("正在核对备份资料…"));
     const writtenVerification = await inspectLibraryTransfer({
+      digest: readbackDigest,
+      onImageProgress: dataSafetyProgress("正在检查已写入的图片"),
       sourceType: writePlan.mode === "rescue"
         ? LIBRARY_TRANSFER_SOURCES.RESCUE_BACKUP
         : LIBRARY_TRANSFER_SOURCES.COMPLETE_BACKUP,
@@ -3932,6 +3987,7 @@ async function createCompleteFolderBackup() {
       sourceReport: writePlan.report
     });
     assertFolderBackupRoundtrip(exportState.entries, exportState.trashState, writtenVerification.state);
+    showDataSafetyFeedback(t("正在完成备份…"));
     await writeDirectoryFile(directory, writePlan.markerPath, new Blob([JSON.stringify(writePlan.marker, null, 2)], { type: "application/json" }));
     const completionLabel = writePlan.mode === "rescue" ? "救援备份已完成" : "完整备份已完成";
     showDataSafetyFeedback(`${completionLabel} · ${exportState.entries.length} 个案例 · ${mediaCount} 项媒体 · ${formatBytes(byteSize)}`);
@@ -3962,8 +4018,12 @@ async function restoreCompleteFolderBackup() {
   setDataSafetyBusy(true);
   try {
     const directory = await window.showDirectoryPicker({ mode: "read" });
-    const files = await readDirectoryFiles(directory);
-    const envelope = await inspectFolderBackupEnvelope(files);
+    showDataSafetyFeedback(t("正在读取备份文件…"));
+    const files = await readDirectoryFiles(directory, "", dataSafetyProgress("正在读取备份文件"));
+    const digest = createBlobDigestCache();
+    const envelope = await inspectFolderBackupEnvelope(files, {
+      digest, onProgress: dataSafetyProgress("正在校验备份文件")
+    });
     const completion = envelope.marker;
     const libraryFile = envelope.libraryFile;
     let library;
@@ -3992,6 +4052,8 @@ async function restoreCompleteFolderBackup() {
       library,
       files,
       limits: restoreLimits,
+      digest,
+      onImageProgress: dataSafetyProgress("正在检查图片"),
       validateImage: validateImportedImage,
       sourceReport: envelope.report
     });
@@ -4703,15 +4765,13 @@ async function writeDirectoryFile(root, path, data) {
   }
 }
 
-async function readDirectoryFiles(directory, prefix = "") {
-  const files = new Map();
+async function readDirectoryFiles(directory, prefix = "", onProgress, files = new Map()) {
   for await (const [name, handle] of directory.entries()) {
     const path = prefix ? `${prefix}/${name}` : name;
-    if (handle.kind === "file") files.set(path, await handle.getFile());
-    else {
-      const nested = await readDirectoryFiles(handle, path);
-      for (const item of nested) files.set(...item);
-    }
+    if (handle.kind === "file") {
+      files.set(path, await handle.getFile());
+      await onProgress?.({ completed: files.size });
+    } else await readDirectoryFiles(handle, path, onProgress, files);
   }
   return files;
 }
@@ -5803,7 +5863,7 @@ async function createArticleDocumentReader(entryValue) {
   async function appendBlocks(reader, blocks) {
     for (const block of blocks) {
       if (block.kind === "table" && block.rows) {
-        const wrap = el("div", "article-table-scroll");
+        const wrap = el("div", "article-table-scroll ui-scrollbar");
         const table = el("table", "article-structured-table");
         const body = document.createElement("tbody");
         for (const row of block.rows) {
@@ -6118,7 +6178,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       mediaActions.push({ label: "移除媒体", danger: true, run: removeMedia });
     }
     item.addEventListener("contextmenu", event => {
-      if (event.target.closest("input, textarea, [contenteditable], .document-text-reader")) return;
+      if (event.target.closest("img, input, textarea, [contenteditable], .document-text-reader")) return;
       event.preventDefault(); event.stopPropagation();
       showQuickMenu(download, mediaActions, { x: event.clientX, y: event.clientY }, message => showFeedback(message, true));
     });
@@ -6495,6 +6555,15 @@ async function createMediaViewer(asset, imageUrl, entry) {
     image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
     image.alt = `${entry.title} 图片`;
     image.src = imageUrl;
+    image.draggable = true;
+    image.addEventListener("dragstart", event => {
+      if (!event.dataTransfer || !imageUrl) return;
+      // Preserve native image drag data and add Chrome's file-export payload.
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("DownloadURL", `${asset.mimeType || "application/octet-stream"}:${copyFilename(asset, entry.title, 0)}:${imageUrl}`);
+      event.dataTransfer.setData("text/uri-list", imageUrl);
+      event.stopPropagation();
+    });
     image.tabIndex = 0;
     image.role = "button";
     image.addEventListener("click", () => openImageLightbox(image, entry));
@@ -8271,7 +8340,8 @@ async function addVideoReference(entryId = "") {
     fields: [{
       id: "url",
       label: "视频网页地址",
-      type: "url",
+      type: "text",
+      inputMode: "url",
       placeholder: "https://…",
       autocomplete: "url",
       required: true

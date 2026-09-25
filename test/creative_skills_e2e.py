@@ -133,7 +133,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(skills.locator("#skill-source-inspector")).to_be_visible()
         expect(skills.locator(".skill-source-asset")).to_have_count(2)
         expect(skills.locator(".skill-source-asset input:checked")).to_have_count(1)
-        skills.screenshot(path="/tmp/promptdirector-skills-inspector-light.png")
+        skills.screenshot(path=str(Path(tempfile.gettempdir()) / "promptdirector-skills-inspector-light.png"))
         skills.locator("#skill-source-clear").click()
         expect(skills.locator("#skill-selected-count")).to_have_text("1")
         skills.locator("#skill-source-cancel").click()
@@ -150,7 +150,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         skills.locator("#skill-visible-select").click()
         expect(skills.locator("#skill-selected-count")).to_have_text("2")
         skills.locator("#skill-goal").fill("只提炼我喜欢的构图、色彩和人物光线")
-        skills.screenshot(path="/tmp/promptdirector-skills-create-light.png", full_page=True)
+        skills.screenshot(path=str(Path(tempfile.gettempdir()) / "promptdirector-skills-create-light.png"), full_page=True)
         skills.locator("#skill-generate").click()
         preflight = skills.locator("#promptdirector-app-dialog")
         expect(preflight).to_be_visible()
@@ -160,7 +160,14 @@ Run `scripts/helper.py` before applying the composition guidance.
         preflight.get_by_role("button", name="开始提炼").click()
         expect(skills.locator("#skill-draft-step")).to_be_visible()
         expect(skills.locator("#skill-markdown")).to_have_value(re.compile("视觉组织方法"))
-        expect(skills.locator("#skill-run-panel")).to_be_visible()
+        expect(skills.locator("#skill-target-step")).to_be_hidden()
+        expect(skills.locator("#skill-draft-preview")).to_contain_text("视觉组织方法")
+        expect(skills.locator("#skill-save")).to_be_in_viewport()
+        skills.screenshot(path=str(Path(tempfile.gettempdir()) / "pd-skill-result.png"))
+        skills.locator("#skill-back-sources").click()
+        expect(skills.locator("#skill-selected-count")).to_have_text("2")
+        expect(skills.locator("#skill-goal")).to_have_value("只提炼我喜欢的构图、色彩和人物光线")
+        skills.locator("#skill-show-draft").click()
         expect(skills.locator("#skill-generation-status")).to_contain_text("草稿已生成")
         expect(skills.locator("#skill-run-progress")).to_have_attribute("style", re.compile("100%"))
         expect(skills.locator("#skill-run-log")).to_contain_text("文字提炼完成")
@@ -189,7 +196,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         exported_skill, _ = wait_for_download(skills)
         assert zipfile.is_zipfile(exported_skill)
         expect(skills.locator("#skill-detail-feedback")).to_contain_text("Skill 已导出")
-        skills.screenshot(path="/tmp/promptdirector-skills-desktop-light.png")
+        skills.screenshot(path=str(Path(tempfile.gettempdir()) / "promptdirector-skills-desktop-light.png"))
 
         skills.locator("#skill-detail-edit").click()
         expect(skills.locator("#skill-version-label")).to_have_text("当前 v1")
@@ -275,7 +282,10 @@ Run `scripts/helper.py` before applying the composition guidance.
         skills.locator("#skill-detail-more > summary").click()
         skills.locator("#skill-detail-refine").click()
         expect(skills.locator("#skill-source-sidebar")).to_be_visible()
-        expect(skills.locator("#skill-draft-step")).to_be_visible()
+        expect(skills.locator("#skill-draft-step")).to_be_hidden()
+        skills.locator("#skill-show-draft").click()
+        expect(skills.locator("#skill-draft-preview")).to_contain_text("视觉组织方法")
+        skills.locator("#skill-back-sources").click()
         expect(skills.locator("#skill-run-evidence-step")).to_be_visible()
         expect(skills.locator("#skill-run-evidence-list")).to_contain_text("保留主体层级")
         evidence_checkbox = skills.locator("#skill-run-evidence-list input")
@@ -324,7 +334,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(composer.locator("#composer-projects-panel")).to_be_visible()
         expect(composer.locator(".composer-skill-card")).to_have_count(2)
         expect(composer.locator(".composer-skill-card .skill-cover-card img")).to_be_visible()
-        composer.screenshot(path="/tmp/promptdirector-composer-skills-after.png")
+        composer.screenshot(path=str(Path(tempfile.gettempdir()) / "promptdirector-composer-skills-after.png"))
         skill_workspace_layout = composer.evaluate("""() => {
           const body = document.querySelector('.composer-reference-body').getBoundingClientRect();
           const panel = document.querySelector('#composer-projects-panel').getBoundingClientRect();
@@ -387,7 +397,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         assert max(rgb_channels(layout["background"])) < 60, layout
         assert max(rgb_channels(layout["cardBackground"])) < 80, layout
         assert min(rgb_channels(layout["cardColor"])) > 180, layout
-        skills.screenshot(path="/tmp/promptdirector-skills-mobile-dark-en.png")
+        skills.screenshot(path=str(Path(tempfile.gettempdir()) / "promptdirector-skills-mobile-dark-en.png"))
 
         skills.locator(".skill-card", has_text="external-method").click()
         skills.locator("#skill-detail-edit").click()

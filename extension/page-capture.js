@@ -346,9 +346,10 @@ function filterCandidateArticleDocument(value, selection) {
 
 export function normalizePageCaptureCandidate(value = {}) {
   const canonicalUrl = safeUrl(value.canonicalUrl || value.url);
-  const title = clean(value.title);
-  if (!canonicalUrl && !title) return null;
+  const capturedTitle = cleanCaptureImageDescription(value.title);
+  if (!canonicalUrl && !capturedTitle) return null;
   const sourceFacts = normalizeSourceFacts(value.sourceFacts, canonicalUrl);
+  const title = capturedTitle || captureSourceLabel(canonicalUrl, sourceFacts);
   const rawContentText = normalizeText(value.contentText);
   const rawTextBlocks = normalizeTextBlocks(value.textBlocks, rawContentText, canonicalUrl);
   const prepared = rawTextBlocks.some((item) => item.kind && item.kind !== "section")
@@ -400,6 +401,20 @@ export function normalizePageCaptureCandidate(value = {}) {
     },
     adapter: clean(value.adapter) || "generic"
   };
+}
+
+// Accessibility wrappers describe an image element, not the work's name.
+// Keep the supplied description, but never invent a subject for an untitled work.
+function cleanCaptureImageDescription(value) {
+  return clean(value).replace(/^(?:其中包括(?:图片)?|图片中可能包括|图像中可能包括)\s*[:：]\s*/u, "")
+    .replace(/^(?:image may contain|this may contain)\s*:?\s*/iu, "").trim();
+}
+
+function captureSourceLabel(url, facts) {
+  if (!url) return facts.provider;
+  const source = new URL(url);
+  const identity = facts.itemId || source.pathname.replace(/^\/+|\/+$/gu, "") || source.search;
+  return [facts.provider === "pinterest" ? "Pinterest" : source.hostname, identity].filter(Boolean).join(" · ");
 }
 
 function suppressVideoPosterImages(values) {
@@ -540,6 +555,10 @@ export function normalizeSourceFacts(value = {}, canonicalUrl = "") {
     ...(typeof value.originalPromptAvailable === "boolean" ? { originalPromptAvailable: value.originalPromptAvailable } : {}),
     pageType: PAGE_TYPES.has(value.pageType) ? value.pageType : "generic",
     itemId: clean(value.itemId),
+    authorUrl: safeUrl(value.authorUrl),
+    originalSourceUrl: safeUrl(value.originalSourceUrl),
+    imageDescription: clean(value.imageDescription),
+    metadataError: clean(value.metadataError),
     author: clean(value.author),
     handle: clean(value.handle),
     publishedAt: validIso(value.publishedAt),
@@ -689,9 +708,10 @@ export async function collectPageCaptureSnapshot(options = {}) {
       element.removeAttribute?.("data-promptdirector-capture-region");
     }
     const adapter = detectAdapter(location.hostname);
-    const declaredContent = (adapter.fields?.content || []).map(selector => document.querySelector(selector)).find(Boolean);
+    const assetDetail = options.siteData?.adapter === "higgsfield" && options.siteData?.captureScope === "asset";
+    const declaredContent = (assetDetail ? [] : adapter.fields?.content || []).map(selector => document.querySelector(selector)).find(Boolean);
     if (declaredContent) maxMedia = Math.max(maxMedia, declaredContent.querySelectorAll("img,video").length);
-    const pendingContentMedia = (options.feishuDocument ? 0 : await prepareArticleImages(declaredContent)) + await prepareContentMedia(adapter) + (Number(options.downloads?.failures) || 0) + (Number(options.feishuDocument?.pendingMediaCount) || 0);
+    const pendingContentMedia = (options.feishuDocument ? 0 : await prepareArticleImages(declaredContent)) + (assetDetail ? 0 : await prepareContentMedia(adapter)) + (Number(options.downloads?.failures) || 0) + (Number(options.feishuDocument?.pendingMediaCount) || 0);
     const canonicalUrl = safeHttpUrl(document.querySelector('link[rel="canonical"]')?.href || location.href);
     const metadata = collectMetadata();
     const structured = collectStructuredData();
@@ -731,7 +751,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         siteStatus: siteData.completeness === "complete" ? "complete" : "partial"
       };
     }
-    if (["jimeng", "youtube", "bilibili", "midjourney"].includes(siteData?.adapter) && siteData.pageKind === "detail" && !pageSelection) {
+    if ((assetDetail || ["jimeng", "youtube", "bilibili", "midjourney", "pinterest"].includes(siteData?.adapter)) && siteData.pageKind === "detail" && !pageSelection) {
       return {
         id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id,
         candidates: Array.isArray(siteData.candidates) ? siteData.candidates.slice(0, 1) : [],
@@ -813,15 +833,16 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const collectVisible = () => {
       if (contentRoot || siteData?.pageKind === "detail") return [];
       const current = [];
-      const adapterRoots = adapter.cardSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
-      const repeatedRoots = adapterRoots.length > 1 ? [] : collectRepeatedCardRoots(maxCandidates);
+      const pinRoots = adapter.id === "pinterest" && !/^\/pin\//u.test(location.pathname) ? [...document.querySelectorAll('[data-test-id="pinWrapper"]')] : [];
+      const adapterRoots = pinRoots.length ? pinRoots : adapter.cardSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
+      const repeatedRoots = adapterRoots.length > 1 || pinRoots.length ? [] : collectRepeatedCardRoots(maxCandidates);
       const cardRoots = [...adapterRoots, ...repeatedRoots];
       const roots = [...new Set(cardRoots)].filter(isContentRoot);
       const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: roots.length });
       for (const [index, root] of roots.entries()) {
         const candidate = candidateForRoot(root, index, {
           adapter, metadata, structured, article: null, siteData: null, canonicalUrl,
-          pageType: options.listMode ? "gallery" : pageType, maxMedia
+          pageType: options.listMode || pinRoots.length ? "gallery" : pageType, maxMedia
         });
         if (candidate) current.push(candidate);
       }
@@ -866,7 +887,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         })
       : [];
     if (regionCandidates.length) await attachViewportFallbacks(regionCandidates);
-    const candidates = capturedCards.length > 1 && (options.listMode || ["feed", "gallery"].includes(pageType))
+    const candidates = capturedCards.length > 0 && (adapter.id === "pinterest" && !/^\/pin\//u.test(location.pathname) && !siteData && !pageSelection || capturedCards.length > 1 && (options.listMode || ["feed", "gallery"].includes(pageType)))
       ? capturedCards.slice(0, maxCandidates)
       : regionCandidates.length ? regionCandidates
         : bodyCandidate ? [bodyCandidate] : capturedCards.slice(0, maxCandidates);
@@ -1325,6 +1346,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function candidateForRoot(root, index, context) {
     const isPageRoot = root === document.body || root === context.pageRoot;
+    let textRoot = root;
+    if (!isPageRoot && context.adapter.id === "pinterest") {
+      // Hover controls are not artwork descriptions. Their transient presence
+      // must not change the structure used to select other cards in a board.
+      textRoot = root.cloneNode(true);
+      for (const control of textRoot.querySelectorAll('button,input,select,textarea,[role="button"],[role="combobox"],[hidden],[aria-hidden="true"]')) control.remove();
+    }
     const siteData = isPageRoot ? context.siteData : null;
     const adapterFields = collectAdapterFields(root, context.adapter);
     const capturePost = context.adapter.id === "x" && !context.pageSelection && !options.editedRegion?.token;
@@ -1332,7 +1360,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (capturePost && !post) return null;
     const cardLink = isPageRoot || context.pageType === "article" ? "" : safeHttpUrl(root.querySelector("a[href]")?.href);
     const canonicalUrl = adapterFields.canonicalUrl || cardLink || safeHttpUrl(siteData?.canonicalUrl) || context.canonicalUrl;
-    const structured = context.structured.find((item) => sameUrl(item.url || item.mainEntityOfPage, canonicalUrl)) || context.structured[0] || {};
+    const structured = context.structured.find((item) => sameUrl(item.url || item.mainEntityOfPage, canonicalUrl)) || (isPageRoot ? context.structured[0] : null) || {};
     let title = cleanText(isPageRoot
       ? options.feishuDocument?.title || siteData?.title || (context.contentRoot ? adapterFields.title : "") || context.article?.title || structured.headline || structured.name || (context.pageType === "post" ? "" : context.metadata.title)
       : adapterFields.title || root.querySelector("h1,h2,h3,[role=heading]")?.textContent || structured.headline || structured.name || (context.pageType === "post" ? "" : root.querySelector("img[alt]")?.alt));
@@ -1344,7 +1372,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const captureRoots = contentParts.length ? contentParts : [root];
     const text = post ? post.text : cleanBlockText(context.contentRoot ? (options.feishuDocument?.text || (contentParts.length ? contentParts.map(readBlockText).filter(Boolean).join("\n\n") : root.innerText || root.textContent)) : isPageRoot
       ? pageSelection?.text || articleText || siteData?.contentText || context.article?.textContent || structured.articleBody || root.innerText || context.metadata.description
-      : root.innerText || root.textContent);
+      : textRoot.innerText || textRoot.textContent);
     const contentHtml = post ? post.html : context.contentRoot ? contentRootHtml(root, contentParts) : isPageRoot
       ? pageSelection?.html || context.article?.content || ""
       : "";
@@ -1358,7 +1386,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
           sourceOrder: 0
         }]
       : null;
-    const textBlocks = post?.textBlocks || pageSelection?.textBlocks || structuredTextBlocks || collectTextBlocks(root, contentHtml, text);
+    const textBlocks = post?.textBlocks || pageSelection?.textBlocks || structuredTextBlocks || collectTextBlocks(textRoot, contentHtml, text);
     const siteMedia = [...(options.feishuDocument?.media || []), ...(Array.isArray(siteData?.media) ? siteData.media : []), ...collectStructuredMedia(structured)];
     const domMedia = post?.media || (pageSelection || (root.isConnected === false && !options.manualContentHtml) ? [] : captureRoots.flatMap(part => collectMedia(part, context.maxMedia)));
     const pairedDomIds = new Set();
@@ -1380,7 +1408,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       ...pairedSiteMedia,
       ...domMedia.filter((item) => !pairedDomIds.has(item.id))
     ], context.maxMedia);
-    const article = collectArticleDocument(root, contentHtml, textBlocks, media, context.maxMedia);
+    const article = collectArticleDocument(textRoot, contentHtml, textBlocks, media, context.maxMedia);
     if (capturePost) {
       for (const item of media.filter(item => item.postMediaUrl)) {
         item.quotedPostUrl = sameUrl(item.postMediaUrl, canonicalUrl) ? "" : item.postMediaUrl;
@@ -1394,7 +1422,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     media = mergeCollectedMedia([...media, ...article.media], context.maxMedia);
     if (!title && !text && !media.length) return null;
     const pageType = isPageRoot || context.pageType === "article" ? context.pageType : ["post", "video"].includes(context.adapter.pageType) ? context.adapter.pageType : "artwork";
-    const author = cleanText(siteData?.sourceFacts?.author || adapterFields.author || structuredAuthorName(structured.author) || context.metadata.author || root.querySelector('[rel=author],[data-testid*=author],[class*=author]')?.textContent);
+    const author = cleanText(siteData?.sourceFacts?.author || adapterFields.author || structuredAuthorName(structured.author) || (isPageRoot ? context.metadata.author : "") || root.querySelector('[rel=author],[data-testid*=author],[class*=author]')?.textContent);
     if (!title && pageType === "post") {
       const identity = author || (adapterFields.handle ? `@${adapterFields.handle}` : "");
       title = [identity, cleanText(text).slice(0, 96)].filter(Boolean).join(" · ") || context.metadata.siteName || location.hostname;
@@ -1427,16 +1455,19 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return {
       id: `${context.adapter.id}:${itemId || index}:${hashText(`${canonicalUrl}\n${title}`)}`,
       pageType,
-      title: title || context.metadata.siteName || location.hostname,
+      title,
       canonicalUrl,
       contentHtml,
       contentText: text,
       textBlocks,
       articleDocument: placed.articleDocument,
       region,
-      excerpt: cleanText(context.article?.excerpt || context.metadata.description),
+      excerpt: cleanText(context.article?.excerpt || (isPageRoot ? context.metadata.description : "")),
       media,
       sourceFacts: {
+        authorUrl: siteData?.sourceFacts?.authorUrl || "",
+        originalSourceUrl: siteData?.sourceFacts?.originalSourceUrl || "",
+        imageDescription: siteData?.sourceFacts?.imageDescription || "",
         ...(typeof siteData?.sourceFacts?.originalPromptAvailable === "boolean" ? { originalPromptAvailable: siteData.sourceFacts.originalPromptAvailable } : {}),
         ...(siteData?.sourceFacts?.description ? { description: cleanBlockText(siteData.sourceFacts.description) } : {}),
         provider: cleanText(siteData?.sourceFacts?.provider) || (context.adapter.id === "generic" ? location.hostname : context.adapter.id),
@@ -1444,7 +1475,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         itemId,
         author,
         handle: cleanText(siteData?.sourceFacts?.handle || adapterFields.handle) || (author.startsWith("@") ? author.slice(1) : ""),
-        publishedAt: siteData?.sourceFacts?.publishedAt || adapterFields.publishedAt || structured.datePublished || context.metadata.publishedAt || "",
+        publishedAt: siteData?.sourceFacts?.publishedAt || adapterFields.publishedAt || structured.datePublished || (isPageRoot ? context.metadata.publishedAt : "") || "",
         capturedAt,
         model: cleanText(siteData?.sourceFacts?.model || adapterFields.model || structured.model || root.querySelector('[class*=model],[data-testid*=model]')?.textContent),
         dimensions: cleanText(siteData?.sourceFacts?.dimensions || (structured.width && structured.height ? `${structured.width}×${structured.height}` : "")),
@@ -2556,13 +2587,13 @@ function uniqueMedia(values) {
       ...(previewDataUrl ? { previewDataUrl } : {}),
       ...(normalizeFallbackRect(value?.fallbackRect) ? { fallbackRect: normalizeFallbackRect(value.fallbackRect) } : {}),
       variants,
-      alt: clean(value.alt),
+      alt: cleanCaptureImageDescription(value.alt),
       ...(clean(value.originalPrompt) ? { originalPrompt: normalizeText(value.originalPrompt) } : {}),
       filename: clean(value.filename),
       mimeType: clean(value.mimeType).toLocaleLowerCase("en-US"),
       ...(["document", "attachment"].includes(kind) && /^data:(?:text\/[a-z0-9.+-]+|application\/(?:pdf|rtf|zip|gzip|x-gzip|octet-stream))(?:;charset=[a-z0-9-]+)?;base64,[a-z0-9+/=]+$/i.test(value.downloadDataUrl || "")
         && value.downloadDataUrl.length <= PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes ? { downloadDataUrl: value.downloadDataUrl } : {}),
-      sourceTitle: clean(value.sourceTitle),
+      sourceTitle: cleanCaptureImageDescription(value.sourceTitle),
       sourceAuthor: clean(value.sourceAuthor),
       originalWorkUrl: safeUrl(value.originalWorkUrl),
       width: positiveInteger(variants[0]?.width || value.width, 0),

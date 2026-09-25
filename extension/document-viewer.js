@@ -58,7 +58,7 @@ export async function createPdfViewer(blob, title = "PDF") {
   }
   zoom.setAttribute("aria-label", "PDF 缩放");
   toolbar.append(previous, pageStatus, next, zoom);
-  const viewport = node("div", "pdf-page-viewport");
+  const viewport = node("div", "pdf-page-viewport ui-scrollbar");
   const canvas = document.createElement("canvas");
   canvas.setAttribute("aria-label", `${title} 页面`);
   viewport.append(canvas);

@@ -3,7 +3,6 @@
   --visual-card-radius: 2px;
 }
 
-html { scrollbar-gutter: stable; }
 html.detail-open, html.detail-open body { overflow: hidden; }
 
 .library-loading { position: fixed; z-index: 100; inset: 0; min-height: 100vh; overflow: hidden; color: var(--muted); background: var(--paper); }
@@ -874,7 +873,7 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .settings-tabs { display: flex; gap: 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
 .settings-tabs button { min-height: 32px; color: var(--muted); background: transparent; }
 .settings-tabs button[aria-selected="true"] { color: var(--ink); background: var(--selection); box-shadow: inset 0 -1px var(--selection-indicator); }
-.settings-panel { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.settings-panel { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .settings-rules-panel { display: grid; align-content: start; gap: 12px; }
 .settings-rules-panel .analysis-kind-tabs { position: sticky; top: 0; z-index: 1; background: var(--card); margin: 0; padding-block: 8px; flex-wrap: wrap; }
 .settings-rules-panel .analysis-protocol > summary { cursor: pointer; font-weight: 600; }
@@ -1640,7 +1639,7 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .gallery-heading:not(.project-selection-mode) { display: flex; flex-wrap: nowrap; align-items: center; min-height: 34px; }
 .gallery-heading:not(.project-selection-mode) .gallery-heading-copy { display: flex; flex: 1 1 0; flex-wrap: nowrap; align-items: center; min-width: 0; height: 34px; }
 .gallery-heading:not(.project-selection-mode) #result-count[hidden] { display: block !important; }
-.gallery-heading:not(.project-selection-mode) .gallery-view-controls { display: flex; flex: 0 1 auto; flex-wrap: nowrap; align-items: center; min-width: 0; height: 34px; min-height: 34px; overflow-x: auto; scrollbar-width: none; }
+.gallery-heading:not(.project-selection-mode) .gallery-view-controls { display: flex; flex: 0 1 auto; flex-wrap: nowrap; align-items: center; min-width: 0; height: 34px; min-height: 34px; overflow-x: auto; }
 .gallery-heading:not(.project-selection-mode) .gallery-view-controls > * { flex-shrink: 0; }
 .gallery-heading:not(.project-selection-mode) .gallery-view-controls[hidden] { display: flex !important; visibility: hidden; pointer-events: none; }
 .gallery-heading.selection-mode .gallery-heading-copy { visibility: hidden; pointer-events: none; }
@@ -1675,8 +1674,3 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .project-row.case-drop-target,
 #workspace-unassigned.case-drop-target,
 #open-trash.case-drop-target { box-shadow: inset 0 0 0 1px var(--accent-ink); background: var(--hover); }
-
-/* Keep long detail content scrollable without visible nested scrollbar tracks. */
-.detail-drawer, .detail-drawer * { scrollbar-width: none; scrollbar-gutter: auto; }
-.detail-drawer::-webkit-scrollbar, .detail-drawer *::-webkit-scrollbar,
-.sidebar-module-body::-webkit-scrollbar { display: none; }

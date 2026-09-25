@@ -1413,3 +1413,21 @@ test("backup media kinds retain large temporary images, videos and generated vid
   assert.equal(parsed.assets.get("result:video").size, 16);
   assert.throws(() => parseLibraryPackage(data, files, { ...limits, maxVideoBytes: 12 }), /超过/);
 });
+
+
+test("folder restore preserves skill attachments reported with the desktop registered MIME", async () => {
+  const data = packageData([], catalog());
+  data.version = 5;
+  const path = "attachments/skill-case/original.skill";
+  const blob = new Blob(["original archive bytes"], { type: "application/vnd.openai.codex.skill" });
+  data.entries = [{
+    ...entry("skill-case"), hasScreenshot: undefined, screenshotPath: undefined,
+    mediaAssets: [{ id: "skill-original", kind: "attachment", storageMode: "managed", sourceTitle: "original.skill",
+      sourceFormat: "skill", mimeType: "application/zip", byteSize: blob.size, assetPath: path }]
+  }];
+  const { parseCompleteFolderBackup } = await import("../extension/library-package.js");
+  const restored = await parseCompleteFolderBackup(data, new Map([[path, blob]]));
+  assert.equal(restored.entries[0].mediaAssets.length, 1);
+  assert.equal(restored.assets.get("skill-original"), blob);
+  assert.equal(restored.importDiagnostics.length, 0);
+});

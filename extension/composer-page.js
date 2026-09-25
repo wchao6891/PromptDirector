@@ -1,3 +1,5 @@
+import { createSourceVideoPreview, bindSourceVideoCover } from "./source-video-preview.js";
+import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
 import { readSkillCover } from "./skill-cover.js";
@@ -162,6 +164,11 @@ let workspaceMode = "references";
 let feedbackTimer = 0;
 const COMPOSER_TITLE_MAX_CHARACTERS = 36;
 const thumbnailUrls = new Map();
+let referenceVideoCleanups = [];
+function releaseReferenceVideos() {
+  referenceVideoCleanups.forEach(release => release());
+  referenceVideoCleanups = [];
+}
 const openJudgmentIds = new Set();
 const judgmentFeedbackById = new Map();
 const imageObserver = new IntersectionObserver((items) => {
@@ -298,6 +305,7 @@ function bindEvents() {
     if (event.key === "Escape") closeComposerModelMenu();
   });
   addEventListener("beforeunload", () => {
+    releaseReferenceVideos();
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   });
   chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -2108,6 +2116,7 @@ function setReferenceWorkspaceMode(mode) {
 }
 
 function closeReferenceWorkspace() {
+  releaseReferenceVideos();
   if (elements.composerReferenceWorkspace.contains(document.activeElement)) {
     elements.composerReferenceOpen.focus({ preventScroll: true });
   }
@@ -2187,6 +2196,7 @@ function renderSkills() {
 }
 
 function renderCasePicker() {
+  releaseReferenceVideos();
   const query = elements.composerReferenceSearch.value.trim().toLocaleLowerCase();
   const projectId = elements.composerReferenceProjectFilter.value;
   const projectIds = projectId
@@ -2211,15 +2221,17 @@ function createCaseOption(entry) {
   option.dataset.entryId = entry.id;
   const referenceAssets = selectableReferenceAssets(entry, composerSession?.targetType);
   const primaryAsset = referenceAssets.find((asset) => asset.id === entry.primaryMediaId) ?? referenceAssets[0];
-  const previewAsset = referenceAssets.find((asset) => asset.id === referencePreviewAssetIds.get(entry.id)) ?? primaryAsset;
-  if (previewAsset) referencePreviewAssetIds.set(entry.id, previewAsset.id);
+  const selectedPreviewAsset = referenceAssets.find((asset) => asset.id === referencePreviewAssetIds.get(entry.id)) ?? primaryAsset;
+  const previewAsset = selectedPreviewAsset ?? previewReferenceAsset(entry);
+  if (selectedPreviewAsset) referencePreviewAssetIds.set(entry.id, selectedPreviewAsset.id);
+  else referencePreviewAssetIds.delete(entry.id);
   option.dataset.selected = String(referenceDraftSelections.has(entry.id));
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.className = "composer-case-preview-checkbox";
   checkbox.disabled = !selectable;
   checkbox.setAttribute("aria-label", `选择当前预览素材：${entry.title || t("未命名案例")}`);
-  checkbox.checked = previewAsset ? referenceDraftSelections.get(entry.id)?.has(previewAsset.id) === true : referenceDraftSelections.has(entry.id);
+  checkbox.checked = selectedPreviewAsset ? referenceDraftSelections.get(entry.id)?.has(selectedPreviewAsset.id) === true : referenceDraftSelections.has(entry.id);
   checkbox.addEventListener("change", () => {
     const assetId = referencePreviewAssetIds.get(entry.id);
     setDraftAssetSelected(entry.id, assetId || "", checkbox.checked);
@@ -2242,11 +2254,17 @@ function createCaseOption(entry) {
     else syncCaseOptionSelection(option, entry);
     renderReferenceSelection();
   });
-  const inspect = textEl("button", "composer-case-inspect", previewAsset?.kind === "video" ? "查看封面" : "查看原图");
+  const inspect = textEl("button", "composer-case-inspect", previewAsset?.kind === "video" ? "播放视频" : "查看原图");
   inspect.type = "button";
+  if (previewAsset?.kind === "video") {
+    inspect.classList.add("icon-button");
+    inspect.setAttribute("aria-label", t("播放视频"));
+    inspect.title = t("播放视频");
+    setUiIcon(inspect, "play");
+  }
   inspect.hidden = !previewAsset;
-  inspect.disabled = previewAsset?.kind === "video" && !posterAssetForVideo(entry, previewAsset);
-  inspect.addEventListener("click", () => openReferenceAssetPreview(entry, referencePreviewAssetIds.get(entry.id)));
+  inspect.disabled = false;
+  inspect.addEventListener("click", () => openReferenceAssetPreview(entry, referencePreviewAssetIds.get(entry.id) || previewAsset?.id));
   visual.append(selectPreview, inspect);
   option.append(checkbox, visual);
   renderCasePreviewImage(option, entry, previewAsset?.id || "");
@@ -2372,9 +2390,20 @@ function setDraftAssetSelected(entryId, assetId, selected) {
 function renderCasePreviewImage(option, entry, assetId) {
   const surface = option.querySelector(".composer-case-select-preview");
   if (!surface) return;
-  const asset = selectableReferenceAssets(entry, composerSession?.targetType).find((item) => item.id === assetId);
+  const asset = previewReferenceAsset(entry, assetId);
   if (!asset) return surface.replaceChildren(rawTextEl("span", "", t("文字资料")));
-  const displayAsset = asset.kind === "video" ? posterAssetForVideo(entry, asset) : asset;
+  surface.releaseVideo?.();
+  if (asset.kind === "video") {
+    const cover = el("span", "composer-video-cover");
+    surface.replaceChildren(cover);
+    const releaseCover = bindSourceVideoCover(cover, entry, asset, null);
+    const hover = asset.storageMode !== "reference"
+      ? bindVideoHoverPreview(surface, { loadBlob: () => getMediaBlob(asset.id) }) : null;
+    surface.releaseVideo = () => { releaseCover(); hover?.destroy(); };
+    referenceVideoCleanups.push(surface.releaseVideo);
+    return;
+  }
+  const displayAsset = asset;
   if (!displayAsset) return surface.replaceChildren(rawTextEl("span", "", t("视频")));
   const image = document.createElement("img");
   image.className = "composer-case-image";
@@ -2409,8 +2438,22 @@ function syncRenderedReferenceCards() {
 async function openReferenceAssetPreview(entry, assetId) {
   if (!assetId) return;
   try {
-    const asset = selectableReferenceAssets(entry, composerSession?.targetType).find((item) => item.id === assetId);
-    const displayAsset = asset?.kind === "video" ? posterAssetForVideo(entry, asset) : asset;
+    const asset = previewReferenceAsset(entry, assetId);
+    if (asset?.kind === "video") {
+      const dialog = el("dialog", "composer-reference-preview-dialog");
+      const close = textEl("button", "icon-button", "×");
+      close.type = "button";
+      close.setAttribute("aria-label", "关闭视频预览");
+      const player = createSourceVideoPreview(entry, asset);
+      dialog.append(close, player);
+      close.addEventListener("click", () => dialog.close());
+      dialog.addEventListener("close", () => { player.releaseMedia(); dialog.remove(); }, { once: true });
+      document.body.append(dialog);
+      dialog.showModal();
+      player.querySelector("button").click();
+      return;
+    }
+    const displayAsset = asset;
     const blob = displayAsset ? await getScreenshotBlob(displayAsset.id) : null;
     if (!blob) throw new Error("无法读取原图");
     const url = URL.createObjectURL(blob);
@@ -2433,6 +2476,13 @@ async function openReferenceAssetPreview(entry, assetId) {
   } catch (error) {
     setReferenceFeedback(error.message || "无法查看原图", true);
   }
+}
+
+// Viewing a case is independent of which assets the current creative task can use.
+function previewReferenceAsset(entry, assetId = "") {
+  const assets = entryMediaAssets(entry).filter(asset => asset.usage !== "poster" && ["image", "video"].includes(asset.kind));
+  return assets.find(asset => asset.id === assetId)
+    ?? assets.find(asset => asset.id === entry.primaryMediaId) ?? assets[0];
 }
 
 function selectableReferenceAssets(entry, targetType = "") {

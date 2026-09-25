@@ -335,6 +335,7 @@ import {
   normalizePageCaptureSitePayload
 } from "./page-capture-site-adapters.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
+import { enrichPinterestCandidates, readPinterestHtml } from "./pinterest-capture.js";
 import { downloadPageCaptureVideo } from "./page-capture-video.js";
 import { resolveXVideoSources } from "./x-video-capture.js";
 import { readPageCaptureSupplement } from "./capture-supplement.js";
@@ -1424,7 +1425,7 @@ async function collectPageCaptureTab(tab, options) {
   if (activePageCapture?.sessionId === options.sessionId && activePageCapture.cancelled) return { candidates: [] };
   const adapter = PAGE_CAPTURE_ADAPTERS.find((item) => item.id === siteData?.adapter);
   let downloads = { items: [], failures: 0 };
-  if (adapter?.fields?.downloadButtons) {
+  if (adapter?.fields?.downloadButtons && siteData?.captureScope !== "asset") {
     const [downloadResult] = await chrome.scripting.executeScript({
       target: { tabId: tab.id }, world: "MAIN", func: collectPageCaptureDownloads,
       args: [{ contentSelector: adapter.fields.content[0], containerSelector: adapter.fields.mediaContainers[0],
@@ -1468,7 +1469,17 @@ async function collectPageCaptureTab(tab, options) {
     siteData = await readPageCaptureSiteData(tab, { installObserver: false, maxCandidates: options.maxCandidates }) || siteData;
     snapshot = { ...snapshot, candidates: siteData.candidates, siteStatus: siteData.completeness };
   }
-  snapshot = addDiscoveredVideos(snapshot, await discoveredVideosForTab(tab.id));
+  if (snapshot.adapter === "pinterest") {
+    const session = activePageCapture;
+    if (session && !session.pinterestMetadata) session.pinterestMetadata = new Map();
+    snapshot = await enrichPinterestCandidates(snapshot, {
+      cache: session?.pinterestMetadata, cancelled: () => Boolean(session?.cancelled)
+    });
+  }
+  // Scoped Higgsfield content must not inherit videos played in another Asset.
+  const scopedHiggsfield = siteData?.captureScope === "asset"
+    || snapshot.adapter === "higgsfield" && snapshot.candidates?.some(candidate => candidate.pageType === "article");
+  if (!scopedHiggsfield) snapshot = addDiscoveredVideos(snapshot, await discoveredVideosForTab(tab.id));
   snapshot = await resolvePageCaptureVideoFrames(snapshot, tab.id, chrome.scripting);
   snapshot = await resolveXVideoSources(snapshot, tab, chrome, { cancelled: () => Boolean(activePageCapture?.cancelled) });
   return addVisiblePageCaptureFallbacks(snapshot, tab);
@@ -1540,8 +1551,15 @@ async function readPageCaptureSiteData(tab, { installObserver = true, maxCandida
         maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes
       }]
     });
+    if (/^https:\/\/(?:www\.)?pinterest\.com\/pin\/(?:[^/]*--)?\d+\/?(?:\?.*)?$/u.test(tab.url) && !sitePayloadResult?.result?.pin) {
+      const html = await readPinterestHtml(tab.url);
+      return normalizePageCaptureSitePayload(collectPageCaptureSitePayload({ pinterestUrl: tab.url, pinterestHtml: html,
+        maxCandidates, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
+        maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes }), tab.url);
+    }
     return sitePayloadResult?.result?.adapter === "libtv" ? normalizeLibTvPublicPayload(sitePayloadResult.result) : normalizePageCaptureSitePayload(sitePayloadResult?.result, tab.url);
-  } catch {
+  } catch (error) {
+    console.warn("Page capture site extraction failed:", error?.message || String(error));
     return null;
   }
 }
@@ -3814,25 +3832,11 @@ async function runImportJobSlice() {
   if (importRunnerActive) return;
   importRunnerActive = true;
   try {
-    const stored = await chrome.storage.local.get([STORAGE_KEYS.importJobs, STORAGE_KEYS.importStaging]);
-    let jobs = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]);
-    const active = jobs.items.find((job) => ["queued", "running"].includes(job.status) && job.items.some((item) => item.status === "queued"));
+    const state = await readState();
+    const active = state.importJobs.items.find((job) =>
+      ["queued", "running"].includes(job.status) && job.items.some((item) => item.status === "queued"));
     if (!active) return;
-    const started = startImportJob(jobs, active.id);
-    jobs = started.state;
-    await commitLocalChanges({ [STORAGE_KEYS.importJobs]: jobs });
-    const item = started.job.items.find((value) => value.status === "queued");
-    try {
-      await importStagedItem(started.job, item);
-    } catch (error) {
-      const latest = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
-      const failed = finishImportItem(latest[STORAGE_KEYS.importJobs], started.job.id, item.id, {
-        status: "failed",
-        error: userMessage(error)
-      });
-      await commitLocalChanges({ [STORAGE_KEYS.importJobs]: failed.state });
-      await queueImportJobAnalysis(failed.job);
-    }
+    await importStagedItems(state, active);
   } finally {
     importRunnerActive = false;
     const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
@@ -3843,33 +3847,65 @@ async function runImportJobSlice() {
   }
 }
 
-async function importStagedItem(job, item) {
-  const state = await readState();
-  const staged = stagedAssetById(state.importStaging, item.stagedAssetId);
-  if (!staged) throw new Error("暂存文件已经丢失，无法继续导入");
-  if (staged.storageMode !== "reference" && !await getMediaBlob(staged.assetId)) {
-    throw new Error(`本机媒体已经丢失：${staged.name}`);
+// Yield between short batches so queued cancellation and edits can run. This
+// bounds preparation work, not item count; large files still finish individually.
+const IMPORT_SLICE_PREPARE_MS = 100;
+
+async function importStagedItems(state, job) {
+  const started = startImportJob(state.importJobs, job.id);
+  let jobs = started.state;
+  let staging = state.importStaging;
+  let finished = started;
+  const imported = [];
+  const deadline = performance.now() + IMPORT_SLICE_PREPARE_MS;
+  const target = job.collectionId
+    ? state.organizerState.collections.find((collection) => collection.id === job.collectionId)
+    : null;
+  for (const item of started.job.items.filter((value) => value.status === "queued")) {
+    let result;
+    let staged;
+    let entry;
+    try {
+      staged = stagedAssetById(staging, item.stagedAssetId);
+      if (!staged) throw new Error("暂存文件已经丢失，无法继续导入");
+      if (job.collectionId && !target) throw new Error("导入目标项目已经不存在");
+      if (staged.storageMode !== "reference" && !await getMediaBlob(staged.assetId)) {
+        throw new Error(`本机媒体已经丢失：${staged.name}`);
+      }
+      if (staged.posterAssetId && !await getMediaBlob(staged.posterAssetId)) throw new Error(`视频或 GIF 封面已经丢失：${staged.name}`);
+      entry = importedEntryFromStagedAsset(state, staged, job, item);
+      result = { status: "imported", entryId: entry.id };
+    } catch (error) {
+      result = { status: "failed", error: userMessage(error) };
+    }
+    finished = finishImportItem(jobs, job.id, item.id, result);
+    jobs = finished.state;
+    if (entry) {
+      imported.push(entry);
+      staging = removeStagedAsset(staging, staged.id).state;
+    }
+    if (performance.now() >= deadline) break;
   }
-  if (staged.posterAssetId && !await getMediaBlob(staged.posterAssetId)) throw new Error(`视频或 GIF 封面已经丢失：${staged.name}`);
-  const entry = importedEntryFromStagedAsset(state, staged, job, item);
-  const entries = [...state.entries, entry];
-  let organizerState = normalizeOrganizerState(state.organizerState, entries.map((value) => value.id));
-  if (job.collectionId) {
-    const target = organizerState.collections.find((collection) => collection.id === job.collectionId);
-    if (!target) throw new Error("导入目标项目已经不存在");
-    target.entryIds = [...new Set([...target.entryIds, entry.id])];
-    organizerState = normalizeOrganizerState(organizerState, entries.map((value) => value.id));
+  const entries = [...state.entries, ...imported];
+  const organizerState = normalizeOrganizerState(state.organizerState, entries.map((entry) => entry.id));
+  if (target) {
+    const collection = organizerState.collections.find((value) => value.id === target.id);
+    collection.entryIds = [...new Set([...collection.entryIds, ...imported.map((entry) => entry.id)])];
   }
-  const finished = finishImportItem(state.importJobs, job.id, item.id, { status: "imported", entryId: entry.id });
-  const removed = removeStagedAsset(state.importStaging, staged.id);
+  // Cases, staging removal and job receipts share one durable commit. If it
+  // fails or the worker stops before it, queued items are safe to retry.
   await commitLocalChanges({
-    [STORAGE_KEYS.entries]: entries,
-    [STORAGE_KEYS.organizerState]: organizerState,
-    [STORAGE_KEYS.importJobs]: finished.state,
-    [STORAGE_KEYS.importStaging]: removed.state
+    ...(imported.length ? {
+      [STORAGE_KEYS.entries]: entries,
+      [STORAGE_KEYS.organizerState]: organizerState
+    } : {}),
+    [STORAGE_KEYS.importJobs]: jobs,
+    [STORAGE_KEYS.importStaging]: staging
   });
-  await enqueueAutomaticLibraryMaintenance([entry]);
-  await notifySaved(entries.length);
+  if (imported.length) {
+    await enqueueAutomaticLibraryMaintenance(imported);
+    await notifySaved(entries.length);
+  }
   await queueImportJobAnalysis(finished.job);
 }
 

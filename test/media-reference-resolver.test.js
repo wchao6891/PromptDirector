@@ -126,3 +126,17 @@ test("X posts remain source references and never masquerade as standalone video 
   assert.equal(reference.playback.embedUrl, "");
   assert.notEqual(reference.playback.status, "playing");
 });
+
+test('protocol-less video addresses use the same provider rules as full URLs', () => {
+  const input = 'bilibili.com/video/BV1gveN6WEpC/?trackid=web_pegasus_0.router-web-pegasus-2479516-sm4rx.1790183942202.146&spm_id_from=333.1007.tianma.1-3-3.click';
+  assert.equal(canonicalizeMediaReference(input), canonicalizeMediaReference(`https://${input}`));
+  for (const value of ['youtu.be/abc123', '//vimeo.com/12345', 'b23.tv/abc?token=123', 'example.com/watch?id=2', 'example.com:8443/watch?id=2']) {
+    const full = value.startsWith('//') ? `https:${value}` : `https://${value}`;
+    assert.equal(canonicalizeMediaReference(value), canonicalizeMediaReference(full));
+    assert.equal(detectMediaReferenceProvider(value), detectMediaReferenceProvider(full));
+  }
+  assert.equal(canonicalizeMediaReference('bilibili.com/video/BV1abc?p=3'), 'https://www.bilibili.com/video/BV1abc/?p=3');
+  for (const input of ['javascript:alert(1)', 'data:text/html,x', 'file:///tmp/a', '/video/BV1abc', 'not a url', 'https://user:pass@example.com', 'example.com\\@evil.com']) {
+    assert.throws(() => canonicalizeMediaReference(input), /有效/);
+  }
+});

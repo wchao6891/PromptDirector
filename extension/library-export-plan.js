@@ -1,26 +1,26 @@
-import { sha256Blob } from "./blob-digest.js";
+import { createBlobDigestCache } from "./blob-digest.js";
 const FOLDER_BACKUP_FORMAT = "prompt-director-folder-backup";
 const FOLDER_RESCUE_FORMAT = "prompt-director-folder-rescue";
 const BACKUP_MARKER_PATHS = new Set(["complete.json", "rescue.json"]);
 
-export async function buildFolderBackupCompletion(filesValue, metadata = {}) {
+export async function buildFolderBackupCompletion(filesValue, metadata = {}, options = {}) {
   return buildFolderMarker(filesValue, metadata, {
     format: FOLDER_BACKUP_FORMAT,
     version: 2,
     status: "complete"
-  });
+  }, options);
 }
 
-export async function buildFolderRescueCompletion(filesValue, metadata = {}) {
+export async function buildFolderRescueCompletion(filesValue, metadata = {}, options = {}) {
   return buildFolderMarker(filesValue, metadata, {
     format: FOLDER_RESCUE_FORMAT,
     version: 1,
     status: "rescue",
     issues: Array.isArray(metadata.issues) ? structuredClone(metadata.issues) : []
-  });
+  }, options);
 }
 
-export async function buildFolderBackupWritePlan({ files: filesValue, sourceFiles, report = {}, metadata = {} } = {}) {
+export async function buildFolderBackupWritePlan({ files: filesValue, sourceFiles, report = {}, metadata = {}, digest = createBlobDigestCache(), onProgress } = {}) {
   const files = backupFiles(filesValue);
   if (!(files.get("library.json") instanceof Blob)) throw new Error("备份写入计划缺少 library.json");
   const diagnostics = Array.isArray(report?.diagnostics) ? structuredClone(report.diagnostics) : [];
@@ -33,10 +33,10 @@ export async function buildFolderBackupWritePlan({ files: filesValue, sourceFile
     }
   }
   const marker = rescue
-    ? await buildFolderRescueCompletion(files, { ...metadata, issues: diagnostics })
-    : await buildFolderBackupCompletion(files, metadata);
-  if (rescue) await verifyFolderRescueCompletion(marker, files);
-  else await verifyFolderBackupCompletion(marker, files);
+    ? await buildFolderRescueCompletion(files, { ...metadata, issues: diagnostics }, { digest, onProgress })
+    : await buildFolderBackupCompletion(files, metadata, { digest, onProgress });
+  if (rescue) await verifyFolderRescueCompletion(marker, files, { digest });
+  else await verifyFolderBackupCompletion(marker, files, { digest });
   return {
     mode: rescue ? "rescue" : "complete",
     markerPath: rescue ? "rescue.json" : "complete.json",
@@ -50,11 +50,16 @@ export async function buildFolderBackupWritePlan({ files: filesValue, sourceFile
   };
 }
 
-async function buildFolderMarker(filesValue, metadata, identity) {
+async function buildFolderMarker(filesValue, metadata, identity, { digest = createBlobDigestCache(), onProgress } = {}) {
   const files = backupFiles(filesValue);
   const manifest = [];
   for (const [path, blob] of [...files.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    manifest.push({ path, byteSize: blob.size, sha256: await sha256Blob(blob) });
+    const progress = { path, completed: manifest.length, total: files.size };
+    await onProgress?.(progress);
+    manifest.push({ path, byteSize: blob.size, sha256: await digest(blob, {
+      onProgress: bytes => onProgress?.({ ...progress, ...bytes })
+    }) });
+    await onProgress?.({ ...progress, completed: manifest.length });
   }
   return {
     ...identity,
@@ -69,25 +74,25 @@ async function buildFolderMarker(filesValue, metadata, identity) {
   };
 }
 
-export async function verifyFolderBackupCompletion(completionValue, filesValue) {
+export async function verifyFolderBackupCompletion(completionValue, filesValue, options = {}) {
   return verifyFolderMarker(completionValue, filesValue, {
     format: FOLDER_BACKUP_FORMAT,
     version: 2,
     invalidMessage: "完整备份标记无效",
     integrityLabel: "完整备份"
-  });
+  }, options);
 }
 
-export async function verifyFolderRescueCompletion(completionValue, filesValue) {
+export async function verifyFolderRescueCompletion(completionValue, filesValue, options = {}) {
   return verifyFolderMarker(completionValue, filesValue, {
     format: FOLDER_RESCUE_FORMAT,
     version: 1,
     invalidMessage: "救援备份标记无效",
     integrityLabel: "救援备份"
-  });
+  }, options);
 }
 
-export async function inspectFolderBackupEnvelope(filesValue) {
+export async function inspectFolderBackupEnvelope(filesValue, options = {}) {
   const files = filesValue instanceof Map ? filesValue : new Map();
   const libraryFile = files.get("library.json");
   if (!(libraryFile instanceof Blob)) throw new Error("资料夹备份缺少 library.json");
@@ -103,7 +108,7 @@ export async function inspectFolderBackupEnvelope(filesValue) {
       if (marker?.format === FOLDER_BACKUP_FORMAT && marker.version === 1) {
         return folderEnvelope("complete", marker, libraryFile, []);
       }
-      const verification = await verifyFolderBackupCompletion(marker, files);
+      const verification = await verifyFolderBackupCompletion(marker, files, options);
       return folderEnvelope("complete", marker, libraryFile, extraFileDiagnostics(verification.extraPaths));
     } catch (error) {
       if (error?.code === "BACKUP_MARKER_FUTURE") throw error;
@@ -120,7 +125,7 @@ export async function inspectFolderBackupEnvelope(filesValue) {
       if (marker?.format === FOLDER_RESCUE_FORMAT && Number(marker.version) > 1) {
         throw updateRequiredError();
       }
-      const verification = await verifyFolderRescueCompletion(marker, files);
+      const verification = await verifyFolderRescueCompletion(marker, files, options);
       const diagnostics = [
         ...(Array.isArray(marker.issues) ? structuredClone(marker.issues) : []),
         ...extraFileDiagnostics(verification.extraPaths)
@@ -181,7 +186,7 @@ function updateRequiredError() {
   });
 }
 
-async function verifyFolderMarker(completionValue, filesValue, expected) {
+async function verifyFolderMarker(completionValue, filesValue, expected, { digest = createBlobDigestCache(), onProgress } = {}) {
   const completion = completionValue && typeof completionValue === "object" ? completionValue : {};
   if (completion.format !== expected.format || completion.version !== expected.version || !Array.isArray(completion.files)) {
     throw new Error(expected.invalidMessage);
@@ -196,9 +201,12 @@ async function verifyFolderMarker(completionValue, filesValue, expected) {
     if (!path || expectedPaths.has(path)) throw new Error(`${expected.integrityLabel}的文件清单完整性校验失败`);
     expectedPaths.add(path);
     const blob = files.get(path);
-    if (!(blob instanceof Blob) || blob.size !== descriptor.byteSize || await sha256Blob(blob) !== descriptor.sha256) {
+    const progress = { path, completed: expectedPaths.size - 1, total: completion.files.length };
+    await onProgress?.(progress);
+    if (!(blob instanceof Blob) || blob.size !== descriptor.byteSize || await digest(blob, { onProgress: bytes => onProgress?.({ ...progress, ...bytes }) }) !== descriptor.sha256) {
       throw new Error(`${expected.integrityLabel}文件“${path}”完整性校验失败`);
     }
+    await onProgress?.({ ...progress, completed: expectedPaths.size });
   }
   return {
     extraPaths: [...files.keys()].filter((path) => !expectedPaths.has(path)).sort()

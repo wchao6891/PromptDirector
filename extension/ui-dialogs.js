@@ -68,6 +68,7 @@ export async function showAppDialog(options = {}) {
 
   return new Promise((resolve) => {
     let settled = false;
+    let submitting = false;
     let initialControlState = "";
     let dismissConfirmationArmed = false;
     const controlState = () => JSON.stringify([...controls].map(([id, input]) => [
@@ -88,6 +89,7 @@ export async function showAppDialog(options = {}) {
       if (status && !status.classList.contains("error")) status.textContent = "";
     };
     const dismiss = () => {
+      if (submitting) return;
       const dirty = options.confirmDismissWhenDirty === true && controlState() !== initialControlState;
       if (!dirty || dismissConfirmationArmed) return finish(null);
       dismissConfirmationArmed = true;
@@ -100,13 +102,16 @@ export async function showAppDialog(options = {}) {
     cancel.addEventListener("click", dismiss);
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); dismiss(); });
     dialog.addEventListener("click", (event) => {
-      if (event.target === dialog && options.dismissOnBackdrop !== false) dismiss();
+      const hasInput = Boolean(form.querySelector("input, textarea, select, [contenteditable='true']"));
+      const dismissOnBackdrop = options.dismissOnBackdrop ?? (!hasInput && typeof options.onSubmit !== "function");
+      if (event.target === dialog && dismissOnBackdrop) dismiss();
     });
     form.addEventListener("input", resetDismissConfirmation);
     form.addEventListener("change", resetDismissConfirmation);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (!form.reportValidity()) return;
+      if (submitting || !form.reportValidity()) return;
+      submitting = true;
       const values = Object.fromEntries([...controls].map(([id, input]) => [
         id,
         input.type === "checkbox" ? input.checked : input.value
@@ -130,6 +135,7 @@ export async function showAppDialog(options = {}) {
         statusLine.textContent = uiText(error?.message) || t("操作失败，请重试");
         statusLine.classList.add("error");
       } finally {
+        submitting = false;
         if (!settled) { confirm.disabled = false; cancel.disabled = false; close.disabled = false; }
       }
     });
@@ -186,6 +192,7 @@ function createField(field = {}) {
   }
   input.id = `${DIALOG_ID}-${id}`;
   input.name = id;
+  if (clean(field.inputMode)) input.inputMode = clean(field.inputMode);
   if (field.type === "secret") {
     input.classList.add("app-dialog-secret-input");
     input.dataset.secretInput = "true";

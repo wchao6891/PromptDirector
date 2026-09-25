@@ -38,7 +38,7 @@ export function hasLibrarySalvageDiagnostics(diagnosticsValue) {
     .some((item) => item?.action === "dropped" || item?.action === "skipped");
 }
 
-export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}) {
+export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}, options = {}) {
   const preparedFiles = new Map(files);
   const limits = libraryTransferLimits(limitsValue);
   for (const [path, mimeType] of completeBackupDocumentPaths(value)) {
@@ -47,7 +47,7 @@ export async function parseCompleteFolderBackup(value, files = new Map(), limits
     const verified = await verifiedDocumentBlob(blob, mimeType, limits.maxFileBytes);
     preparedFiles.set(path, verified);
   }
-  return parseLibraryPackage(value, await sharedLibraryMediaFiles(value, preparedFiles), { ...limitsValue, salvageInvalidMedia: false });
+  return parseLibraryPackage(value, await sharedLibraryMediaFiles(value, preparedFiles, options), { ...limitsValue, salvageInvalidMedia: false });
 }
 
 export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) {

@@ -105,3 +105,11 @@ test("portable asset format round-trips every registered kind without a second f
     assert.equal(isReportedMimeCompatible(definition, resolved.mimeType), true, definition.id);
   }
 });
+
+
+test("desktop skill MIME is recognized consistently without treating it as a case ZIP", () => {
+  const file = { name: "original.skill", type: "application/vnd.openai.codex.skill" };
+  assert.equal(assetKindFromFileMetadata(file), "attachment");
+  assert.equal(importContainerKindForFile(file), "");
+  assert.equal(isReportedMimeCompatible(assetFormatForExtension("skill"), file.type), true);
+});

@@ -712,3 +712,14 @@ test("Krea detail keeps original and preview together and does not assign the wo
   assert.equal(result.media[0].originalPrompt, "A cinematic silhouette.");
   assert.equal(result.media[1].originalPrompt, undefined);
 });
+
+test("untitled Pins use their own description or identity rather than repeating the creator name", () => {
+  const pin = (id, description) => normalizePageCaptureSitePayload({
+    adapter:'pinterest', canonicalUrl:`https://www.pinterest.com/pin/${id}/`,
+    pin:{entityId:id,description,author:{fullName:'Same creator'},images:{original:{url:'https://i.pinimg.com/originals/work.png'}}}
+  });
+  assert.equal(pin('123', 'Forest\n temple').title, 'Forest temple');
+  assert.equal(pin('123', '').title, 'Pinterest 123');
+  assert.equal(pin('456', '').title, 'Pinterest 456');
+  assert.equal(pin('456', '').sourceFacts.author, 'Same creator');
+});

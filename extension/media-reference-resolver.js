@@ -218,7 +218,12 @@ function fetchOptions() {
 
 function safeUrl(value) {
   try {
-    const url = value instanceof URL ? value : new URL(String(value ?? ""));
+    let text = String(value ?? "").trim();
+    if (!text || /[\s\\]/u.test(text)) return null;
+    if (text.startsWith("//")) text = `https:${text}`;
+    // Missing protocol is accepted only for a domain, never a relative path.
+    else if (/^[^/?#:@]+\.[^/?#:@]+(?::\d+)?(?:[/?#]|$)/u.test(text)) text = `https://${text}`;
+    const url = new URL(text);
     return ["http:", "https:"].includes(url.protocol) && url.username === "" && url.password === "" ? url : null;
   } catch {
     return null;

@@ -4,7 +4,7 @@ import { libraryStoredAssets } from "./library-asset-inventory.js";
 // A media id may be referenced by several cases, trash items or creative runs.
 // Compare actual bytes only for repeated ids; package-provided hashes and sizes
 // alone cannot prove that two originals are the same.
-export async function sharedLibraryMediaFiles(library, files, { signal } = {}) {
+export async function sharedLibraryMediaFiles(library, files, { signal, digest = sha256Blob } = {}) {
   const pathsById = new Map();
   for (const asset of libraryStoredAssets(library)) {
     const id = String(asset.id || asset.assetId || "").trim();
@@ -22,7 +22,7 @@ export async function sharedLibraryMediaFiles(library, files, { signal } = {}) {
     for (const path of paths) {
       signal?.throwIfAborted();
       const blob = files.get(path);
-      if (!digests.has(blob)) digests.set(blob, await sha256Blob(blob));
+      if (!digests.has(blob)) digests.set(blob, await digest(blob));
       signal?.throwIfAborted();
       const key = `${blob.type}:${blob.size}:${digests.get(blob)}`;
       const original = originals.get(key);

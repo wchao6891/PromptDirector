@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="library.css" />
     <link rel="stylesheet" href="skills-page.css" />
     <link rel="stylesheet" href="skill-cover.css" />
+    <link rel="stylesheet" href="source-video-preview.css" />
 </head>
   <body class="skills-page" data-skill-view="list">
     <header class="skills-topbar">
@@ -76,7 +77,7 @@
             <button class="icon-button" title="清空全部案例" aria-label="清空全部案例" data-i18n-title="清空全部案例" data-i18n-aria-label="清空全部案例" id="skill-clear-selection" type="button" disabled><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
           </aside>
               <div id="skill-selection-summary" class="skill-selection-summary"></div>
-              <div id="skill-case-scroll" class="skill-case-scroll"><div id="skill-case-grid" class="skill-case-grid"></div><button id="skill-case-load-more" class="button-secondary skill-case-load-more" type="button" hidden data-i18n="加载更多案例">加载更多案例</button></div>
+              <div id="skill-case-scroll" class="skill-case-scroll"><div id="skill-case-grid" class="skill-case-grid"></div><div id="skill-case-load-more" class="skill-case-load-more" hidden aria-hidden="true"></div></div>
             </section>
 
             <section id="skill-run-evidence-step" class="skill-step" hidden>
@@ -103,7 +104,7 @@
                   <div id="skill-request-preview" class="skill-request-preview"></div>
                 </div>
               </details>
-              <div class="skill-step-actions"><button id="skill-generate" type="button" data-i18n="生成可编辑草稿">生成可编辑草稿</button><button id="skill-retry-vision" class="button-secondary" type="button" hidden data-i18n="重试失败批次">重试失败批次</button></div>
+              <div class="skill-step-actions"><button id="skill-show-draft" class="button-secondary" type="button" hidden>查看草稿</button><button id="skill-generate" type="button" data-i18n="生成可编辑草稿">生成可编辑草稿</button><button id="skill-retry-vision" class="button-secondary" type="button" hidden data-i18n="重试失败批次">重试失败批次</button></div>
               <section id="skill-run-panel" class="skill-run-panel" hidden aria-live="polite">
                 <div class="skill-run-heading"><div><strong id="skill-generation-status"></strong><span id="skill-run-elapsed"></span></div><button id="skill-stop-run" class="button-secondary" type="button" data-i18n="停止">停止</button></div>
                 <div class="skill-run-track"><span id="skill-run-progress"></span></div>
@@ -113,15 +114,17 @@
               <p id="skill-generation-feedback" class="skill-feedback" role="status"></p>
             </section>
 
-            <section id="skill-draft-step" class="skill-step skill-draft-step" hidden>
+            <section id="skill-draft-step" class="skill-step skill-draft-step" tabindex="-1" hidden>
               <div class="skill-section-heading"><div><small>03</small><strong data-i18n="编辑并保存">编辑并保存</strong></div><span id="skill-version-label"></span></div>
+              <div class="skill-result-actions"><button id="skill-back-sources" class="button-secondary" type="button">返回选材</button><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
               <div class="skill-name-grid">
                 <label><span data-i18n="调用名">调用名</span><div class="skill-call-name"><b>/</b><input id="skill-call-name" maxlength="80" placeholder="你的 Skill 名称" data-i18n-placeholder="你的 Skill 名称" /></div></label>
                 <label><span data-i18n="说明">说明</span><input id="skill-description" maxlength="240" placeholder="它在什么创作任务中发挥作用" data-i18n-placeholder="它在什么创作任务中发挥作用" /></label>
               </div>
               <div id="skill-cover-editor"></div>
+              <article id="skill-draft-preview" class="skill-draft-preview"></article>
               <details id="skill-draft-editor" class="skill-draft-editor"><summary data-i18n="查看并编辑 SKILL.md">查看并编辑 SKILL.md</summary><label><span data-i18n="SKILL.md 正文">SKILL.md 正文</span><textarea id="skill-markdown" class="skill-markdown-editor" rows="22"></textarea></label></details>
-              <div class="skill-step-actions"><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
+
               <p id="skill-save-status" class="skill-feedback" role="status"></p>
             </section>
 

@@ -1081,3 +1081,23 @@ test("session image file bytes are not mislabeled as a screenshot fallback", asy
   assert.equal(result.captureMethod, "page-session");
   assert.equal(result.usedPixelFallback, false);
 });
+
+test("capture names strip accessibility wrappers and untitled works retain distinct source identities", () => {
+  const candidate = (title, id) => normalizePageCaptureCandidate({
+    title, canonicalUrl: `https://www.pinterest.com/pin/${id}/`,
+    sourceFacts: { provider: 'pinterest', itemId: id },
+    media: [{ id, kind: 'image', url: `https://i.pinimg.com/originals/${id}.png`, alt: title, sourceTitle: title }]
+  });
+  const empty = candidate('其中包括图片：', '123456');
+  assert.equal(empty.title, 'Pinterest · 123456');
+  assert.equal(empty.media[0].alt, '');
+  assert.equal(empty.media[0].sourceTitle, '');
+  assert.notEqual(empty.title, candidate('其中包括图片：', '654321').title);
+  assert.equal(candidate('其中包括图片： Dragon and Artemis', '1').title, 'Dragon and Artemis');
+  assert.equal(candidate('Image may contain: Forest temple', '2').title, 'Forest temple');
+  assert.equal(candidate('作者原题：山海', '3').title, '作者原题：山海');
+  const generic = normalizePageCaptureCandidate({title:'',canonicalUrl:'https://portfolio.example/art/real-work',sourceFacts:{}});
+  assert.equal(generic.title, 'portfolio.example · art/real-work');
+  assert.equal(generic.sourceFacts.author, '');
+  assert.equal(generic.sourceFacts.publishedAt, '');
+});

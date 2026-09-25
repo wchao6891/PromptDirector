@@ -167,7 +167,8 @@ export function collectPageCaptureSitePayload(options = {}) {
   const maxMedia = Number.isSafeInteger(Number(options.maxMedia)) && Number(options.maxMedia) > 0 ? Number(options.maxMedia) : 0;
   const maxNodes = Number.isSafeInteger(Number(options.maxCandidates)) && Number(options.maxCandidates) > 0 ? Number(options.maxCandidates) : 0;
   const maxTextCharacters = Number.isSafeInteger(Number(options.maxTextCharacters)) && Number(options.maxTextCharacters) > 0 ? Number(options.maxTextCharacters) : 0;
-  const host = clean(globalThis.location?.hostname).toLocaleLowerCase("en-US");
+  const captureLocation = options.pinterestUrl ? new URL(options.pinterestUrl) : globalThis.location;
+  const host = clean(captureLocation?.hostname).toLocaleLowerCase("en-US");
   if (host === "midjourney.com" || host.endsWith(".midjourney.com")) {
     const pageUrl = new URL(globalThis.location.href);
     const jobId = /^\/jobs\/([a-f0-9-]+)\/?$/iu.exec(pageUrl.pathname)?.[1];
@@ -368,6 +369,40 @@ export function collectPageCaptureSitePayload(options = {}) {
     return { adapter: "krea", pageKind: "feed", canonicalUrl: clean(globalThis.location?.href), items, status: items.length ? "complete" : "partial" };
   }
   if (host === "higgsfield.ai" || host.endsWith(".higgsfield.ai")) {
+    // Asset previews keep the project URL and schema behind the dialog.
+    // Read only the selected output and its prompt, never the background brief.
+    const assetDialog = globalThis.document?.querySelector?.('[role="dialog"][aria-description="asset showcase dialog view"][data-state="open"]');
+    if (assetDialog) {
+      const originalUrl = (value) => {
+        if (!value) return "";
+        try {
+          const url = new URL(value, globalThis.location.href);
+          return url.hostname === "images.higgs.ai" ? url.searchParams.get("url") || url.href : url.href;
+        } catch { return ""; }
+      };
+      const videos = [...assetDialog.querySelectorAll('video')].filter(node => !node.closest('[role="tabpanel"],[aria-hidden="true"]'));
+      const images = [...assetDialog.querySelectorAll('img[alt="raw media image"]')];
+      const video = videos.map(node => ({contentUrl: originalUrl(node.currentSrc || node.src || node.querySelector('source[src]')?.src), thumbnailUrl: originalUrl(node.poster), width: node.videoWidth, height: node.videoHeight}));
+      const image = images.map(node => ({contentUrl: originalUrl(node.currentSrc || node.src), width: node.naturalWidth, height: node.naturalHeight}));
+      const prompt = String(assetDialog.querySelector('[role="textbox"]')?.innerText || "").trim().slice(0, maxTextCharacters);
+      const author = clean(assetDialog.querySelector('h2:not([hidden])')?.textContent);
+      const assetLink = assetDialog.querySelector('a[href*="assetId="]');
+      const source = new URL(assetLink?.href || globalThis.location.href, globalThis.location.href);
+      const assetId = source.searchParams.get("assetId") || "";
+      // Reference links expose the current asset ID as well as an input ID.
+      if (assetId && source.origin === globalThis.location.origin) {
+        source.searchParams.delete("inputMediaId");
+        source.searchParams.delete("inputMediaType");
+      }
+      return {
+        adapter: "higgsfield", pageKind: "detail", captureScope: "asset",
+        canonicalUrl: assetId ? source.href : globalThis.location.href,
+        jsonLd: [{"@type": "CreativeWork", url: assetId ? source.href : globalThis.location.href,
+          identifier: assetId || video[0]?.contentUrl || image[0]?.contentUrl,
+          name: "", description: prompt, author: {name: author}, video: video.slice(0,maxMedia), image: image.slice(0,maxMedia)}],
+        status: video.length || image.length ? "complete" : "partial"
+      };
+    }
     const compactPerson = (person) => {
       const value = person?.mainEntity || person;
       return value && typeof value === "object" ? {
@@ -445,7 +480,7 @@ export function collectPageCaptureSitePayload(options = {}) {
       status: jsonLd.length ? "complete" : "partial"
     };
   }
-  if ((host === "pinterest.com" || host.endsWith(".pinterest.com")) && /^\/pin\/(?:[^/]*--)?\d+\/?$/u.test(clean(globalThis.location?.pathname))) {
+  if ((host === "pinterest.com" || host.endsWith(".pinterest.com")) && /^\/pin\/(?:[^/]*--)?\d+\/?$/u.test(clean(captureLocation?.pathname))) {
     const parseRelayResponse = (source) => {
       const text = String(source || "");
       const marker = "window.__PWS_RELAY_REGISTER_COMPLETED_REQUEST__";
@@ -477,12 +512,18 @@ export function collectPageCaptureSitePayload(options = {}) {
       }
       return null;
     };
+    const expectedId = captureLocation.pathname.match(/(?:--)?(\d+)\/?$/u)?.[1];
+    const scripts = options.pinterestHtml
+      ? [...String(options.pinterestHtml).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/giu)].map(match => ({ textContent: match[1] }))
+      : [...(globalThis.document?.scripts || [])];
     let rawPin = null;
-    for (const script of [...(globalThis.document?.scripts || [])]) {
+    for (const script of scripts) {
       const text = String(script?.textContent || "");
       if (!text.includes("v3GetPinQueryv2")) continue;
-      rawPin = parseRelayResponse(text)?.data?.v3GetPinQueryv2?.data || null;
-      if (rawPin) break;
+      const part = parseRelayResponse(text)?.data?.v3GetPinQueryv2?.data;
+      if (clean(part?.entityId) === expectedId) {
+        rawPin = { ...rawPin, ...Object.fromEntries(Object.entries(part).filter(([, value]) => value !== null && value !== undefined && value !== "")) };
+      }
     }
     if (!rawPin || typeof rawPin !== "object") return { adapter: "pinterest", pageKind: "detail", status: "partial" };
     const image = (value) => ({
@@ -491,16 +532,35 @@ export function collectPageCaptureSitePayload(options = {}) {
       height: Number(value?.height) || 0
     });
     const creator = rawPin.nativeCreator || rawPin.closeupAttribution || rawPin.pinner || {};
-    const repins = Number(globalThis.document?.querySelector?.('meta[property="pinterestapp:repins"],meta[name="pinterestapp:repins"]')?.content);
+    const document = options.pinterestHtml ? null : globalThis.document;
+    const count = value => value !== null && value !== undefined && String(value).trim() !== "" && Number.isSafeInteger(Number(value)) && Number(value) >= 0 ? Number(value) : undefined;
+    const repins = count(rawPin.repinCount ?? document?.querySelector?.('meta[property="pinterestapp:repins"],meta[name="pinterestapp:repins"]')?.content);
+    const observedCounts = {};
+    const closeup = document?.querySelector?.('[aria-label="Closeup content container"]') || document?.querySelector?.('[data-test-id="closeup-body"]');
+    for (const button of closeup?.querySelectorAll?.('button,[role="button"]') || []) {
+      const label = clean(button.getAttribute('aria-label') || button.textContent);
+      const key = /^(?:回应|React|Reactions)$/iu.test(label) ? 'reactions' : /^(?:评论|Comments)$/iu.test(label) ? 'comments' : '';
+      if (!key) continue;
+      for (let parent = button.parentElement; parent && parent !== closeup; parent = parent.parentElement) {
+        if (parent.querySelectorAll('button,[role="button"]').length > 1) break;
+        const text = String(parent.textContent || '').trim();
+        const match = text.match(/^(?:(?:回应|React|Reactions|评论|Comments)\s*)?(\d[\d,]*)$/iu);
+        const value = match ? count(match[1].replace(/,/gu, '')) : undefined;
+        if (value !== undefined) { observedCounts[key] = value; break; }
+      }
+    }
     return {
       adapter: "pinterest",
       pageKind: "detail",
-      canonicalUrl: clean(globalThis.location?.href),
+      canonicalUrl: clean(captureLocation?.href),
       pin: {
         entityId: clean(rawPin.entityId),
-        title: clean(rawPin.gridTitle || rawPin.seoTitle),
+        title: clean(rawPin.title || rawPin.gridTitle || rawPin.closeupUnifiedTitle || rawPin.seoTitle),
         description: String(rawPin.gridDescription || rawPin.description || "").slice(0, maxTextCharacters).trim(),
         createdAt: clean(rawPin.createdAt),
+        originalSourceUrl: clean(rawPin.link || rawPin.mobileLink),
+        imageDescription: clean(rawPin.seoAltText || rawPin.seoDescription),
+        engagement: observedCounts,
         author: {
           fullName: clean(creator.fullName || creator.name || creator.firstName),
           username: clean(creator.username)
@@ -1092,7 +1152,10 @@ function normalizeHiggsfieldPayload(value, canonicalUrlValue) {
     url: canonicalUrl,
     video: [...(Array.isArray(work.video) ? work.video : work.video ? [work.video] : []), ...videos]
   }, value?.brief);
-  return candidate ? { ...candidate, pageKind, candidates: [candidate] } : null;
+  if (candidate && value?.captureScope === "asset") {
+    candidate.media = candidate.media.map(item => ({ ...item, placement: "inline" }));
+  }
+  return candidate ? { ...candidate, pageKind, captureScope: value?.captureScope === "asset" ? "asset" : "document", candidates: [candidate] } : null;
 }
 
 function normalizeHiggsfieldWork(value, briefValue) {
@@ -1108,7 +1171,7 @@ function normalizeHiggsfieldWork(value, briefValue) {
   const author = clean(person?.name);
   const handle = clean(person?.alternateName || handlePart || person?.identifier).replace(/^@/u, "");
   const publicationId = ["publications", "community"].includes(pathParts[0]) ? clean(pathParts[1]) : "";
-  const itemId = publicationId || (projectSlug ? [handle, projectSlug].filter(Boolean).join("/") : "") || clean(value?.identifier) || stableTextHash(canonicalUrl);
+  const itemId = clean(value?.identifier) || publicationId || (projectSlug ? [handle, projectSlug].filter(Boolean).join("/") : "") || stableTextHash(canonicalUrl);
   const imageValues = Array.isArray(value?.image) ? [...value.image] : value?.image ? [value.image] : [];
   const types = Array.isArray(value?.["@type"]) ? value["@type"] : [value?.["@type"]];
   const videoValues = [...(Array.isArray(value?.video) ? value.video : value?.video ? [value.video] : []), ...(types.includes("VideoObject") ? [value] : [])];
@@ -1155,7 +1218,7 @@ function normalizeHiggsfieldWork(value, briefValue) {
     adapter: "higgsfield",
     pageType,
     canonicalUrl,
-    title: title || author || `Higgsfield ${projectSlug || itemId}`,
+    title: title || captureTextTitle(contentText) || `Higgsfield ${itemId}`,
     contentText,
     media,
     completeness: complete ? "complete" : "partial",
@@ -1205,7 +1268,7 @@ function normalizeBehancePayload(value, canonicalUrlValue) {
     adapter: "behance",
     pageType: "artwork",
     canonicalUrl,
-    title: title || author || `Behance ${itemId}`,
+    title: title || captureTextTitle(contentText) || `Behance ${itemId}`,
     contentText,
     media,
     completeness: complete ? "complete" : "partial",
@@ -1242,11 +1305,11 @@ function normalizePinterestPayload(value, canonicalUrlValue) {
   const first = variants[0];
   const contentText = cleanMultiline(pin.description);
   const media = first ? [{
-    id: `pinterest:${itemId}:1`, kind: "image", url: first.url,
+    id: `pinterest:${itemId}:1`, kind: "image", placement: "inline", url: first.url,
     width: first.width, height: first.height, sourceKind: first.sourceKind,
     captureMethod: "source", variants
   }] : [];
-  const engagement = Number.isSafeInteger(Number(pin.repins)) && Number(pin.repins) >= 0 ? { repins: Number(pin.repins) } : {};
+  const engagement = Object.fromEntries(Object.entries({ ...pin.engagement, ...(pin.repins !== undefined && pin.repins !== null ? { repins: pin.repins } : {}) }).filter(([,value]) => value !== "" && Number.isSafeInteger(Number(value)) && Number(value) >= 0).map(([key,value]) => [key, Number(value)]));
   const title = clean(pin.title);
   const complete = Boolean(title && author && contentText && media.length);
   const candidate = {
@@ -1254,13 +1317,16 @@ function normalizePinterestPayload(value, canonicalUrlValue) {
     adapter: "pinterest",
     pageType: "artwork",
     canonicalUrl,
-    title: title || author || `Pinterest ${itemId}`,
+    title: title || captureTextTitle(contentText) || `Pinterest ${itemId}`,
     contentText,
     media,
     completeness: complete ? "complete" : "partial",
     extraction: { scope: "document", method: "structured", textBlockCount: contentText ? 1 : 0 },
     sourceFacts: {
       provider: "pinterest", pageType: "artwork", itemId, author, handle,
+      authorUrl: handle ? `https://www.pinterest.com/${encodeURIComponent(handle)}/` : "",
+      originalSourceUrl: safeHttpUrl(pin.originalSourceUrl),
+      imageDescription: clean(pin.imageDescription),
       publishedAt: validIso(pin.createdAt), engagement,
       extractionMethod: "structured", status: complete ? "complete" : "partial"
     }
@@ -1316,7 +1382,7 @@ function normalizeLiblibPayload(value, canonicalUrlValue) {
     adapter: "liblibai",
     pageType: "artwork",
     canonicalUrl,
-    title: clean(data.title) || author || "LiblibAI 作品",
+    title: clean(data.title) || captureTextTitle(promptText) || `LiblibAI ${itemId}`,
     contentText: promptText,
     media,
     completeness: complete ? "complete" : "partial",
@@ -1354,7 +1420,7 @@ function normalizeWechatPayload(value, canonicalUrlValue) {
     adapter: "wechat",
     pageType: "article",
     canonicalUrl,
-    title: title || author || "微信公众号文章",
+    title: title || captureTextTitle(contentText) || canonicalUrl,
     contentText,
     media,
     completeness: complete ? "complete" : "partial",
@@ -1525,4 +1591,8 @@ function clean(value) {
 
 function cleanMultiline(value) {
   return String(value ?? "").replace(/\r\n?/g, "\n").replace(/[\t ]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function captureTextTitle(value) {
+  return String(value || "").replace(/\s+/gu, " ").trim().slice(0, 160);
 }
