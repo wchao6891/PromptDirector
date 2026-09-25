@@ -112,6 +112,8 @@ def main() -> None:
         )
         library.reload(wait_until="networkidle")
         library.set_viewport_size({"width": 560, "height": 800})
+        # Resize moves actions into the compact menu asynchronously.
+        expect(library.locator("#toolbar-more #add-menu")).to_have_count(1)
         if not library.locator("#add-menu > summary").is_visible():
             library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
