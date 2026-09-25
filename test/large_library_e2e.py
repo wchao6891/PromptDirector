@@ -172,6 +172,7 @@ def main() -> None:
                 }, batch
                 assert len(analysis_requests) == 1, analysis_requests
 
+                library.locator('[data-sidebar-module="tags"] .sidebar-module-toggle').click()
                 style_facet = library.locator('.facet-filter[data-facet-id="style"]')
                 style_facet.locator("summary").click()
                 style_category = style_facet.locator('[data-facet-node-id="style.render"]')

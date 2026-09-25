@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import re
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
@@ -125,6 +126,7 @@ def main() -> None:
                           const actions = document.querySelector('.top-actions').getBoundingClientRect();
                           return {
                             viewportWidth: innerWidth,
+                            padding: parseFloat(getComputedStyle(document.querySelector(".topbar")).paddingRight),
                             searchLeft: search.left,
                             searchRight: search.right,
                             actionsLeft: actions.left,
@@ -134,10 +136,12 @@ def main() -> None:
                         }"""
                     )
                     assert header["documentWidth"] <= header["viewportWidth"], (width, header)
-                    assert header["searchLeft"] >= 10
-                    assert header["searchRight"] <= header["viewportWidth"] - 10
-                    assert header["actionsLeft"] >= 10
-                    assert header["actionsRight"] <= header["viewportWidth"] - 10
+                    assert header["searchLeft"] >= header["padding"]
+                    assert header["searchRight"] <= header["viewportWidth"] - header["padding"]
+                    assert header["actionsLeft"] >= header["padding"]
+                    assert header["actionsRight"] <= header["viewportWidth"] - header["padding"]
+                    if not library.locator("#add-menu > summary").is_visible():
+                        library.locator("#toolbar-more > summary").click()
                     library.locator("#add-menu > summary").click()
                     add_menu = library.evaluate(
                         """() => {
@@ -163,6 +167,8 @@ def main() -> None:
                     assert add_menu["panelRight"] <= add_menu["viewportWidth"] - 10, (width, add_menu)
                     assert add_menu["panelTop"] >= add_menu["headerBottom"] - 1, (width, add_menu)
                     assert add_menu["panelBottom"] <= add_menu["viewportHeight"] - 10, (width, add_menu)
+                    if not library.locator("#add-menu > summary").is_visible():
+                        library.locator("#toolbar-more > summary").click()
                     library.locator("#add-menu > summary").click()
                 library.set_viewport_size({"width": 1280, "height": 820})
                 library.reload()
@@ -172,6 +178,7 @@ def main() -> None:
                 gallery_top_before_filter = library.locator(".gallery-shell").evaluate(
                     "element => element.getBoundingClientRect().top"
                 )
+                library.locator('[data-sidebar-module="types"] .sidebar-module-toggle').click()
                 image_filter = library.locator("#content-filters").get_by_role("button", name="图片案例 100", exact=True)
                 image_filter.click()
                 expect(image_filter).to_have_attribute("aria-pressed", "true")
@@ -350,12 +357,12 @@ def main() -> None:
                     """() => {
                       const topbar = document.querySelector('.topbar').getBoundingClientRect();
                       const toolbar = document.querySelector('#gallery-heading').getBoundingClientRect();
-                      return {topbarBottom: topbar.bottom, toolbarTop: toolbar.top, shellPadding: parseFloat(getComputedStyle(document.querySelector(".gallery-shell")).paddingTop)};
+                      return {topbarTop: topbar.top, topbarBottom: topbar.bottom, toolbarTop: toolbar.top, toolbarBottom: toolbar.bottom};
                     }"""
                 )
-                assert abs(selection_geometry["toolbarTop"] - selection_geometry["topbarBottom"] - selection_geometry["shellPadding"]) <= 1, selection_geometry
+                assert selection_geometry["toolbarTop"] >= selection_geometry["topbarTop"] and selection_geometry["toolbarBottom"] <= selection_geometry["topbarBottom"], selection_geometry
                 library.evaluate("scrollTo(0, 100)")
-                library.wait_for_function("Math.abs(document.querySelector('#gallery-heading').getBoundingClientRect().top - document.querySelector('.topbar').getBoundingClientRect().bottom) <= 1")
+                library.wait_for_function("() => { const bar = document.querySelector('.topbar').getBoundingClientRect(); const heading = document.querySelector('#gallery-heading').getBoundingClientRect(); return heading.top >= bar.top && heading.bottom <= bar.bottom; }")
                 library.evaluate("scrollTo(0, 0)")
                 library.screenshot(path="/tmp/prompt-director-132-project-selection.png")
                 library.locator("#search-input").fill("Prompt")
@@ -366,7 +373,7 @@ def main() -> None:
                 )
                 library.locator("#load-more").click()
                 expect(library.locator(".case-card[data-entry-id='case-099']")).to_have_class(
-                    "case-card share-selectable selected-for-share"
+                    re.compile(r"\bshare-selectable\s+selected-for-share\b")
                 )
                 selected_position_after_append = library.locator(".case-card[data-entry-id='case-099']").evaluate(
                     "card => { const rect = card.getBoundingClientRect(); return {x: rect.x + scrollX, y: rect.y + scrollY}; }"

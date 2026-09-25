@@ -112,6 +112,8 @@ def main() -> None:
         )
         library.reload(wait_until="networkidle")
         library.set_viewport_size({"width": 560, "height": 800})
+        if not library.locator("#add-menu > summary").is_visible():
+            library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
         add_note_alignment = library.locator("#add-quick-note").evaluate(
             """node => {
@@ -161,6 +163,8 @@ def main() -> None:
         expect(project_input).to_have_attribute("aria-expanded", "false")
         dialog.get_by_role("button", name="取消", exact=True).click()
 
+        if not library.locator("#add-menu > summary").is_visible():
+            library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
         library.locator("#add-video-reference").click()
         video_dialog = library.locator("#promptdirector-app-dialog")
@@ -178,6 +182,8 @@ def main() -> None:
         video_dialog.get_by_role("button", name="取消", exact=True).click()
 
         library.set_viewport_size({"width": 390, "height": 844})
+        if not library.locator("#add-menu > summary").is_visible():
+            library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
         library.locator("#add-quick-note").click()
         mobile_dialog = library.locator("#promptdirector-app-dialog")

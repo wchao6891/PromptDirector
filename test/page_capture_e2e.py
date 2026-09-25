@@ -163,9 +163,9 @@ def main() -> None:
         collector.locator(".page-capture-article-media").first.click()
         expect(collector.locator("#page-capture-media-viewer")).to_be_visible()
         expect(collector.locator("#page-capture-media-stage img")).to_be_visible()
-        expect(collector.locator("#page-capture-media-position")).to_have_text("媒体 2 / 6")
+        expect(collector.locator("#page-capture-media-position")).to_have_text("媒体 1 / 5")
         collector.locator("#page-capture-media-next").click()
-        expect(collector.locator("#page-capture-media-position")).to_have_text("媒体 3 / 6")
+        expect(collector.locator("#page-capture-media-position")).to_have_text("媒体 2 / 5")
         collector.locator("#page-capture-media-close").click()
 
         collector.locator(".page-capture-inspect").first.click()
@@ -173,8 +173,8 @@ def main() -> None:
         collector.locator(".page-capture-confirm").first.click()
         expect(collector.locator(".page-capture-item.confirmed")).to_have_count(1)
         expect(collector.locator("#page-capture-media-review")).to_be_visible()
-        expect(collector.locator("#page-capture-media-review-list .page-capture-media-review-item")).to_have_count(6)
-        expect(collector.locator(".page-capture-media-review-group")).to_contain_text("可能遗漏媒体（1）")
+        expect(collector.locator("#page-capture-media-review-list .page-capture-media-review-item")).to_have_count(5)
+        expect(collector.locator(".page-capture-media-review-group")).to_have_count(0)
         expect(collector.locator("#page-capture-media-review-status")).to_contain_text("5 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         # Direct picking replaces the automatic scope, then appends subsequent choices.

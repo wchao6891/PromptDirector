@@ -38,8 +38,9 @@ def main() -> None:
         library.locator("#search-input").fill("library-")
         expect(library.locator(".case-card")).to_have_count(3)
         expect(library.locator("#filter-sidebar")).to_contain_text("内容类型")
-        expect(library.locator("#filter-sidebar")).to_contain_text("属性筛选")
+        expect(library.locator("#filter-sidebar")).to_contain_text("标签筛选")
 
+        library.locator('[data-sidebar-module="tags"] .sidebar-module-toggle').click()
         style_filter = library.locator("#facet-filters > .facet-filter", has_text="视觉风格")
         expect(style_filter).to_have_count(1)
         style_filter.locator(":scope > summary").click()

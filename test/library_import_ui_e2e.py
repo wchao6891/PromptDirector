@@ -286,7 +286,7 @@ def main() -> None:
             wait_for_confirmation(library, "1")
             expect(library.locator("#import-file-list")).to_contain_text("dropped.txt")
             library.set_viewport_size({"width": 390, "height": 844})
-            library.wait_for_function("document.documentElement.scrollWidth <= innerWidth")
+            library.wait_for_function("() => document.documentElement.scrollWidth <= innerWidth")
             mobile_layout = library.evaluate(
                 """() => {
                   const dialog = document.querySelector('#import-dialog').getBoundingClientRect();

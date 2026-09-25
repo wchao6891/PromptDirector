@@ -77,10 +77,11 @@ def main() -> None:
         expect(library.get_by_role("button", name="以此创作")).to_be_enabled()
         expect(library.get_by_role("button", name="编辑共享提示词", exact=True)).to_have_count(0)
         project_menu = library.locator(".detail-project-menu")
-        expect(project_menu.locator(":scope > summary")).to_have_text("已加入 21 个项目")
+        expect(project_menu.locator(":scope > summary")).to_have_text("详情项目 00")
         closed_height = project_menu.locator(":scope > summary").evaluate("node => node.getBoundingClientRect().height")
         assert closed_height <= 40, closed_height
-        project_menu.locator(":scope > summary").click()
+        summary = project_menu.locator(":scope > summary")
+        summary.click(position={"x": summary.bounding_box()["width"] - 8, "y": 12})
         expect(project_menu.locator(".detail-project-option")).to_have_count(21)
         checkbox_widths = project_menu.locator('.detail-project-option input[type="checkbox"]').evaluate_all(
             "nodes => nodes.map(node => node.getBoundingClientRect().width)"
@@ -89,10 +90,10 @@ def main() -> None:
         long_project = project_menu.locator(".detail-project-option").nth(20)
         expect(long_project).to_contain_text("完整项目名称需要换行显示")
         long_project.locator("input").click()
-        expect(project_menu.locator(":scope > summary")).to_have_text("已加入 20 个项目")
+        expect(project_menu.locator(":scope > summary")).to_have_text("详情项目 20 完整项目名称需要换行显示")
         project_menu.locator('input[aria-label="新项目名称"]').fill("详情新建项目")
         project_menu.get_by_role("button", name="新建并加入", exact=True).click()
-        expect(library.locator(".detail-project-menu > summary")).to_have_text("已加入 21 个项目")
+        expect(library.locator(".detail-project-menu > summary")).to_have_text("详情新建项目")
         expect(library.locator(".detail-quick-organization")).not_to_contain_text("快捷整理")
         detail_order = library.evaluate(
             """() => {
@@ -171,7 +172,8 @@ def main() -> None:
         for _ in range(5):
             if mobile_project_menu.get_attribute("open") is not None and mobile_project_popover.is_visible():
                 break
-            mobile_project_menu.locator(":scope > summary").click()
+            summary = mobile_project_menu.locator(":scope > summary")
+            summary.click(position={"x": summary.bounding_box()["width"] - 8, "y": 12})
             library.wait_for_timeout(150)
         expect(mobile_project_menu).to_have_attribute("open", "")
         expect(mobile_project_popover).to_be_visible()

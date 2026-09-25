@@ -139,3 +139,10 @@
 .modular-library .sidebar-module .filter-heading > span { flex: 0 0 auto; }
 .modular-library .filters-collapsed .sidebar-module .filter-heading { padding: 0; }
 .modular-library .filters-collapsed .sidebar-module #manage-facets { display: none; }
+
+/* Nested add menus must anchor to the compact panel, not its narrow trigger. */
+.modular-library .toolbar-more-panel .add-menu { position: static; }
+.modular-library .toolbar-more-panel .add-menu .package-menu-panel { left: 0; right: auto; }
+@media (max-width: 640px) {
+  .modular-library #filter-sidebar .project-menu-panel { position: fixed; left: 12px; right: auto; top: auto; }
+}
