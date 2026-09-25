@@ -21,7 +21,8 @@ Public distribution formats and the permissions used by PromptDirector.
 - Screenshots, in order:
   1. `store/screenshots/01-library-1280x800.png`
   2. `store/screenshots/02-skills-1280x800.png`
-  3. `store/screenshots/03-composer-1280x800.png`
+  3. `store/screenshots/04-skill-result-1280x800.png`
+  4. `store/screenshots/03-composer-1280x800.png`
 
 ## Single purpose
 
