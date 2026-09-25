@@ -71,7 +71,6 @@ export function createSkillCoverEditor({ host, readFile, sources, reportError })
   host.append(preview, controls, dialog);
   add.addEventListener("click", () => input.click());
   close.addEventListener("click", () => dialog.close());
-  dialog.addEventListener("click", event => { if (event.target === dialog) dialog.close(); });
   dialog.addEventListener("close", () => { for (const child of grid.children) clearSkillCoverImage(child); grid.replaceChildren(); });
   remove.addEventListener("click", () => { generation++; loading = false; pending = null; automatic = false; upload = null; selectedSource = ""; render(); });
   input.addEventListener("change", async () => {

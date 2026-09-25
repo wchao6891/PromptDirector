@@ -15,7 +15,7 @@ test("background imports inert local references without reading a managed media 
   const item = source.slice(itemStart, itemEnd);
   assert.match(item, /staged\.storageMode !== "reference" && !await getMediaBlob/u);
   assert.match(item, /await commitLocalChanges\(/u);
-  assert.match(item, /await enqueueAutomaticLibraryMaintenance\(\[entry\]\)/u);
+  assert.match(item, /await enqueueAutomaticLibraryMaintenance\(imported\)/u);
   assert.match(item, /await notifySaved\(entries\.length\)/u);
   assert.match(item, /await queueImportJobAnalysis\(finished\.job\)/u);
 });

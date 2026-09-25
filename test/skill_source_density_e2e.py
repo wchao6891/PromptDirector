@@ -124,8 +124,11 @@ def main() -> None:
         expect(skills.locator("#skill-selection-summary")).to_contain_text("文档 1")
         expect(skills.locator("#skill-selection-summary")).to_contain_text("案例文字 2")
 
-        skills.locator("#skill-case-load-more").click()
+        skills.evaluate("window.firstSkillCard = document.querySelector('.skill-case')")
+        skills.locator("#skill-case-scroll").hover()
+        skills.mouse.wheel(0, 2400)
         expect(skills.locator(".skill-case")).to_have_count(48)
+        assert skills.evaluate("window.firstSkillCard === document.querySelector('.skill-case')")
         skills.locator("#skill-case-search").fill("真实密度案例 58")
         expect(skills.locator(".skill-case")).to_have_count(1)
         expect(skills.locator("#skill-selected-count")).to_have_text("2")

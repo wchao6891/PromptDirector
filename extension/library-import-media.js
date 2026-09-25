@@ -14,7 +14,7 @@ export async function findInvalidImportedImageIds(images, validateImage, { signa
       invalidIds.add(assetId);
     }
     signal?.throwIfAborted();
-    onProgress?.({ completed: ++completed, total: images.size });
+    await onProgress?.({ completed: ++completed, total: images.size });
   }
   return invalidIds;
 }

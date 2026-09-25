@@ -27,7 +27,9 @@ def main() -> None:
             else:
                 library.locator(f'[data-collection-id="{project_id}"] .project-filter').click()
             library.locator("#search-input").fill("雨夜")
+            library.locator('#toolbar-more > summary').click()
             library.locator("#gallery-sort").select_option("title")
+            library.locator('#toolbar-more > summary').click()
             # Scroll to a case beyond the first batch, not just within the initial viewport.
             while library.locator("#case-list > .case-card").count() <= 60:
                 previous = library.locator("#case-list > .case-card").count()
@@ -35,6 +37,7 @@ def main() -> None:
                 library.wait_for_function("count => document.querySelectorAll('#case-list > .case-card').length > count", arg=previous)
             library.locator("#case-list > .case-card").nth(60).scroll_into_view_if_needed()
             library.wait_for_function("scrollY > innerHeight")
+            library.locator('#toolbar-more > summary').click()
             library.locator("#start-compose").click()
             library.wait_for_url("**/composer.html*")
             saved = library.evaluate("JSON.parse(sessionStorage.getItem('promptDirector.libraryReturn'))")
@@ -49,6 +52,7 @@ def main() -> None:
             assert library.locator("#case-list > .case-card").count() > 24
 
         # A project deleted while away must resolve to the library, not a phantom project.
+        library.locator('#toolbar-more > summary').click()
         library.locator("#start-compose").click()
         library.wait_for_url("**/composer.html*")
         await_result = library.evaluate("""async () => {

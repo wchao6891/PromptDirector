@@ -590,3 +590,31 @@ html[data-motion="reduced"] *::after {
   animation-iteration-count: 1 !important;
   transition-duration: .01ms !important;
 }
+
+/* Controls are clicked, while document text and editing fields remain selectable. */
+button, summary, label, nav a, [role="button"], [role="tab"], [role="menuitem"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea, [contenteditable]:not([contenteditable="false"]) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Ordinary surfaces scroll without tracks. Opt in only where dragging the
+   scrollbar helps navigate an editor, zoomed document or wide table. */
+:where(*) { scrollbar-width: none; scrollbar-gutter: auto; }
+:where(*)::-webkit-scrollbar { display: none; }
+:where(.ui-scrollbar, textarea:not([readonly]):not([disabled]), [contenteditable]:not([contenteditable="false"])) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border-strong) transparent;
+}
+:where(.ui-scrollbar, textarea:not([readonly]):not([disabled]), [contenteditable]:not([contenteditable="false"]))::-webkit-scrollbar {
+  display: block;
+  width: var(--ui-space-1);
+  height: var(--ui-space-1);
+}
+:where(.ui-scrollbar, textarea:not([readonly]):not([disabled]), [contenteditable]:not([contenteditable="false"]))::-webkit-scrollbar-thumb {
+  background: var(--ui-border-strong);
+  border-radius: var(--ui-control-radius);
+}

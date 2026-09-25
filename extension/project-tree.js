@@ -51,7 +51,7 @@ export function createProjectTreeInteractions({ elements, expanded, getState, un
   const root = elements.projectRootDrop;
   const status = elements.projectOrderStatus;
   const undoButton = elements.projectMoveUndo;
-  const scroller = list.closest(".filter-sidebar");
+  const scroller = list.closest(".sidebar-module-body") || list.closest(".filter-sidebar");
   document.body.append(elements.projectMoveFeedback);
   elements.projectMoveFeedback.querySelector(".project-move-dismiss").addEventListener("click", () => {
     elements.projectMoveFeedback.hidden = true;
@@ -210,7 +210,8 @@ export function createProjectTreeInteractions({ elements, expanded, getState, un
     if (!drag?.moved) return;
     const bounds = scroller.getBoundingClientRect();
     root.style.left = `${bounds.left + 8}px`;
-    root.style.top = `${Math.max(8, bounds.top + 8)}px`;
+    const tools = list.closest(".project-section")?.querySelector(".project-tree-tools");
+    root.style.top = `${Math.max(8, tools ? tools.getBoundingClientRect().top : bounds.top + 8)}px`;
     root.style.width = `${bounds.width - 16}px`;
     clearIndicators();
     drag.drop = null;

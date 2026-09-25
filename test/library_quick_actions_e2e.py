@@ -85,17 +85,16 @@ def main():
         page.get_by_role('button',name='关闭详情',exact=True).click()
         page.locator('#search-input').fill('快捷测试')
         expect(page.locator('#case-list > .case-card')).to_have_count(1)
-        page.locator('#project-search').fill('不存在的项目')
         before=page.evaluate("""()=>{document.querySelector('.case-card').dataset.probe='same';return {url:location.href,scroll:scrollY,count:history.length};}""")
         card.click(button='right'); page.get_by_role('menuitem',name='定位项目').click()
         expect(card).to_have_attribute('data-probe','same')
         expect(page.locator('#search-input')).to_have_value('快捷测试')
-        expect(page.locator('#project-search')).to_have_value('')
+        expect(page.locator('#project-search')).to_have_count(0)
         after=page.evaluate("()=>({url:location.href,scroll:scrollY,count:history.length})")
         assert before==after,(before,after)
         def check_alignment():
             bounds=page.evaluate("""()=>{const row=document.querySelector('.project-located');const tools=document.querySelector('.project-tree-tools');
-              return {target:row.getBoundingClientRect().top,header:tools.getBoundingClientRect().bottom,scroll:document.querySelector('#filter-sidebar').scrollTop};}""")
+              return {target:row.getBoundingClientRect().top,header:tools.getBoundingClientRect().bottom,scroll:document.querySelector('#sidebar-projects-body').scrollTop};}""")
             assert abs(bounds['target']-bounds['header'])<2,bounds
             assert bounds['scroll']>0,bounds
         check_alignment()
@@ -123,28 +122,29 @@ def main():
         expect(page.locator('#case-list')).to_have_attribute('data-probe','same-wall')
         expect(page.locator('#detail-drawer')).not_to_have_class(__import__('re').compile(r'.*open.*'))
         page.locator('#selection-project-target').select_option('p1')
-        page.locator('#selection-add-project').click()
+        page.locator('#selection-copy-project').click()
         expect(page.locator('#share-bar')).to_be_hidden()
         memberships=page.evaluate("async()=> (await chrome.storage.local.get('organizerState')).organizerState.collections.find(p=>p.id==='p1').entryIds")
-        assert memberships==['quick-case'],memberships
-        # Multiple memberships select a path without filtering the gallery.
-        card.click(button='right'); page.get_by_role('menuitem',name='定位项目').click()
-        expect(page.get_by_role('menuitem')).to_have_count(2)
-        page.get_by_role('menuitem',name='项目1',exact=True).click(); check_alignment()
+        assert len(memberships)==1 and memberships[0]!='quick-case',memberships
+        copy_id=memberships[0]
+        # A copy has its own location while the original remains in its folder.
+        card.click(button='right'); page.get_by_role('menuitem',name='定位项目').click(); check_alignment()
         other_card=page.locator('[data-entry-id="quick-other"].case-card')
         other_card.click(button='right'); page.get_by_role('menuitem',name='定位项目').click()
         expect(page.locator('#workspace-unassigned')).to_have_class(__import__('re').compile(r'.*project-located.*'))
-        expect(page.locator('#case-list > .case-card')).to_have_count(2)
-        # Moving removes only the current project membership, retaining other projects.
+        expect(page.locator('#case-list > .case-card')).to_have_count(3)
         page.locator('[data-collection-id="p1"] .project-filter').click()
-        card.click(button='right'); page.get_by_role('menuitem',name='项目管理').click()
+        copy_card=page.locator(f'[data-entry-id="{copy_id}"].case-card')
+        copy_card.click(button='right'); page.get_by_role('menuitem',name='项目管理').click()
         page.locator('#selection-project-target').select_option('p2')
         page.locator('#selection-move-project').click()
         expect(page.locator('#share-bar')).to_be_hidden()
-        memberships=page.evaluate("async()=> (await chrome.storage.local.get('organizerState')).organizerState.collections.filter(p=>p.entryIds.includes('quick-case')).map(p=>p.id)")
-        assert set(memberships)=={'p0','p2'},memberships
+        memberships=page.evaluate("async id=> (await chrome.storage.local.get('organizerState')).organizerState.collections.filter(p=>p.entryIds.includes(id)).map(p=>p.id)",copy_id)
+        assert memberships==['p2'],memberships
+        original_members=page.evaluate("async()=> (await chrome.storage.local.get('organizerState')).organizerState.collections.filter(p=>p.entryIds.includes('quick-case')).map(p=>p.id)")
+        assert original_members==['p0'],original_members
         page.locator('#workspace-library').click()
-        expect(page.locator('#case-list > .case-card')).to_have_count(2)
+        expect(page.locator('#case-list > .case-card')).to_have_count(3)
         # Batch takeout still uses Share, without a separate download command.
         page.locator('#select-cases').click(); card.click(); other_card.click()
         page.locator('#selection-more-menu > summary').click()

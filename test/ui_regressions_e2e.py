@@ -94,6 +94,7 @@ def main() -> None:
         assert selected_style["background"] != "rgba(0, 0, 0, 0)", selected_style
         assert selected_style["shadow"] != "none", selected_style
 
+        library.locator('[data-sidebar-module="tags"] .sidebar-module-toggle').click()
         library.locator('.facet-filter[data-facet-id="style"] > summary').click()
         facet_button = library.locator('[data-facet-node-id="style.render"]')
         expect(facet_button).to_be_visible()
@@ -184,7 +185,7 @@ def main() -> None:
         icon_metrics = icon.evaluate(
             "image => ({naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight, width: image.getBoundingClientRect().width})"
         )
-        assert icon_metrics == {"naturalWidth": 128, "naturalHeight": 128, "width": 36}, icon_metrics
+        assert icon_metrics == {"naturalWidth": 128, "naturalHeight": 128, "width": 28}, icon_metrics
         print({
             "visibility": visibility,
             "navigation_reused": navigation_reused,

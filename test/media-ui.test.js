@@ -108,7 +108,7 @@ test("video cards resolve a saved local poster and referenced video details stay
 test("one top search surface keeps only a concise placeholder hint", () => {
   const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
   assert.equal((header.match(/type="search"/g) ?? []).length, 1);
-  assert.match(html, /id="project-search"[^>]*aria-label="搜索项目"/);
+  assert.doesNotMatch(html, /id="project-search"/);
   assert.match(html, /placeholder="[^"]*type:video[^"]*"/);
   assert.doesNotMatch(html, /id="search-help"|source:x\.com.*tag:电影感.*has:video/);
 });
@@ -134,11 +134,11 @@ test("folder backup opens the picker before asynchronous preparation and creates
   assert.ok(pickerCall < backup.indexOf("inspectLibraryTransfer({"));
   assert.ok(backup.indexOf("confirmAppAction({") < backup.indexOf("parent.getDirectoryHandle"));
   assert.match(backup, /plannedFiles\.set\(assetPath, blob\)/);
-  assert.match(backup, /portableManagedBackupAsset\(asset, blob, assetPath, await sha256Blob\(blob\), portableFormat\)/);
+  assert.match(backup, /portableManagedBackupAsset\(asset, blob, assetPath, await digest\(blob, [\s\S]*?\), portableFormat\)/);
   assert.match(backup, /materializeEntry\(item\.snapshot, `trash-entry-/);
   assert.match(backup, /buildFolderBackupWritePlan\(\{/);
   assert.match(backup, /for \(const \[path, blob\] of writePlan\.files\)/);
-  assert.match(backup, /verifyFolderBackupCompletion\(writePlan\.marker, writtenFiles\)/);
+  assert.match(backup, /verifyFolderBackupCompletion\(writePlan\.marker, writtenFiles, readbackOptions\)/);
   assert.ok(backup.indexOf("for (const [path, blob] of writePlan.files)") < backup.indexOf("writePlan.markerPath"));
   assert.match(backup, /inspectPlannedBackup\(LIBRARY_TRANSFER_SOURCES\.COMPLETE_BACKUP\)/);
   assert.match(backup, /inspectPlannedBackup\(LIBRARY_TRANSFER_SOURCES\.RESCUE_BACKUP,/);

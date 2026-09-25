@@ -549,3 +549,12 @@
 .composer-reference-input-choice:has(input:enabled):hover { background: var(--hover); }
 .composer-reference-input-choice input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--ui-accent); }
 .composer-reference-input-choice:has(input:disabled) { color: var(--muted); cursor: default; }
+
+.composer-case-select-preview { position: relative; }
+.composer-video-cover { display: grid; place-items: center; width: 100%; height: 180px; overflow: hidden; }
+.composer-video-cover :is(img, video), .composer-case-select-preview > .case-video-preview { width: 100%; height: 100%; object-fit: contain; }
+.composer-case-select-preview > .case-video-preview { position: absolute; inset: 0; pointer-events: none; }
+.composer-reference-preview-dialog > .skill-source-video { height: 100%; align-content: center; }
+.composer-reference-preview-dialog > .skill-source-video :is(video, iframe) { max-height: calc(100dvh - 120px); }
+
+.composer-case-inspect.icon-button { width: 32px; height: 32px; padding: 6px; }

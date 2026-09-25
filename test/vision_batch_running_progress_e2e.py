@@ -114,10 +114,12 @@ def main() -> None:
             )
 
             library = session.open_page("library.html", wait_until="networkidle")
+            library.locator('#toolbar-more > summary').click()
             library.locator("#select-cases").click()
             library.locator("#selection-select-filtered").click()
             library.locator("#selection-more-menu > summary").click()
             library.locator("#selection-analyze").click()
+            expect(library.locator(".case-card.selected-for-share")).to_have_count(2)
             dialog = library.locator("#vision-batch-dialog")
             dialog.locator("#vision-batch-start").click()
 
@@ -149,6 +151,10 @@ def main() -> None:
                 "element => ({value: element.value, max: element.max})"
             )
             assert completed_progress == {"value": 2, "max": 2}, completed_progress
+            expect(dialog.locator("#vision-batch-start")).to_be_hidden()
+            dialog.locator("#vision-batch-close").click()
+            expect(library.locator("#share-bar")).to_be_hidden()
+            assert library.locator(".case-card.selected-for-share").count() == 0
             print({"in_flight_progress_visible": True, "completed": 2, "narrowViewport": layout})
     finally:
         HangingVisionHandler.release_requests.set()

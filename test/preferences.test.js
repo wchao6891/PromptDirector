@@ -15,8 +15,11 @@ test("UI preferences accept only supported locale theme and motion values", () =
     motion: "system",
     analysisDiagnostics: false,
     sidebarWidth: 244,
+    sidebarLayout: { collapsed: false, open: ["projects"], order: ["projects", "types", "tags"] },
     detailMode: "fullscreen",
     detailSidebarWidth: 760,
+    galleryView: "waterfall",
+    includeSubprojects: false,
     detailPanelRatio: null
   });
   assert.deepEqual(normalizeUiPreferences({ locale: "en", theme: "dark", motion: "none", analysisDiagnostics: true }), {
@@ -25,8 +28,11 @@ test("UI preferences accept only supported locale theme and motion values", () =
     motion: "reduced",
     analysisDiagnostics: true,
     sidebarWidth: 244,
+    sidebarLayout: { collapsed: false, open: ["projects"], order: ["projects", "types", "tags"] },
     detailMode: "fullscreen",
     detailSidebarWidth: 760,
+    galleryView: "waterfall",
+    includeSubprojects: false,
     detailPanelRatio: null
   });
   assert.equal(normalizeUiPreferences({ theme: "light", motion: "reduced" }).theme, "light");
@@ -54,4 +60,19 @@ test("system locale resolves Chinese browsers to Chinese and everything else to 
   assert.equal(resolveLocale({ locale: "system" }, "zh-TW"), "zh-CN");
   assert.equal(resolveLocale({ locale: "system" }, "en-US"), "en");
   assert.equal(resolveLocale({ locale: "zh-CN" }, "en-US"), "zh-CN");
+});
+
+
+test("browse preferences keep folder scope and reject removed or unknown views", () => {
+  assert.equal(normalizeUiPreferences({galleryView: "list", includeSubprojects: true}).galleryView, "list");
+  assert.equal(normalizeUiPreferences({includeSubprojects: true}).includeSubprojects, true);
+  assert.equal(normalizeUiPreferences({galleryView: "columns"}).galleryView, "waterfall");
+  assert.equal(normalizeUiPreferences({includeSubprojects: "false"}).includeSubprojects, false);
+});
+
+test("sidebar layout keeps old users on projects and sanitizes saved module state", () => {
+  assert.deepEqual(normalizeUiPreferences({}).sidebarLayout, { collapsed: false, open: ["projects"], order: ["projects", "types", "tags"] });
+  assert.deepEqual(normalizeUiPreferences({sidebarLayout: {collapsed:true, open:["tags","tags","unknown"],order:["types","types","unknown"]}}).sidebarLayout,
+    {collapsed:true, open:["tags"], order:["types","projects","tags"]});
+  assert.deepEqual(normalizeUiPreferences({sidebarLayout: {open:[]}}).sidebarLayout.open, []);
 });

@@ -94,8 +94,8 @@ export function entrySourceMetadataRows(entry = {}, sourceLabel = "来源") {
   const seen = new Set();
   const english = sourceLabel === "Source";
   const labels = english
-    ? { provider: "Provider", itemId: "Work ID", author: "Author", handle: "Account", publishedAt: "Published", model: "Model", dimensions: "Dimensions", favorites: "Favorites", likes: "Likes", uses: "Uses", views: "Views", shares: "Shares", comments: "Comments", coins: "Coins", danmaku: "Danmaku" }
-    : { provider: "来源", itemId: "作品 ID", author: "作者", handle: "账号", publishedAt: "发布时间", model: "模型", dimensions: "尺寸", favorites: "收藏", likes: "点赞", uses: "使用", views: "浏览", shares: "分享", comments: "评论", coins: "投币", danmaku: "弹幕" };
+    ? { provider: "Provider", itemId: "Work ID", author: "Author", handle: "Account", publishedAt: "Published", model: "Model", dimensions: "Dimensions", repins: "Saves", reactions: "Reactions", favorites: "Favorites", likes: "Likes", uses: "Uses", views: "Views", shares: "Shares", comments: "Comments", coins: "Coins", danmaku: "Danmaku" }
+    : { provider: "来源", itemId: "作品 ID", author: "作者", handle: "账号", publishedAt: "发布时间", model: "模型", dimensions: "尺寸", repins: "收藏次数", reactions: "回应", favorites: "收藏", likes: "点赞", uses: "使用", views: "浏览", shares: "分享", comments: "评论", coins: "投币", danmaku: "弹幕" };
   const addField = (label, value) => {
     const text = String(value ?? "").trim();
     const key = `${label}\n${text}`;
@@ -107,6 +107,10 @@ export function entrySourceMetadataRows(entry = {}, sourceLabel = "来源") {
   for (const name of ["provider", "itemId", "author", "handle", "publishedAt", "model", "dimensions"]) {
     addField(labels[name], sourceFacts[name]);
   }
+  addField(english ? "Author URL" : "作者主页", sourceFacts.authorUrl);
+  addField(english ? "Original source" : "作品原始来源", sourceFacts.originalSourceUrl);
+  addField(english ? "Image description" : "图片描述", sourceFacts.imageDescription);
+  addField(english ? "Metadata incomplete" : "元信息未补全", sourceFacts.metadataError);
   const description = String(sourceFacts.description || "").trim();
   if (description && !String(entry.text || "").includes(description)) addField(english ? "Description" : "作品说明", description);
   for (const [name, amount] of Object.entries(sourceFacts.engagement || {})) {

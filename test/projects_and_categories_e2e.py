@@ -104,7 +104,7 @@ def main() -> None:
 
         library.locator(".project-filter", has_text="辅助项目").click()
         expect(library.locator("#project-folder-list .project-folder-card", has_text="项目与分类验收")).to_be_visible()
-        expect(library.locator("#result-count")).to_have_text("0 个直接案例 · 1 个子项目")
+        expect(library.locator("#result-count")).to_have_text("0 个案例 · 1 子项目")
         library.locator("#project-folder-list .project-folder-card", has_text="项目与分类验收").click()
         expect(library.locator("#manage-case-order")).to_be_visible()
         library.locator("#gallery-sort").select_option("project-manual")

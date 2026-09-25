@@ -1,3 +1,6 @@
+import { createUiIcon } from "./ui-icons.js";
+import { bindVideoHoverPreview } from "./video-hover-preview.js";
+import { createSourceVideoPreview, bindSourceVideoCover } from "./source-video-preview.js";
 import { createSkillCoverEditor, showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
 import { readSkillCover } from "./skill-cover.js";
 import { DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS, normalizeAiSettings } from "./deepseek.js";
@@ -70,7 +73,7 @@ const elements = Object.fromEntries([
   "skill-detail", "skill-detail-title", "skill-detail-call-name", "skill-detail-feedback", "skill-detail-description", "skill-detail-version", "skill-detail-source", "skill-detail-updated", "skill-detail-markdown", "skill-detail-edit", "skill-detail-more", "skill-detail-refine", "skill-export", "skill-submit-curated",
   "skill-workspace", "skill-workspace-kicker", "skill-workspace-title", "skill-delete", "skill-builder", "skill-source-sidebar", "skill-source-step", "skill-target-step", "skill-selected-count", "skill-project-picker", "skill-project-label", "skill-project-filter", "skill-case-search", "skill-clear-selection", "skill-visible-select", "skill-selection-summary", "skill-case-scroll", "skill-case-grid", "skill-case-load-more",
   "skill-run-evidence-step", "skill-run-evidence-count", "skill-run-evidence-list",
-  "skill-goal", "skill-use-vision", "skill-vision-toggle-note", "skill-vision-preview", "skill-advanced", "skill-text-provider-menu", "skill-vision-provider-menu", "skill-text-instruction", "skill-vision-instruction", "skill-restore-instructions", "skill-request-preview", "skill-generate", "skill-retry-vision", "skill-run-panel", "skill-generation-status", "skill-run-elapsed", "skill-stop-run", "skill-run-progress", "skill-run-stages", "skill-run-log", "skill-generation-feedback", "skill-draft-step", "skill-draft-editor", "skill-version-label", "skill-call-name", "skill-description", "skill-markdown", "skill-save", "skill-test", "skill-save-status", "skill-versions-step", "skill-version-list",
+  "skill-show-draft", "skill-back-sources", "skill-draft-preview", "skill-goal", "skill-use-vision", "skill-vision-toggle-note", "skill-vision-preview", "skill-advanced", "skill-text-provider-menu", "skill-vision-provider-menu", "skill-text-instruction", "skill-vision-instruction", "skill-restore-instructions", "skill-request-preview", "skill-generate", "skill-retry-vision", "skill-run-panel", "skill-generation-status", "skill-run-elapsed", "skill-stop-run", "skill-run-progress", "skill-run-stages", "skill-run-log", "skill-generation-feedback", "skill-draft-step", "skill-draft-editor", "skill-version-label", "skill-call-name", "skill-description", "skill-markdown", "skill-save", "skill-test", "skill-save-status", "skill-versions-step", "skill-version-list",
   "skill-source-inspector-backdrop", "skill-source-inspector", "skill-source-inspector-title", "skill-source-inspector-close", "skill-source-select-all", "skill-source-clear", "skill-source-text-option", "skill-source-include-text", "skill-source-asset-list", "skill-source-cancel", "skill-source-apply",
   "skill-import-dialog", "skill-import-close", "skill-import-zip", "skill-import-folder",
   "skill-submission-dialog", "skill-submission-close", "skill-submission-author", "skill-submission-author-error", "skill-submission-summary", "skill-submission-summary-error", "skill-submission-rights", "skill-submission-rights-error", "skill-submission-refresh", "skill-submission-open", "skill-submission-feedback", "skill-submission-findings", "skill-submission-preview"
@@ -93,6 +96,8 @@ let inspectorDraftSelection = null;
 let inspectorReturnFocus = null;
 let renderedSourceCount = SKILL_SOURCE_BATCH_SIZE;
 let thumbnailUrls = new Map();
+let sourceVideoCovers = [];
+let sourceScrollPosition = 0;
 let visualSuccesses = [];
 let visualFailures = [];
 let pendingAfterVision = false;
@@ -135,7 +140,13 @@ function bindEvents() {
   elements.skillCaseSearch.addEventListener("input", () => renderCases({ reset: true }));
   elements.skillClearSelection.addEventListener("click", clearAllSourceSelections);
   elements.skillVisibleSelect.addEventListener("click", toggleVisibleCases);
-  elements.skillCaseLoadMore.addEventListener("click", loadMoreSourceCases);
+  const sourceLoader = new IntersectionObserver(records => {
+    if (records.some(record => record.isIntersecting) && !elements.skillCaseLoadMore.hidden) loadMoreSourceCases();
+  }, { root: elements.skillCaseScroll });
+  sourceLoader.observe(elements.skillCaseLoadMore);
+  elements.skillShowDraft.addEventListener("click", showDraftResult);
+  elements.skillBackSources.addEventListener("click", showSourceWorkspace);
+  elements.skillMarkdown.addEventListener("input", renderDraftPreview);
   elements.skillGoal.addEventListener("input", renderRequestPreview);
   elements.skillUseVision.addEventListener("change", () => { visionPreferenceTouched = true; renderVisionPreview(); renderRequestPreview(); });
   elements.skillTextInstruction.addEventListener("input", renderRequestPreview);
@@ -158,7 +169,7 @@ function bindEvents() {
   addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !elements.skillSourceInspector.hidden) cancelSourceInspector();
   });
-  addEventListener("beforeunload", () => { activeSkillRun?.controller.abort(); releaseThumbnails(); });
+  addEventListener("beforeunload", () => { activeSkillRun?.controller.abort(); releaseThumbnails(); releaseSourceVideos(); });
 }
 
 async function refreshState() {
@@ -368,6 +379,11 @@ function renderWorkspace(view, skillId = "") {
   coverEditor.reset(skill);
   const selectingSources = view === "create" || view === "refine";
   elements.skillBuilder.dataset.mode = view;
+  elements.skillBuilder.dataset.stage = "sources";
+  elements.skillShowDraft.hidden = true;
+  elements.skillGenerate.textContent = t("生成可编辑草稿");
+  elements.skillGenerate.classList.remove("button-secondary");
+  elements.skillBackSources.hidden = !selectingSources;
   elements.skillSourceSidebar.hidden = !selectingSources;
   elements.skillSourceStep.hidden = !selectingSources;
   elements.skillTargetStep.hidden = !selectingSources;
@@ -384,6 +400,7 @@ function renderWorkspace(view, skillId = "") {
   }
   renderRunEvidence(view);
   if (skill) {
+    elements.skillShowDraft.hidden = !selectingSources;
     const version = currentCreativeSkillVersion(skill);
     elements.skillCallName.value = skill.callName;
     elements.skillDescription.value = skill.description;
@@ -404,6 +421,7 @@ function renderWorkspace(view, skillId = "") {
   setFeedback(elements.skillGenerationStatus, "");
   setFeedback(elements.skillGenerationFeedback, "");
   setFeedback(elements.skillSaveStatus, "");
+  renderDraftPreview();
   if (selectingSources) prepareSkillRuntimeControls();
 }
 
@@ -454,7 +472,7 @@ function renderProjectControls() {
 }
 
 function renderCases(options = {}) {
-  releaseThumbnails();
+  if (!options.append) releaseThumbnails();
   const projectId = selectedProjectId;
   const members = projectId ? new Set(collectionEntryIds(organizerState, projectId, { subtree: true })) : null;
   const visible = filterSkillSourceEntries(entries, {
@@ -467,19 +485,16 @@ function renderCases(options = {}) {
   }
   visibleEntryIds = visible.map((entry) => entry.id);
   const rendered = pageSkillSourceEntries(visible, renderedSourceCount);
-  elements.skillCaseGrid.replaceChildren(...rendered.map(caseCard));
+  if (options.append) elements.skillCaseGrid.append(...rendered.slice(elements.skillCaseGrid.children.length).map(caseCard));
+  else elements.skillCaseGrid.replaceChildren(...rendered.map(caseCard));
   elements.skillCaseLoadMore.hidden = rendered.length >= visible.length;
-  elements.skillCaseLoadMore.textContent = t("加载更多案例（已显示 {shown}/{total}）", {
-    shown: rendered.length,
-    total: visible.length
-  });
   renderSourceSelectionSummary();
   renderVisibleSelectionAction();
 }
 
 function loadMoreSourceCases() {
   renderedSourceCount += SKILL_SOURCE_BATCH_SIZE;
-  renderCases();
+  renderCases({ append: true });
 }
 
 function toggleVisibleCases() {
@@ -516,7 +531,17 @@ function caseCard(entry) {
   button.setAttribute("aria-label", entry.title || t("未命名案例"));
   const visual = el("span", "skill-case-visual");
   const asset = primaryImageAsset(entry);
-  if (asset) {
+  const videoAsset = availableSkillAssets(entry).find(asset => asset.kind === "video");
+  if (videoAsset) {
+    const cover = el("span", "skill-video-cover");
+    cover.textContent = t("视频");
+    visual.append(cover);
+    sourceVideoCovers.push(bindSourceVideoCover(cover, entry, videoAsset, elements.skillCaseScroll));
+    if (videoAsset.storageMode !== "reference") {
+      const hover = bindVideoHoverPreview(visual, { loadBlob: () => getMediaBlob(videoAsset.id) });
+      sourceVideoCovers.push(() => hover.destroy());
+    }
+  } else if (asset) {
     const image = document.createElement("img");
     image.alt = "";
     image.loading = "lazy";
@@ -546,8 +571,21 @@ function caseCard(entry) {
     renderRequestPreview();
   });
   card.append(button);
+  if (videoAsset) {
+    const play = document.createElement("button");
+    play.append(createUiIcon("play"));
+    play.title = t("播放视频");
+    play.type = "button";
+    play.className = "skill-case-play icon-button";
+    play.setAttribute("aria-label", t("播放视频"));
+    play.addEventListener("click", () => {
+      openSourceInspector(entry.id, play);
+      elements.skillSourceAssetList.querySelector(".skill-source-video button")?.click();
+    });
+    card.append(play);
+  }
   const assets = availableSkillAssets(entry);
-  if (assets.length > 1 || String(entry.text ?? "").trim() || hasSelectableVideoSources(entry, assets)) {
+  if (assets.some(asset => asset.kind === "video") || assets.length > 1 || String(entry.text ?? "").trim() || hasSelectableVideoSources(entry, assets)) {
     const details = textEl("button", sourceSelectionCountLabel(entry));
     details.type = "button";
     details.className = "skill-case-detail";
@@ -665,7 +703,13 @@ function openSourceInspector(entryId, returnFocus = null) {
   elements.skillSourceInspectorClose.focus();
 }
 
+function releaseSourceVideos() {
+  elements.skillSourceAssetList.querySelectorAll(".skill-source-video").forEach(host => host.releaseMedia());
+}
+
 function closeSourceInspector() {
+  releaseSourceVideos();
+  elements.skillSourceAssetList.replaceChildren();
   inspectedEntryId = "";
   inspectorDraftSelection = null;
   elements.skillSourceInspector.hidden = true;
@@ -699,8 +743,10 @@ function renderSourceInspector() {
   const hasText = Boolean(String(entry.text ?? "").trim());
   elements.skillSourceTextOption.hidden = !hasText;
   elements.skillSourceIncludeText.checked = hasText && selection.includeEntryText;
+  releaseSourceVideos();
   elements.skillSourceAssetList.replaceChildren(...availableSkillAssets(entry).flatMap((asset, index) => [
     sourceAssetOption(entry, asset, index),
+    ...(asset.kind === "video" ? [createSourceVideoPreview(entry, asset)] : []),
     ...(asset.kind === "video" && selection.assetIds.has(asset.id) ? videoSourceOptions(entry, asset) : [])
   ]));
 }
@@ -1055,6 +1101,30 @@ async function generateTextDraft(settingsValue = null, sourcesValue = null) {
   pendingAfterVision = false;
   finishSkillRun(t("草稿已生成 · {model}", { model: result.model }));
   appendSkillRunLog(t("文字提炼完成 · {model}", { model: result.model }));
+  showDraftResult();
+}
+
+function renderDraftPreview() {
+  elements.skillDraftPreview.replaceChildren(renderMarkdownDocument(elements.skillMarkdown.value));
+}
+
+function showDraftResult() {
+  sourceScrollPosition = window.scrollY;
+  closeSourceInspector();
+  renderDraftPreview();
+  elements.skillDraftEditor.open = false;
+  elements.skillBuilder.dataset.stage = "result";
+  elements.skillDraftStep.hidden = false;
+  elements.skillShowDraft.hidden = false;
+  elements.skillGenerate.textContent = t("重新提炼");
+  elements.skillGenerate.classList.add("button-secondary");
+  elements.skillDraftStep.scrollIntoView({ block: "start" });
+  elements.skillDraftStep.focus({ preventScroll: true });
+}
+
+function showSourceWorkspace() {
+  elements.skillBuilder.dataset.stage = "sources";
+  window.scrollTo({ top: sourceScrollPosition });
 }
 
 async function saveSkill() {
@@ -1601,6 +1671,8 @@ function formatDate(value) {
 }
 
 function releaseThumbnails() {
+  sourceVideoCovers.forEach(release => release());
+  sourceVideoCovers = [];
   for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   thumbnailUrls = new Map();
 }

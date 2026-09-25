@@ -1,3 +1,5 @@
+import { libraryStoredAssets } from "./library-asset-inventory.js";
+import { mediaIdentity, sameMediaIdentity, sharedLibraryMediaFiles } from "./library-shared-media.js";
 import { normalizeFacetCatalog, uniqueNames } from "./facets.js";
 import { normalizeSettings } from "./lib.js";
 import { SCHEMA_VERSION, mergeTaxonomies, normalizeTaxonomy } from "./taxonomy.js";
@@ -19,6 +21,7 @@ import { expandLogicalCaseIds, normalizeCompoundCases, removeEntriesFromCompound
 import { prepareLibraryPackageDraft } from "./library-package-migrations.js";
 import { remapArticleDocumentAssets } from "./article-document.js";
 import { caseSemanticFingerprint } from "./library-semantic-identity.js";
+import { libraryCaseScopes } from "./library-case-scope.js";
 import { normalizeTrashState } from "./trash.js";
 import { verifiedDocumentBlob, isSupportedDocumentMimeType } from "./bounded-media.js";
 import {
@@ -35,7 +38,7 @@ export function hasLibrarySalvageDiagnostics(diagnosticsValue) {
     .some((item) => item?.action === "dropped" || item?.action === "skipped");
 }
 
-export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}) {
+export async function parseCompleteFolderBackup(value, files = new Map(), limitsValue = {}, options = {}) {
   const preparedFiles = new Map(files);
   const limits = libraryTransferLimits(limitsValue);
   for (const [path, mimeType] of completeBackupDocumentPaths(value)) {
@@ -44,7 +47,7 @@ export async function parseCompleteFolderBackup(value, files = new Map(), limits
     const verified = await verifiedDocumentBlob(blob, mimeType, limits.maxFileBytes);
     preparedFiles.set(path, verified);
   }
-  return parseLibraryPackage(value, preparedFiles, { ...limitsValue, salvageInvalidMedia: false });
+  return parseLibraryPackage(value, await sharedLibraryMediaFiles(value, preparedFiles, options), { ...limitsValue, salvageInvalidMedia: false });
 }
 
 export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) {
@@ -84,7 +87,14 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
     }
   }
   const ids = new Set();
-  const visualIds = new Set();
+  const mediaIdentities = new Map();
+  const claimMedia = (asset, blob) => {
+    const identity = mediaIdentity(asset, blob);
+    const existing = mediaIdentities.get(asset.id);
+    if (existing && !sameMediaIdentity(existing, identity)) return false;
+    mediaIdentities.set(asset.id, identity);
+    return true;
+  };
   const assets = new Map();
   const images = new Map();
   const skillAssets = new Map();
@@ -131,9 +141,21 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
     const entryAssets = new Map();
     const droppedAssetIds = [...(normalizationDroppedAssetIds.get(entryIndex) ?? [])];
     for (const asset of entry.mediaAssets) {
-      if (visualIds.has(asset.id)) throw new Error("案例包包含重复的媒体编号");
-      visualIds.add(asset.id);
-      if (asset.storageMode === "reference") continue;
+      const identityBlob = asset.storageMode === "reference" ? undefined : files.get(clean(asset.assetPath));
+      const existingIdentity = mediaIdentities.get(asset.id);
+      if (existingIdentity && !sameMediaIdentity(existingIdentity, mediaIdentity(asset, identityBlob))) {
+        if (!salvageInvalidMedia) throw new Error("案例包包含冲突的媒体编号");
+        droppedAssetIds.push(asset.id);
+        importStats.droppedMediaDescriptors += 1;
+        importDiagnostics.push({ code: "media_descriptor_dropped", severity: "media", action: "dropped",
+          entryId: entry.id, assetId: asset.id, path: clean(asset.assetPath), reason: "duplicate_asset_id",
+          message: "同一媒体编号对应不同内容，本项不能自动恢复" });
+        continue;
+      }
+      if (asset.storageMode === "reference") {
+        claimMedia(asset, undefined);
+        continue;
+      }
       const path = clean(asset.assetPath);
       let format;
       try {
@@ -169,6 +191,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         });
         continue;
       }
+      claimMedia(asset, blob);
       entryAssets.set(asset.id, blob);
     }
     for (const assetId of droppedAssetIds) entry = removeEntryMedia(entry, assetId);
@@ -233,15 +256,19 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         });
     const droppedAssetIds = [];
     for (const asset of entry.mediaAssets) {
-      if (visualIds.has(asset.id)) {
-        if (!salvageInvalidMedia) throw new Error("完整备份包含重复的媒体编号");
+      const identityBlob = asset.storageMode === "reference" ? undefined : files.get(clean(asset.assetPath));
+      const existingIdentity = mediaIdentities.get(asset.id);
+      if (existingIdentity && !sameMediaIdentity(existingIdentity, mediaIdentity(asset, identityBlob))) {
+        if (!salvageInvalidMedia) throw new Error("完整备份包含冲突的媒体编号");
         droppedAssetIds.push(asset.id);
         importStats.droppedTrashMedia += 1;
         importDiagnostics.push(trashMediaDiagnostic(item, asset, "duplicate_asset_id"));
         continue;
       }
-      visualIds.add(asset.id);
-      if (asset.storageMode === "reference") continue;
+      if (asset.storageMode === "reference") {
+        claimMedia(asset, undefined);
+        continue;
+      }
       const path = clean(asset.assetPath);
       let format;
       try {
@@ -264,6 +291,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         importDiagnostics.push(trashMediaDiagnostic(item, asset, failure.reason));
         continue;
       }
+      claimMedia(asset, blob);
       assets.set(asset.id, blob);
       if (asset.kind === "image") images.set(asset.id, blob);
     }
@@ -371,15 +399,13 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
           importDiagnostics.push(privateResourceDiagnostic("temporary_asset_dropped", asset, path, "byte_size_mismatch"));
           continue;
         }
-        const existing = assets.get(asset.assetId);
-        if ((existing && existing.size !== blob.size) || (visualIds.has(asset.assetId) && !existing)) {
+        if (!claimMedia({ ...asset, id: asset.assetId }, blob)) {
           if (!salvageInvalidMedia) throw new Error("案例包包含冲突的临时附件编号");
           droppedAssetIds.add(asset.assetId);
           importStats.droppedTemporaryAssets += 1;
           importDiagnostics.push(privateResourceDiagnostic("temporary_asset_dropped", asset, path, "duplicate_asset_id"));
           continue;
         }
-        visualIds.add(asset.assetId);
         assets.set(asset.assetId, blob);
         if (asset.kind === "image") images.set(asset.assetId, blob);
         retainedAssetRefs.push(asset);
@@ -421,14 +447,12 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         importDiagnostics.push(privateResourceDiagnostic("creative_output_dropped", visual, path, "size_limit"));
         continue;
       }
-      const existingAsset = assets.get(visual.id);
-      if (visualIds.has(visual.id) && existingAsset && existingAsset.size !== asset.size) {
+      if (!claimMedia({ ...visual, kind: video ? "video" : "image" }, asset)) {
         if (!salvageInvalidMedia) throw new Error("案例包包含冲突的结果媒体编号");
         importStats.droppedCreativeOutputs += 1;
         importDiagnostics.push(privateResourceDiagnostic("creative_output_dropped", visual, path, "duplicate_asset_id"));
         continue;
       }
-      visualIds.add(visual.id);
       assets.set(visual.id, asset);
       if (!video) images.set(visual.id, asset);
       retainedOutputs.push(output);
@@ -526,6 +550,20 @@ export function selectLibraryPackage(state = {}, entryIds = []) {
     creativeRuns: [],
     creativeSkills: { version: 1, items: [] }
   };
+  const equivalent = new Map();
+  for (const entry of selected.entries) {
+    const fingerprint = caseSemanticFingerprint(entry);
+    if (!fingerprint) continue;
+    const group = equivalent.get(fingerprint) ?? [];
+    group.push(entry);
+    equivalent.set(fingerprint, group);
+  }
+  // Selection sharing omits private folders. Preserve separately selected cases
+  // that would otherwise become indistinguishable once that context is removed.
+  for (const group of equivalent.values()) {
+    if (group.length < 2) continue;
+    for (const entry of group) entry.caseInstanceId ||= `case-instance:${entry.id}`;
+  }
   return selected;
 }
 
@@ -683,8 +721,14 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   const entriesById = new Map(next.entries.map((entry) => [entry.id, entry]));
   const entriesByFingerprint = new Map();
   const fingerprintById = new Map();
-  function indexEntry(entry) {
-    const fingerprint = caseSemanticFingerprint(normalizeEntryMedia(entry));
+  const currentScopes = libraryCaseScopes(next);
+  const importedScopes = libraryCaseScopes(imported);
+  function scopedFingerprint(entry, scope) {
+    const content = caseSemanticFingerprint(normalizeEntryMedia(entry));
+    return content ? JSON.stringify([scope, content]) : "";
+  }
+  function indexEntry(entry, scope = currentScopes.get(entry.id)) {
+    const fingerprint = scopedFingerprint(entry, scope);
     if (!fingerprint) return;
     const matches = entriesByFingerprint.get(fingerprint) ?? new Set();
     matches.add(entry);
@@ -708,8 +752,13 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   let skippedCount = 0;
   for (const source of imported.entries) {
     let idCollision = usedEntryIds.has(source.id);
-    const sourceFingerprint = caseSemanticFingerprint(normalizeEntryMedia(source));
-    const identical = sourceFingerprint && entriesByFingerprint.get(sourceFingerprint)?.values().next().value;
+    const sourceFingerprint = scopedFingerprint(source, importedScopes.get(source.id));
+    const existing = entriesById.get(source.id);
+    const sameExportedInstance = source.caseInstanceId === `case-instance:${source.id}` && existing && !existing.caseInstanceId
+      && currentScopes.get(existing.id) === importedScopes.get(source.id)
+      && scopedFingerprint({ ...source, caseInstanceId: undefined }, importedScopes.get(source.id)) === scopedFingerprint(existing, currentScopes.get(existing.id));
+    const identical = !options.preserveCaseIdentities && sourceFingerprint &&
+      (entriesByFingerprint.get(sourceFingerprint)?.values().next().value || (sameExportedInstance ? existing : null));
     if (identical) {
       skippedCount += 1;
       entryIdMap[source.id] = identical.id;
@@ -770,11 +819,11 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     entry.mediaAssets = entry.mediaAssets.map((visual) => {
       const preferredVisualId = visual.id === source.id && targetId !== source.id ? targetId : visual.id;
       const mappedVisualId = clean(options.visualIdMap?.[visual.id]);
-      const targetVisualId = usedVisualIds.has(preferredVisualId)
+      const targetVisualId = createdVisualIdMap[visual.id] || (usedVisualIds.has(preferredVisualId)
         ? mappedVisualId && !usedVisualIds.has(mappedVisualId)
           ? mappedVisualId
           : uniqueId("visual", usedVisualIds)
-        : preferredVisualId;
+        : preferredVisualId);
       usedVisualIds.add(targetVisualId);
       visualIdMap[visual.id] = targetVisualId;
       createdVisualIdMap[visual.id] = targetVisualId;
@@ -816,7 +865,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     });
     next.entries.push(entry);
     entriesById.set(targetId, entry);
-    indexEntry(entry);
+    indexEntry(entry, importedScopes.get(source.id));
     usedEntryIds.add(targetId);
     createdEntryIds.push(targetId);
     entryIdMap[source.id] = targetId;
@@ -915,7 +964,8 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     preferredEntryIdMap: options.trashEntryIdMap,
     preferredCollectionIdMap: options.trashCollectionIdMap,
     preferredCompoundIdMap: options.trashCompoundIdMap,
-    preferredVisualIdMap: options.visualIdMap
+    preferredVisualIdMap: options.visualIdMap,
+    sharedVisualIdMap: visualIdMap
   });
   next.trashState = trashMerge.trashState;
   Object.assign(visualIdMap, trashMerge.visualIdMap);
@@ -1156,6 +1206,7 @@ function mergeImportedTrashState(currentValue, importedValue, context = {}) {
     }
   }
   const visualIdMap = {};
+  const sharedVisualIdMap = { ...context.sharedVisualIdMap };
   const moved = imported.items.map((sourceItem) => {
     const item = structuredClone(sourceItem);
     if (item.kind === "collection") {
@@ -1169,8 +1220,9 @@ function mergeImportedTrashState(currentValue, importedValue, context = {}) {
     }
     if (item.kind === "entry") {
       const targetId = entryIdMap[item.targetId];
-      const remapped = remapTrashedEntrySnapshot(item.snapshot, targetId, usedVisualIds, context.preferredVisualIdMap);
+      const remapped = remapTrashedEntrySnapshot(item.snapshot, targetId, usedVisualIds, context.preferredVisualIdMap, sharedVisualIdMap);
       Object.assign(visualIdMap, remapped.visualIdMap);
+      Object.assign(sharedVisualIdMap, remapped.visualIdMap);
       item.targetId = targetId;
       item.id = `trash:entry:${targetId}`;
       item.snapshot = remapped.entry;
@@ -1191,8 +1243,9 @@ function mergeImportedTrashState(currentValue, importedValue, context = {}) {
       id: parentEntryId || `trash-media:${item.targetId}`,
       mediaAssets: item.snapshot?.mediaAssets ?? [],
       primaryMediaId: ""
-    }, parentEntryId || `trash-media:${item.targetId}`, usedVisualIds, context.preferredVisualIdMap);
+    }, parentEntryId || `trash-media:${item.targetId}`, usedVisualIds, context.preferredVisualIdMap, sharedVisualIdMap);
     Object.assign(visualIdMap, remapped.visualIdMap);
+    Object.assign(sharedVisualIdMap, remapped.visualIdMap);
     const targetId = remapped.visualIdMap[item.targetId] ?? item.targetId;
     item.targetId = targetId;
     item.id = ["trash", "media", parentEntryId, targetId].filter(Boolean).join(":");
@@ -1215,15 +1268,15 @@ function mergeImportedTrashState(currentValue, importedValue, context = {}) {
   };
 }
 
-function remapTrashedEntrySnapshot(entryValue, targetEntryId, usedVisualIds, preferredVisualIdMap = {}) {
+function remapTrashedEntrySnapshot(entryValue, targetEntryId, usedVisualIds, preferredVisualIdMap = {}, sharedVisualIdMap = {}) {
   const entry = normalizeEntryMedia(entryValue);
   const visualIdMap = {};
   entry.mediaAssets = entry.mediaAssets.map((asset) => {
     const preferredId = asset.id === entry.id && targetEntryId !== entry.id ? targetEntryId : asset.id;
     const plannedId = clean(preferredVisualIdMap[asset.id]);
-    const targetId = usedVisualIds.has(preferredId)
+    const targetId = sharedVisualIdMap[asset.id] || (usedVisualIds.has(preferredId)
       ? plannedId && !usedVisualIds.has(plannedId) ? plannedId : uniqueId("visual", usedVisualIds)
-      : preferredId;
+      : preferredId);
     usedVisualIds.add(targetId);
     visualIdMap[asset.id] = targetId;
     return { ...asset, id: targetId };
@@ -1283,7 +1336,19 @@ function packageImagePlaceholders(value) {
   const trashAssets = trashMediaAssets(value?.trashState).flatMap((asset) => asset.assetPath
     ? [[asset.assetPath, new Blob(["placeholder"], { type: mediaType(asset.assetPath, asset.kind, asset.mimeType) })]]
     : []);
-  return new Map([...entryImages, ...creativeAssets, ...skillFiles, ...tempFiles, ...trashAssets]);
+  const files = new Map([...entryImages, ...creativeAssets, ...skillFiles, ...tempFiles, ...trashAssets]);
+  // Merge validates structure with placeholders after the real-byte inspection.
+  // Preserve shared media identity across the placeholder paths as well.
+  const byId = new Map();
+  for (const asset of libraryStoredAssets(value)) {
+    const path = asset.assetPath || asset.screenshotPath || asset.archivePath;
+    const blob = files.get(path);
+    if (!blob) continue;
+    const key = `${asset.id || asset.assetId}:${blob.type}`;
+    if (byId.has(key)) files.set(path, byId.get(key));
+    else byId.set(key, blob);
+  }
+  return files;
 }
 
 function trashMediaAssets(trashStateValue) {

@@ -558,6 +558,35 @@ def main() -> None:
         assert "local-before-exact" in rollback_state["entryIds"], rollback_state
         assert rollback_state["activeImageId"] == "share-image-one", rollback_state
 
+        # Several cases may intentionally share one stored original. Backup must
+        # keep both cases, their independent prompts and the original bytes.
+        library.evaluate(
+            """async () => {
+              const {entries} = await chrome.storage.local.get('entries');
+              const original = entries.find(entry => entry.mediaAssets?.some(asset => asset.kind === 'image'));
+              window.__beforeSharedBackupEntries = entries;
+              await chrome.storage.local.set({entries: [...entries, {
+                ...original, id: 'shared-original-case', title: '共享原件独立案例', text: '独立正文必须保留'
+              }]});
+              window.__installBackupRoot();
+            }"""
+        )
+        library.locator("#create-folder-backup").click()
+        expect(library.locator("#data-safety-feedback")).to_contain_text("完整备份已完成", timeout=15_000)
+        shared_backup = library.evaluate(
+            """async () => {
+              const folder = [...window.__backupRoot.directories.values()][0];
+              const data = JSON.parse(await (await folder.files.get('library.json').getFile()).text());
+              const shared = data.entries.find(entry => entry.id === 'shared-original-case');
+              return {text: shared.text, mediaCount: shared.mediaAssets.length,
+                complete: folder.files.has('complete.json'),
+                owners: data.entries.filter(entry => entry.mediaAssets.some(asset => asset.id === shared.mediaAssets[0].id)).length};
+            }"""
+        )
+        assert shared_backup["complete"] and shared_backup["mediaCount"] > 0, shared_backup
+        assert shared_backup["owners"] == 1 and shared_backup["text"] == "独立正文必须保留", shared_backup
+        library.evaluate("() => chrome.storage.local.set({entries: window.__beforeSharedBackupEntries})")
+
         library.evaluate(
             """async () => {
               const stored = await chrome.storage.local.get('entries');

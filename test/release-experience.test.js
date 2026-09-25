@@ -30,7 +30,8 @@ test("video links and quick notes each use a purpose-built one-step form", async
 
   assert.match(video, /showAppDialog\(\{/);
   assert.match(video, /title:\s*"添加视频链接"/);
-  assert.match(video, /type:\s*"url"/);
+  assert.match(video, /type:\s*"text"/);
+  assert.match(video, /inputMode:\s*"url"/);
   assert.match(video, /pendingLabel:\s*"正在解析链接并保存…"/);
   assert.match(note, /showAppDialog\(\{/);
   assert.match(note, /type:\s*"textarea"/);

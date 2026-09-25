@@ -171,7 +171,7 @@ test("shared ZIP and degraded folders salvage individual failures while verified
   const folderRestore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function importSharedLibraryPackage"));
   assert.match(sharedImport, /inspectLibraryTransfer\(\{[\s\S]*?sourceType:\s*LIBRARY_TRANSFER_SOURCES\.SHARE_PACKAGE/);
   assert.match(folderRestore, /sourceType:\s*envelope\.mode === "complete"[\s\S]*LIBRARY_TRANSFER_SOURCES\.COMPLETE_BACKUP[\s\S]*LIBRARY_TRANSFER_SOURCES\.RESCUE_BACKUP/);
-  assert.match(folderRestore, /inspectFolderBackupEnvelope\(files\)/);
+  assert.match(folderRestore, /inspectFolderBackupEnvelope\(files,\s*\{\s*digest,\s*onProgress:/);
   assert.match(folderRestore, /sourceReport:\s*envelope\.report/);
   assert.match(sharedImport, /validateImage:\s*validateImportedImage/);
   assert.match(folderRestore, /validateImage:\s*validateImportedImage/);

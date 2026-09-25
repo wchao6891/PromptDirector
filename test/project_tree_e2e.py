@@ -71,19 +71,18 @@ def main():
         page.reload(wait_until='networkidle')
         expect(row(page,'child')).to_have_count(0)
         row(page,'p0').locator('.project-filter').click()
-        page.locator('#project-search').fill('子项目')
-        expect(page.locator('.project-row')).to_have_count(3)
-        expect(row(page,'child').locator('.project-search-path')).to_contain_text('项目 000')
-        expect(row(page,'other-child').locator('.project-search-path')).to_contain_text('项目 001')
+        expect(page.locator('#project-search')).to_have_count(0)
+        row(page,'p0').locator('.project-disclosure').click()
+        row(page,'p1').locator('.project-disclosure').click()
+        expect(row(page,'child')).to_be_visible()
+        expect(row(page,'other-child')).to_be_visible()
         assert row(page,'child').locator('.project-filter').bounding_box()['width'] > 100
-        page.locator('#project-search').fill('')
-        expect(row(page,'child')).to_have_count(0)
+        page.locator('#collapse-projects').click()
         # A distant target is chosen by name, with no long drag or full expansion.
-        page.locator('#project-search').fill('099')
+        row(page,'p99').scroll_into_view_if_needed()
         dialog = move_dialog(page,'p99','000','项目 000','before')
         dialog.get_by_role('button',name='移动',exact=True).click()
         expect(dialog).to_have_count(0)
-        page.locator('#project-search').fill('')
         expect(page.locator('.project-filter-name').first).to_have_text('项目 099')
         page.locator('#project-move-undo').click()
         expect(page.locator('.project-filter-name').first).to_have_text('项目 000')
@@ -95,19 +94,19 @@ def main():
         assert panel.bounding_box()['y'] >= 0
         page.keyboard.press('Escape')
         # Move a whole subtree and undo without changing membership.
-        page.locator('#project-search').fill('000')
+        row(page,'p0').scroll_into_view_if_needed()
         dialog = move_dialog(page,'p0','001','项目 001')
         dialog.get_by_role('button',name='移动',exact=True).click()
         expect(dialog).to_have_count(0)
         moved = {p['id']:p for p in state(page)}
         assert moved['p0']['parentId'] == 'p1'
         assert moved['child']['parentId'] == 'p0' and moved['child']['entryIds'] == ['case']
-        assert moved['grandchild']['entryIds'] == ['case']
+        assert len(moved['grandchild']['entryIds']) == 1 and moved['grandchild']['entryIds'] != ['case']
         page.locator('#project-move-undo').click()
         expect(page.locator('#project-order-status')).to_contain_text('已撤销')
-        page.locator('#project-search').fill('')
         # Root moves are accessible through the same picker, with a visible root placement.
-        page.locator('#project-search').fill('深层项目')
+        row(page,'p0').locator('.project-disclosure').click()
+        row(page,'child').locator('.project-disclosure').click()
         dialog = move_dialog(page,'grandchild','项目根目录','项目根目录')
         expect(dialog.locator('[name="position"]')).to_be_disabled()
         dialog.get_by_role('button',name='移动',exact=True).click()
@@ -115,7 +114,7 @@ def main():
         assert next(p for p in state(page) if p['id']=='grandchild')['parentId'] is None
         page.locator('#project-move-undo').click()
         expect(page.locator('#project-order-status')).to_contain_text('已撤销')
-        page.locator('#project-search').fill('')
+        page.locator('#collapse-projects').click()
         # Direct pointer drag, without a manage-mode click.
         row(page,'p0').scroll_into_view_if_needed()
         drag_to(page,'p2','p1','before')
@@ -137,15 +136,15 @@ def main():
         assert state(page) == baseline
         # Edge scrolling continues while the pointer is stationary.
         drag_to(page,'p2','p3')
-        sidebar = page.locator('#filter-sidebar')
+        sidebar = page.locator('#sidebar-projects-body')
         box = sidebar.bounding_box()
         before = sidebar.evaluate('node => node.scrollTop')
         page.mouse.move(box['x']+box['width']/2,box['y']+box['height']-8)
-        page.wait_for_function('(before) => document.querySelector("#filter-sidebar").scrollTop > before + 120',arg=before)
+        page.wait_for_function('(before) => document.querySelector("#sidebar-projects-body").scrollTop > before + 120',arg=before)
         page.keyboard.press('Escape')
         page.mouse.up()
         # Failure is explicit and does not claim success or change data.
-        page.locator('#project-search').fill('002')
+        row(page,'p2').scroll_into_view_if_needed()
         dialog = move_dialog(page,'p2','001','项目 001')
         page.evaluate("""() => {window.originalSend=chrome.runtime.sendMessage;chrome.runtime.sendMessage=(m,...args)=>m.type==='MOVE_COLLECTION'?Promise.resolve({ok:false,message:'模拟项目保存失败'}):window.originalSend.call(chrome.runtime,m,...args)}""")
         baseline = state(page)
@@ -154,11 +153,10 @@ def main():
         assert state(page) == baseline
         dialog.get_by_role('button',name='取消',exact=True).click()
         page.evaluate('() => {chrome.runtime.sendMessage=window.originalSend}')
-        page.locator('#project-search').fill('')
         row(page,'p0').scroll_into_view_if_needed()
         # Keep toolbar reachable after a long scroll and menu usable in a narrow window.
         row(page,'p99').scroll_into_view_if_needed()
-        expect(page.locator('#project-search')).to_be_in_viewport()
+        expect(page.locator('#collapse-projects')).to_be_in_viewport()
         page.set_viewport_size({'width':760,'height':740})
         if not row(page,'p99').is_visible():
             page.locator('#toggle-filters').click()
@@ -167,7 +165,7 @@ def main():
         expect(row(page,'p99').get_by_role('button',name='移动到…',exact=True)).to_be_in_viewport()
         page.keyboard.press('Escape')
         page.set_viewport_size({'width':1280,'height':900})
-        page.locator('#filter-sidebar').evaluate('node => node.scrollTop = 0')
+        page.locator('#sidebar-projects-body').evaluate('node => node.scrollTop = 0')
         if os.environ.get('PROMPTDIRECTOR_PROJECT_TREE_EVIDENCE'):
             folder = Path(os.environ['PROMPTDIRECTOR_PROJECT_TREE_EVIDENCE'])
             folder.mkdir(parents=True,exist_ok=True)

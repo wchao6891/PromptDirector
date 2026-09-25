@@ -36,7 +36,7 @@ test("every material import queues local index completion without coupling it to
   const curatedImport = background.slice(background.indexOf("async function applyCuratedImport"), background.indexOf("function curatedImportResponse"));
   const automaticCompletion = background.slice(background.indexOf("async function enqueueAutomaticLibraryMaintenance"), background.indexOf("async function libraryMaintenanceStatus"));
 
-  assert.match(localImport, /enqueueAutomaticLibraryMaintenance\(\[entry\]\)/);
+  assert.match(localImport, /enqueueAutomaticLibraryMaintenance\(imported\)/);
   assert.match(packageImport, /enqueueAutomaticLibraryMaintenance/);
   assert.match(curatedImport, /enqueueAutomaticLibraryMaintenance/);
   assert.match(automaticCompletion, /libraryMaintenanceTargets/);

@@ -254,7 +254,7 @@ test("replacement recovery media is protected from sync orphan cleanup", async (
   assert.equal(fixture.counts().mediaDeletes, 0);
 });
 
-test("different device ids with complete identical meaning converge to one case and keep both projects", async () => {
+test("sync retains independent copies in different folders and fetches both originals", async () => {
   const fixture = await createFixture();
   fixture.state.entries[0].title = "Same";
   fixture.state.entries[0].text = "Same";
@@ -289,10 +289,10 @@ test("different device ids with complete identical meaning converge to one case 
   const result = await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(fixture.state.entries.map((item) => item.id), ["one"]);
-  assert.deepEqual(fixture.state.organizerState.collections.map((project) => project.entryIds), [["one"], ["one"]]);
-  assert.equal(fixture.counts().objectReads, 0);
-  assert.equal(fixture.media.has("asset:remote"), false);
+  assert.deepEqual(fixture.state.entries.map((item) => item.id).sort(), ["one", "remote"]);
+  assert.deepEqual(fixture.state.organizerState.collections.map((project) => project.entryIds), [["one"], ["remote"]]);
+  assert.equal(fixture.counts().objectReads, 1);
+  assert.equal(fixture.media.has("asset:remote"), true);
 });
 
 test("one missing unsynced media item is reported and removed without blocking healthy cases", async () => {
@@ -523,3 +523,15 @@ function entry(id, assetId) {
     primaryMediaId: assetId
   };
 }
+
+test("folder migration recovery originals survive remote deletion and orphan cleanup", async () => {
+  const fixture = await syncedTwoEntryFixture();
+  fixture.state.folderOwnershipBackup = { state: state([entry("one", "asset:one")]) };
+  await addRemoteDeletionOfFirstEntry(fixture);
+  fixture.resetCounts();
+  const result = await fixture.controller.start({ vault: fixture.vault, settings: fixture.settings });
+  assert.equal(result.ok, true);
+  assert.equal(fixture.state.entries.some(item => item.id === "one"), false);
+  assert.equal(fixture.media.has("asset:one"), true);
+  assert.equal(fixture.counts().mediaDeletes, 0);
+});

@@ -65,7 +65,7 @@ test("desktop sidebar width is adjustable and persists as a bounded UI preferenc
 
 test("share and combine are contextual actions after entering selection mode", () => {
   const selection = html.slice(html.indexOf('id="gallery-heading"'), html.indexOf('<p id="feedback"'));
-  assert.match(selection, /id="selection-add-project"/);
+  assert.match(selection, /id="selection-copy-project"/);
   assert.match(selection, /id="selection-new-project"/);
   assert.match(selection, /id="selection-combine"/);
   assert.match(selection, /id="selection-analyze"/);

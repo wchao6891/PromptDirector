@@ -34,7 +34,7 @@ test("the current project uses the product accent while other library selections
   assert.match(rule(source, '.analysis-kind-tabs button[aria-selected="true"]'), /background:\s*var\(--selection\)/);
   assert.match(rule(source, ".compact-general .share-package-import"), /display:\s*flex/);
   assert.doesNotMatch(rule(source, ".compact-general .share-package-import"), /background:|box-shadow:|justify-content:\s*space-between/);
-  assert.match(rule(source, "html"), /scrollbar-gutter:\s*stable/);
+  assert.doesNotMatch(source, /scrollbar-gutter:\s*stable/);
   assert.doesNotMatch(source, /0 0 0 (?:2px|3px) color-mix\(in srgb, var\(--accent\)/);
 });
 

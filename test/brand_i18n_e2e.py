@@ -41,6 +41,9 @@ def main() -> None:
             if path == "composer.html":
                 page.locator("#composer-shell").evaluate("node => node.classList.add('nav-open')")
                 page.wait_for_timeout(250)
+            if path == "library.html":
+                expect(page.locator(".product-brand").first).to_be_hidden()
+                page.set_viewport_size({"width": 1280, "height": 844})
             brand = page.locator(".product-brand").first
             expect(brand).to_be_visible()
             expect(brand.locator(".product-brand-name")).to_have_text("PromptDirector")

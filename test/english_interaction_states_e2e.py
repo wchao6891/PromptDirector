@@ -129,6 +129,8 @@ def main() -> None:
 
         library = session.open_page("library.html", wait_until="networkidle")
 
+        if not library.locator("#add-menu > summary").is_visible():
+            library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
         library.locator("#add-quick-note").click()
         quick_note = library.locator("#promptdirector-app-dialog")
@@ -136,6 +138,8 @@ def main() -> None:
         assert_no_visible_chinese(quick_note, "quick note dialog")
         quick_note.get_by_role("button", name="Cancel", exact=True).click()
 
+        if not library.locator("#add-menu > summary").is_visible():
+            library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
         library.locator("#add-video-reference").click()
         video_link = library.locator("#promptdirector-app-dialog")
@@ -153,11 +157,13 @@ def main() -> None:
         library.set_viewport_size({"width": 390, "height": 800})
         library.locator("#toggle-filters").click()
         expect(library.locator("#filter-sidebar")).to_be_visible()
+        library.wait_for_function("() => document.querySelector('#filter-sidebar').getBoundingClientRect().left >= 0")
         project_menu.locator(":scope > summary").click()
         assert_no_visible_chinese(project_menu.locator(".project-menu-panel"), "project menu")
         assert_panel_contains_children(project_menu.locator(".project-menu-panel"), "project menu at 390px")
         project_menu.locator(":scope > summary").click()
 
+        library.locator('[data-sidebar-module="types"] .sidebar-module-toggle').click()
         category_menu = library.locator(".content-filter-menu").first
         category_menu.locator(":scope > summary").click()
         assert_no_visible_chinese(category_menu.locator(".project-menu-panel"), "category menu")
@@ -171,6 +177,8 @@ def main() -> None:
         assert_no_visible_chinese(library.locator("#detail-drawer"), "case details")
         library.locator("#detail-close").click()
 
+        if not library.locator("#add-menu > summary").is_visible():
+            library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
         library.locator("#add-media").click()
         expect(library.locator("#import-last-job")).to_be_visible()
