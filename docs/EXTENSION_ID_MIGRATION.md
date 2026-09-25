@@ -16,4 +16,4 @@ Chrome 会把扩展资料绑定到浏览器配置和扩展 ID。更换为另一�
 
 如果旧扩展已经卸载且没有完整资料夹备份、同步目录或完整浏览器配置备份，Chrome 可能已经清除了旧数据，无法由新扩展恢复。
 
-正式发布包必须使用 Chrome Web Store 为该项目分配的稳定身份。`npm run package:release` 会在缺失时停止发布；普通 `npm run package` 仅用于开发验证。
+GitHub 安装包保留与 Chrome Web Store 一致的固定扩展身份，由 `npm run package` 构建。`npm run package:release` 构建商店上传包：验证固定身份后移除上传包中的 `key`，并排除本地程序安装器。运行 `npm run package:distribution` 可同时准备两个渠道的产物，详见[分发说明](../store/DISTRIBUTION.md)。
