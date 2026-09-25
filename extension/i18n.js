@@ -1,6 +1,15 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "查看草稿": "View draft",
+  "返回选材": "Back to sources",
+  "重新提炼": "Refine again",
+  "关闭视频预览": "Close video preview",
+  "视频 · 点击播放": "Video · Click to play",
+  "视频预览不可用 · 点击检查": "Preview unavailable · Click to inspect",
+  "视频无法播放，请在案例库检查原件或打开来源": "Unable to play. Check the original in the library or open its source.",
+  "视频暂不可播放，请在案例库检查来源": "Video unavailable. Check its source in the library.",
+  "请先在案例库授权 YouTube 播放器": "Authorize the YouTube player in the library first.",
   "全部展开": "Expand all",
   "面板布局": "Panel layout",
   "恢复默认布局": "Reset layout",

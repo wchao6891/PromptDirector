@@ -104,7 +104,7 @@
                   <div id="skill-request-preview" class="skill-request-preview"></div>
                 </div>
               </details>
-              <div class="skill-step-actions"><button id="skill-show-draft" class="button-secondary" type="button" hidden>查看草稿</button><button id="skill-generate" type="button" data-i18n="生成可编辑草稿">生成可编辑草稿</button><button id="skill-retry-vision" class="button-secondary" type="button" hidden data-i18n="重试失败批次">重试失败批次</button></div>
+              <div class="skill-step-actions"><button data-i18n="查看草稿" id="skill-show-draft" class="button-secondary" type="button" hidden>查看草稿</button><button id="skill-generate" type="button" data-i18n="生成可编辑草稿">生成可编辑草稿</button><button id="skill-retry-vision" class="button-secondary" type="button" hidden data-i18n="重试失败批次">重试失败批次</button></div>
               <section id="skill-run-panel" class="skill-run-panel" hidden aria-live="polite">
                 <div class="skill-run-heading"><div><strong id="skill-generation-status"></strong><span id="skill-run-elapsed"></span></div><button id="skill-stop-run" class="button-secondary" type="button" data-i18n="停止">停止</button></div>
                 <div class="skill-run-track"><span id="skill-run-progress"></span></div>
@@ -116,7 +116,7 @@
 
             <section id="skill-draft-step" class="skill-step skill-draft-step" tabindex="-1" hidden>
               <div class="skill-section-heading"><div><small>03</small><strong data-i18n="编辑并保存">编辑并保存</strong></div><span id="skill-version-label"></span></div>
-              <div class="skill-result-actions"><button id="skill-back-sources" class="button-secondary" type="button">返回选材</button><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
+              <div class="skill-result-actions"><button data-i18n="返回选材" id="skill-back-sources" class="button-secondary" type="button">返回选材</button><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
               <div class="skill-name-grid">
                 <label><span data-i18n="调用名">调用名</span><div class="skill-call-name"><b>/</b><input id="skill-call-name" maxlength="80" placeholder="你的 Skill 名称" data-i18n-placeholder="你的 Skill 名称" /></div></label>
                 <label><span data-i18n="说明">说明</span><input id="skill-description" maxlength="240" placeholder="它在什么创作任务中发挥作用" data-i18n-placeholder="它在什么创作任务中发挥作用" /></label>

@@ -83,7 +83,7 @@ test("folder restore derives its media budget before strict or rescue inspection
   assert.match(restore, /maxFileBytes: largestMediaBytes/);
   assert.match(restore, /maxImageBytes: largestMediaBytes/);
   assert.match(restore, /maxVideoBytes: largestMediaBytes/);
-  assert.match(restore, /inspectFolderBackupEnvelope\(files\)/);
+  assert.match(restore, /inspectFolderBackupEnvelope\(files,\s*\{\s*digest,\s*onProgress:/);
   assert.match(restore, /sourceType:\s*envelope\.mode === "complete"[\s\S]*LIBRARY_TRANSFER_SOURCES\.COMPLETE_BACKUP[\s\S]*LIBRARY_TRANSFER_SOURCES\.RESCUE_BACKUP/);
   assert.match(restore, /limits:\s*restoreLimits/);
   assert.match(restore, /validateImage:\s*validateImportedImage/);

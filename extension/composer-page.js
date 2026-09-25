@@ -2443,7 +2443,7 @@ async function openReferenceAssetPreview(entry, assetId) {
       const dialog = el("dialog", "composer-reference-preview-dialog");
       const close = textEl("button", "icon-button", "×");
       close.type = "button";
-      close.setAttribute("aria-label", "关闭视频预览");
+      close.setAttribute("aria-label", t("关闭视频预览"));
       const player = createSourceVideoPreview(entry, asset);
       dialog.append(close, player);
       close.addEventListener("click", () => dialog.close());
