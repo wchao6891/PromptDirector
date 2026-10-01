@@ -97,7 +97,13 @@ def main() -> None:
         library.locator(".project-row", has_text="项目与分类验收").focus()
         dialog = move_dialog(library, project_id, "辅助项目", "辅助项目")
         dialog.get_by_role("button", name="移动", exact=True).click()
-        library.locator('.project-row[data-collection-id="collection:e2e-extra"] .project-disclosure').click()
+        parent_row = library.locator('.project-row[data-collection-id="collection:e2e-extra"]')
+        # The move response adds the child asynchronously. Wait for that tree
+        # state before expanding it; a placeholder click can race the render.
+        expect(parent_row).to_have_attribute("aria-expanded", re.compile(r"^(true|false)$"))
+        if parent_row.get_attribute("aria-expanded") == "false":
+            parent_row.locator(".project-disclosure").click()
+        expect(parent_row).to_have_attribute("aria-expanded", "true")
         expect(library.locator(".project-row", has_text="项目与分类验收")).to_have_attribute("aria-level", "2")
         expect(library.locator(".project-row.project-draggable")).to_have_count(2)
         expect(library.locator(".project-row > .project-menu:visible")).to_have_count(2)
