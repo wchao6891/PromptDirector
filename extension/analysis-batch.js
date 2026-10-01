@@ -1,4 +1,6 @@
 import { ANALYSIS_PROMPT_VERSION, DEFAULT_ANALYSIS_MODEL } from "./deepseek.js";
+import { assertFacetUndoPreservesReferences } from "./facet-history.js";
+import { sameUndoState } from "./undo-state.js";
 import { applyTextAnalysisTags } from "./analysis-candidates.js";
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import {
@@ -739,8 +741,10 @@ export function createAnalysisBatchUndo(jobValue, state = {}) {
   const includeAllEntries = job.mode === "rebuild";
   return {
     jobId: job.id,
+    mode: job.mode,
     createdAt: new Date().toISOString(),
     facetCatalog: structuredClone(state.facetCatalog),
+    appliedEntries: [],
     entries: (state.entries ?? []).flatMap((entry) => includeAllEntries || included.has(entry.id) ? [{
       entryId: entry.id,
       value: pickEntryAnalysisState(entry)
@@ -748,10 +752,43 @@ export function createAnalysisBatchUndo(jobValue, state = {}) {
   };
 }
 
+export function sealAnalysisBatchUndo(undo, state, entryIds) {
+  if (!undo || !Array.isArray(undo.entries) || !Array.isArray(undo.appliedEntries)) {
+    throw new Error("旧批量分析撤回记录无法安全撤回");
+  }
+  const baselineIds = new Set(undo.entries.map((item) => item.entryId));
+  const sealed = new Map(undo.appliedEntries.map((item) => [item.entryId, item]));
+  for (const entryId of entryIds) {
+    if (!baselineIds.has(entryId)) throw new Error("批量分析撤回目标不属于本次任务");
+    const entry = (state.entries ?? []).find((item) => item.id === entryId);
+    if (!entry) throw new Error("批量分析撤回目标已不存在");
+    sealed.set(entryId, { entryId, value: pickEntryAnalysisState(entry) });
+  }
+  return { ...undo, appliedEntries: [...sealed.values()] };
+}
+
 export function restoreAnalysisBatchUndo(stateValue = {}, undo = {}) {
   const state = structuredClone(stateValue);
+  if (!Array.isArray(undo.appliedEntries) || !undo.appliedEntries.length) {
+    throw new Error("旧批量分析撤回记录无法安全撤回");
+  }
+  if (undo.mode === "rebuild") {
+    const baselineIds = (undo.entries ?? []).map((item) => item.entryId).sort();
+    const currentIds = (state.entries ?? []).map((item) => item.id).sort();
+    if (JSON.stringify(currentIds) !== JSON.stringify(baselineIds)) {
+      throw new Error("重建后案例清单发生变化，未撤回批量分析");
+    }
+  }
   const backupById = new Map((undo.entries ?? []).map((item) => [item.entryId, item.value]));
+  const appliedById = new Map(undo.appliedEntries.map((item) => [item.entryId, item.value]));
+  for (const [entryId, appliedValue] of appliedById) {
+    const current = state.entries?.find((item) => item.id === entryId);
+    if (!current || !backupById.has(entryId) || !sameUndoState(pickEntryAnalysisState(current), appliedValue)) {
+      throw new Error("案例分析结果后来修改，未撤回批量分析");
+    }
+  }
   state.entries = (state.entries ?? []).map((entry) => {
+    if (!appliedById.has(entry.id)) return entry;
     const value = backupById.get(entry.id);
     if (!value) return entry;
     const restored = { ...entry };
@@ -762,6 +799,7 @@ export function restoreAnalysisBatchUndo(stateValue = {}, undo = {}) {
     return restored;
   });
   state.facetCatalog = structuredClone(undo.facetCatalog);
+  assertFacetUndoPreservesReferences(stateValue, state);
   return state;
 }
 

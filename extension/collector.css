@@ -146,7 +146,7 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
 #page-capture-mode { width: auto; min-height: 32px; padding: 4px 7px; font-size: 11px; }
 #page-capture-scan { margin-left: auto; }
 .page-capture h2 { margin: 2px 0 0; font-size: 16px; }
-.page-capture small, .page-capture > p { color: var(--muted); font-size: 11px; }
+.page-capture small, .page-capture > p:not(.ui-task-feedback) { color: var(--muted); font-size: 11px; }
 .page-capture > p { margin: 0; line-height: 1.5; }
 .page-capture-bulk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .page-capture-bulk-actions button { width: auto; }

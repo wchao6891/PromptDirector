@@ -99,9 +99,12 @@ def main() -> None:
         assert home_wall_style == {"gap": "2px", "radius": "2px"}, home_wall_style
 
         initial_entry_id = library.locator("#case-list > .case-card").first.get_attribute("data-entry-id")
+        detail_started = time.perf_counter()
         library.locator("#case-list > .case-card").first.click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", initial_entry_id)
         expect(library.locator(".detail-primary")).to_be_visible()
+        expect(library.locator(".detail-discovery-grid .local-discovery-item")).to_have_count(24)
+        print({"detail_and_first_similar_batch_ms": round((time.perf_counter() - detail_started) * 1000, 2)})
         expect(library.locator("#detail-navigation")).to_be_in_viewport()
         detail_geometry = library.locator(".detail-primary").evaluate(
             """primary => {
@@ -179,7 +182,7 @@ def main() -> None:
         query = parse_qs(urlparse(library.url).query)
         assert query == {
             "references": [active_entry_id],
-            "asset": ["discovery-image-028"],
+            "asset": [next(entry["primaryMediaId"] for entry in entries if entry["id"] == active_entry_id)],
             "type": ["image"]
         }, query
         library.go_back(wait_until="domcontentloaded")

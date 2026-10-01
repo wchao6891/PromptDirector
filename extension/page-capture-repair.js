@@ -1,6 +1,26 @@
 import { remapArticleDocumentAssets } from "./article-document.js";
 import { markEntryTextChanged } from "./analysis-revision.js";
 
+export function samePageCaptureSource(entry, candidate) {
+  const postId = (value) => {
+    try {
+      const url = new URL(value);
+      return /(^|\.)(x|twitter)\.com$/u.test(url.hostname)
+        ? /^\/(?:[^/]+\/status|i\/web\/status)\/(\d+)(?:\/|$)/u.exec(url.pathname)?.[1] || "" : "";
+    } catch { return ""; }
+  };
+  const savedPostId = postId(entry.url);
+  const capturedPostId = postId(candidate.canonicalUrl);
+  // Older edited-post captures stored "history" as the work ID. A repaired
+  // case may also carry another post's facts; its own source URL is authoritative.
+  if (savedPostId || capturedPostId || entry.sourceFacts?.provider === "x" || candidate.sourceFacts?.provider === "x") {
+    return Boolean(savedPostId && savedPostId === capturedPostId);
+  }
+  return candidate.sourceFacts?.itemId && entry.sourceFacts?.itemId && entry.sourceFacts.provider === candidate.sourceFacts.provider
+    ? entry.sourceFacts.itemId === candidate.sourceFacts.itemId
+    : Boolean(entry.url && entry.url === candidate.canonicalUrl);
+}
+
 export function capturedMediaPrompts(candidate, assetIds, existing = []) {
   const prompts = existing.map(item => ({ ...item }));
   for (const media of candidate.media || []) {

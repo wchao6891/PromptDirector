@@ -167,6 +167,8 @@ async function loadParsed(item) {
 async function install(item, parsed, button) {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
+  button.classList.add("is-progressing");
+  button.dataset.progressMode = "unknown";
   button.textContent = t("正在校验…");
   try {
     const verified = parsed ?? await loadParsed(item);
@@ -191,6 +193,9 @@ async function install(item, parsed, button) {
     button.removeAttribute("aria-busy");
     button.textContent = installLabel(item);
     showToast(error.message || t("精选 Skill 保存失败"));
+  } finally {
+    button.classList.remove("is-progressing");
+    button.removeAttribute("aria-busy");
   }
 }
 

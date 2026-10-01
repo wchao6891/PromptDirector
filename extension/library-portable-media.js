@@ -18,7 +18,7 @@ export function projectPortableMedia(stateValue) {
   const maps = new Map();
   for (const entry of entries) {
     const mapping = new Map();
-    for (const asset of entry.mediaAssets ?? []) {
+    for (const asset of entry.mediaAssets ?? entry.visuals ?? []) {
       if (claimed.has(asset.id)) {
         const base = `portable:${encodeURIComponent(entry.id)}:${encodeURIComponent(asset.id)}`;
         let id = base;
@@ -31,7 +31,7 @@ export function projectPortableMedia(stateValue) {
     if (!mediaTrash.has(entry)) maps.set(entry.id, mapping);
     if (!mapping.size) continue;
     remapMediaReferences(entry, mapping);
-    for (const asset of entry.mediaAssets) asset.id = mapping.get(asset.id) ?? asset.id;
+    for (const asset of [...(entry.mediaAssets ?? []), ...(entry.visuals ?? [])]) asset.id = mapping.get(asset.id) ?? asset.id;
     const trashItem = mediaTrash.get(entry);
     if (trashItem) {
       remapMediaReferences(trashItem.relationships, mapping);
@@ -63,7 +63,8 @@ const MEDIA_LISTS = new Set(["assetIds", "mediaIds", "visualIds"]);
 export function remapEntryMediaIds(entryValue, mapping) {
   const entry = structuredClone(entryValue);
   remapMediaReferences(entry, mapping);
-  for (const asset of entry.mediaAssets ?? []) asset.id = mapping.get(asset.id) ?? asset.id;
+  for (const asset of [...(entry.mediaAssets ?? []), ...(entry.visuals ?? [])]) asset.id = mapping.get(asset.id) ?? asset.id;
+  for (const alias of entry.mediaIdAliases || []) alias.to = mapping.get(alias.to) ?? alias.to;
   return entry;
 }
 function remapMediaReferences(value, mapping) {

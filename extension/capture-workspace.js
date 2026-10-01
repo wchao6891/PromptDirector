@@ -97,6 +97,7 @@ export async function runCaptureTransaction({
 
 export function createCaptureWorkspace({
   chromeApi,
+  storage,
   captureDraftStorageKey,
   uiPreferencesStorageKey = "uiPreferences",
   ensureOffscreenDocument,
@@ -105,7 +106,7 @@ export function createCaptureWorkspace({
   createId = () => globalThis.crypto.randomUUID(),
   now = () => new Date().toISOString()
 }) {
-  if (!chromeApi?.storage?.local || !chromeApi?.tabs || !chromeApi?.scripting || !chromeApi?.runtime) {
+  if (!storage?.get || !storage?.set || !chromeApi?.tabs || !chromeApi?.scripting || !chromeApi?.runtime) {
     throw new Error("采集工作区缺少浏览器能力");
   }
   if (!captureDraftStorageKey) throw new Error("采集工作区缺少草稿存储键");
@@ -183,13 +184,13 @@ export function createCaptureWorkspace({
   }
 
   async function readDraft() {
-    const stored = await chromeApi.storage.local.get(captureDraftStorageKey);
+    const stored = await storage.get(captureDraftStorageKey);
     return createCaptureDraft(stored[captureDraftStorageKey]);
   }
 
   async function persistDraft(value) {
     const draft = createCaptureDraft(value);
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "采集草稿已更新", draft };
   }
 
@@ -238,7 +239,7 @@ export function createCaptureWorkspace({
       if (!candidate) {
         return { ok: true, added: false, reason: "empty-selection", message: "", draft: before };
       }
-      const saved = await chromeApi.storage.local.get(CAPTURE_SAVED_TEXT_KEY);
+      const saved = await storage.get(CAPTURE_SAVED_TEXT_KEY);
       if (saved[CAPTURE_SAVED_TEXT_KEY]?.includes(candidate.textFingerprint)) {
         return { ok: true, added: false, reason: "already-saved-selection", message: "", draft: before };
       }
@@ -272,7 +273,7 @@ export function createCaptureWorkspace({
         draft: result.draft
       };
     }
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: result.draft });
+    await storage.set({ [captureDraftStorageKey]: result.draft });
     const textCount = result.draft.fragments.length;
     const imageCount = result.draft.visuals.length;
     return {
@@ -339,7 +340,7 @@ export function createCaptureWorkspace({
           screenshot
         }));
       });
-      await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+      await storage.set({ [captureDraftStorageKey]: draft });
       return {
         ok: true,
         added: true,
@@ -497,7 +498,7 @@ export function createCaptureWorkspace({
         capturedAt: now(),
         screenshot
       }));
-      await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+      await storage.set({ [captureDraftStorageKey]: draft });
       return {
         ok: true,
         added: true,
@@ -661,13 +662,13 @@ export function createCaptureWorkspace({
 
   async function updateFragment(fragmentId, text) {
     const draft = updateDraftFragment(await readDraft(), fragmentId, text);
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "高亮文字已更新", draft };
   }
 
   async function removeFragment(fragmentId) {
     const draft = removeDraftFragment(await readDraft(), fragmentId);
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "高亮文字已移除", draft };
   }
 
@@ -677,7 +678,7 @@ export function createCaptureWorkspace({
     const saved = current.fragments.filter(fragment => ids.has(fragment.id));
     const candidates = await Promise.all(saved.map(fragment => createTextCandidate({ clipboard: fragment.text })));
     const draft = saved.reduce((value, fragment) => removeDraftFragment(value, fragment.id), current);
-    await chromeApi.storage.local.set({
+    await storage.set({
       [captureDraftStorageKey]: draft,
       ...(saved.length ? { [CAPTURE_SAVED_TEXT_KEY]: [...new Set(candidates.filter(Boolean).map(candidate => candidate.textFingerprint))] } : {})
     });
@@ -686,7 +687,7 @@ export function createCaptureWorkspace({
 
   async function reorderFragments(ids) {
     const draft = reorderDraftFragments(await readDraft(), ids);
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "文字顺序已更新", draft };
   }
 
@@ -696,11 +697,11 @@ export function createCaptureWorkspace({
       return { ok: false, message: "没有找到这张草稿截图", draft: current };
     }
     const draft = removeDraftVisual(current, visualId);
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     try {
       await deleteVisual(visualId);
     } catch (error) {
-      await chromeApi.storage.local.set({ [captureDraftStorageKey]: current });
+      await storage.set({ [captureDraftStorageKey]: current });
       throw error;
     }
     return { ok: true, message: "截图已从草稿移除", draft };
@@ -708,13 +709,13 @@ export function createCaptureWorkspace({
 
   async function reorderVisuals(ids) {
     const draft = reorderDraftVisuals(await readDraft(), ids);
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "截图顺序已更新", draft };
   }
 
   async function setPrimaryVisual(visualId) {
     const draft = setDraftPrimaryVisual(await readDraft(), visualId);
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "主图已更新", draft };
   }
 
@@ -723,7 +724,7 @@ export function createCaptureWorkspace({
     const results = await Promise.allSettled(current.visuals.map((visual) => deleteVisual(visual.id)));
     const failedVisuals = current.visuals.filter((_visual, index) => results[index].status === "rejected");
     const draft = createCaptureDraft({ visuals: failedVisuals });
-    await chromeApi.storage.local.set({ [captureDraftStorageKey]: draft });
+    await storage.set({ [captureDraftStorageKey]: draft });
     if (failedVisuals.length) {
       throw new Error(`草稿文字已清除，但有 ${failedVisuals.length} 张截图未能删除；已保留在草稿中，可再次丢弃`);
     }
@@ -731,7 +732,7 @@ export function createCaptureWorkspace({
   }
 
   async function currentLocale() {
-    const stored = await chromeApi.storage.local.get(uiPreferencesStorageKey);
+    const stored = await storage.get(uiPreferencesStorageKey);
     return resolveLocale(
       normalizeUiPreferences(stored[uiPreferencesStorageKey]),
       chromeApi.i18n?.getUILanguage?.()

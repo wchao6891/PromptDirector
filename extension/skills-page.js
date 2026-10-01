@@ -1,3 +1,6 @@
+import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
+import { getLibraryStorage } from "./library-storage.js";
+const libraryStorage = getLibraryStorage();
 import { createUiIcon } from "./ui-icons.js";
 import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { createSourceVideoPreview, bindSourceVideoCover } from "./source-video-preview.js";
@@ -1445,7 +1448,7 @@ async function getPrivateSettings(options = {}) {
       allowUnconfigured: options.allowUnconfiguredVision === true,
       assignment: runtimeOverrides.vision
     }),
-    chrome.storage.local.get("composerSettings")
+    libraryStorage.get("composerSettings")
   ]);
   if (!text?.ok || !image?.ok) throw new Error(text?.message || image?.message || t("无法读取 Skill 服务配置"));
   requireAiRuntimeProtocolVersion(text.aiRuntimeProtocolVersion);
@@ -1545,7 +1548,7 @@ function startSkillRun() {
   elements.skillStopRun.hidden = false;
   elements.skillStopRun.disabled = false;
   elements.skillRunLog.replaceChildren();
-  elements.skillRunProgress.style.width = "0%";
+  setTaskProgress(elements.skillRunProgress, { completed: 0, total: activeSkillRun.totalUnits, pending: true });
   renderSkillRunStages("prepare");
   activeSkillRun.elapsedTimer = setInterval(renderSkillRunElapsed, 1000);
   renderSkillRunElapsed();
@@ -1565,8 +1568,7 @@ function updateSkillRun(stage, message, current = 0, total = 1) {
 function completeSkillRunUnit() {
   if (!activeSkillRun) return;
   activeSkillRun.completedUnits = Math.min(activeSkillRun.totalUnits, activeSkillRun.completedUnits + 1);
-  const percent = Math.round(activeSkillRun.completedUnits / activeSkillRun.totalUnits * 100);
-  elements.skillRunProgress.style.width = `${percent}%`;
+  setTaskProgress(elements.skillRunProgress, { completed: activeSkillRun.completedUnits, total: activeSkillRun.totalUnits, pending: true });
 }
 
 function touchSkillRun(message = "") {
@@ -1592,8 +1594,9 @@ function finishSkillRun(message = "") {
     return;
   }
   activeSkillRun.completedUnits = activeSkillRun.totalUnits;
-  elements.skillRunProgress.style.width = "100%";
+  setTaskProgress(elements.skillRunProgress, { completed: activeSkillRun.totalUnits, total: activeSkillRun.totalUnits });
   setFeedback(elements.skillGenerationStatus, message);
+  setTaskFeedbackState(elements.skillGenerationStatus);
   renderSkillRunStages("complete", true);
   elements.skillStopRun.hidden = true;
   activeSkillRun = null;
@@ -1602,6 +1605,8 @@ function finishSkillRun(message = "") {
 function failSkillRun(message, error = true) {
   if (activeSkillRun) clearSkillRunTimers();
   setFeedback(elements.skillGenerationStatus, message, error);
+  setTaskFeedbackState(elements.skillGenerationStatus, { error });
+  setTaskProgress(elements.skillRunProgress, { completed: activeSkillRun?.completedUnits, total: activeSkillRun?.totalUnits, error, visible: Boolean(activeSkillRun) });
   elements.skillStopRun.hidden = true;
   appendSkillRunLog(message);
   activeSkillRun = null;
@@ -1679,7 +1684,7 @@ function releaseThumbnails() {
 
 function setFeedback(element, message, error = false) {
   element.textContent = translateUiMessage(message);
-  element.classList.toggle("error", error);
+  setTaskFeedbackState(element, { error, pending: Boolean(message) && element === elements.skillGenerationStatus && Boolean(activeSkillRun) });
 }
 
 function safely(action) {

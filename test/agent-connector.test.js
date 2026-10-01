@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentTasks } from '../extension/agent-tasks.js';
+import { createAgentTasks as createTasks } from '../extension/agent-tasks.js';
 import { createAgentTransfers } from '../extension/agent-transfers.js';
 import { createAgentLibrary } from '../extension/agent-library.js';
 import { saveAgentMaterial } from '../extension/agent-save.js';
@@ -16,6 +16,7 @@ function storage(initial = {}) {
     async set(value) { Object.assign(data, structuredClone(value)); }, async remove(key) { delete data[key]; } };
 }
 const turn = () => new Promise(resolve => setImmediate(resolve));
+const createAgentTasks = options => createTasks({ getLibraryId: async () => 'test-library', ...options });
 
 test('retrying a write request does not run it twice and cannot change its meaning', async () => {
   const store = storage(); let count = 0; let finish;
@@ -40,7 +41,7 @@ test('persisted requests tolerate reordered object keys but retain array and val
 });
 
 test('worker restart reports interruption instead of claiming an unsaved result', async () => {
-  const tasks = createAgentTasks({ storage: storage({ 'agentTask:x': { id: 'x', state: 'running' } }), execute() { throw new Error('must not execute'); } });
+  const tasks = createAgentTasks({ allowLegacyTasks: true, storage: storage({ 'agentTask:x': { id: 'x', state: 'running' } }), execute() { throw new Error('must not execute'); } });
   assert.equal((await tasks.inspect('x')).state, 'interrupted');
 });
 

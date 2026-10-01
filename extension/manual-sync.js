@@ -163,6 +163,7 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
     if (sameRevisionRecords(remotePreview.records, meta.records) && !remoteIdentity.changed) {
       if (meta.pendingCleanupAssetIds.length) {
         const current = await deps.readState();
+        current.entries?.forEach(assertCaseFilesReadable);
         const cleanup = await retryPendingCleanup({
           state: current,
           settings,
@@ -177,6 +178,7 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
   }
 
   const current = await deps.readState();
+  current.entries?.forEach(assertCaseFilesReadable);
   requireNotAborted(signal);
   let localPrepared = attachSyncImageReferences(current, previousRefs);
   let localSnapshot = await createRevisionSnapshot(localPrepared, {
@@ -544,3 +546,4 @@ function isAbortError(error) {
 function cleanError(error) {
   return String(error?.message ?? error ?? "同步失败").trim() || "同步失败";
 }
+import { assertCaseFilesReadable } from './case-file-status.js';

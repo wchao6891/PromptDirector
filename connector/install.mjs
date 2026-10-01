@@ -38,6 +38,12 @@ export async function install(plan, { register = registerWindowsHost } = {}) {
   // A stable private runtime survives moving the development checkout. Copy
   // dependencies without install scripts; the lockfile identifies their source.
   await mkdir(plan.runtime, { recursive: true, mode: 0o700 });
+  const sharedDirectory = join(plan.root, 'extension');
+  await mkdir(sharedDirectory, { recursive: true, mode: 0o700 });
+  await atomicWrite(join(sharedDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
+  for (const name of ['case-operation-specs.js', 'project-operation-specs.js']) {
+    await cp(resolve(source, '../extension', name), join(sharedDirectory, name));
+  }
   for (const entry of await readdir(source, { withFileTypes: true })) {
     if (entry.name.endsWith('.mjs') || ['node_modules', 'package.json', 'package-lock.json', 'SKILL.md'].includes(entry.name)) {
       await cp(join(source, entry.name), join(plan.runtime, entry.name), { recursive: true, dereference: true });

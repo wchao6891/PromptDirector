@@ -1,3 +1,4 @@
+import { sameUndoState } from "./undo-state.js";
 export const ORGANIZER_VERSION = 7;
 
 export const COLLECTION_VISIBILITY = Object.freeze({
@@ -116,6 +117,19 @@ export function reorderCollections(stateValue, collectionIds) {
   const byId = new Map(state.collections.map((item) => [item.id, item]));
   requested.forEach((id, order) => { byId.get(id).order = order; });
   return normalizeOrganizerState(state);
+}
+
+export function collectionStructureSnapshot(stateValue) {
+  return normalizeOrganizerState(stateValue).collections
+    .map(({ id, parentId, order }) => ({ id, parentId, order }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function assertCollectionStructureCurrent(stateValue, expectedStructure) {
+  if (!Array.isArray(expectedStructure)
+    || !sameUndoState(collectionStructureSnapshot(stateValue), expectedStructure)) {
+    throw new Error("项目位置后来又被修改，为保护新调整，本次没有撤销");
+  }
 }
 
 export function moveCollection(stateValue, collectionId, parentId = null, index = 0) {
@@ -287,8 +301,10 @@ export function mergeOrganizerStateWithMap(currentValue, importedValue, entryIdM
   for (const source of imported.collections) {
     const parentId = source.parentId ? collectionIdMap.get(source.parentId) ?? null : null;
     const existing = current.collections.find((item) => item.parentId === parentId && canonical(item.name) === canonical(source.name));
-    if (existing) {
+    const requirementsConflict = existing?.requirements && source.requirements && existing.requirements !== source.requirements;
+    if (existing && !requirementsConflict) {
       existing.entryIds = uniqueIds([...existing.entryIds, ...remap(source.entryIds)]);
+      if (!existing.requirements && source.requirements) existing.requirements = source.requirements;
       collectionIdMap.set(source.id, existing.id);
       continue;
     }
@@ -298,9 +314,16 @@ export function mergeOrganizerStateWithMap(currentValue, importedValue, entryIdM
         ? preferredId
         : `collection:${globalThis.crypto.randomUUID()}`
       : source.id;
+    let name = source.name;
+    if (requirementsConflict) {
+      let suffix = 1;
+      const names = new Set(current.collections.filter(item => item.parentId === parentId).map(item => canonical(item.name)));
+      do { name = `${source.name}（导入${suffix === 1 ? '' : ` ${suffix}`}）`; suffix++; } while (names.has(canonical(name)));
+    }
     current.collections.push({
       ...source,
       id,
+      name,
       parentId,
       order: current.collections.filter((item) => item.parentId === parentId).length,
       entryIds: remap(source.entryIds),
@@ -326,6 +349,7 @@ function normalizeCollection(value = {}) {
     order: Number(value.order),
     entryIds: uniqueIds(value.entryIds),
     visibility: normalizeVisibility(value.visibility),
+    ...(typeof value.requirements === "string" ? { requirements: value.requirements } : {}),
     ...(createdAt ? { createdAt } : {})
   };
 }

@@ -18,6 +18,10 @@ SCRIPTS = [
     "page_capture_batch_scale_e2e.py",
     "page_capture_batch_scroll_e2e.py",
     "agent_library_e2e.py",
+    "agent_search_e2e.py",
+    "case_operations_e2e.py",
+    "project_creation_e2e.py",
+    "reference_handoff_e2e.py",
     "e2e_worker_attachment_e2e.py",
     "frontend_compact_surfaces_e2e.py",
     "capture_and_cross_page_e2e.py",
@@ -44,6 +48,8 @@ SCRIPTS = [
     "midjourney_capture_e2e.py",
     "capture_session_video_e2e.py",
     "detail_tag_organization_e2e.py",
+    "undo_safety_feedback_e2e.py",
+    "task_feedback_ui_e2e.py",
     "prompt_panels_e2e.py",
     "detail_visual_stability_e2e.py",
     "detail_content_editing_e2e.py",
@@ -96,6 +102,7 @@ SCRIPTS = [
     "capture_classification_detail_e2e.py",
     "capture_partial_save_e2e.py",
     "x_capture_extraction_e2e.py",
+    "x_edited_post_identity_e2e.py",
     "x_comment_capture_e2e.py",
     "x_video_playback_e2e.py",
     "higgsfield_capture_e2e.py",
@@ -138,6 +145,7 @@ SCRIPTS = [
 ]
 
 CASE_MANAGEMENT_SCRIPTS = [
+    "undo_safety_feedback_e2e.py",
     "library_navigation_e2e.py",
     "library_browse_views_e2e.py",
     "library_folder_ownership_e2e.py",

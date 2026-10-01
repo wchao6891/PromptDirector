@@ -11,7 +11,7 @@ import {
   renderSharePreviewMasonryJs,
   renderSharePreviewRuntimeJs
 } from "../extension/share-preview.js";
-import { createDefaultFacetCatalog } from "../extension/facets.js";
+import { createDefaultFacetCatalog, createFacetNode } from "../extension/facets.js";
 import { CONTENT_IDS, createDefaultTaxonomy } from "../extension/taxonomy.js";
 
 const iconSprite = readFileSync(new URL("../extension/assets/ui-icons.svg", import.meta.url), "utf8");
@@ -168,8 +168,23 @@ test("share preview shows reconstruction prompts without a redundant visual-desc
   assert.doesNotMatch(html, /画面描述|Visual description/);
   assert.match(html, /青绿色雾气中的古代庭院，完整重建构图与光色/);
   assert.match(html, /data-copy-prompt="青绿色雾气中的古代庭院，完整重建构图与光色。"/);
-  assert.match(html, /相关案例/);
+  // Image recommendations now use palette first, including cases without tags or prompts.
   assert.match(html, /仅在本分享包内推荐/);
+  // Without palettes, recommendations must come from reconstruction through the export consumer.
+  const textOnlyEntries = structuredClone(entries);
+  for (const entry of textOnlyEntries) delete entry.mediaAssets[0].palette;
+  const textOnlyHtml = renderSharePreviewHtml(textOnlyEntries, { libraryTitle: "Archive" }, createDefaultTaxonomy(), createDefaultFacetCatalog(), previewOptions);
+  assert.match(textOnlyHtml, /仅在本分享包内推荐/);
+  for (const entry of textOnlyEntries) entry.mediaAssets[0].visionAnalysis.invalidated = true;
+  const invalidHtml = renderSharePreviewHtml(textOnlyEntries, { libraryTitle: "Archive" }, createDefaultTaxonomy(), createDefaultFacetCatalog(), previewOptions);
+  assert.doesNotMatch(invalidHtml, /仅在本分享包内推荐/);
+  const catalog = createFacetNode(createDefaultFacetCatalog(), {
+    id: "courtyard", facetId: "scene", parentId: "scene.place", name: "庭院"
+  });
+  for (const entry of entries) entry.facetAssignments = [{ nodeId: "courtyard", status: "confirmed" }];
+  const relatedHtml = renderSharePreviewHtml(entries, { libraryTitle: "Archive" }, createDefaultTaxonomy(), catalog, previewOptions);
+  assert.match(relatedHtml, /相关案例/);
+  assert.match(relatedHtml, /仅在本分享包内推荐/);
 });
 
 test("share preview adapts the current stable masonry implementation for offline classic scripts", () => {

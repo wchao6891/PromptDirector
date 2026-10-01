@@ -1,3 +1,5 @@
+import { facetAssignmentIdentity } from './facet-assignments.js';
+
 export const TAG_TAXONOMY_VERSION = 1;
 export const ANALYSIS_TAG_MIN = 1;
 export const ANALYSIS_TAG_MAX = 10;
@@ -444,24 +446,42 @@ export function createDetailOrganizationChunks(catalogValue, entries = [], maxBy
   return chunks;
 }
 
+export function detailOrganizationRequestChunk(chunk) {
+  return {
+    g: chunk.g.slice(1),
+    d: chunk.d.map(([, name, count], index) => [String(index + 1), name, count])
+  };
+}
+
 export function validateDetailOrganizationResponse(value, chunk) {
   if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.m)) {
     throw new Error("AI 整理结果格式无效，本次没有修改标签");
   }
   const known = new Set((chunk?.d ?? []).map((item) => item[0]));
-  const seen = new Set();
-  return value.m.map((item) => {
+  const seen = new Map();
+  const mappings = [];
+  for (const item of value.m) {
     const id = String(item?.id ?? "").trim();
-    const name = normalizeDetailLabel(item?.n);
-    if (!known.has(id) || !name || name.length > ANALYSIS_DETAIL_MAX_LENGTH || seen.has(id)) {
-      throw new Error("AI 整理结果包含无效标签，本次没有修改");
+    if (!known.has(id)) throw new Error("AI 返回了不属于本批的标签编号，本次没有修改标签");
+    if (typeof item?.n !== "string") throw new Error("AI 返回的标签名称格式无效，本次没有修改标签");
+    const name = normalizeDetailLabel(item.n);
+    if (!name) throw new Error("AI 返回了标签空名称，本次没有修改标签");
+    if (name.length > ANALYSIS_DETAIL_MAX_LENGTH) {
+      throw new Error(`AI 返回的标签名称超过 ${ANALYSIS_DETAIL_MAX_LENGTH} 个字符，本次没有修改标签`);
     }
     if (Object.keys(item ?? {}).some((key) => !["id", "n"].includes(key))) {
       throw new Error("AI 整理结果包含未允许字段，本次没有修改");
     }
-    seen.add(id);
-    return { id, n: name };
-  });
+    // Repeated identical mappings have the same effect; conflicting renames
+    // remain ambiguous and must not be chosen by response order.
+    if (seen.has(id)) {
+      if (seen.get(id) !== name) throw new Error(`AI 为同一标签返回了不同名称（「${seen.get(id)}」和「${name}」），本次没有修改标签`);
+      continue;
+    }
+    seen.set(id, name);
+    mappings.push({ id, n: name });
+  }
+  return mappings;
 }
 
 export function applyDetailOrganizationMappings(stateValue, mappingsValue = []) {
@@ -589,7 +609,7 @@ function ensureDetailNode(catalog, group, label, origin) {
 }
 
 function assignNode(entry, node, source) {
-  const existingIndex = entry.facetAssignments.findIndex((item) => item.nodeId === node.id);
+  const existingIndex = entry.facetAssignments.findIndex((item) => item.nodeId === node.id && !item.visualId);
   const assignment = { facetId: node.facetId, nodeId: node.id, status: "confirmed", source };
   if (existingIndex < 0) entry.facetAssignments.push(assignment);
   else if (sourcePriority(source) > sourcePriority(entry.facetAssignments[existingIndex].source)) entry.facetAssignments[existingIndex] = assignment;
@@ -598,8 +618,9 @@ function assignNode(entry, node, source) {
 function dedupeAssignments(values) {
   const byNode = new Map();
   for (const item of values) {
-    const prior = byNode.get(item.nodeId);
-    if (!prior || sourcePriority(item.source) > sourcePriority(prior.source)) byNode.set(item.nodeId, item);
+    const key = facetAssignmentIdentity(item);
+    const prior = byNode.get(key);
+    if (!prior || sourcePriority(item.source) > sourcePriority(prior.source)) byNode.set(key, item);
   }
   return [...byNode.values()];
 }

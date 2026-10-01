@@ -45,6 +45,21 @@ test('real native broker binds one library, authenticates and forwards response'
       const response = await client.callTool({ name: 'promptdirector_search_cases', arguments: { query: '素材' } });
       const content = JSON.parse(response.content[0].text);
       assert.equal(content.operation, 'search'); assert.equal(content.input.query, '素材');
+      for (const [name, args] of [
+        ['search_cases', { query: '动作', mediaKind: 'video', hasOriginalPrompt: true, alternatives: ['打斗'], sort: 'newest', minDurationMs: 1000, maxDurationMs: 5000, expectedRevision: 'search-version', countOnly: false, offset: 0, limit: 24 }],
+        ['read_workspace_content', { part: 'selection', expectedRevision: 'selected-version', offset: 0, length: 49152 }],
+        ['read_projects', { offset: 0, length: 31 }],
+        ['create_project', { requestId: 'project', name: '子项目', parentId: 'parent', requirements: '完整要求' }],
+        ['update_project', { requestId: 'brief', projectId: 'parent', expectedRevision: 'version', requirements: '新要求' }],
+        ['read_case_details', { caseId: 'case', part: 'source', length: 31 }],
+        ['edit_case', { requestId: 'edit', caseId: 'case', expectedRevision: 'version', patch: { sourceFacts: { engagement: null }, title: '新标题' } }],
+        ['organize_case', { requestId: 'split', caseId: 'case', expectedRevision: 'version', action: 'split_media', groups: [{ assetIds: ['media'], title: '独立案例', text: '', sourceUrl: 'https://example.com/post' }] }]
+      ]) {
+        const response = await client.callTool({ name: `promptdirector_${name}`, arguments: args });
+        assert(!response.isError, JSON.stringify(response));
+        const expectedInput = name === 'read_workspace_content' ? { source: 'selection', ...args } : args;
+        assert.deepEqual(JSON.parse(response.content[0].text), { operation: name === 'search_cases' ? 'search' : name, input: expectedInput });
+      }
     } finally { await client.close(); }
     await assert.rejects(startNativeHost({ root, origin: `chrome-extension://${'b'.repeat(32)}/`, input: new PassThrough(), output }), /identity/);
   } finally { await host.close(); input.destroy(); output.destroy(); await rm(root, { recursive: true, force: true }); }
@@ -56,7 +71,7 @@ test('SDK client performs real stdio MCP handshake and discovers bounded tools',
   try {
     await client.connect(transport);
     const list = await client.listTools();
-    assert.equal(list.tools.length, 7);
+    assert.equal(list.tools.length, 17);
     assert(list.tools.some(tool => tool.name === 'promptdirector_capture_url'));
     const bad = await client.callTool({ name: 'promptdirector_capture_url', arguments: { requestId: '../bad', url: 'no' } });
     assert.equal(bad.isError, true);
@@ -123,7 +138,15 @@ test('installer creates a reviewable private runtime and origin-bound registrati
 
     assert(!JSON.stringify(paired).includes('secret'));
     const client = new Client({ name: 'installed-runtime-test', version: '1' });
-    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.equal((await client.listTools()).tools.length, 7); }
+    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.equal((await client.listTools()).tools.length, 17); }
     finally { await client.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('CLI discovers the same MCP operations without a second command registry', {timeout:5000}, async () => {
+  const {callFromCli}=await import('../call.mjs');
+  const result=await callFromCli('list');
+  assert.equal(result.tools.length,17);
+  assert(result.tools.some(tool=>tool.name==='promptdirector_read_workspace_context'));
+  await assert.rejects(callFromCli('not_a_real_operation'), /not|unknown|不存在/i);
 });

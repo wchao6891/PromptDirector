@@ -17,6 +17,7 @@ import {
   finalizePartialAnalysisRebuild,
   resumeAnalysisBatch,
   restoreAnalysisBatchUndo,
+  sealAnalysisBatchUndo,
   retryFailedAnalysisItems,
   stageAnalysisRebuildResults,
   backfillLegacyAnalysisMeta,
@@ -339,11 +340,18 @@ test("rebuild undo snapshots every case including image-only labels and custom l
   changed.entries[0].customLabels = ["changed"];
   changed.entries[1].facetAssignments = [];
   changed.entries[1].customLabels = ["changed"];
-  const restored = restoreAnalysisBatchUndo(changed, undo);
+  const sealed = sealAnalysisBatchUndo(undo, changed, ["text", "image"]);
+  const restored = restoreAnalysisBatchUndo(changed, sealed);
 
   assert.deepEqual(restored.facetCatalog, original.facetCatalog);
   assert.deepEqual(restored.entries.map((item) => item.facetAssignments), original.entries.map((item) => item.facetAssignments));
   assert.deepEqual(restored.entries.map((item) => item.customLabels), original.entries.map((item) => item.customLabels));
+
+  const editedLater = structuredClone(changed);
+  editedLater.entries[0].customLabels.push("用户后来补的标签");
+  assert.throws(() => restoreAnalysisBatchUndo(editedLater, sealed), /后来修改/);
+  assert.throws(() => restoreAnalysisBatchUndo(changed, undo), /无法安全撤回/);
+  assert.throws(() => restoreAnalysisBatchUndo({ ...changed, entries: [...changed.entries, { id: "later" }] }, sealed), /案例清单发生变化/);
 });
 
 test("matching text and analysis profile do not queue a paid request", async () => {
@@ -851,4 +859,36 @@ test('applying a completed staged rebuild checks its source again, including unc
   const before=structuredClone(state);
   await assert.rejects(async()=>finalizeAnalysisRebuild(staged.job,staged.staging,state),/原文已变化/);
   assert.deepEqual(state,before);
+});
+
+test('batch catalog rollback refuses to orphan a tag held by a recoverable media snapshot', async () => {
+  const before = { facetCatalog: createFixedFacetCatalog(), entries: [{ id: 'target', text: '原文', facetAssignments: [] }] };
+  const job = await createAnalysisBatchJob(before.entries, { id: 'trash-guard', mode: 'missing' });
+  const undo = createAnalysisBatchUndo(job, before);
+  const after = structuredClone(before);
+  const node = { id: 'new-tag', facetId: after.facetCatalog.facets[0].id, name: '新增标签', status: 'active' };
+  after.facetCatalog.nodes.push(node);
+  after.entries[0].facetAssignments = [{ facetId: node.facetId, nodeId: node.id, source: 'deepseek_text' }];
+  const sealed = sealAnalysisBatchUndo(undo, after, ['target']);
+  const state = { ...after, trashState: { items: [{ kind: 'media', relationships: { facetAssignments: [{ nodeId: node.id, visualId: 'deleted-image' }] } }] } };
+  assert.throws(() => restoreAnalysisBatchUndo(state, sealed), /回收站/);
+  assert.deepEqual(state.entries, after.entries);
+});
+
+test("batch undo preserves later cases and their edits and refuses to orphan their new tags", async () => {
+  const original = { facetCatalog: createFixedFacetCatalog(), entries: [{ id: "target", text: "original", facetAssignments: [] }] };
+  const job = await createAnalysisBatchJob(original.entries, { id: "undo-later", mode: "missing" });
+  const undo = createAnalysisBatchUndo(job, original);
+  const changed = structuredClone(original);
+  const tag = { id: "batch-new-tag", facetId: changed.facetCatalog.facets[0].id, name: "新增", status: "active" };
+  changed.facetCatalog.nodes.push(tag);
+  changed.entries[0].facetAssignments = [{ nodeId: tag.id, source: "deepseek_text" }];
+  const sealed = sealAnalysisBatchUndo(undo, changed, ["target"]);
+  const later = { id: "later", title: "后来编辑", text: "后来原词", customLabels: ["人工"], mediaAssets: [{ id: "original-media" }], facetAssignments: [] };
+  const current = { ...changed, entries: [...changed.entries, later] };
+  const restored = restoreAnalysisBatchUndo(current, sealed);
+  assert.deepEqual(restored.entries.map(entry => entry.id), ["target", "later"]);
+  assert.deepEqual(restored.entries[1], later);
+  later.facetAssignments = [{ nodeId: tag.id, source: "manual" }];
+  assert.throws(() => restoreAnalysisBatchUndo(current, sealed), /仍在使用/);
 });

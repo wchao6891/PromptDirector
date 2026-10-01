@@ -25,7 +25,7 @@ test("sync cancellation and run status remain reachable while the write queue is
 
 test("business writes persist pending state instead of scheduling background transfer", async () => {
   const background = await source();
-  const commit = functionBody(background, "async function commitLocalChanges", "async function persistDomainState");
+  const commit = functionBody(background, "const commitLocalChanges = createLibraryCommitter", "const manualSyncController");
 
   assert.match(commit, /markSyncMetaDirty/);
   assert.match(commit, /SYNCED_STORAGE_KEYS/);

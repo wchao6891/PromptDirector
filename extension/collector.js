@@ -1,3 +1,6 @@
+import { setTaskFeedbackState } from "./task-feedback.js";
+import { getLibraryStorage } from "./library-storage.js";
+const libraryStorage = getLibraryStorage();
 import { addDiscoveredVideos } from "./video-discovery.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems, savedPageCaptureCandidateIds, persistedPageCaptureCandidates } from "./capture-additions.js";
@@ -120,8 +123,8 @@ const customLabelEditor = createTagEditor({
 });
 elements.customLabels.replaceChildren(customLabelEditor.element);
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !(changes.captureDraft || changes.activeCreativeResult || changes.composerSessions)) return;
+libraryStorage.subscribe((changes) => {
+  if (!(changes.captureDraft || changes.activeCreativeResult || changes.composerSessions)) return;
   refresh().catch(() => undefined);
 });
 
@@ -544,7 +547,7 @@ async function confirmClipboardPermissionEnable(event) {
 }
 
 async function extractClipboardContent() {
-  showFeedback("正在读取你明确授权的当前剪贴板内容");
+  showFeedback("正在读取你明确授权的当前剪贴板内容", false, true);
   let clipboardContent;
   try {
     clipboardContent = await readClipboardContentAfterFocus();
@@ -638,6 +641,7 @@ function render() {
   elements.collectorFooter.hidden = Boolean(smartVisualSession || pageCaptureBatch || regionCaptureState) || !view.showFooter;
   if (regionCaptureState) {
     elements.regionCaptureTitle.textContent = t(regionCaptureMessage(regionCaptureState.phase));
+    setTaskFeedbackState(elements.regionCaptureTitle, { pending: ["requesting-permission", "capturing"].includes(regionCaptureState.phase) });
     elements.regionCaptureHelp.textContent = regionCaptureState.phase === "selecting"
       ? t("请切回网页拖动选择画面；按 Esc 或在这里取消。")
       : t("请保持当前网页与侧边栏打开，完成后会自动回到待保存内容。");
@@ -777,6 +781,7 @@ function renderPageCapture() {
   elements.pageCaptureHelp.textContent = pageCaptureSupplementRequest ? t("正在读取评论全文…") : scanning ? t("正在扫描…")
     : pageCaptureBatch.status === "saving" ? t("正在保存…")
     : pageCaptureBatch.error || (!pageCaptureBatch.candidates.length ? t("未识别到内容，可重新扫描或返回选择其他采集方式") : "");
+  setTaskFeedbackState(elements.pageCaptureHelp, { pending: scanning || pageCaptureBatch.status === "saving" || Boolean(pageCaptureSupplementRequest), error: Boolean(pageCaptureBatch.error) });
   elements.pageCaptureHelp.hidden = !elements.pageCaptureHelp.textContent;
   const selectedMediaCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
   const saveBlocked = busy || !selectedCount || (listMode && !["multiple", "combined"].includes(pageCaptureBatch.saveMode));
@@ -1446,7 +1451,7 @@ async function captureFromActivePage(type, button, commitCreative = false) {
         type,
         commitCreative,
         chromeApi: chrome,
-        onStatus: showFeedback
+        onStatus: message => showFeedback(message, false, true)
       });
       if (type === "CAPTURE_ACTIVE_TAB_TO_DRAFT") regionCaptureState = null;
       smartVisualFallback = response.fallbackAction === "capture-region";
@@ -1489,7 +1494,7 @@ async function beginSmartVisualSelection(button, commitCreative = false) {
       const response = await runCaptureTransaction({
         type: "START_SMART_VISUAL_SELECTION",
         chromeApi: chrome,
-        onStatus: showFeedback
+        onStatus: message => showFeedback(message, false, true)
       });
       smartVisualFallback = response.fallbackAction === "capture-region";
       if (!response.captured?.session) {
@@ -1806,6 +1811,7 @@ async function commitDraft(duplicateAction = "", button) {
     button.setAttribute("aria-busy", "true");
   }
   render();
+  showFeedback(t("正在保存案例…"), false, true);
   try {
     const metadata = captureMetadataForCommit();
     const response = await sendWithGenerationPromptConfirmation({
@@ -1888,16 +1894,16 @@ async function withButton(button, task) {
   }
 }
 
-function showFeedback(message, error = false) {
+function showFeedback(message, error = false, pending = false) {
   if (feedbackTimer) window.clearTimeout(feedbackTimer);
   feedbackTimer = 0;
   const value = translateUiMessage(message || "");
   elements.feedback.textContent = value;
-  elements.feedback.classList.toggle("error", error);
-  if (value) {
+  setTaskFeedbackState(elements.feedback, { error, pending: Boolean(value) && pending });
+  if (value && !pending) {
     feedbackTimer = window.setTimeout(() => {
       elements.feedback.textContent = "";
-      elements.feedback.classList.remove("error");
+      setTaskFeedbackState(elements.feedback);
       feedbackTimer = 0;
     }, error ? ERROR_FEEDBACK_DURATION_MS : FEEDBACK_DURATION_MS);
   }

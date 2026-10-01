@@ -66,11 +66,9 @@
 .composer-message.prompt .composer-message-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.8; }
 .composer-message.status .composer-message-content { display: inline-grid; max-width: min(680px, 88%); }
 .composer-message.failure .composer-message-content { display: inline-grid; max-width: min(680px, 88%); border: 1px solid var(--line); border-radius: 7px; padding: 12px 14px; background: var(--subtle-card); }
-.composer-message.status .composer-message-text { color: var(--muted); }
+.composer-message.status .composer-message-text { color: var(--accent-ink); font-size: var(--ui-feedback-size); line-height: 1.5; }
 .composer-message.failure .composer-message-content { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
 .composer-message.failure .composer-message-text { color: var(--danger); }
-.composer-status-dots::after { content: ""; display: inline-block; width: 16px; animation: composer-dots 1.2s steps(4, end) infinite; }
-@keyframes composer-dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75%, 100% { content: "..."; } }
 .composer-message-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .composer-message-actions button { min-height: 31px; padding: 5px 10px; font-size: 11px; }
 .composer-result-list { display: grid; gap: 10px; margin-top: 14px; }
@@ -239,8 +237,8 @@
 .composer-model-menu > button[aria-checked="false"] > span:last-child, .composer-model-dynamic > button[aria-checked="false"] > span:last-child { visibility: hidden; }
 .composer-model-menu > p { margin: 7px 7px 3px; border-top: 1px solid var(--line); padding-top: 9px; }
 .composer-status-line { display: flex; width: min(920px, 100%); min-height: 20px; align-items: start; justify-content: space-between; gap: 14px; margin: 7px auto 0; }
-.composer-status-line p { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
-#composer-feedback { color: var(--accent-ink); font-weight: 750; }
+.composer-status-line p:not(.ui-task-feedback) { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+#composer-feedback { margin: 0; }
 #composer-feedback.error { color: var(--danger); }
 #composer-send-note { max-width: 70%; text-align: right; }
 
@@ -308,7 +306,7 @@
 .composer-reference-footer { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 18px; border-top: 1px solid var(--line); padding: 10px clamp(18px, 3vw, 38px); background: var(--card); }
 .composer-reference-footer > div:last-child { display: flex; gap: 8px; }
 .composer-reference-footer-status { display: grid; min-width: 0; gap: 5px; }
-.composer-workspace-feedback { min-height: 16px; margin: 0; color: var(--accent-ink); font-size: 10px; font-weight: 750; line-height: 1.4; }
+.composer-workspace-feedback { min-height: 16px; margin: 0; }
 .composer-workspace-feedback:empty { min-height: 0; }
 .composer-workspace-feedback.error { color: var(--danger); }
 .composer-selection-strip { display: flex; min-width: 0; overflow: hidden; gap: 6px; }
@@ -499,12 +497,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .composer-nav { transition: none; }
-  .composer-streaming-caret::after, .composer-status-dots::after { animation: none; }
-  .composer-status-dots::after { content: "…"; }
+  .composer-streaming-caret::after { animation: none; }
 }
 
 .composer-page-paused .composer-streaming-caret::after,
-.composer-page-paused .composer-status-dots::after { animation-play-state: paused; }
+.composer-page-paused .ui-task-feedback::before { animation-play-state: paused; }
 
 @media (prefers-reduced-motion: no-preference) {
   .composer-session-item,

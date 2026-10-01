@@ -37,6 +37,27 @@ test("structured fields become editable evidence-backed candidates without fixed
   assert.ok(candidates.every((item) => item.status === "suggested" && item.evidence));
 });
 
+test('reanalyzing one image and undoing it preserves the same tag on another image', () => {
+  const catalog = createDefaultFacetCatalog(), group = catalog.nodes.find(n => n.kind === 'group');
+  const before = { facetCatalog: catalog, entries: [{ id: 'case', text: '', facetAssignments: [], mediaAssets: ['a', 'b'].map(id => ({ id, kind: 'image' })) }] };
+  const result = { reconstructionPrompt: '有效逆推', tags: [{ g: group.id }] };
+  const first = applyVisionAnalysis(before, 'case', result, { visualId: 'a' });
+  const second = applyVisionAnalysis(first.state, 'case', result, { visualId: 'b' });
+  assert.deepEqual(second.state.entries[0].facetAssignments.map(a => a.visualId), ['a', 'b']);
+  const undone = undoVisionAnalysis(second.state, second.undo);
+  assert.deepEqual(undone.entries[0].facetAssignments.map(a => a.visualId), ['a']);
+});
+
+test('vision vocabulary cleanup preserves a tag still held by a deleted media snapshot', () => {
+  const catalog = createDefaultFacetCatalog(), group = catalog.nodes.find(n => n.kind === 'group');
+  const before = { facetCatalog: catalog, entries: [{ id: 'case', text: '', facetAssignments: [] }] };
+  const applied = applyVisionAnalysis(before, 'case', { reconstructionPrompt: '有效逆推', tags: [{ g: group.id, t: '回收站需保留' }] }, { visualId: 'a' });
+  const node = applied.undo.createdNodes[0];
+  const state = { ...applied.state, trashState: { items: [{ kind: 'media', relationships: { facetAssignments: [{ facetId: group.facetId, nodeId: node.id, visualId: 'deleted-image' }] } }] } };
+  const undone = undoVisionAnalysis(state, applied.undo);
+  assert(undone.facetCatalog.nodes.some(n => n.id === node.id));
+});
+
 test("accepting a legacy candidate maps into the fixed tree while rejection prevents repetition", () => {
   const incoming = [{ dimensionName: "视觉风格", groupName: "电影流派", tagName: "黑色电影", evidence: "noir lighting", confidence: 0.9 }];
   const entry = mergeAnalysisCandidates({ id: "one", facetAssignments: [] }, incoming);
@@ -490,6 +511,11 @@ test("vision analysis replaces only vision tags and can be undone once", () => {
   assert.equal(undone.entries[0].visionAnalysis.reconstructionPrompt, "旧反推提示词");
   assert.deepEqual(undone.entries[0].facetAssignments.map((item) => item.nodeId).sort(), beforeNodeIds.sort());
   assert.equal(undone.facetCatalog.nodes.some((item) => item.name === "逆光" && item.parentId === "light.direction"), false);
+
+  const laterEdit = structuredClone(applied.state);
+  laterEdit.entries[0].visionAnalysis.reconstructionPrompt = "人工后来修改的反推";
+  assert.throws(() => undoVisionAnalysis(laterEdit, applied.undo), /后来修改/);
+  assert.throws(() => undoVisionAnalysis(applied.state, { ...applied.undo, appliedVisionAnalysis: undefined }), /无法安全撤回/);
 });
 
 test("screenshot replacement invalidates vision references and undo restores them", () => {

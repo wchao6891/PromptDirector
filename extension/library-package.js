@@ -515,6 +515,7 @@ export function selectLibraryPackage(state = {}, entryIds = []) {
   const compounds = normalizeCompoundCases(state.compoundCases, state.entries);
   const selectedIds = new Set(expandLogicalCaseIds([...requestedIds], compounds));
   const entries = (state.entries ?? []).filter((entry) => selectedIds.has(entry.id));
+  entries.forEach(assertCaseFilesReadable);
   if (!entries.length) throw new Error("请先选择要分享的案例");
   const catalog = normalizeFacetCatalog(state.facetCatalog);
   const usedNodeIds = new Set(entries.flatMap((entry) =>
@@ -1658,3 +1659,4 @@ function clean(value) {
 function canonical(value) {
   return clean(value).toLocaleLowerCase("zh-CN").replace(/[\s._·—–-]+/g, "");
 }
+import { assertCaseFilesReadable } from './case-file-status.js';

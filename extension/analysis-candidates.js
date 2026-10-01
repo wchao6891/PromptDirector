@@ -1,3 +1,5 @@
+import { sameUndoState } from "./undo-state.js";
+import { facetAssignmentIdentity, libraryFacetAssignments } from './facet-assignments.js';
 import { cleanName, createDefaultFacetCatalog, normalizeFacetCatalog, uniqueNames } from "./facets.js";
 import { CLASSIFIER_VERSION } from "./classifier.js";
 import { applyFixedAnalysisTags, mapLegacyAnalysisCandidate, prepareFacetRebuild } from "./tag-taxonomy.js";
@@ -138,6 +140,9 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
       ...(visualId ? { visualId } : {}),
       previousVisionAnalysis,
       previousAssignments,
+      appliedVisionAnalysis: structuredClone(entry.visionAnalysis),
+      appliedAssignments: (entry.facetAssignments ?? []).filter(matchesVisual).map((item) => structuredClone(item)),
+      appliedCatalogRevision: next.facetCatalog.revision,
       createdFacets,
       createdNodes
     }
@@ -149,7 +154,19 @@ export function undoVisionAnalysis(state = {}, undo = {}) {
   next.facetCatalog = normalizeFacetCatalog(next.facetCatalog);
   const entry = next.entries?.find((item) => item.id === undo.entryId);
   if (!entry || !Array.isArray(undo.previousAssignments)) throw new Error("这条案例没有可撤回的图片分析");
+  if (!undo.appliedVisionAnalysis || !Array.isArray(undo.appliedAssignments)
+    || !Number.isInteger(undo.appliedCatalogRevision)) {
+    throw new Error("旧图片分析撤回记录无法安全撤回");
+  }
   const visualId = String(undo.visualId ?? "").trim();
+  const currentAssignments = (entry.facetAssignments ?? []).filter((item) =>
+    item.source === "vision_model" && (!visualId || item.visualId === visualId)
+  );
+  if (!sameUndoState(entry.visionAnalysis, undo.appliedVisionAnalysis)
+    || !sameUndoState(currentAssignments, undo.appliedAssignments)
+    || next.facetCatalog.revision !== undo.appliedCatalogRevision) {
+    throw new Error("图片分析或标签在上次分析后又被后来修改，本次没有撤回");
+  }
   entry.facetAssignments = dedupeAssignments([
     ...(entry.facetAssignments ?? []).filter((item) => item.source !== "vision_model" || (visualId && item.visualId !== visualId)),
     ...undo.previousAssignments
@@ -438,9 +455,7 @@ function materializeCandidate(state, entryId, proposal, assignment = {}) {
 
 function cleanupCreatedVisionVocabulary(state, undo) {
   const createdNodes = new Map((undo.createdNodes ?? []).map((item) => [item.id, item]));
-  const usedNodeIds = new Set((state.entries ?? []).flatMap((entry) =>
-    (entry.facetAssignments ?? []).map((item) => item.nodeId)
-  ));
+  const usedNodeIds = new Set(libraryFacetAssignments(state).map(item => item.nodeId));
   const nodeDepth = (node) => node.parentId ? 1 : 0;
   for (const snapshot of [...createdNodes.values()].toSorted((left, right) => nodeDepth(right) - nodeDepth(left))) {
     const current = state.facetCatalog.nodes.find((item) => item.id === snapshot.id);
@@ -466,7 +481,7 @@ function sameVocabularyItem(left, right) {
     fixed: value.fixed === true,
     protected: value.protected === true
   });
-  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
+  return sameUndoState(comparable(left), comparable(right));
 }
 
 function compareAnalysisCandidate(left, right) {
@@ -549,8 +564,9 @@ function candidateKey(item) {
 function dedupeAssignments(values) {
   const byNode = new Map();
   for (const item of values) {
-    const current = byNode.get(item.nodeId);
-    if (!current || sourcePriority(item.source) > sourcePriority(current.source)) byNode.set(item.nodeId, item);
+    const key = facetAssignmentIdentity(item);
+    const current = byNode.get(key);
+    if (!current || sourcePriority(item.source) > sourcePriority(current.source)) byNode.set(key, item);
   }
   return [...byNode.values()];
 }

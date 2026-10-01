@@ -19,7 +19,8 @@ test("copy stays local while an explicit image action activates result capture",
   assert.match(collector, /resultScreenshot[\s\S]*captureFromActivePage\([\s\S]*true/);
   assert.match(collector, /activeCreativePrompt/);
   assert.match(collector, /changes\.activeCreativeResult/);
-  assert.ok(collector.indexOf("chrome.storage.onChanged.addListener") < collector.indexOf("await refresh()"));
+  assert.ok(collector.indexOf("libraryStorage.subscribe") >= 0);
+  assert.ok(collector.indexOf("libraryStorage.subscribe") < collector.indexOf("await refresh()"));
   assert.doesNotMatch(collector, /rating|评分|满意度/);
 });
 
@@ -47,7 +48,7 @@ test("Composer reconciles creative storage changes that arrive during its first 
   const composer = await readFile(new URL("composer-page.js", root), "utf8");
   const startup = composer.slice(composer.indexOf("bindEvents();"), composer.indexOf("function bindEvents()"));
   const storageListener = composer.slice(
-    composer.indexOf("chrome.storage.onChanged.addListener"),
+    composer.indexOf("getLibraryStorage().subscribe"),
     composer.indexOf("async function refreshCreativeResultState")
   );
 

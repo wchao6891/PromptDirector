@@ -15,6 +15,29 @@ import {
   takeTrashItems
 } from "../extension/trash.js";
 
+test('restoring one media keeps the same label independently attached to other media and the case', () => {
+  const assignments = ['', 'a', 'b'].map(visualId => ({ facetId: 'subject', nodeId: 'same-tag', source: visualId ? 'vision_model' : 'manual', ...(visualId ? { visualId } : {}) }));
+  const state = { entries: [{ id: 'one', text: '人工正文', mediaAssets: ['a', 'b'].map(id => ({ id, kind: 'image', storageMode: 'managed' })), facetAssignments: assignments }], trashState: { items: [] } };
+  const moved = moveMediaToTrash(state, 'one', ['b']);
+  const restored = restoreTrashItems(moved, moved.movedItemIds);
+  assert.deepEqual(restored.entries[0].facetAssignments, assignments);
+});
+
+test('media restore tolerates storage key order while still rejecting real later document edits', () => {
+  const state = { entries: [{ id: 'one', text: '正文', mediaAssets: [{ id: 'image', kind: 'image', storageMode: 'managed' }],
+    articleDocument: { version: 1, blocks: [{ id: 'body', kind: 'paragraph', text: '正文', sourceOrder: 0 }, { id: 'media', kind: 'image', assetId: 'image', label: '人工图注', sourceOrder: 1 }] } }], trashState: { items: [] } };
+  const moved = moveMediaToTrash(state, 'one', ['image']);
+  const persisted = JSON.parse(JSON.stringify(moved, (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(k => [k, value[k]])) : value));
+  const restored = restoreTrashItems(persisted, persisted.movedItemIds);
+  assert.equal(restored.restoredItemIds.length, 1);
+  assert.equal(restored.entries[0].articleDocument.blocks[1].label, '人工图注');
+  persisted.entries[0].articleDocument.blocks[0].text = '用户后续编辑';
+  const conflict = restoreTrashItems(persisted, persisted.movedItemIds);
+  assert.equal(conflict.restoredItemIds.length, 0);
+  assert.equal(conflict.entries[0].articleDocument.blocks[0].text, '用户后续编辑');
+});
+
 test("trash state normalizes serializable items and valid deletion times", () => {
   assert.deepEqual(createDefaultTrashState(), { version: TRASH_VERSION, items: [] });
   const normalized = normalizeTrashState({
@@ -109,6 +132,25 @@ test("restoring a case recreates its project positions and does not duplicate la
   assert.deepEqual(restored.trashState.items, []);
   assert.deepEqual(restored.restoredItemIds, ["trash:entry:one"]);
   assert.deepEqual(restored.unresolved, []);
+});
+
+test("undoing an imported case through trash preserves later edits, original media, and newer cases", () => {
+  const editedImport = {
+    id: "case:imported", importBatchId: "job:one", title: "后来改过的标题", text: "后来补写的原词",
+    mediaAssets: [{ id: "original:one", kind: "image", storageMode: "managed" }]
+  };
+  const newerCase = { id: "case:newer", title: "导入后新建" };
+  const source = {
+    entries: [editedImport, newerCase],
+    trashState: createDefaultTrashState(),
+    organizerState: { collections: [{ id: "project:one", name: "项目", entryIds: [editedImport.id, newerCase.id] }] }
+  };
+  const moved = moveEntriesToTrash(source, [editedImport.id]);
+  assert.deepEqual(moved.entries, [newerCase]);
+  assert.deepEqual(moved.trashState.items[0].snapshot, editedImport);
+  const restored = restoreTrashItems(moved, moved.movedItemIds);
+  assert.deepEqual(restored.entries.find((entry) => entry.id === editedImport.id), editedImport);
+  assert.deepEqual(restored.organizerState.collections[0].entryIds, [editedImport.id, newerCase.id]);
 });
 
 test("project restoration waits for missing members but can restore a project and its trashed case together", () => {

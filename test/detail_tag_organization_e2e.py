@@ -17,7 +17,7 @@ def main():
           window.calls=[];window.failOnce=true;const original=window.fetch;
           window.fetch=async(url,options)=>{
             if(!String(url).includes('api.deepseek.com'))return original(url,options);
-            const body=JSON.parse(options.body);const chunk=JSON.parse(body.messages.at(-1).content);window.calls.push(chunk.d.map(r=>r[0]));
+            const body=JSON.parse(options.body);const chunk=JSON.parse(body.messages.at(-1).content);window.calls.push(JSON.stringify(chunk));
             if(window.calls.length===2&&window.failOnce){window.failOnce=false;return new Response(JSON.stringify({error:{message:'fixture length limit'}}),{status:400});}
             return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({m:[]})}}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}}),{status:200,headers:{'Content-Type':'application/json'}});
           };
@@ -31,7 +31,8 @@ def main():
         assert page.evaluate('window.calls.length')==2
         button.click();expect(dialog).to_contain_text(f'{count-1} 次付费请求')
         dialog.get_by_role('button',name='确认并开始',exact=True).click()
-        expect(page.locator('#organize-detail-status')).to_contain_text('tokens')
+        expect(page.locator('#organize-detail-status')).to_contain_text('当前没有需要整理')
+        assert page.evaluate("async () => !(await chrome.runtime.sendMessage({type:'GET_STATE'})).canUndoFacetUpdate")
         calls=page.evaluate('window.calls')
         assert len(calls)==count+1 and calls[0] not in calls[1:] and calls[1]==calls[2],calls
         print({'chunks':count,'failedChunkRetried':True,'successfulChunkNotRecharged':True,'noRealModelCalls':True})

@@ -46,6 +46,9 @@
   --ui-meta-size: 11px;
   --ui-motion-fast: 120ms;
   --ui-motion-normal: 160ms;
+  --ui-feedback-size: 12px;
+  --ui-progress-height: 4px;
+  --ui-progress-motion: 900ms;
   --ui-popover-gap: 5px;
   --ui-popover-viewport-inset: 12px;
   --ui-browse-max-width: 1500px;
@@ -561,11 +564,33 @@ textarea:focus-visible {
 .app-dialog-field small { color: var(--ui-muted); font-weight: 400; line-height: 1.5; }
 .app-dialog-check { display: flex; align-items: flex-start; gap: 9px; color: var(--ui-text); }
 .app-dialog-check input { width: 16px; min-height: 16px; margin-top: 2px; }
-.app-dialog-status { margin: 0; color: var(--ui-text); font-size: var(--ui-meta-size); }
+.app-dialog-status { margin: 0; }
 .app-dialog-status.error { color: var(--ui-danger); }
 .app-dialog-form > footer { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--ui-border); padding: 12px 16px; background: var(--ui-page); }
 .button-danger { border-color: color-mix(in srgb, var(--ui-danger) 52%, transparent); color: #fff; background: var(--ui-danger); }
 .button-danger:hover:not(:disabled) { border-color: var(--ui-danger); color: #fff; background: color-mix(in srgb, var(--ui-danger) 88%, #000); }
+
+/* One task language for inline feedback, streamed waiting and existing bars. */
+.ui-task-feedback { color: var(--accent-ink); font-size: var(--ui-feedback-size); font-weight: 400; line-height: 1.5; overflow-wrap: anywhere; }
+.ui-task-feedback.error { color: var(--ui-danger); }
+.ui-task-feedback:empty { display: none; }
+.ui-task-feedback[aria-busy="true"]:not(:empty)::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: var(--ui-space-1); border-radius: 50%; background: currentColor; vertical-align: 1px; animation: ui-task-pulse var(--ui-progress-motion) ease-in-out infinite alternate; }
+.ui-task-status { display: grid; gap: var(--ui-space-1); margin-bottom: var(--ui-space-1); }
+.ui-task-status:has(.ui-task-feedback:empty):not(:has(progress:not([hidden]))) { display: none; }
+.ui-task-status > .ui-task-feedback { margin: 0; }
+.ui-task-progress { display: block; width: 100%; height: var(--ui-progress-height); overflow: hidden; border: 0; border-radius: var(--ui-control-radius); padding: 0; appearance: none; background: var(--ui-raised); accent-color: var(--ui-accent-emphasis); }
+.ui-task-progress::-webkit-progress-bar { border-radius: inherit; background: var(--ui-raised); }
+.ui-task-progress::-webkit-progress-value { border-radius: inherit; background: var(--ui-accent-emphasis); transition: width var(--ui-motion-normal) ease; }
+.ui-task-progress::-moz-progress-bar { border-radius: inherit; background: var(--ui-accent-emphasis); }
+.ui-task-progress.error::-webkit-progress-value { background: var(--ui-danger); }
+.ui-task-progress.error::-moz-progress-bar { background: var(--ui-danger); }
+.ui-task-progress[aria-busy="true"]:indeterminate { background-image: linear-gradient(var(--ui-accent-emphasis), var(--ui-accent-emphasis)); background-size: 38% 100%; background-repeat: no-repeat; animation: ui-task-wait var(--ui-progress-motion) ease-in-out infinite alternate; }
+.ui-task-progress:indeterminate::-webkit-progress-bar { background: transparent; }
+.is-progressing { position: relative; overflow: hidden; }
+.is-progressing::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: var(--ui-progress-height); background: linear-gradient(90deg, var(--ui-accent-emphasis) calc(var(--progress) * 100%), var(--ui-raised) 0); }
+.is-progressing[data-progress-mode="unknown"]::after { background-image: linear-gradient(var(--ui-accent-emphasis), var(--ui-accent-emphasis)); background-size: 38% 100%; background-repeat: no-repeat; background-color: var(--ui-raised); animation: ui-task-wait var(--ui-progress-motion) ease-in-out infinite alternate; }
+@keyframes ui-task-pulse { from { opacity: .42; } to { opacity: .82; } }
+@keyframes ui-task-wait { from { background-position: 0 0; } to { background-position: 100% 0; } }
 
 @media (prefers-reduced-motion: no-preference) {
   button, input, select, textarea, summary {

@@ -1263,6 +1263,15 @@ export async function collectPageCaptureSnapshot(options = {}) {
     } catch { return ""; }
   }
 
+  function xPostCanonicalUrl(value) {
+    if (!xPostIdentity(value)) return "";
+    const url = new URL(value);
+    url.pathname = url.pathname.match(/^\/(?:[^/]+\/status|i\/web\/status)\/\d+/u)[0];
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  }
+
   function xPostTextNodes(root) {
     const classic = [...root.querySelectorAll('[data-testid="tweetText"]')];
     // The public X post layout uses a directional, pre-wrapped text container.
@@ -2153,7 +2162,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       title: firstText(fields.title),
       author: firstText(fields.author),
       handle: handleFromLink(fields.handle) || (adapter.id === "x" ? new URL(ownPostLinks(root)[0]?.href || location.href).pathname.split('/')[1] : ""),
-      canonicalUrl: adapter.id === "x" ? safeHttpUrl(ownPostLinks(root)[0]?.href) : firstUrl(fields.canonicalUrl),
+      canonicalUrl: adapter.id === "x" ? xPostCanonicalUrl(ownPostLinks(root)[0]?.href) : firstUrl(fields.canonicalUrl),
       model: firstText(fields.model),
       publishedAt: adapter.id === "x" ? cleanText(ownPostLinks(root)[0]?.querySelector("time")?.dateTime) : firstText(fields.publishedAt),
       engagement
@@ -2457,7 +2466,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const link = quote
       ? [...quote.querySelectorAll('a[href*="/status/"]')].find(node => node.querySelector("time"))
       : ownPostLinks(post)[0];
-    return safeHttpUrl(link?.href);
+    return xPostCanonicalUrl(link?.href);
   }
 
   function xPostPhotoUrl(element) {
@@ -2500,6 +2509,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function itemIdFromUrl(value) {
+    const postId = xPostIdentity(value);
+    if (postId) return postId;
     try {
       const parts = new URL(value).pathname.split("/").filter(Boolean);
       return cleanText(parts.at(-1));

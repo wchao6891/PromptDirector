@@ -1,3 +1,8 @@
+import { assertCaseFilesReadable } from './case-file-status.js';
+import { getLibraryStorage, createLibraryCommitter } from "./library-storage.js";
+import { createProjectOperations } from "./project-operations.js";
+import { createBrowserLibraryIdentity } from "./library-identity.js";
+import { validateProjectOperation } from "./project-operation-specs.js";
 import { collectVideoPagePayload, normalizeVideoPagePayload } from "./video-page-capture.js";
 import { installVideoDiscovery, addDiscoveredVideos } from "./video-discovery.js";
 import { pickPageContent } from "./page-content-picker.js";
@@ -9,6 +14,9 @@ import { splitArticleCases } from "./article-case-groups.js";
 import { createAgentConnection } from "./agent-connection.js";
 import { createAgentTasks } from "./agent-tasks.js";
 import { createAgentLibrary } from "./agent-library.js";
+import { createAgentWorkspace } from "./agent-workspace.js";
+import { createReferenceSelection } from "./reference-selection.js";
+import { createCaseOperations } from "./case-operations.js";
 import { createAgentTransfers } from "./agent-transfers.js";
 import { saveAgentMaterial } from "./agent-save.js";
 import { captureAgentUrl } from "./agent-capture.js";
@@ -102,6 +110,7 @@ import {
   reconcileVisionBatchResults,
   recoverInterruptedAnalysisBatch,
   restoreAnalysisBatchUndo,
+  sealAnalysisBatchUndo,
   resumeAnalysisBatch,
   retryFailedAnalysisItems,
   stageAnalysisRebuildResults,
@@ -226,7 +235,7 @@ import {
 import {
   commitMetadataThenDeleteImages
 } from "./image-transaction.js";
-import { createEntrySaveUndo, normalizeLastSaveUndo, restoreScreenshotSaveEntry } from "./save-history.js";
+import { assertCreatedEntryUndoSafe, createEntrySaveUndo, normalizeLastSaveUndo, restoreScreenshotSaveEntry } from "./save-history.js";
 import {
   selectLibraryPackage,
   selectProjectPackage
@@ -258,6 +267,7 @@ import {
   collectionPathLabel,
   collectionSelectorLabelsById,
   moveCollection,
+  assertCollectionStructureCurrent,
   moveEntriesBetweenCollections,
   normalizeOrganizerState,
   removeEntriesFromOrganizer,
@@ -340,7 +350,7 @@ import { downloadPageCaptureVideo } from "./page-capture-video.js";
 import { resolveXVideoSources } from "./x-video-capture.js";
 import { readPageCaptureSupplement } from "./capture-supplement.js";
 import { PAGE_CAPTURE_VIDEO_FRAME_RULES, resolvePageCaptureVideoFrames } from "./page-capture-frames.js";
-import { pageCaptureMediaReceipt, planPageCaptureRepair, mergePageCaptureRepair, capturedMediaPrompts } from "./page-capture-repair.js";
+import { pageCaptureMediaReceipt, planPageCaptureRepair, mergePageCaptureRepair, capturedMediaPrompts, samePageCaptureSource } from "./page-capture-repair.js";
 import { collectPageCaptureDownloads } from "./page-capture-downloads.js";
 import {
   discardPageSessionMedia,
@@ -492,6 +502,7 @@ const SYNCED_STORAGE_KEYS = new Set([
   STORAGE_KEYS.creativeRuns,
   STORAGE_KEYS.creativeSkills
 ]);
+const libraryStorage = getLibraryStorage();
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 let writeQueue = Promise.resolve();
 let captureWriteQueue = Promise.resolve();
@@ -511,10 +522,12 @@ const extensionUpdateLifecycle = createExtensionUpdateLifecycle({
 });
 let activePageCapture = null;
 let syncApplyInProgress = false;
+const commitLocalChanges = createLibraryCommitter({ storage: libraryStorage, syncedKeys: SYNCED_STORAGE_KEYS,
+  syncMetaKey: STORAGE_KEYS.syncMeta, markDirty: markSyncMetaDirty, isSyncApplying: () => syncApplyInProgress });
 const manualSyncController = createManualSyncController({
   readState,
   readMeta: async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
+    const stored = await libraryStorage.get(STORAGE_KEYS.syncMeta);
     return stored[STORAGE_KEYS.syncMeta];
   },
   readMedia: getMediaBlob,
@@ -542,6 +555,7 @@ const ANALYSIS_TASK_STORAGE_LOCK = "promptdirector-analysis-task-storage";
 const MAINTENANCE_SLICE_TARGET_MS = 250;
 const captureRuntime = createCaptureWorkspace({
   chromeApi: chrome,
+  storage: libraryStorage,
   captureDraftStorageKey: STORAGE_KEYS.captureDraft,
   uiPreferencesStorageKey: STORAGE_KEYS.uiPreferences,
   ensureOffscreenDocument,
@@ -555,8 +569,16 @@ const agentLibrary = createAgentLibrary({
   readDerived: getDerivedMedia, readDerivedMetadata: getAllDerivedMetadata,
   libraryUrl: chrome.runtime.getURL("library.html")
 });
+const projectOperations = createProjectOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const caseOperations = createCaseOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const libraryIdentity = createBrowserLibraryIdentity({ storage: libraryStorage,
+  getLegacyId: async () => (await agentConnection.prepare()).instanceId });
+const referenceSelection = createReferenceSelection({ storage: libraryStorage, loadState: readState,
+  readDerived: getDerivedMedia, getLibraryId: async () => (await libraryIdentity.read()).libraryId, enqueue });
+const agentWorkspace = createAgentWorkspace({ chromeApi: chrome, readCase: input => caseOperations.read(input),
+  readSelection: input => referenceSelection.read(input) });
 const agentTransfers = createAgentTransfers({
-  storage: chrome.storage.local, readBlob: getMediaBlob, writeBlob: savePortableAssetBlob, deleteBlob: deleteMediaBlob,
+  storage: libraryStorage, readBlob: getMediaBlob, writeBlob: savePortableAssetBlob, deleteBlob: deleteMediaBlob,
   prepare: async record => {
     await ensureOffscreenDocument();
     const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "PREPARE_AGENT_FILE", record });
@@ -564,21 +586,40 @@ const agentTransfers = createAgentTransfers({
     return response.prepared;
   }
 });
-const agentTasks = createAgentTasks({ storage: chrome.storage.local,
-  execute: (operation, input, requestId) => {
-    if (operation === "capture") return enqueueCapture(() => captureAgentUrl(input, requestId, {
-      chromeApi: chrome, loadState: readState, collect: collectPageCaptureTab,
-      commit: (batch, metadata) => enqueue(() => commitPageCapture(batch, metadata))
-    }));
-    if (operation === "save_material") return enqueue(() => agentTransfers.lock(() => saveAgentMaterial(input, requestId, {
-      loadState: readState, transfers: agentTransfers, buildEntry,
-      getInstanceId: async () => (await agentConnection.snapshot()).instanceId,
-      classify: (entry, state) => classifyContent(entry, state.classificationRules, state.taxonomy),
-      place: organizerAfterCapturePlacement, commit: commitLocalChanges, notify: notifySaved, schemaVersion: SCHEMA_VERSION
-    })));
+const agentTasks = createAgentTasks({ storage: libraryStorage,
+  getLibraryId: async () => (await libraryIdentity.read()).libraryId,
+  // This browser library may adopt its receipts predating library IDs.
+  allowLegacyTasks: true,
+  execute: async (operation, input, requestId, scope) => {
+    await scope.assertCurrent();
+    if (operation === "capture") return enqueueCapture(async () => {
+      await scope.assertCurrent();
+      return captureAgentUrl(input, requestId, {
+        chromeApi: chrome, loadState: readState, collect: collectPageCaptureTab,
+        commit: (batch, metadata) => enqueue(async () => {
+          await scope.assertCurrent();
+          return commitPageCapture(batch, metadata);
+        })
+      });
+    });
+    if (operation === "save_material") return saveMaterial(input, requestId, scope);
     throw agentError("unknown_operation", "未知写入操作。");
   }
 });
+function saveMaterial(input, requestId, scope) {
+  return enqueue(() => agentTransfers.lock(async () => {
+    await scope?.assertCurrent();
+    return saveAgentMaterial(input, requestId, {
+      loadState: readState, storage: libraryStorage, transfers: agentTransfers, buildEntry,
+      getInstanceId: async () => (await agentConnection.snapshot()).instanceId,
+      classify: (entry, state) => classifyContent(entry, state.classificationRules, state.taxonomy),
+      place: organizerAfterCapturePlacement, commit: async (update, options) => {
+        await scope?.assertCurrent();
+        return commitLocalChanges(update, options);
+      }, notify: notifySaved, schemaVersion: SCHEMA_VERSION
+    });
+  }));
+}
 const agentConnection = createAgentConnection({ chromeApi: chrome, execute: dispatchAgentOperation });
 void agentConnection.start();
 
@@ -586,7 +627,17 @@ async function dispatchAgentOperation(operation, input) {
   switch (operation) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
       extensionVersion: chrome.runtime.getManifest().version,
-      capabilities: ["search", "read_case", "read_media", "capture", "save_material", "get_task"] };
+      capabilities: ["read_projects", "create_project", "update_project", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation"], workspaceContentParts: ["instruction", "reference", "selection"], searchFilters: ["minDurationMs", "maxDurationMs", "expectedRevision", "mediaKind", "hasOriginalPrompt", "alternatives", "sort", "countOnly"] };
+    case "read_projects": return projectOperations.read(input);
+    case "create_project":
+    case "update_project": return projectOperations.execute(operation, input);
+    case "resolve_reference": return referenceSelection.resolve(input);
+    case "read_workspace_context":
+    case "read_workspace_content": return agentWorkspace.read(input);
+    case "show_case": return agentWorkspace.show(input);
+    case "read_case_details": return caseOperations.read(input);
+    case "edit_case":
+    case "organize_case": return caseOperations.execute(operation, input);
     case "search": return agentLibrary.search(input);
     case "read_case": return agentLibrary.read(input);
     case "read_media": return agentLibrary.media(input);
@@ -688,6 +739,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "AGENT_READ_WORKSPACE") return false;
   if (message?.target === "offscreen") return false;
   const interaction = {
     sidePanelOpening: openCreativeResultSidePanel(message, sender),
@@ -713,6 +765,29 @@ function openCreativeResultSidePanel(message, sender) {
 
 async function handleMessage(message, interaction = {}) {
   switch (message?.type) {
+    case "GET_REFERENCE_SELECTION":
+    case "SET_REFERENCE_SELECTION": {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
+        throw new Error("参考选择只能从插件工作空间操作");
+      }
+      return { ok: true, selection: message.type === "GET_REFERENCE_SELECTION"
+        ? await referenceSelection.get() : await referenceSelection.update(message.input) };
+    }
+    case "CASE_OPERATION": {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
+        throw new Error("案例操作只能从插件工作空间调用");
+      }
+      if (message.operation === "read_projects") return projectOperations.read(message.input);
+      if (["create_project", "update_project"].includes(message.operation)) return projectOperations.execute(message.operation, message.input);
+      if (message.operation === "save_material") {
+        validateProjectOperation(message.operation, message.input);
+        const { requestId, ...input } = message.input;
+        return saveMaterial(input, requestId);
+      }
+      if (message.operation === "read_case_details") return caseOperations.read(message.input);
+      if (!["edit_case", "organize_case"].includes(message.operation)) throw new Error("未知案例操作");
+      return caseOperations.execute(message.operation, message.input);
+    }
     case "PREPARE_AGENT_CONNECTION":
     case "GET_AGENT_CONNECTION":
     case "SET_AGENT_CONNECTION": {
@@ -733,7 +808,7 @@ async function handleMessage(message, interaction = {}) {
     case "GET_LIBRARY_ASSET_RETENTION":
       return enqueue(async () => {
         const ids = Array.isArray(message.assetIds) ? message.assetIds : [];
-        const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+        const stored = await libraryStorage.get(STORAGE_KEYS.libraryImportTransactions);
         const transactions = normalizeLibraryImportTransactionsState(stored[STORAGE_KEYS.libraryImportTransactions]);
         if (transactions.items.some(item => item.status === "pending")) {
           return { ok: true, assetIds: ids };
@@ -1230,7 +1305,7 @@ async function handleMessage(message, interaction = {}) {
 
 async function captureWorkspace() {
   const draft = await captureRuntime.getDraft();
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.entries,
     STORAGE_KEYS.compoundCases,
     STORAGE_KEYS.taxonomy,
@@ -1714,8 +1789,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
   let metadataCommitted = false;
   try {
     for (const candidate of selected) {
-      const duplicate = entries.find(entry => candidate.sourceFacts.itemId && entry.sourceFacts?.itemId && entry.sourceFacts?.provider === candidate.sourceFacts.provider
-        ? entry.sourceFacts.itemId === candidate.sourceFacts.itemId : entry.url === candidate.canonicalUrl);
+      const duplicate = entries.find(entry => samePageCaptureSource(entry, candidate));
       const repair = duplicate ? await planPageCaptureRepair(duplicate, candidate, async id => Boolean(await getMediaBlob(id))) : null;
       const refreshedClassification = duplicate ? classifyCapturedContent({ ...duplicate, sourceFacts: candidate.sourceFacts }, state.classificationRules, state.taxonomy) : null;
       const classificationChanged = duplicate && JSON.stringify(duplicate.classification?.pathIds) !== JSON.stringify(refreshedClassification.pathIds);
@@ -2395,7 +2469,7 @@ async function createMediaCase(assetValue, posterValue, titleValue, textValue = 
   await retireLastSaveUndo();
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
-    [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id)
+    [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry)
   });
   await enqueueAutomaticLibraryMaintenance([entry]);
   await notifySaved(entries.length);
@@ -2443,7 +2517,7 @@ async function createQuickNote(titleValue, textValue, organization = {}) {
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
     [STORAGE_KEYS.organizerState]: organizerState,
-    [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id)
+    [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry)
   });
   await notifySaved(entries.length);
   return { ok: true, message: "快速笔记已保存", entry };
@@ -2580,7 +2654,7 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
     [STORAGE_KEYS.entries]: entries,
     [STORAGE_KEYS.organizerState]: organizerState,
     ...await captureCommitState(draft, nextDraft),
-    ...(created ? { [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry.id) } : {})
+    ...(created ? { [STORAGE_KEYS.lastSaveUndo]: createEntrySaveUndo(entry) } : {})
   });
   await notifySaved(entries.length);
   return { ok: true, message: target ? "内容已加入明确选择的案例" : "多段文字和截图已保存为新案例", entry, draft: nextDraft };
@@ -2779,29 +2853,33 @@ async function undoLastSave() {
   if (undo.type === "delete_created_entry") {
     const removed = state.entries.find((item) => item.id === undo.entryId);
     if (!removed) {
-      await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+      await libraryStorage.remove(STORAGE_KEYS.lastSaveUndo);
       return { ok: false, message: "这次保存已经不存在，撤回记录已清理" };
     }
-    const entries = state.entries.filter((item) => item.id !== removed.id);
-    const organizerState = removeEntriesFromOrganizer(state.organizerState, [removed.id]);
-    const compoundCases = removeEntriesFromCompoundCases(state.compoundCases, state.entries, [removed.id]);
+    assertCreatedEntryUndoSafe(removed, undo);
+    const moved = moveEntriesToTrash({
+      entries: state.entries,
+      trashState: state.trashState,
+      organizerState: state.organizerState,
+      compoundCases: state.compoundCases
+    }, [removed.id]);
+    if (moved.movedItemIds.length !== 1) throw new Error("回收站已有同编号案例，未执行撤回");
     const visionAnalysisUndo = await visionUndoWithout(removed.id);
     await commitLocalChanges({
-      [STORAGE_KEYS.entries]: entries,
-      [STORAGE_KEYS.compoundCases]: compoundCases,
-      [STORAGE_KEYS.organizerState]: organizerState,
+      [STORAGE_KEYS.entries]: moved.entries,
+      [STORAGE_KEYS.trashState]: moved.trashState,
+      [STORAGE_KEYS.compoundCases]: moved.compoundCases,
+      [STORAGE_KEYS.organizerState]: moved.organizerState,
       [STORAGE_KEYS.visionAnalysisUndo]: visionAnalysisUndo
     });
-    const visualIds = normalizeEntryMedia(removed).mediaAssets.filter((asset) => asset.storageMode === "managed").map((asset) => asset.id);
-    await chrome.storage.local.remove([STORAGE_KEYS.lastSaveUndo, screenshotStorageKey(removed.id)]);
-    await deleteUnreferencedMedia(visualIds);
-    return { ok: true, message: "已撤回刚才保存的案例", removed, count: entries.length };
+    await libraryStorage.remove(STORAGE_KEYS.lastSaveUndo);
+    return { ok: true, message: "已撤回刚才保存的案例，可在回收站恢复", removed, count: moved.entries.length };
   }
 
   const current = state.entries.find((item) => item.id === undo.entryId);
   if (!current) {
     await discardSaveUndoBackup(undo).catch(() => undefined);
-    await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+    await libraryStorage.remove(STORAGE_KEYS.lastSaveUndo);
     return { ok: false, message: "原案例已经不存在，撤回记录已清理" };
   }
   const updated = restoreScreenshotSaveEntry(current, undo);
@@ -2828,7 +2906,7 @@ async function undoLastSave() {
       if (restoredId) await deleteMediaBlob(restoredId).catch(() => undefined);
       throw error;
     }
-    await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+    await libraryStorage.remove(STORAGE_KEYS.lastSaveUndo);
     await discardSaveUndoBackup(undo).catch(() => undefined);
     return { ok: true, message: "已恢复原案例更新前的截图与图片分析", entry: detached, count: state.entries.length };
   }
@@ -2852,7 +2930,7 @@ async function undoLastSave() {
     }
     throw error;
   }
-  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+  await libraryStorage.remove(STORAGE_KEYS.lastSaveUndo);
   return { ok: true, message: "已恢复原案例更新前的截图与图片分析", entry: updated, count: entries.length };
 }
 
@@ -3013,7 +3091,7 @@ async function commitTrashCleanup(taken, options = {}) {
     };
   }
   const screenshotResults = await Promise.allSettled(
-    taken.cleanup.screenshotEntryIds.map((entryId) => chrome.storage.local.remove(screenshotStorageKey(entryId)))
+    taken.cleanup.screenshotEntryIds.map((entryId) => libraryStorage.remove(screenshotStorageKey(entryId)))
   );
   const localReferenceResults = await Promise.allSettled(localReferenceIds.map((assetId) => deleteLocalAssetHandle(assetId)));
   const failedScreenshotCount = screenshotResults.filter((result) => result.status === "rejected").length;
@@ -3071,7 +3149,7 @@ async function restrictLocalStorageAccess() {
 }
 
 async function retireLastSaveUndo(options = {}) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.lastSaveUndo);
+  const stored = await libraryStorage.get(STORAGE_KEYS.lastSaveUndo);
   const undo = normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo]);
   const preserveCurrentFixedBackup = undo?.type === "restore_replaced_screenshot" &&
     undo.entryId === options.preserveBackupEntryId &&
@@ -3079,7 +3157,7 @@ async function retireLastSaveUndo(options = {}) {
   if (undo?.type === "restore_replaced_screenshot" && !preserveCurrentFixedBackup) {
     await discardSaveUndoBackup(undo).catch(() => undefined);
   }
-  await chrome.storage.local.remove(STORAGE_KEYS.lastSaveUndo);
+  await libraryStorage.remove(STORAGE_KEYS.lastSaveUndo);
 }
 
 async function discardSaveUndoBackup(undoValue) {
@@ -3089,7 +3167,7 @@ async function discardSaveUndoBackup(undoValue) {
 }
 
 async function readState() {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     ...Object.values(STORAGE_KEYS),
     "tagCatalog"
   ]);
@@ -3146,13 +3224,13 @@ async function readState() {
     stateMigration = commitLocalChanges(update);
     try { await stateMigration; }
     finally { stateMigration = null; }
-    await chrome.storage.local.remove("tagCatalog");
+    await libraryStorage.remove("tagCatalog");
   }
   const recoveredVocabulary = recoverFullyArchivedFacets(state.facetCatalog);
   if (recoveredVocabulary.restoredFacetIds.length) {
     state = { ...state, facetCatalog: recoveredVocabulary.catalog };
     await commitLocalChanges({ [STORAGE_KEYS.facetCatalog]: state.facetCatalog });
-    await chrome.storage.local.remove(STORAGE_KEYS.facetUndo);
+    await libraryStorage.remove(STORAGE_KEYS.facetUndo);
     stored[STORAGE_KEYS.facetUndo] = null;
   }
   const uiPreferences = normalizeUiPreferences(stored[STORAGE_KEYS.uiPreferences]);
@@ -3175,7 +3253,7 @@ async function readState() {
       stored[STORAGE_KEYS.batchJob] = migratedBatch;
       await commitLocalChanges({ [STORAGE_KEYS.batchJob]: migratedBatch });
     }
-    await chrome.storage.local.remove(STORAGE_KEYS.legacyAnalysisBatchJob);
+    await libraryStorage.remove(STORAGE_KEYS.legacyAnalysisBatchJob);
   }
   const normalizedCreativeStorage = {
     [STORAGE_KEYS.creativeRuns]: creativeRuns,
@@ -3224,7 +3302,10 @@ async function readState() {
     ),
     syncSettings,
     syncStatus: await publicSyncStatus(syncSettings),
-    visionUndoEntryIds: Object.keys(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}),
+    visionUndoEntryIds: Object.entries(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {})
+      .filter(([, undo]) => undo?.appliedVisionAnalysis && Array.isArray(undo.appliedAssignments)
+        && Number.isInteger(undo.appliedCatalogRevision))
+      .map(([entryId]) => entryId),
     pendingContentCount: state.entries.filter(
       (entry) => entry.classification?.status === "needs_review"
     ).length,
@@ -3243,14 +3324,15 @@ async function readState() {
     visionBatchJob: ["vision", "video"].includes(analysisBatchSummary(stored[STORAGE_KEYS.batchJob])?.kind)
       ? analysisBatchSummary(stored[STORAGE_KEYS.batchJob])
       : null,
-    canUndoAnalysisBatch: Boolean(textBatchSummary && analysisUndo?.jobId === textBatchSummary.id),
+    canUndoAnalysisBatch: Boolean(textBatchSummary && analysisUndo?.jobId === textBatchSummary.id
+      && Array.isArray(analysisUndo.appliedEntries) && analysisUndo.appliedEntries.length),
     lastSaveUndo: normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo])
   };
 }
 
 async function saveComposerToolDraftAction(message) {
   const keys = [STORAGE_KEYS.composerSessions, STORAGE_KEYS.creativeSkills, STORAGE_KEYS.entries];
-  const stored = await chrome.storage.local.get(keys);
+  const stored = await libraryStorage.get(keys);
   const state = { composerSessions: normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]),
     creativeSkills: stored[STORAGE_KEYS.creativeSkills], entries: stored[STORAGE_KEYS.entries] };
   const result = saveComposerToolDraft(state, message);
@@ -3260,14 +3342,14 @@ async function saveComposerToolDraftAction(message) {
 }
 
 async function createCreativeSkillAction(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
   const result = createCreativeSkill(stored[STORAGE_KEYS.creativeSkills], message.skill);
   await commitSkillCoverResult(result, message.cover);
   return { ok: true, message: "Skill 已保存", creativeSkills: result.state, skill: result.skill };
 }
 
 async function saveCreativeSkillVersionAction(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
   const result = saveCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.version);
   await commitSkillCoverResult(result, message.cover);
   return { ok: true, message: message.version?.coverOnly ? "Skill 已保存" : "Skill 新版本已保存", creativeSkills: result.state, skill: result.skill };
@@ -3285,14 +3367,14 @@ async function commitSkillCoverResult(result, cover) {
 }
 
 async function restoreCreativeSkillVersionAction(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
   const result = restoreCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.versionId);
   await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
   return { ok: true, message: "已将所选版本恢复为新的当前版本", creativeSkills: result.state, skill: result.skill };
 }
 
 async function deleteCreativeSkillAction(skillId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeSkills);
+  const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
   const result = deleteCreativeSkill(stored[STORAGE_KEYS.creativeSkills], skillId);
   await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
   await deleteUnreferencedMedia(skillPackageAssetIds(result.skill)).catch(error => console.warn("Skill 资源清理未完成", error));
@@ -3300,7 +3382,7 @@ async function deleteCreativeSkillAction(skillId) {
 }
 
 async function getComposerSession(sessionId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
   const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]).find((item) => item.id === sessionId);
   return session ? { ok: true, session } : { ok: false, message: "没有找到这份创作草稿" };
 }
@@ -3311,7 +3393,7 @@ async function startCreativeJobAction(request, jobId) {
   if (!["create_image", "create_video"].includes(request?.session?.outputMode) && !hasVideo) {
     return { ok: false, message: "后台持久任务用于媒体创作与视频对话" };
   }
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.creativeJobs,
     STORAGE_KEYS.composerSessions
   ]);
@@ -3334,7 +3416,7 @@ async function startCreativeJobAction(request, jobId) {
 }
 
 async function getCreativeJobAction(jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
+  const stored = await libraryStorage.get(STORAGE_KEYS.creativeJobs);
   const creativeJobs = normalizeCreativeJobsState(stored[STORAGE_KEYS.creativeJobs]);
   const job = String(jobId ?? "").trim()
     ? creativeJobById(creativeJobs, jobId)
@@ -3343,7 +3425,7 @@ async function getCreativeJobAction(jobId) {
 }
 
 async function retryCreativeJobAction(jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
+  const stored = await libraryStorage.get(STORAGE_KEYS.creativeJobs);
   const retried = retryCreativeJob(stored[STORAGE_KEYS.creativeJobs], jobId);
   await commitLocalChanges({ [STORAGE_KEYS.creativeJobs]: retried.state });
   try {
@@ -3359,7 +3441,7 @@ async function retryCreativeJobAction(jobId) {
 }
 
 async function updateCreativeJobProgress(message) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.creativeJobs,
     STORAGE_KEYS.composerSessions
   ]);
@@ -3386,7 +3468,7 @@ async function updateCreativeJobProgress(message) {
 }
 
 async function creativeJobExecutionState() {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.entries,
     STORAGE_KEYS.compoundCases,
     STORAGE_KEYS.facetCatalog,
@@ -3411,7 +3493,7 @@ async function creativeJobExecutionState() {
 }
 
 async function completeCreativeJobAction(message) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.creativeJobs,
     STORAGE_KEYS.composerSessions,
     STORAGE_KEYS.creativeRuns
@@ -3459,7 +3541,7 @@ async function completeCreativeJobAction(message) {
 }
 
 async function failCreativeJobAction(message) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.creativeJobs,
     STORAGE_KEYS.composerSessions
   ]);
@@ -3504,7 +3586,7 @@ async function failCreativeJobAction(message) {
 
 async function cancelCreativeJobAction(jobId) {
   const requested = await enqueue(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.creativeJobs);
+    const stored = await libraryStorage.get(STORAGE_KEYS.creativeJobs);
     const current = creativeJobById(stored[STORAGE_KEYS.creativeJobs], jobId);
     if (!current) return null;
     if (!["queued", "running"].includes(current.status)) return current;
@@ -3533,7 +3615,7 @@ async function cancelCreativeJobAction(jobId) {
     runnerMessage = userMessage(error);
   }
   return enqueue(async () => {
-    const latest = await chrome.storage.local.get([
+    const latest = await libraryStorage.get([
       STORAGE_KEYS.creativeJobs,
       STORAGE_KEYS.composerSessions
     ]);
@@ -3732,7 +3814,7 @@ async function startImportJobAction(message) {
 }
 
 async function getImportJobAction(jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const stored = await libraryStorage.get(STORAGE_KEYS.importJobs);
   const importJobs = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]);
   const id = String(jobId ?? "").trim();
   const job = id
@@ -3742,7 +3824,7 @@ async function getImportJobAction(jobId) {
 }
 
 async function cancelImportJobAction(jobId) {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.importJobs, STORAGE_KEYS.importStaging]);
+  const stored = await libraryStorage.get([STORAGE_KEYS.importJobs, STORAGE_KEYS.importStaging]);
   const canceled = cancelImportJob(stored[STORAGE_KEYS.importJobs], jobId);
   let staging = normalizeImportStagingState(stored[STORAGE_KEYS.importStaging]);
   const cleanupIds = [];
@@ -3769,7 +3851,7 @@ async function cancelImportJobAction(jobId) {
 }
 
 async function retryImportJobAction(jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const stored = await libraryStorage.get(STORAGE_KEYS.importJobs);
   const retried = retryImportJob(stored[STORAGE_KEYS.importJobs], jobId);
   await commitLocalChanges({ [STORAGE_KEYS.importJobs]: retried.state });
   scheduleImportRunner();
@@ -3779,36 +3861,30 @@ async function retryImportJobAction(jobId) {
 async function undoImportJobAction(jobId) {
   const state = await readState();
   const undone = undoImportJob(state.importJobs, jobId);
-  const removedIds = new Set(undone.createdEntryIds);
-  const removedEntries = state.entries.filter((entry) => removedIds.has(entry.id));
-  const entries = state.entries.filter((entry) => !removedIds.has(entry.id));
-  const organizerState = removeEntriesFromOrganizer(
-    normalizeOrganizerState(state.organizerState, state.entries.map((entry) => entry.id)),
-    undone.createdEntryIds
-  );
-  const compoundCases = removeEntriesFromCompoundCases(state.compoundCases, state.entries, undone.createdEntryIds);
+  const targetIds = new Set(undone.createdEntryIds);
+  const importedEntries = state.entries.filter((entry) => targetIds.has(entry.id));
+  if (importedEntries.length !== targetIds.size || importedEntries.some((entry) => entry.importBatchId !== undone.job.importBatchId)) {
+    throw new Error("导入案例已变化，未执行撤销");
+  }
+  const moved = moveEntriesToTrash({
+    entries: state.entries,
+    trashState: state.trashState,
+    organizerState: state.organizerState,
+    compoundCases: state.compoundCases
+  }, undone.createdEntryIds);
+  if (moved.movedItemIds.length !== targetIds.size) throw new Error("回收站已有同编号案例，未执行撤销");
   await commitLocalChanges({
-    [STORAGE_KEYS.entries]: entries,
-    [STORAGE_KEYS.organizerState]: organizerState,
-    [STORAGE_KEYS.compoundCases]: compoundCases,
+    [STORAGE_KEYS.entries]: moved.entries,
+    [STORAGE_KEYS.trashState]: moved.trashState,
+    [STORAGE_KEYS.organizerState]: moved.organizerState,
+    [STORAGE_KEYS.compoundCases]: moved.compoundCases,
     [STORAGE_KEYS.importJobs]: undone.state
   });
-  const assetIds = removedEntries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets
-    .filter((asset) => asset.storageMode !== "reference")
-    .map((asset) => asset.id));
-  const localReferenceIds = removedEntries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets
-    .filter((asset) => asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE)
-    .map((asset) => asset.id));
-  await deleteUnreferencedMedia(assetIds);
-  const retainedLocalAssetIds = collectRetainedLocalAssetIds({ ...state, entries });
-  await Promise.allSettled(localReferenceIds
-    .filter((assetId) => !retainedLocalAssetIds.has(assetId))
-    .map((assetId) => deleteLocalAssetHandle(assetId)));
-  return { ok: true, message: `已撤销本次导入的 ${removedEntries.length} 个案例`, job: undone.job };
+  return { ok: true, message: `已撤销本次导入的 ${importedEntries.length} 个案例，可在回收站恢复`, job: undone.job };
 }
 
 async function recoverImportJobs() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const stored = await libraryStorage.get(STORAGE_KEYS.importJobs);
   const recovered = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs], { recoverRunning: true });
   if (stored[STORAGE_KEYS.importJobs]
       && JSON.stringify(stored[STORAGE_KEYS.importJobs]) !== JSON.stringify(recovered)) {
@@ -3839,7 +3915,7 @@ async function runImportJobSlice() {
     await importStagedItems(state, active);
   } finally {
     importRunnerActive = false;
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+    const stored = await libraryStorage.get(STORAGE_KEYS.importJobs);
     const pending = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]).items.some((job) =>
       ["queued", "running"].includes(job.status) && job.items.some((item) => item.status === "queued"));
     if (pending) scheduleImportRunner();
@@ -3948,7 +4024,7 @@ async function queueImportJobAnalysis(job) {
   if (!["completed", "failed", "canceled"].includes(job.status) || !job.options.autoAnalyze || job.analysisQueuedAt) return;
   const entryIds = job.items.filter((item) => item.status === "imported").map((item) => item.entryId).filter(Boolean);
   if (entryIds.length) await queueAutomaticVisionAnalysis(entryIds, { requireAutoImportSetting: false });
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.importJobs);
+  const stored = await libraryStorage.get(STORAGE_KEYS.importJobs);
   const marked = markImportJobAnalysisQueued(stored[STORAGE_KEYS.importJobs], job.id);
   await commitLocalChanges({ [STORAGE_KEYS.importJobs]: marked.state });
 }
@@ -3956,7 +4032,7 @@ async function queueImportJobAnalysis(job) {
 async function addTempReferencesAction(message) {
   const sessionId = String(message.sessionId ?? "").trim();
   if (!sessionId) throw new Error("临时引用缺少创作会话编号");
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
   const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   const existing = sessions.find((item) => item.id === sessionId);
   if (message.session && String(message.session.id ?? "").trim() !== sessionId) throw new Error("临时引用与创作会话不匹配");
@@ -3990,7 +4066,7 @@ async function addTempReferencesAction(message) {
 async function removeTempReferenceAction(message) {
   const sessionId = String(message.sessionId ?? "").trim();
   const tempReferenceId = String(message.tempReferenceId ?? "").trim();
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
   const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   const current = sessions.find((item) => item.id === sessionId);
   if (!current) throw new Error("没有找到这份创作草稿");
@@ -4061,7 +4137,7 @@ async function saveTempReferenceAsCaseAction(message) {
 
 async function startOrJoinAnalysisTaskAction(message) {
   const created = await enqueue(() => withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
+    const stored = await libraryStorage.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
     if (message.kind === "entry_video" && String(message.batchJobId ?? "").trim()) {
       const busy = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]).items.find((task) =>
         task.request?.kind === "entry_video"
@@ -4092,7 +4168,7 @@ async function startOrJoinAnalysisTaskAction(message) {
 }
 
 async function getAnalysisTaskAction(taskId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
   const task = analysisTaskById(stored[STORAGE_KEYS.analysisTasks], taskId);
   if (!task) return { ok: false, message: "没有找到分析任务" };
   return analysisTaskResponse(task);
@@ -4101,7 +4177,7 @@ async function getAnalysisTaskAction(taskId) {
 async function getEntryVideoAnalysisTaskAction(entryIdValue, assetIdValue) {
   const entryId = String(entryIdValue ?? "").trim();
   const assetId = String(assetIdValue ?? "").trim();
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
   const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
   const task = state.items.slice().reverse().find((item) => item.request?.kind === "entry_video"
     && item.request.entryId === entryId && item.request.assetId === assetId);
@@ -4110,7 +4186,7 @@ async function getEntryVideoAnalysisTaskAction(entryIdValue, assetIdValue) {
 
 async function detachAnalysisConsumerAction(message) {
   const detached = await withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
     const result = detachAnalysisTaskConsumer(
       stored[STORAGE_KEYS.analysisTasks],
       message.taskId,
@@ -4126,7 +4202,7 @@ async function detachAnalysisConsumerAction(message) {
 async function stopAnalysisTaskAction(message) {
   let activeAttemptId = "";
   const stopped = await enqueue(() => withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, message.taskId);
     if (!current) throw new Error("没有找到分析任务");
@@ -4153,7 +4229,7 @@ async function stopAnalysisTaskAction(message) {
 async function retryAnalysisTaskAction(message) {
   if (message.confirmDuplicateCharge !== true) throw new Error("重新分析前必须确认可能再次计费");
   const retried = await enqueue(() => withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, message.taskId);
     if (!current) throw new Error("没有找到分析任务");
@@ -4185,7 +4261,7 @@ function scheduleAnalysisTaskRun(taskId, preparedAttemptId = "") {
 }
 
 async function runQueuedAnalysisTasks() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
   const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
   for (const task of state.items.filter((item) => item.status === "queued")) scheduleAnalysisTaskRun(task.id);
 }
@@ -4193,7 +4269,7 @@ async function runQueuedAnalysisTasks() {
 async function runAnalysisTask(taskId, preparedAttemptId = "") {
   if (analysisTaskRunners.has(taskId)) return;
   const claimed = await enqueue(() => withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
+    const stored = await libraryStorage.get([STORAGE_KEYS.analysisTasks, STORAGE_KEYS.batchJob]);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, taskId);
     if (!current) return null;
@@ -4255,7 +4331,7 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
   let settled;
   try {
     settled = await enqueue(async () => {
-      const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+      const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
       const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
       const current = analysisTaskById(state, taskId);
       if (!current || current.activeAttemptId !== claimed.activeAttemptId || current.status !== "running") return current;
@@ -4274,7 +4350,7 @@ async function runAnalysisTask(taskId, preparedAttemptId = "") {
 
 async function persistAnalysisTaskProgress(taskId, attemptId, phase, options = {}) {
   const task = await enqueue(() => withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
     const state = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const current = analysisTaskById(state, taskId);
     if (!current || current.activeAttemptId !== attemptId || current.status !== "running") return null;
@@ -4308,7 +4384,7 @@ async function recoverAnalysisTasks() {
     activeAttemptIds = [];
   }
   const recovered = await withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
     const current = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const next = recoverInterruptedAnalysisTasks(current, { activeAttemptIds });
     if (JSON.stringify(current) !== JSON.stringify(next)) {
@@ -4324,7 +4400,7 @@ async function recoverAnalysisTasks() {
 
 async function recoverVideoBatchExecutionState() {
   const [stored, state] = await Promise.all([
-    chrome.storage.local.get([STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisTasks]),
+    libraryStorage.get([STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisTasks]),
     readState()
   ]);
   let job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
@@ -4372,7 +4448,7 @@ async function recoverVideoBatchExecutionState() {
 }
 
 async function analysisTaskAttemptIsActive(taskId, attemptId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+  const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
   const task = analysisTaskById(stored[STORAGE_KEYS.analysisTasks], taskId);
   return Boolean(task && task.status === "running" && task.executionState === "running" && task.activeAttemptId === attemptId);
 }
@@ -4399,7 +4475,7 @@ async function analyzeTempReferencesAction(message) {
     const requestedIds = [...new Set((Array.isArray(message.tempReferenceIds) ? message.tempReferenceIds : [])
       .map((value) => String(value ?? "").trim()).filter(Boolean))];
     if (!sessionId || !requestedIds.length) return { ok: false, message: "没有可分析的临时图片" };
-    const stored = await chrome.storage.local.get([
+    const stored = await libraryStorage.get([
       STORAGE_KEYS.composerSessions,
       STORAGE_KEYS.facetCatalog,
       STORAGE_KEYS.entries
@@ -4471,7 +4547,7 @@ async function analyzeTempReferencesAction(message) {
       if (message.taskId && !await analysisTaskAttemptIsActive(message.taskId, message.attemptId)) {
         return { ok: false, message: "这次图片分析已经停止或失效，结果没有写入" };
       }
-      const latestStored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+      const latestStored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
       const latestSessions = normalizeComposerSessions(latestStored[STORAGE_KEYS.composerSessions]);
       const latestSession = latestSessions.find((item) => item.id === sessionId);
       if (!latestSession) return { ok: false, message: "分析期间创作草稿已经变化，本次结果没有写入" };
@@ -4491,7 +4567,7 @@ async function analyzeTempReferencesAction(message) {
         }
       }
       let caseState = domainState(await readState());
-      const undoStore = { ...((await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo))[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
+      const undoStore = { ...((await libraryStorage.get(STORAGE_KEYS.visionAnalysisUndo))[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
       let casesChanged = false;
       for (const item of analyzed) {
         if (item.sourceType === "temporary") continue;
@@ -4581,7 +4657,7 @@ function temporaryAssetIdsFromSession(session) {
 }
 
 async function updateComposerSettings(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSettings);
+  const stored = await libraryStorage.get(STORAGE_KEYS.composerSettings);
   let settings = normalizeComposerSettings(stored[STORAGE_KEYS.composerSettings]);
   const allowedActions = ["save_agent", "reset_agent", "save_task", "reset_task", "preferences"];
   const action = allowedActions.includes(message.action) ? message.action : "preferences";
@@ -4601,7 +4677,7 @@ async function updateComposerSettings(message) {
 }
 
 async function upsertComposerSession(value) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
   const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   const session = createComposerSession(value);
   preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
@@ -4612,7 +4688,7 @@ async function upsertComposerSession(value) {
 }
 
 async function deleteComposerSession(sessionId) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.composerSessions,
     STORAGE_KEYS.activeCreativeResult
   ]);
@@ -4631,7 +4707,7 @@ async function deleteComposerSession(sessionId) {
 
 async function saveComposerResult(message) {
   const state = await readState();
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
   const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]).find((item) => item.id === message.sessionId);
   if (!session) return { ok: false, message: "创作草稿已变化，请重新打开" };
   const version = session.promptVersions.find((item) => item.id === message.promptVersionId);
@@ -4667,7 +4743,7 @@ async function saveComposerResult(message) {
 }
 
 async function activateCreativeResult(message, sidePanelOpening = null) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.composerSessions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
   const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions])
     .find((item) => item.id === String(message.sessionId ?? "").trim());
   if (!session) return { ok: false, message: "创作草稿已变化，请重新打开" };
@@ -5194,6 +5270,9 @@ async function applyDetailTagOrganization(message) {
   const state = await readState();
   const before = domainState(state);
   const applied = applyDetailOrganizationMappings(before, message.mappings);
+  if (!applied.changedCount) {
+    return { ok: true, message: "当前没有需要整理的三级标签组。", ...publicDomainState(before) };
+  }
   const changedIds = userVisibleEntryChanges(before.entries, applied.state.entries);
   const nextState = { ...applied.state, entries: touchEntries(applied.state.entries, changedIds) };
   await persistDomainState(nextState, before);
@@ -5370,7 +5449,7 @@ function discoveryErrorMessage(error, apiKey) {
 }
 
 async function loadAiConfiguration() {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.aiProviderRegistry, STORAGE_KEYS.aiTaskAssignments, STORAGE_KEYS.aiPreferences
   ]);
   return aiConfigurationFromStorage(stored);
@@ -5553,7 +5632,7 @@ async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobI
         batchJobId: String(batchJobIdValue ?? "").trim()
       });
       const undoStore = {
-        ...((await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo))[STORAGE_KEYS.visionAnalysisUndo] ?? {})
+        ...((await libraryStorage.get(STORAGE_KEYS.visionAnalysisUndo))[STORAGE_KEYS.visionAnalysisUndo] ?? {})
       };
       undoStore[current.id] = applied.undo;
       await commitLocalChanges({
@@ -5792,7 +5871,7 @@ async function dispatchVideoAnalysisTask(task) {
 
 async function completeVideoAnalysisAction(message) {
   const outcome = await enqueue(() => withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
     const registry = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const runningTask = analysisTaskById(registry, message.taskId);
     if (!runningTask || runningTask.status !== "running" || runningTask.activeAttemptId !== String(message.attemptId ?? "").trim()) {
@@ -5885,7 +5964,7 @@ async function completeVideoAnalysisAction(message) {
 
 async function failVideoAnalysisAction(message) {
   const outcome = await enqueue(() => withAnalysisTaskStorageLock(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.analysisTasks);
+    const stored = await libraryStorage.get(STORAGE_KEYS.analysisTasks);
     const registry = normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]);
     const runningTask = analysisTaskById(registry, message.taskId);
     if (!runningTask || runningTask.status !== "running" || runningTask.activeAttemptId !== String(message.attemptId ?? "").trim()) {
@@ -5977,7 +6056,7 @@ async function applyEntryMediaPromptSuggestions(message) {
 
 async function undoEntryVisionAnalysis(entryId) {
   const state = await readState();
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo);
+  const stored = await libraryStorage.get(STORAGE_KEYS.visionAnalysisUndo);
   const undoStore = { ...(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
   const undo = undoStore[entryId];
   if (!undo) return { ok: false, message: "这条案例没有可撤回的图片分析" };
@@ -6232,6 +6311,7 @@ async function updateOrganizer(message) {
   } else if (message.type === "REORDER_COLLECTIONS") {
     organizerState = reorderCollections(organizerState, message.collectionIds);
   } else if (message.type === "MOVE_COLLECTION") {
+    if (message.undoing) assertCollectionStructureCurrent(organizerState, message.expectedStructure);
     organizerState = moveCollection(organizerState, message.collectionId, message.parentId, message.index);
   } else if (message.type === "REPLACE_COLLECTION_ENTRIES") {
     const validIds = new Set(state.entries.map((entry) => entry.id));
@@ -6306,9 +6386,10 @@ async function applyEntryAnalysisResult(message) {
 
 async function previewDeepSeekBatch(outputLocale, mode = "incremental", entryIds = []) {
   const state = await readState();
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
-    STORAGE_KEYS.analysisRebuildStaging
+    STORAGE_KEYS.analysisRebuildStaging,
+    STORAGE_KEYS.analysisBatchUndo
   ]);
   const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   const previousSummary = analysisBatchSummary(previous);
@@ -6336,7 +6417,7 @@ async function previewDeepSeekBatch(outputLocale, mode = "incremental", entryIds
 
 async function createDeepSeekBatch(outputLocale, mode = "incremental", entryIds = [], expectedEntryIds) {
   const state = await readState();
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisRebuildStaging
   ]);
@@ -6392,7 +6473,7 @@ async function createDeepSeekBatch(outputLocale, mode = "incremental", entryIds 
 }
 
 async function claimDeepSeekBatchItems(jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const current = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
   const claimed = claimAnalysisItems(current);
   if (claimed.claims.length) {
@@ -6406,15 +6487,16 @@ async function claimDeepSeekBatchItems(jobId) {
 }
 
 async function getDeepSeekBatchStatus(jobId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
   return { ok: true, analysisBatchJob: analysisBatchSummary(job) };
 }
 
 async function commitDeepSeekBatchItem(message) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
-    STORAGE_KEYS.analysisRebuildStaging
+    STORAGE_KEYS.analysisRebuildStaging,
+    STORAGE_KEYS.analysisBatchUndo
   ]);
   const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
   requireClaim(job, message.entryId, message.claimId);
@@ -6461,9 +6543,12 @@ async function commitDeepSeekBatchItem(message) {
     applied.state.facetCatalog.revision,
     message
   );
+  const nextUndo = Array.isArray(stored[STORAGE_KEYS.analysisBatchUndo]?.appliedEntries)
+    ? sealAnalysisBatchUndo(stored[STORAGE_KEYS.analysisBatchUndo], applied.state, [entry.id]) : null;
   await commitLocalChanges({
     ...storagePayload(applied.state),
-    [STORAGE_KEYS.batchJob]: nextJob
+    [STORAGE_KEYS.batchJob]: nextJob,
+    ...(nextUndo ? { [STORAGE_KEYS.analysisBatchUndo]: nextUndo } : {})
   });
   return {
     ok: true,
@@ -6475,9 +6560,10 @@ async function commitDeepSeekBatchItem(message) {
 async function commitDeepSeekBatchItems(message) {
   const results = Array.isArray(message.results) ? message.results : [];
   if (!results.length) return { ok: false, message: "批量分析结果为空" };
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
-    STORAGE_KEYS.analysisRebuildStaging
+    STORAGE_KEYS.analysisRebuildStaging,
+    STORAGE_KEYS.analysisBatchUndo
   ]);
   let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
   const state = await readState();
@@ -6491,6 +6577,7 @@ async function commitDeepSeekBatchItems(message) {
     return commitStagedRebuildResults(job, stored[STORAGE_KEYS.analysisRebuildStaging], state, results);
   }
   let working = domainState(state);
+  let undo = stored[STORAGE_KEYS.analysisBatchUndo];
   for (const result of results) {
     requireClaim(job, result.entryId, result.claimId);
     if (result.error) {
@@ -6515,10 +6602,12 @@ async function commitDeepSeekBatchItems(message) {
       profileFingerprint: job.profileFingerprint
     }, result.fingerprint, updated.analyzedAt, updated);
     job = succeedAnalysisItem(job, result.entryId, result.claimId, result.usage, working.facetCatalog.revision, result);
+    if (Array.isArray(undo?.appliedEntries)) undo = sealAnalysisBatchUndo(undo, working, [entry.id]);
   }
   await commitLocalChanges({
     ...storagePayload(working),
-    [STORAGE_KEYS.batchJob]: job
+    [STORAGE_KEYS.batchJob]: job,
+    ...(Array.isArray(undo?.appliedEntries) ? { [STORAGE_KEYS.analysisBatchUndo]: undo } : {})
   });
   return {
     ok: true,
@@ -6543,14 +6632,15 @@ async function commitStagedRebuildResults(jobValue, stagingValue, state, results
   const finalized = await finalizeAnalysisRebuild(job, staging, domainState(state));
   const working = finalized.state;
   job = finalized.job;
-  const undo = createAnalysisBatchUndo(job, state);
+  const undo = sealAnalysisBatchUndo(createAnalysisBatchUndo(job, state), working,
+    working.entries.map((entry) => entry.id));
   await commitLocalChanges({
     ...storagePayload(working),
     [STORAGE_KEYS.batchJob]: job,
     [STORAGE_KEYS.analysisBatchUndo]: undo,
     [STORAGE_KEYS.analysisRebuildStaging]: { version: 1, jobId: job.id, committed: true, results: {} }
   });
-  await chrome.storage.local.remove(STORAGE_KEYS.analysisRebuildStaging);
+  await libraryStorage.remove(STORAGE_KEYS.analysisRebuildStaging);
   return {
     ok: true,
     message: "全部案例已成功，固定标签树已原子切换",
@@ -6560,7 +6650,7 @@ async function commitStagedRebuildResults(jobValue, stagingValue, state, results
 }
 
 async function failDeepSeekBatchItem(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
   requireClaim(job, message.entryId, message.claimId);
   const failed = failAnalysisItem(job, message.entryId, message.claimId, message.error);
@@ -6569,7 +6659,7 @@ async function failDeepSeekBatchItem(message) {
 }
 
 async function updateDeepSeekBatch(action, jobId) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisRebuildStaging
   ]);
@@ -6595,7 +6685,7 @@ async function updateDeepSeekBatch(action, jobId) {
     await ensureAnalysisBatchAlarm(false);
   }
   if (action === "cancel" && current.mode === "rebuild") {
-    await chrome.storage.local.remove(STORAGE_KEYS.analysisRebuildStaging);
+    await libraryStorage.remove(STORAGE_KEYS.analysisRebuildStaging);
   }
   const messages = {
     pause: "批量分析已暂停",
@@ -6607,7 +6697,7 @@ async function updateDeepSeekBatch(action, jobId) {
 }
 
 async function applyStagedAnalysisRebuild(jobId) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisRebuildStaging
   ]);
@@ -6634,14 +6724,15 @@ async function applyStagedAnalysisRebuild(jobId) {
     stored[STORAGE_KEYS.analysisRebuildStaging],
     domainState(state)
   );
-  const undo = createAnalysisBatchUndo(job, state);
+  const undo = sealAnalysisBatchUndo(createAnalysisBatchUndo(job, state), finalized.state,
+    finalized.state.entries.map((entry) => entry.id));
   await commitLocalChanges({
     ...storagePayload(finalized.state),
     [STORAGE_KEYS.batchJob]: finalized.job,
     [STORAGE_KEYS.analysisBatchUndo]: undo,
     [STORAGE_KEYS.analysisRebuildStaging]: { version: 1, jobId: job.id, committed: true, results: {} }
   });
-  await chrome.storage.local.remove(STORAGE_KEYS.analysisRebuildStaging);
+  await libraryStorage.remove(STORAGE_KEYS.analysisRebuildStaging);
   const failedCount = analysisBatchSummary(job).counts.failed;
   return {
     ok: true,
@@ -6653,7 +6744,7 @@ async function applyStagedAnalysisRebuild(jobId) {
 }
 
 async function recoverDeepSeekBatch() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   if (!job || !job.items.some((item) => item.status === "running")) {
     return { ok: true, analysisBatchJob: analysisBatchSummary(job) };
@@ -6683,7 +6774,7 @@ async function recoverDeepSeekBatch() {
 }
 
 async function undoDeepSeekBatch(jobId) {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisBatchUndo
   ]);
@@ -6697,7 +6788,7 @@ async function undoDeepSeekBatch(jobId) {
   }
   const restored = restoreAnalysisBatchUndo(domainState(state), undo);
   await commitLocalChanges(storagePayload(restored));
-  await chrome.storage.local.remove([
+  await libraryStorage.remove([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisBatchUndo,
     STORAGE_KEYS.analysisRebuildStaging
@@ -6730,7 +6821,7 @@ async function previewVideoBatchTask(message) {
   const [state, configuration, stored] = await Promise.all([
     readState(),
     loadAiConfiguration(),
-    chrome.storage.local.get(STORAGE_KEYS.analysisTasks)
+    libraryStorage.get(STORAGE_KEYS.analysisTasks)
   ]);
   const route = resolveVideoAnalysisTask(configuration);
   const selected = new Set((Array.isArray(message.entryIds) ? message.entryIds : []).map(String));
@@ -6818,7 +6909,7 @@ async function videoAssetFingerprint(blob) {
 
 async function createVideoBatchTask(message) {
   const [state, configuration] = await Promise.all([readState(), loadAiConfiguration()]);
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   if (previous && ["running", "paused"].includes(previous.status)
       && previous.items.some((item) => ["pending", "running"].includes(item.status))) {
@@ -6860,7 +6951,7 @@ async function createVideoBatchTask(message) {
     outputLocale
   });
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
-  await chrome.storage.local.remove(STORAGE_KEYS.analysisBatchUndo);
+  await libraryStorage.remove(STORAGE_KEYS.analysisBatchUndo);
   await ensureAnalysisBatchAlarm(true);
   scheduleAnalysisBatchRunner();
   return {
@@ -6872,7 +6963,7 @@ async function createVideoBatchTask(message) {
 
 async function createVisionBatchTask(message) {
   const state = await readState();
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const configuration = await loadAiConfiguration();
   const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
   const provider = settings[settings.activeProvider];
@@ -6895,7 +6986,7 @@ async function createVisionBatchTask(message) {
     concurrency: configuration.assignments.imageAnalysis.concurrency
   });
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
-  await chrome.storage.local.remove(STORAGE_KEYS.analysisBatchUndo);
+  await libraryStorage.remove(STORAGE_KEYS.analysisBatchUndo);
   await ensureAnalysisBatchAlarm(true);
   scheduleAnalysisBatchRunner();
   return {
@@ -6908,7 +6999,7 @@ async function createVisionBatchTask(message) {
 async function claimVisionBatchItem(jobId) {
   const [state, stored] = await Promise.all([
     readState(),
-    chrome.storage.local.get(STORAGE_KEYS.batchJob)
+    libraryStorage.get(STORAGE_KEYS.batchJob)
   ]);
   let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "vision");
   const reconciled = reconcileVisionBatchResults(job, state.entries);
@@ -6946,7 +7037,7 @@ async function claimVisionBatchItem(jobId) {
 }
 
 async function completeVisionBatchItem(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "vision");
   requireClaim(job, message.entryId, message.claimId, message.visualId);
   const usage = {
@@ -6961,7 +7052,7 @@ async function completeVisionBatchItem(message) {
 }
 
 async function failVisionBatchItem(message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "vision");
   requireClaim(job, message.entryId, message.claimId, message.visualId);
   const failed = failAnalysisItem(job, message.entryId, message.claimId, message.error);
@@ -6970,7 +7061,7 @@ async function failVisionBatchItem(message) {
 }
 
 async function updateVisionBatch(action, jobId, options = {}) {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisTasks]);
+  const stored = await libraryStorage.get([STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisTasks]);
   const current = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   if (!current || current.id !== jobId || !["vision", "video"].includes(current.kind)) throw new Error("批量任务已经变化，请刷新后重试");
   const actions = {
@@ -7031,7 +7122,7 @@ async function runPersistedAnalysisBatch() {
   analysisBatchRunnerActive = true;
   let continueRunning = false;
   try {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+    const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
     const initial = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
     if (!initial || initial.status !== "running") {
       await ensureAnalysisBatchAlarm(false);
@@ -7047,7 +7138,7 @@ async function runPersistedAnalysisBatch() {
     await ensureAnalysisBatchAlarm(continueRunning);
   } catch (error) {
     console.error("PromptDirector persisted analysis batch failed", error);
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob).catch(() => ({}));
+    const stored = await libraryStorage.get(STORAGE_KEYS.batchJob).catch(() => ({}));
     const current = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
     if (current?.status === "running") {
       const taskLabel = current.kind === "vision" ? "图片服务" : current.kind === "video" ? "视频服务" : "文字服务";
@@ -7068,7 +7159,7 @@ async function runPersistedAnalysisBatch() {
 async function runPersistedTextBatchSlice(jobId) {
   const configuration = await loadAiConfiguration();
   const prepared = await enqueue(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+    const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
     let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
     if (job.status !== "running") return { job, claims: [], settings: null };
     const snapshotConfiguration = configurationForAssignment(configuration, "textTags", job);
@@ -7108,9 +7199,10 @@ async function runPersistedTextBatchSlice(jobId) {
 
 async function analyzePersistedTextClaim(job, claim, entry, catalog, settings) {
   if (!entry) return persistedTextFailure(claim, "案例已不存在", 404);
-  const analysisInput = canonicalTextAnalysisInput(entry, claim.assetId);
   let serviceRequests = 0;
   try {
+    assertCaseFilesReadable(entry);
+    const analysisInput = canonicalTextAnalysisInput(entry, claim.assetId);
     const result = await runScheduledAnalysisWithRetries({
       key: `${job.providerId}:${job.model || job.analysisModel}:textTags`,
       concurrency: job.concurrency,
@@ -7164,7 +7256,7 @@ async function runPersistedVisionBatchSlice(jobId) {
   const configuration = await loadAiConfiguration();
   const prepared = await enqueue(async () => {
     const state = await readState();
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+    const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
     let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "vision");
     if (job.status !== "running") return { job, claims: [] };
     job = recoverInterruptedAnalysisBatch(reconcileVisionBatchResults(job, state.entries).job);
@@ -7234,14 +7326,14 @@ async function runPersistedVisionBatchSlice(jobId) {
           }
         }));
   }));
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   return normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob])?.status === "running";
 }
 
 async function runPersistedVideoBatchSlice(jobId) {
   const configuration = await loadAiConfiguration();
   const prepared = await enqueue(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+    const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
     let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "video");
     if (job.status !== "running") return { job, claims: [] };
     let route;
@@ -7298,13 +7390,13 @@ async function runPersistedVideoBatchSlice(jobId) {
       await failVideoBatchClaim(prepared.job.id, claim, error);
     }
   }
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const current = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   return Boolean(current?.status === "running" && current.items.some((item) => item.status === "pending"));
 }
 
 async function settleVideoBatchTask(task, actionResult) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   if (!job || job.kind !== "video" || job.id !== task.request.batchJobId || job.status === "canceled") return;
   const item = job.items.find((candidate) => candidate.entryId === task.request.entryId
@@ -7342,7 +7434,7 @@ async function settleVideoBatchTask(task, actionResult) {
 }
 
 async function failVideoBatchClaim(jobId, claim, error) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.batchJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "video");
   const next = failAnalysisItem(job, claim.entryId, claim.claimId, {
     message: userMessage(error),
@@ -7362,7 +7454,7 @@ async function queueAutomaticVisionAnalysis(entryIdsValue, options = {}) {
   if (!entryIds.length) return false;
   const [state, stored] = await Promise.all([
     readState(),
-    chrome.storage.local.get(STORAGE_KEYS.automaticVisionBatchJob)
+    libraryStorage.get(STORAGE_KEYS.automaticVisionBatchJob)
   ]);
   const configuration = await loadAiConfiguration();
   const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
@@ -7398,7 +7490,7 @@ async function runAutomaticVisionItem() {
   automaticVisionRunnerActive = true;
   let continueRunning = false;
   try {
-    const stored = await chrome.storage.local.get([
+    const stored = await libraryStorage.get([
       STORAGE_KEYS.automaticVisionBatchJob
     ]);
     let job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.automaticVisionBatchJob]);
@@ -7433,7 +7525,7 @@ async function runAutomaticVisionItem() {
         result = { ok: false, message: userMessage(error), status: Number(error?.status) || 0, usage: error?.usage };
       }
       await enqueue(async () => {
-        const latestStored = await chrome.storage.local.get(STORAGE_KEYS.automaticVisionBatchJob);
+        const latestStored = await libraryStorage.get(STORAGE_KEYS.automaticVisionBatchJob);
         const latest = requireAnalysisBatch(latestStored[STORAGE_KEYS.automaticVisionBatchJob], job.id, "vision");
         requireClaim(latest, claim.entryId, claim.claimId, claim.visualId);
         const next = result.ok
@@ -7498,14 +7590,14 @@ async function importAnalysisCandidates(payload) {
 }
 
 async function visionUndoWithout(entryId) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo);
+  const stored = await libraryStorage.get(STORAGE_KEYS.visionAnalysisUndo);
   const next = { ...(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
   delete next[entryId];
   return next;
 }
 
 async function visionUndoWithoutEntries(entryIds) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.visionAnalysisUndo);
+  const stored = await libraryStorage.get(STORAGE_KEYS.visionAnalysisUndo);
   const next = { ...(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {}) };
   for (const entryId of entryIds) delete next[entryId];
   return next;
@@ -7581,7 +7673,7 @@ async function startLibraryMaintenance() {
   const [state, derivedMetadata, stored] = await Promise.all([
     readState(),
     getAllDerivedMetadata(),
-    chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob)
+    libraryStorage.get(STORAGE_KEYS.libraryMaintenanceJob)
   ]);
   const current = normalizeLibraryMaintenanceJob(stored[STORAGE_KEYS.libraryMaintenanceJob]);
   if (current && ["running", "paused"].includes(current.status) && libraryMaintenanceSummary(current).remaining) {
@@ -7602,7 +7694,7 @@ async function startLibraryMaintenance() {
 async function enqueueAutomaticLibraryMaintenance(entriesValue) {
   const [derivedMetadata, stored] = await Promise.all([
     getAllDerivedMetadata(),
-    chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob)
+    libraryStorage.get(STORAGE_KEYS.libraryMaintenanceJob)
   ]);
   const targets = libraryMaintenanceTargets(entriesValue, derivedMetadata);
   if (!targets.classificationEntryIds.length && !targets.paletteAssetIds.length) return null;
@@ -7614,12 +7706,12 @@ async function enqueueAutomaticLibraryMaintenance(entriesValue) {
 }
 
 async function libraryMaintenanceStatus() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.libraryMaintenanceJob);
   return { ok: true, maintenanceJob: libraryMaintenanceSummary(stored[STORAGE_KEYS.libraryMaintenanceJob]) };
 }
 
 async function updateLibraryMaintenance(action) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+  const stored = await libraryStorage.get(STORAGE_KEYS.libraryMaintenanceJob);
   const current = normalizeLibraryMaintenanceJob(stored[STORAGE_KEYS.libraryMaintenanceJob]);
   if (!current) return { ok: false, message: "没有可用的资料补全任务" };
   const actions = {
@@ -7673,7 +7765,7 @@ async function runLibraryMaintenanceSlice() {
   maintenanceRunnerActive = true;
   let continueRunning = false;
   try {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+    const stored = await libraryStorage.get(STORAGE_KEYS.libraryMaintenanceJob);
     let job = normalizeLibraryMaintenanceJob(stored[STORAGE_KEYS.libraryMaintenanceJob]);
     if (!job || job.status !== "running") {
       await ensureLibraryMaintenanceAlarm(false);
@@ -7737,7 +7829,7 @@ async function runLibraryMaintenanceSlice() {
 
 async function persistLibraryMaintenanceProgress(progress) {
   return enqueue(async () => {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryMaintenanceJob);
+    const stored = await libraryStorage.get(STORAGE_KEYS.libraryMaintenanceJob);
     const next = mergeLibraryMaintenanceProgress(stored[STORAGE_KEYS.libraryMaintenanceJob], progress);
     if (!next || next.id !== progress.id) return next;
     await commitLocalChanges({ [STORAGE_KEYS.libraryMaintenanceJob]: next });
@@ -7775,10 +7867,13 @@ async function ensureLibraryMaintenanceAlarm(running) {
 async function undoFacetUpdate() {
   const state = await readState();
   const undone = undoFacetHistory(domainState(state), state.facetUndo);
-  const update = storagePayload(undone.state);
+  const update = {
+    [STORAGE_KEYS.facetCatalog]: normalizeFacetCatalog(undone.state.facetCatalog),
+    ...(undone.entriesChanged ? { [STORAGE_KEYS.entries]: undone.state.entries } : {})
+  };
   if (undone.remainingSteps) update[STORAGE_KEYS.facetUndo] = undone.history;
   await commitLocalChanges(update);
-  if (!undone.remainingSteps) await chrome.storage.local.remove(STORAGE_KEYS.facetUndo);
+  if (!undone.remainingSteps) await libraryStorage.remove(STORAGE_KEYS.facetUndo);
   return {
     ok: true,
     message: "已撤回上一步",
@@ -7791,6 +7886,7 @@ async function undoFacetUpdate() {
 function findEntry(state, entryId) {
   const entry = state.entries.find((item) => item.id === entryId);
   if (!entry) throw new Error("没有找到这条案例");
+  assertCaseFilesReadable(entry);
   return entry;
 }
 
@@ -7994,23 +8090,11 @@ function storagePayload(state) {
   };
 }
 
-async function commitLocalChanges(update, options = {}) {
-  const payload = { ...update };
-  const changesSyncedContent = Object.keys(payload).some((key) => SYNCED_STORAGE_KEYS.has(key));
-  if (!syncApplyInProgress && options.markSyncDirty !== false && changesSyncedContent) {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
-    payload[STORAGE_KEYS.syncMeta] = markSyncMetaDirty(
-      stored[STORAGE_KEYS.syncMeta],
-      options.dirtyAssetIds
-    );
-  }
-  await chrome.storage.local.set(payload);
-}
 
 async function persistDomainState(state, undo, historyOptions) {
   const update = storagePayload(state);
   if (undo) {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.facetUndo);
+    const stored = await libraryStorage.get(STORAGE_KEYS.facetUndo);
     update[STORAGE_KEYS.facetUndo] = appendFacetUndo(
       stored[STORAGE_KEYS.facetUndo], undo, state, historyOptions
     );
@@ -8235,7 +8319,7 @@ function previewLibraryImportBatch(state, message = {}) {
   });
 }
 async function applyLibraryImport(state, message) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.libraryImportTransactions);
   const claim = claimLibraryImportTransaction(stored[STORAGE_KEYS.libraryImportTransactions], {
     operationId: message.operationId,
     planToken: message.planToken,
@@ -8298,7 +8382,7 @@ async function applyLibraryImport(state, message) {
     };
     await commitLocalChanges(update);
   } catch (error) {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+    const stored = await libraryStorage.get(STORAGE_KEYS.libraryImportTransactions);
     const current = stored[STORAGE_KEYS.libraryImportTransactions];
     const completed = current?.items?.find(item => item.operationId === claim.receipt.operationId && item.status === "completed");
     if (completed) return completed.result;
@@ -8311,7 +8395,7 @@ async function applyLibraryImport(state, message) {
 
   if (result.context.mode === LIBRARY_TRANSFER_MODES.EXACT_REPLACE) {
     try {
-      const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryReplacementRecoveryPoint);
+      const stored = await libraryStorage.get(STORAGE_KEYS.libraryReplacementRecoveryPoint);
       const obsoleteAssetIds = obsoleteRecoveryAssetIds(
         state.libraryReplacementRecoveryPoint,
         [...collectRetainedLocalAssetIds({ ...state, ...result.targetState, libraryReplacementRecoveryPoint: stored[STORAGE_KEYS.libraryReplacementRecoveryPoint] })],
@@ -8340,7 +8424,7 @@ async function applyLibraryImport(state, message) {
 async function applyLibraryImportBatch(state, message) {
   const packages = Array.isArray(message.packages) ? message.packages : [];
   const sourceValue = packages.map((item) => item?.library);
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+  const stored = await libraryStorage.get(STORAGE_KEYS.libraryImportTransactions);
   const claim = claimLibraryImportTransaction(stored[STORAGE_KEYS.libraryImportTransactions], {
     operationId: message.operationId,
     planToken: message.planToken,
@@ -8387,7 +8471,7 @@ async function applyLibraryImportBatch(state, message) {
       [STORAGE_KEYS.libraryImportTransactions]: completed.state
     });
   } catch (error) {
-    const stored = await chrome.storage.local.get(STORAGE_KEYS.libraryImportTransactions);
+    const stored = await libraryStorage.get(STORAGE_KEYS.libraryImportTransactions);
     const current = stored[STORAGE_KEYS.libraryImportTransactions];
     const completed = current?.items?.find(item => item.operationId === claim.receipt.operationId && item.status === "completed");
     if (completed) return completed.result;
@@ -8606,7 +8690,7 @@ async function connectSyncFolder(password) {
   if (!directory) throw new Error("请先选择同步文件夹");
   await requireDirectoryPermission(directory);
   const vault = await createOrUnlockSyncVault(directory, String(password ?? ""));
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const stored = await libraryStorage.get(STORAGE_KEYS.syncSettings);
   const settings = normalizeSyncSettings({
     ...stored[STORAGE_KEYS.syncSettings],
     enabled: true,
@@ -8628,7 +8712,7 @@ async function unlockSyncVault(password) {
   if (!directory) throw new Error("本机没有保存同步文件夹，请重新选择");
   await requireDirectoryPermission(directory);
   const vault = await createOrUnlockSyncVault(directory, String(password ?? ""));
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const stored = await libraryStorage.get(STORAGE_KEYS.syncSettings);
   const current = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
   if (current.vaultId && current.vaultId !== vault.header.vaultId) {
     throw new Error("这个文件夹不是此前连接的同步库，请使用“更换同步文件夹”");
@@ -8650,7 +8734,7 @@ async function unlockSyncVault(password) {
 }
 
 async function performManualSynchronization(start) {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const stored = await libraryStorage.get(STORAGE_KEYS.syncSettings);
   const settings = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
   if (!settings.enabled) {
     throw new Error("请先在“数据与同步”中选择同步文件夹");
@@ -8789,7 +8873,7 @@ function synchronizedStatePayload(current, synced) {
 }
 
 async function disconnectSyncFolder() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.syncSettings);
+  const stored = await libraryStorage.get(STORAGE_KEYS.syncSettings);
   const current = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
   await clearSyncPrivateState();
   await commitLocalChanges({
@@ -8801,7 +8885,7 @@ async function disconnectSyncFolder() {
       lastErrorCode: ""
     })
   });
-  await chrome.storage.local.remove(STORAGE_KEYS.syncMeta);
+  await libraryStorage.remove(STORAGE_KEYS.syncMeta);
   return { ok: true, message: "已断开同步文件夹，本地案例没有删除" };
 }
 
@@ -8823,7 +8907,7 @@ async function dataSafetyStatus(state) {
 
 async function publicSyncStatus(settingsValue) {
   const settings = normalizeSyncSettings(settingsValue);
-  const metaStored = await chrome.storage.local.get(STORAGE_KEYS.syncMeta);
+  const metaStored = await libraryStorage.get(STORAGE_KEYS.syncMeta);
   const meta = normalizeSyncMeta(metaStored[STORAGE_KEYS.syncMeta]);
   const run = manualSyncController.status();
   const directory = await getSyncDirectoryHandle().catch(() => null);
@@ -8881,7 +8965,7 @@ async function migrateLegacyScreenshots(entries) {
     const entry = normalizeEntryVisuals(entryValue);
     if (!entry.visuals.some((visual) => visual.id === entry.id)) continue;
     const legacyKey = screenshotStorageKey(entry.id);
-    const stored = await chrome.storage.local.get(legacyKey);
+    const stored = await libraryStorage.get(legacyKey);
     const legacyDataUrl = stored[legacyKey];
     if (!legacyDataUrl) continue;
 
@@ -8890,7 +8974,7 @@ async function migrateLegacyScreenshots(entries) {
       blob = await dataUrlToImageBlob(legacyDataUrl);
       await saveScreenshotBlob(entry.id, blob);
     }
-    await chrome.storage.local.remove(legacyKey);
+    await libraryStorage.remove(legacyKey);
   }
 }
 
@@ -8927,7 +9011,7 @@ async function ensureOffscreenDocument() {
 }
 
 async function recoverCreativeJobs() {
-  const stored = await chrome.storage.local.get([
+  const stored = await libraryStorage.get([
     STORAGE_KEYS.creativeJobs,
     STORAGE_KEYS.composerSessions
   ]);
@@ -8953,7 +9037,7 @@ async function recoverCreativeJobs() {
   }
   const recoveryJobId = active.id;
   await enqueue(async () => {
-    const latest = await chrome.storage.local.get([
+    const latest = await libraryStorage.get([
       STORAGE_KEYS.creativeJobs,
       STORAGE_KEYS.composerSessions
     ]);

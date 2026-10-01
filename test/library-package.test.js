@@ -1431,3 +1431,10 @@ test("folder restore preserves skill attachments reported with the desktop regis
   assert.equal(restored.assets.get("skill-original"), blob);
   assert.equal(restored.importDiagnostics.length, 0);
 });
+
+test('public selection rejects recovery-only content while healthy cases remain shareable', () => {
+  const healthy = { id: 'healthy', text: 'current', mediaAssets: [] };
+  const recovery = { id: 'broken', text: 'old', mediaAssets: [], vaultReadStatus: { readOnly: true } };
+  assert.throws(() => selectLibraryPackage({ entries: [healthy, recovery] }, ['broken']), { code: 'case_files_unavailable' });
+  assert.equal(selectLibraryPackage({ entries: [healthy, recovery] }, ['healthy']).entries[0].text, 'current');
+});

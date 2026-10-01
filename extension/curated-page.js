@@ -761,7 +761,10 @@ function emitProgress(id, progress) {
 function setProgressButton(button, progress) {
   if (!button?.isConnected) return;
   button.classList.toggle("is-progressing", ["downloading", "verifying", "extracting", "saving", "creating-project"].includes(progress.stage));
-  button.style.setProperty("--progress", progress.ratio == null ? "0" : String(progress.ratio));
+  const ratio = progress.ratio ?? (progress.total > 0 ? (progress.completed ?? progress.loaded ?? 0) / progress.total : null);
+  button.dataset.progressMode = ratio === null ? "unknown" : "known";
+  button.style.setProperty("--progress", String(Math.max(0, Math.min(1, ratio ?? 0))));
+  button.setAttribute("aria-busy", String(button.classList.contains("is-progressing")));
   const labels = {
     verifying: t("校验中"),
     extracting: progress.total ? `${t("解包中")} ${progress.completed}/${progress.total}` : t("解包中"),

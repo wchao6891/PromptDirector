@@ -4,7 +4,7 @@ import { normalizeAppliedSkillSnapshots } from "./creative-skills.js";
 import { currentVideoReconstruction, entryMediaAssets } from "./media.js";
 import { TEMP_REFERENCE_SOURCE_TYPES } from "./temp-references.js";
 import { normalizeLocalRelativePath } from "./local-media.js";
-import { detailPromptSources } from "./prompt-sources.js";
+import { detailPromptSources, sharedOriginalPrompt } from "./prompt-sources.js";
 import { composerAssetAnalysisText, composerSourceText, formatReferenceTime } from "./composer-source-text.js";
 import { AI_PROVIDER_PRESETS } from "./ai-provider-presets.js";
 import { createComposerActiveTurn } from "./composer-active-turn.js";
@@ -163,7 +163,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
         alias: locale === "en" ? `@Reference${snapshots.length + 1}` : `@参考${snapshots.length + 1}`,
         title: String(entry.title ?? "").trim(), referenceKind: "reference",
         referenceText: composerSourceText(entry, options.documentTextByEntryId),
-        originalText: String(entry.text ?? "").trim(), scope: "case", imageRefs: [], assets: []
+        originalText: sharedOriginalPrompt(entry), scope: "case", imageRefs: [], assets: []
       });
       continue;
     }
@@ -196,13 +196,10 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
       });
       continue;
     }
-    const mediaPrompts = new Map((entry.mediaPrompts ?? []).filter(item => item.source !== "ai-suggestion").map((item) => [item.assetId, String(item.text ?? "").trim()]));
-    const selectedPrompts = selectedAssets.map((asset) => mediaPrompts.get(asset.id)).filter(Boolean);
-    const originalPrompt = selectedAssets.length === 1 && selectedPrompts[0]
-      ? selectedPrompts[0]
-      : selectedPrompts.length === selectedAssets.length && selectedPrompts.length
-        ? selectedPrompts.map((text, index) => `[图片${index + 1}独立提示词]\n${text}`).join("\n\n")
-        : String(entry.text ?? "").trim();
+    const selectedPrompts = selectedAssets.map(asset => detailPromptSources(entry, asset).original);
+    const distinctPrompts = [...new Set(selectedPrompts.filter(Boolean))];
+    const originalPrompt = distinctPrompts.length === 1 && selectedPrompts.every(Boolean) ? distinctPrompts[0]
+      : selectedPrompts.map((text, index) => text ? `[图片${index + 1}独立提示词]\n${text}` : '').filter(Boolean).join('\n\n');
     const visualFacts = imageVisualFacts(entry, selection.assetIds);
     const referenceKind = originalPrompt && visualFacts.length ? "prompt_vision"
         : visualFacts.length || contentRole === CONTENT_ROLES.imageCase ? "vision"
@@ -212,7 +209,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
       : referenceKind === "vision"
         ? visualFacts.map((fact, index) => `[图片${index + 1}可见事实]\n${fact}`).join("\n\n")
         : originalPrompt;
-    const referenceText = [...new Set([baseText, options.documentTextByEntryId?.get?.(entry.id)]
+    const referenceText = [...new Set([baseText, originalPrompt ? '' : entry.text, options.documentTextByEntryId?.get?.(entry.id)]
       .map(value => String(value ?? "").trim()).filter(Boolean))].join("\n\n");
     snapshots.push({
       referenceId: referenceSnapshotId(entry.id, selectedAssets.length === 1 ? selectedAssets[0].id : ""),

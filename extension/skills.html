@@ -25,7 +25,7 @@
     <main class="skills-main">
       <section id="skill-library" class="skill-library">
         <div class="skills-heading"><div><h1 data-i18n="创作 Skill 中心">创作 Skill 中心</h1><p id="skill-summary"></p></div><div class="skills-heading-actions"><a class="button-secondary" href="curated-skills.html" data-i18n="精选 Skill">精选 Skill</a><button id="skill-import" class="button-secondary" type="button" data-i18n="导入">导入</button><button id="skill-create" type="button" data-i18n="新建 Skill">新建 Skill</button></div></div>
-        <p id="skill-feedback" class="skill-feedback" role="status"></p>
+        <p id="skill-feedback" class="skill-feedback ui-task-feedback" role="status"></p>
         <div id="skill-list" class="skill-grid"></div>
         <div id="skill-empty" class="skill-empty" hidden><strong data-i18n="还没有创作 Skill">还没有创作 Skill</strong><p data-i18n="从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。">从你真正喜欢的案例中，按明确目标提炼一份可重复调用的方法。</p></div>
       </section>
@@ -46,7 +46,7 @@
             </details>
           </div>
         </header>
-        <p id="skill-detail-feedback" class="skill-feedback" role="status"></p>
+        <p id="skill-detail-feedback" class="skill-feedback ui-task-feedback" role="status"></p>
         <div id="skill-detail-cover" class="skill-cover-detail" hidden></div>
         <div class="skill-detail-layout">
           <aside class="skill-detail-summary">
@@ -106,12 +106,12 @@
               </details>
               <div class="skill-step-actions"><button data-i18n="查看草稿" id="skill-show-draft" class="button-secondary" type="button" hidden>查看草稿</button><button id="skill-generate" type="button" data-i18n="生成可编辑草稿">生成可编辑草稿</button><button id="skill-retry-vision" class="button-secondary" type="button" hidden data-i18n="重试失败批次">重试失败批次</button></div>
               <section id="skill-run-panel" class="skill-run-panel" hidden aria-live="polite">
-                <div class="skill-run-heading"><div><strong id="skill-generation-status"></strong><span id="skill-run-elapsed"></span></div><button id="skill-stop-run" class="button-secondary" type="button" data-i18n="停止">停止</button></div>
-                <div class="skill-run-track"><span id="skill-run-progress"></span></div>
+                <div class="skill-run-heading"><div><strong id="skill-generation-status" class="ui-task-feedback" role="status"></strong><span id="skill-run-elapsed"></span></div><button id="skill-stop-run" class="button-secondary" type="button" data-i18n="停止">停止</button></div>
+                <progress id="skill-run-progress" class="ui-task-progress" aria-label="Skill 提炼进度" data-i18n-aria-label="Skill 提炼进度"></progress>
                 <ol id="skill-run-stages" class="skill-run-stages"></ol>
                 <details class="skill-run-log"><summary data-i18n="运行记录">运行记录</summary><div id="skill-run-log"></div></details>
               </section>
-              <p id="skill-generation-feedback" class="skill-feedback" role="status"></p>
+              <p id="skill-generation-feedback" class="skill-feedback ui-task-feedback" role="status"></p>
             </section>
 
             <section id="skill-draft-step" class="skill-step skill-draft-step" tabindex="-1" hidden>
@@ -125,7 +125,7 @@
               <article id="skill-draft-preview" class="skill-draft-preview"></article>
               <details id="skill-draft-editor" class="skill-draft-editor"><summary data-i18n="查看并编辑 SKILL.md">查看并编辑 SKILL.md</summary><label><span data-i18n="SKILL.md 正文">SKILL.md 正文</span><textarea id="skill-markdown" class="skill-markdown-editor" rows="22"></textarea></label></details>
 
-              <p id="skill-save-status" class="skill-feedback" role="status"></p>
+              <p id="skill-save-status" class="skill-feedback ui-task-feedback" role="status"></p>
             </section>
 
             <section id="skill-versions-step" class="skill-step" hidden>
@@ -162,7 +162,7 @@
         <details class="skill-submission-license-details"><summary data-i18n="了解公开使用规则">了解公开使用规则</summary><p data-i18n="投稿采用 CC BY 4.0：其他用户必须保留你的公开署名，并可保存、使用和修改这份 Skill。">投稿采用 CC BY 4.0：其他用户必须保留你的公开署名，并可保存、使用和修改这份 Skill。</p></details>
       </div>
       <div class="skill-submission-actions"><button id="skill-submission-refresh" class="button-secondary" type="button" data-i18n="生成并检查公开快照">生成并检查公开快照</button><button id="skill-submission-open" type="button" disabled data-i18n="下载投稿包并打开 GitHub">下载投稿包并打开 GitHub</button></div>
-      <p id="skill-submission-feedback" class="skill-feedback" role="status"></p>
+      <p id="skill-submission-feedback" class="skill-feedback ui-task-feedback" role="status"></p>
       <section id="skill-submission-findings" class="skill-submission-findings" hidden><h3 data-i18n="需要先处理的隐私风险">需要先处理的隐私风险</h3><ul></ul></section>
       <section class="skill-submission-preview-shell"><h3 data-i18n="最终投稿文件与全文">最终投稿文件与全文</h3><div id="skill-submission-preview" class="skill-submission-preview"></div></section>
     </dialog>

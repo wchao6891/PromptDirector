@@ -21,8 +21,7 @@ export async function saveMediaBlob(assetId, blob, options = {}) {
 }
 
 export async function savePortableAssetBlob(assetId, blob, options = {}) {
-  validateAssetId(assetId);
-  validatePortableAssetBlob(blob);
+  validatePortableAssetRecord(assetId, blob);
   return writeMediaBlob(assetId, blob, options);
 }
 
@@ -31,8 +30,7 @@ export async function savePortableAssetBlobs(items, options = {}) {
   const ids = new Set();
   let bytes = 0;
   for (const { assetId, blob } of items) {
-    validateAssetId(assetId);
-    validatePortableAssetBlob(blob);
+    validatePortableAssetRecord(assetId, blob);
     if (ids.has(assetId)) throw new Error("媒体文件编号重复");
     ids.add(assetId);
     bytes += blob.size;
@@ -282,6 +280,17 @@ export function validateMediaBlob(blob) {
   if (!(type.startsWith("image/") || type.startsWith("video/") || assetFormatsForMimeType(type).length)) {
     throw assetImportError(ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT, "暂不支持这种媒体格式");
   }
+}
+
+export function validatePortableAssetRecord(assetId, blob) {
+  validateAssetId(assetId);
+  // Package files may be empty or use a source format with no browser MIME
+  // mapping. Their established namespace keeps ordinary empty media invalid.
+  if (String(assetId).startsWith('skill-file:')) {
+    if (!(blob instanceof Blob)) throw new Error('Skill 包文件无效');
+    return;
+  }
+  validatePortableAssetBlob(blob);
 }
 
 export function validatePortableAssetBlob(blob) {

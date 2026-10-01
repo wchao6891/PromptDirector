@@ -1,3 +1,6 @@
+import { materialProvenance } from "./material-provenance.js";
+import { canonicalInput } from "./agent-tasks.js";
+import { sha256Blob } from "./blob-digest.js";
 import { planImageGenerationPrompts, generationPromptConfirmation } from "./image-generation-ingestion.js";
 import { embeddedMediaPrompts } from "./image-generation-info.js";
 import { agentError, requireWebUrl } from "./agent-protocol.js";
@@ -7,7 +10,10 @@ import { normalizeArticleDocument } from "./article-document.js";
 
 export function resolveAgentProject(state, project = "") {
   if (!project) return "";
-  const matches = (state.organizerState?.collections || []).filter(item => item.id === project || item.name === project);
+  const collections = state.organizerState?.collections || [];
+  const exact = collections.find(item => item.id === project);
+  if (exact) return exact.id;
+  const matches = collections.filter(item => item.name === project);
   if (matches.length !== 1) throw agentError("ambiguous_project", "项目不存在或名称不唯一，请先搜索并使用项目编号。");
   return matches[0].id;
 }
@@ -16,12 +22,23 @@ export async function saveAgentMaterial(input, requestId, deps) {
   const { loadState, transfers, buildEntry, classify, place, commit, notify, schemaVersion } = deps;
   const state = await loadState();
   const instanceId = await deps.getInstanceId?.() || "";
+  const fingerprint = await sha256Blob(new Blob([JSON.stringify(canonicalInput(input))]));
+  const receiptKey = `materialOperation:${instanceId}:${requestId}`;
+  const receipt = deps.storage ? (await deps.storage.get(receiptKey))[receiptKey] : null;
+  if (receipt) {
+    if (receipt.fingerprint !== fingerprint) throw agentError('request_conflict', '此请求编号已用于其他保存内容');
+    return { ...receipt.result, replayed: true };
+  }
   const prior = state.entries.find(entry => entry.agentProvenance?.requestId === requestId && entry.agentProvenance.instanceId === instanceId);
-  if (prior) return { ok: true, results: [{ status: "duplicate", entryId: prior.id, title: prior.title }] };
+  if (prior) {
+    if (prior.agentProvenance.fingerprint && prior.agentProvenance.fingerprint !== fingerprint) throw agentError('request_conflict', '此请求编号已用于其他保存内容');
+    return { ok: true, results: [{ status: "duplicate", entryId: prior.id, title: prior.title }] };
+  }
   if (!String(input.title || "").trim()) throw agentError("invalid_input", "请提供案例标题。");
   const collectionId = resolveAgentProject(state, input.project);
   const sourceUrl = input.sourceUrl ? requireWebUrl(input.sourceUrl) : "";
-  const sourceCaseIds = [...new Set(input.sourceCaseIds || [])];
+  const provenance = await materialProvenance(state, input, collectionId);
+  const sourceCaseIds = [...new Set([...(input.sourceCaseIds || []), ...(input.sourceReferences || []).map(ref => ref.caseId)])];
   const logicalCases = materializeLogicalCases(state.entries, normalizeCompoundCases(state.compoundCases, state.entries));
   const sources = sourceCaseIds.map(id => {
     const entry = logicalCases.find(item => item.id === id);
@@ -61,7 +78,8 @@ export async function saveAgentMaterial(input, requestId, deps) {
     articleDocument: normalizeArticleDocument({ blocks }),
     mediaPrompts: [...explicitPrompts, ...embeddedMediaPrompts(mediaAssets, explicitPrompts)],
     sourcePages: [...(sourceUrl ? [{ url: sourceUrl, title: input.title }] : []), ...sources.filter(s => s.url).map(s => ({ url: s.url, title: s.title }))],
-    agentProvenance: { requestId, instanceId, kind: input.kind, sources, note: String(input.note || ""), savedAt: new Date().toISOString() },
+    agentProvenance: { requestId, instanceId, fingerprint, kind: input.kind, sources, ...provenance,
+      ...(input.kind === "creation" && !provenance.creationVersion ? { creationVersion: { rootCaseId: base.id, number: 1 } } : {}), note: String(input.note || ""), savedAt: new Date().toISOString() },
     customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [],
     analysisBreakdown: [], rejectedCandidateKeys: [], negativeTerms: [], analysisPending: false });
   entry.classification = classify(entry, state);
@@ -70,10 +88,12 @@ export async function saveAgentMaterial(input, requestId, deps) {
   entry = promptPlan.entry;
   const entries = [...state.entries, entry];
   const organizerState = place(state.organizerState, entries, [entry.id], { collectionId });
+  const result = { ok: true, results: [{ status: warnings.length ? "partial" : "saved", entryId: entry.id, title: entry.title, warnings }] };
   // Receipt provenance and transfer ownership are committed with the entry.
   // Retrying after a lost acknowledgement cannot create another case.
   await commit({ entries, organizerState,
+    [receiptKey]: { fingerprint, result },
     ...Object.fromEntries(records.map(record => [transfers.key(record.id), { ...record, state: "committed", entryId: entry.id }])) });
-  try { await notify(entries.length); } catch { warnings.push("案例已保存，但界面通知未送达。"); }
-  return { ok: true, results: [{ status: warnings.length ? "partial" : "saved", entryId: entry.id, title: entry.title, warnings }] };
+  try { await notify(entries.length); } catch { warnings.push("案例已保存，但界面通知未送达。"); result.results[0].status = 'partial'; }
+  return result;
 }

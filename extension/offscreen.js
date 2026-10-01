@@ -454,6 +454,7 @@ export async function createArchiveUrl({
   const locale = localeValue === "en" ? "en" : "zh-CN";
 
   for (const entry of Array.isArray(entries) ? entries : []) {
+    assertCaseFilesReadable(entry);
     const normalized = normalizeEntryMedia(entry);
     const mediaAssets = [];
     for (const asset of normalized.mediaAssets) {
@@ -755,3 +756,4 @@ function loadImage(dataUrl) {
     image.src = dataUrl;
   });
 }
+import { assertCaseFilesReadable } from './case-file-status.js';

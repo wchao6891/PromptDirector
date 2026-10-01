@@ -1,4 +1,5 @@
 import { t, translateUiMessage } from "./i18n.js";
+import { setTaskFeedbackState } from "./task-feedback.js";
 
 const DIALOG_ID = "promptdirector-app-dialog";
 
@@ -40,10 +41,12 @@ export async function showAppDialog(options = {}) {
   }
   if (typeof options.renderBody === "function") options.renderBody({ body, controls, dialog, form });
   let status = null;
+  let busy = false;
   const ensureStatus = () => {
     if (status) return status;
     status = document.createElement("p");
-    status.className = "app-dialog-status";
+    status.className = "app-dialog-status ui-task-feedback";
+    setTaskFeedbackState(status, { pending: busy });
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
     body.append(status);
@@ -112,6 +115,8 @@ export async function showAppDialog(options = {}) {
       event.preventDefault();
       if (submitting || !form.reportValidity()) return;
       submitting = true;
+      busy = true;
+      if (status) setTaskFeedbackState(status, { pending: true });
       const values = Object.fromEntries([...controls].map(([id, input]) => [
         id,
         input.type === "checkbox" ? input.checked : input.value
@@ -122,6 +127,7 @@ export async function showAppDialog(options = {}) {
       if (clean(options.pendingLabel)) {
         const statusLine = ensureStatus();
         statusLine.classList.remove("error");
+        setTaskFeedbackState(statusLine, { pending: true });
         statusLine.textContent = uiText(options.pendingLabel);
       }
       try {
@@ -134,8 +140,11 @@ export async function showAppDialog(options = {}) {
         const statusLine = ensureStatus();
         statusLine.textContent = uiText(error?.message) || t("操作失败，请重试");
         statusLine.classList.add("error");
+        setTaskFeedbackState(statusLine, { error: true });
       } finally {
         submitting = false;
+        busy = false;
+        if (status) setTaskFeedbackState(status, { error: status.classList.contains("error") });
         if (!settled) { confirm.disabled = false; cancel.disabled = false; close.disabled = false; }
       }
     });

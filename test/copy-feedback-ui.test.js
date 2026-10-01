@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { ERROR_FEEDBACK_DURATION_MS } from "../extension/transient-feedback.js";
 
 const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
 const libraryHtml = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
@@ -29,8 +30,8 @@ test("library feedback remains visible above the detail drawer", () => {
 });
 
 test("library error feedback clears after a readable delay instead of staying forever", () => {
-  assert.match(library, /const ERROR_FEEDBACK_DURATION_MS = 8000/);
-  assert.match(library, /isError \? ERROR_FEEDBACK_DURATION_MS : FEEDBACK_DURATION_MS/);
+  assert.equal(ERROR_FEEDBACK_DURATION_MS, 8000);
+  assert.match(library, /transientFeedback\.show\(target, translateUiMessage\(message/);
 });
 
 test("collector capture notifications clear without leaving a permanent floating panel", () => {

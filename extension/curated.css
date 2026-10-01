@@ -124,8 +124,6 @@ body { min-width: 320px; }
 .case-detail-actions .ui-icon { width: 15px; height: 15px; }
 .case-save-action { color: var(--ui-accent-contrast); background: var(--ui-accent); }
 .case-save-action.is-saved, .case-detail-actions .is-success { color: var(--ui-text); border-color: var(--ui-accent); background: var(--ui-accent-subtle); }
-.is-progressing::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: linear-gradient(90deg, var(--ui-accent-emphasis) calc(var(--progress) * 100%), transparent 0); }
-.is-progressing[style*="--progress: 0"]::after { width: 38%; background: var(--ui-accent-emphasis); animation: curated-progress 1.1s ease-in-out infinite alternate; }
 
 .pack-save-dialog { width: min(420px, calc(100vw - 28px)); border: 1px solid var(--ui-border-strong); border-radius: var(--curated-radius); padding: 20px; color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow); }
 .pack-save-dialog::backdrop { background: rgba(4,6,9,.76); }
@@ -133,7 +131,6 @@ body { min-width: 320px; }
 .pack-save-meta { margin: 8px 0 18px; color: var(--ui-muted); font-size: var(--ui-meta-size); }
 .pack-save-actions { display: flex; justify-content: flex-end; gap: 7px; }
 
-@keyframes curated-progress { from { transform: translateX(-90%); } to { transform: translateX(260%); } }
 
 @media (max-width: 1050px) {
   .pack-grid, .curated-loading { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -191,5 +188,4 @@ body { min-width: 320px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .is-progressing[style*="--progress: 0"]::after { width: 100%; opacity: .55; animation: none; }
 }

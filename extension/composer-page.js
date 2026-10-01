@@ -1,4 +1,7 @@
+import { setTaskFeedbackState } from "./task-feedback.js";
+import { getLibraryStorage } from './library-storage.js';
 import { createSourceVideoPreview, bindSourceVideoCover } from "./source-video-preview.js";
+import { installWorkspaceReader, withWorkspaceMedia } from "./workspace-context.js";
 import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
@@ -180,6 +183,13 @@ const imageObserver = new IntersectionObserver((items) => {
 }, { rootMargin: "240px" });
 
 bindEvents();
+void installWorkspaceReader({ chromeApi: chrome, readContext: () => {
+  if (!composerInitializationComplete || !composerSession) throw new Error("创作台尚未就绪，请稍后重读。");
+  return { surface: "composer", sessionId: composerSession.id,
+    instruction: elements.composerInstruction.value,
+    pendingReferenceSelection: !elements.composerReferenceWorkspace.hidden && workspaceMode === "references",
+    references: withWorkspaceMedia(composerSession.referenceSnapshots, entries) };
+} });
 try {
   await initializeComposer();
   composerInitializationComplete = true;
@@ -308,8 +318,7 @@ function bindEvents() {
     releaseReferenceVideos();
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   });
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") return;
+  getLibraryStorage().subscribe((changes) => {
     if (changes.aiProviderRegistry || changes.aiTaskAssignments || changes.aiPreferences) safely(refreshComposerServiceSettings)();
     if (changes.creativeRuns || changes.creativeJobs || changes.composerSessions || changes.entries || changes.compoundCases || changes.creativeExperimentSettings || changes.creativeSkills) {
       if (!composerInitializationComplete) creativeStateRefreshPending = true;
@@ -993,8 +1002,10 @@ function createMessage(message, version, streaming, session) {
     const label = routeLabels[message.route] || t("创作助手");
     content.append(rawTextEl("small", "composer-message-label", label));
   }
-  const messageClass = streaming ? " composer-streaming-caret" : message.type === "status" ? " composer-status-dots" : "";
-  content.append(renderFinalAssistantText(message, streaming, messageClass));
+  const messageClass = streaming ? " composer-streaming-caret" : "";
+  const messageText = renderFinalAssistantText(message, streaming, messageClass);
+  if (message.type === "status") setTaskFeedbackState(messageText, { pending: true });
+  content.append(messageText);
   if (message.type === "question" && message.options?.length) {
     if (message.recommendedAnswer) content.append(rawTextEl("p", "composer-question-recommendation", `${t("推荐")}：${message.recommendedAnswer}`));
     const options = el("div", "composer-question-options");
@@ -3414,6 +3425,9 @@ async function savePromptVersion(sessionId, version, button) {
 }
 
 function renderSendState() {
+  for (const element of composerFeedbackElements()) {
+    setTaskFeedbackState(element, { pending: Boolean(element.textContent) && Boolean(activeOperation), error: element.classList.contains("error") });
+  }
   const ready = composerInitializationComplete && Boolean(composerSession);
   elements.composerInstruction.disabled = !ready;
   elements.composerAction.disabled = !ready;
@@ -3618,14 +3632,14 @@ function composerFeedback(message, error = false) {
   for (const element of composerFeedbackElements()) {
     if (element !== target) {
       element.textContent = "";
-      element.classList.remove("error");
+      setTaskFeedbackState(element);
     }
   }
   target.textContent = translateUiMessage(String(message ?? ""));
-  target.classList.toggle("error", error);
+  setTaskFeedbackState(target, { error, pending: Boolean(message) && Boolean(activeOperation) });
   if (message && !error && !activeOperation) feedbackTimer = setTimeout(() => {
     target.textContent = "";
-    target.classList.remove("error");
+    setTaskFeedbackState(target);
   }, 5000);
 }
 
@@ -3643,7 +3657,7 @@ function clearComposerFeedback() {
   feedbackTimer = 0;
   for (const element of composerFeedbackElements()) {
     element.textContent = "";
-    element.classList.remove("error");
+    setTaskFeedbackState(element);
   }
 }
 

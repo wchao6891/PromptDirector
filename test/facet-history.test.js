@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { FACET_UNDO_LIMIT, appendFacetUndo, facetUndoCount, normalizeFacetUndoHistory, undoFacetHistory } from "../extension/facet-history.js";
+import { FACET_UNDO_HISTORY_VERSION, FACET_UNDO_LIMIT, appendFacetUndo, facetUndoCount, normalizeFacetUndoHistory, undoFacetHistory } from "../extension/facet-history.js";
 import { applyFacetChange, createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, previewFacetChange } from "../extension/facets.js";
+import { createFacetNode } from '../extension/facets.js';
+import { applyVisionAnalysis } from '../extension/analysis-candidates.js';
+import { moveMediaToTrash, restoreTrashItems } from '../extension/trash.js';
 
 test("consecutive dimension archives can be undone one step at a time", () => {
   let catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "情绪" });
@@ -28,31 +31,71 @@ test("consecutive dimension archives can be undone one step at a time", () => {
   assert.equal(undoneFirst.remainingSteps, 0);
 });
 
-test("legacy single-snapshot undo remains available after upgrade", () => {
+test("old undo snapshots are hidden because their case versions cannot be checked", () => {
   const catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "情绪" });
   const legacySnapshot = { facetCatalog: catalog, entries: [{ id: "one", facetAssignments: [] }] };
   const current = structuredClone(legacySnapshot);
   current.facetCatalog.facets[0].name = "新名称";
 
-  assert.equal(facetUndoCount(legacySnapshot), 1);
-  const undone = undoFacetHistory(current, legacySnapshot);
-  assert.equal(undone.state.facetCatalog.facets[0].name, "情绪");
-  assert.equal(undone.remainingSteps, 0);
+  assert.equal(facetUndoCount(legacySnapshot), 0);
+  assert.throws(() => undoFacetHistory(current, legacySnapshot), /没有可撤回/);
 });
 
-test("undo restores removed entries, drops added entries, and restores entry order", () => {
+test("facet undo preserves case membership and order while reverting an affected case", () => {
   const catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "情绪" });
   const first = { id: "one", title: "第一条", facetAssignments: [] };
   const second = { id: "two", title: "第二条", facetAssignments: [] };
   const before = { facetCatalog: catalog, entries: [first, second] };
   const after = {
     facetCatalog: catalog,
-    entries: [{ ...second, title: "已修改" }, { id: "three", title: "新增条目", facetAssignments: [] }]
+    entries: [first, { ...second, title: "已修改" }]
   };
   const history = appendFacetUndo(null, before, after);
+  const newCase = { id: "three", title: "新增条目", facetAssignments: [] };
 
-  const undone = undoFacetHistory(after, history);
-  assert.deepEqual(undone.state.entries, [first, second]);
+  const undone = undoFacetHistory({ ...after, entries: [after.entries[1], newCase] }, history);
+  assert.deepEqual(undone.state.entries, [second, newCase]);
+  assert.equal(undone.entriesChanged, true);
+});
+
+test("a tag undo step cannot empty a library populated afterward", () => {
+  const catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "情绪" });
+  const before = { facetCatalog: catalog, entries: [] };
+  const after = { facetCatalog: { ...catalog, revision: catalog.revision + 1 }, entries: [] };
+  const history = appendFacetUndo(null, before, after);
+  const added = { id: "new-case", title: "后来保存的案例", facetAssignments: [] };
+
+  const undone = undoFacetHistory({ ...after, entries: [added] }, history);
+  assert.deepEqual(undone.state.entries, [added]);
+  assert.equal(undone.entriesChanged, false);
+  assert.equal(undone.state.facetCatalog.revision, catalog.revision);
+});
+
+test("facet undo refuses to overwrite a case edited after the tag operation", () => {
+  const catalog = createFacet(createEmptyFacetCatalog(), { id: "facet:mood", name: "情绪" });
+  const before = { facetCatalog: catalog, entries: [{ id: "one", title: "原文", facetAssignments: [] }] };
+  const after = { facetCatalog: catalog, entries: [{ ...before.entries[0], facetAssignments: [{ nodeId: "tag:a" }] }] };
+  const history = appendFacetUndo(null, before, after);
+
+  assert.throws(() => undoFacetHistory({ ...after, entries: [{ ...after.entries[0], title: "新编辑" }] }, history), /保护新内容/);
+  assert.deepEqual(undoFacetHistory(after, history).state.entries, before.entries);
+});
+
+test("facet undo refuses to overwrite a vocabulary edited after the recorded step", () => {
+  const catalog = createDefaultFacetCatalog();
+  const before = { facetCatalog: catalog, entries: [] };
+  const after = { facetCatalog: { ...catalog, revision: catalog.revision + 1 }, entries: [] };
+  const history = appendFacetUndo(null, before, after, { entriesChanged: false });
+
+  assert.throws(() => undoFacetHistory({ ...after, facetCatalog: { ...after.facetCatalog, revision: after.facetCatalog.revision + 1 } }, history), /保护新内容/);
+  assert.deepEqual(undoFacetHistory(after, history).state.facetCatalog, catalog);
+});
+
+test("a tag operation cannot record an undo step that adds or removes cases", () => {
+  const catalog = createDefaultFacetCatalog();
+  const before = { facetCatalog: catalog, entries: [{ id: "one" }] };
+  assert.throws(() => appendFacetUndo(null, before, { ...before, entries: [] }), /保护资料库/);
+  assert.throws(() => appendFacetUndo(null, before, { ...before, entries: [...before.entries, { id: "two" }] }), /保护资料库/);
 });
 
 test("facet undo history keeps only the latest ten real edits", () => {
@@ -71,12 +114,44 @@ test("facet undo history keeps only the latest ten real edits", () => {
 test("legacy oversized history is trimmed during normalization", () => {
   const catalog = createDefaultFacetCatalog();
   const history = normalizeFacetUndoHistory({
-    version: 1,
+    version: FACET_UNDO_HISTORY_VERSION,
     steps: Array.from({ length: 15 }, (_, revision) => ({
       facetCatalog: { ...catalog, revision },
+      afterFacetCatalog: { ...catalog, revision: revision + 1 },
       entries: []
     }))
   });
   assert.equal(history.steps.length, 10);
   assert.equal(history.steps[0].facetCatalog.revision, 5);
+});
+
+test("tag undo refuses to orphan a tag adopted by a later case or recoverable trash case", () => {
+  const catalog = createDefaultFacetCatalog();
+  const before = { facetCatalog: catalog, entries: [] };
+  const created = { id: "later-tag", facetId: catalog.facets[0].id, name: "新标签", status: "active" };
+  const after = { ...before, facetCatalog: { ...catalog, revision: catalog.revision + 1, nodes: [...catalog.nodes, created] } };
+  const history = appendFacetUndo(null, before, after, { entriesChanged: false });
+  const later = { id: "later", title: "后采集案例", facetAssignments: [{ nodeId: created.id, source: "manual" }] };
+  const active = { ...after, entries: [later] };
+  assert.throws(() => undoFacetHistory(active, history), /仍在使用/);
+  assert.deepEqual(active.entries, [later]);
+  const trashed = { ...after, trashState: { items: [{ kind: "entry", snapshot: later }] } };
+  assert.throws(() => undoFacetHistory(trashed, history), /回收站/);
+  assert.deepEqual(trashed.trashState.items[0].snapshot, later);
+});
+
+test('catalog undo cannot remove a tag used by an image in the recoverable media trash', () => {
+  const catalog = createDefaultFacetCatalog(), group = catalog.nodes.find(n => n.kind === 'group');
+  const before = { facetCatalog: catalog, entries: [{ id: 'case', text: '人工正文', mediaAssets: [{ id: 'image', kind: 'image', storageMode: 'managed' }], facetAssignments: [] }], trashState: { items: [] } };
+  const after = { ...before, facetCatalog: createFacetNode(catalog, { id: 'new-tag', facetId: group.facetId, parentId: group.id, name: '新标签' }) };
+  const history = appendFacetUndo(null, before, after, { entriesChanged: false });
+  const analyzed = applyVisionAnalysis(after, 'case', { reconstructionPrompt: '有效独立逆推', tags: [{ g: group.id, t: '新标签' }] }, { visualId: 'image' }).state;
+  assert.deepEqual(analyzed.facetCatalog, after.facetCatalog);
+  const deleted = moveMediaToTrash(analyzed, 'case', ['image']);
+  const snapshot = structuredClone(deleted);
+  assert.throws(() => undoFacetHistory(deleted, history), /回收站/);
+  assert.deepEqual(deleted, snapshot);
+  const restored = restoreTrashItems(deleted, deleted.movedItemIds);
+  assert(restored.entries[0].facetAssignments.some(a => a.nodeId === 'new-tag' && a.visualId === 'image'));
+  assert(restored.facetCatalog.nodes.some(n => n.id === 'new-tag'));
 });
