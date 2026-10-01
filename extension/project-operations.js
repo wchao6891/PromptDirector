@@ -21,16 +21,19 @@ async function summary(organizer, project) {
   return { id: project.id, name: project.name, parentId: project.parentId, path: collectionPath(organizer, project.id).map(({ id, name }) => ({ id, name })),
     requirements: project.requirements || '', caseCount: project.entryIds.length, revision: await projectRevision(project) };
 }
-export function createProjectOperations({ loadState, storage, commit, enqueue }) {
+export function createProjectOperations({ loadState, loadReadState = loadState, storage, commit, enqueue }) {
   return {
     read: input => enqueue(async () => {
       validateProjectOperation('read_projects', input);
-      const organizer = normalizeOrganizerState((await loadState()).organizerState);
+      if (['projectId', 'name', 'path'].filter(key => input[key] !== undefined).length > 1) throw agentError('invalid_input', '项目编号、名称或路径只选一种定位方式');
+      const organizer = normalizeOrganizerState((await loadReadState()).organizerState);
       const revision = await hash(organizer);
       if (input.expectedRevision && revision !== input.expectedRevision) throw agentError('project_conflict', '项目树已变化，请从第一页重新读取');
       if (input.projectId) findProject(organizer, input.projectId);
       const scope = input.projectId && new Set(collectionSubtreeIds(organizer, input.projectId));
-      const projects = await Promise.all(organizer.collections.filter(p => !scope || scope.has(p.id)).map(p => summary(organizer, p)));
+      const projects = await Promise.all(organizer.collections.filter(p => (!scope || scope.has(p.id))
+        && (input.name === undefined || p.name === input.name)
+        && (input.path === undefined || JSON.stringify(collectionPath(organizer, p.id).map(item => item.name)) === JSON.stringify(input.path))).map(p => summary(organizer, p)));
       const text = JSON.stringify(projects), offset = input.offset || 0, length = input.length || 12000;
       return { ok: true, revision, content: text.slice(offset, offset + length), offset, total: projects.length,
         totalCharacters: text.length, nextOffset: offset + length < text.length ? offset + length : null, untrustedContent: true };

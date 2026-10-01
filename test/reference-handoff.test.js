@@ -19,6 +19,7 @@ function fixture({ readDerived = async () => null } = {}) {
     enqueue: work => { const next = queue.then(work, work); queue = next.catch(() => {}); return next; } });
   return { data, api };
 }
+function referenceText(ref) { return ref.referenceText ?? ref.referenceTextParts.map(part => typeof part === 'string' ? part : part.source === 'originalText' ? ref.originalText : ref.referenceSources[part.index].text).join(''); }
 const code = name => error => error.code === name;
 test('PD identity round trips encoded characters and rejects ambiguous or foreign formats', () => {
   const identity = { libraryId:'lib space', caseId:'案例/#?', assetId:'v:a' };
@@ -55,10 +56,10 @@ test('selected images share human-priority and original-evidence rules with deta
     assert.equal(external.originalText, expected);
     assert.equal(internal.originalText, expected);
     assert.equal(overview.references[0].originalPromptCharacters, expected.length);
-    if (!prompts.length) for (const ref of [internal, external]) assert(ref.referenceText.includes(entry.text), 'Non-prompt prose remains readable as reference content');
+    if (!prompts.length) for (const ref of [internal, external]) assert(referenceText(ref).includes(entry.text), 'Non-prompt prose remains readable as reference content');
     else for (const ref of [internal, external]) {
       assert(!ref.originalText.includes('旧网页词'));
-      assert.equal(ref.referenceText, expected);
+      assert.equal(referenceText(ref), expected);
     }
   }
 });
@@ -135,8 +136,8 @@ test('a selected compound keeps both original media kinds without selecting its 
   assert.equal(context.total,1); assert.equal(context.references[0].scope,'case');
   assert.deepEqual(context.references[0].media.map(a=>a.assetId),['image','video']);
   const content=await api.read({part:'reference',expectedRevision:context.revision,referenceId:context.references[0].referenceId});
-  assert(JSON.parse(content.content).referenceText.includes('原词a'));
-  assert(JSON.parse(content.content).referenceText.includes('原词b'));
+  assert(referenceText(JSON.parse(content.content)).includes('原词a'));
+  assert(referenceText(JSON.parse(content.content)).includes('原词b'));
 });
 
 test('a whole selection pages into one complete ordered JSON bundle with sources and no provider data', async () => {

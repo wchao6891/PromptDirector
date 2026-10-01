@@ -1,3 +1,4 @@
+import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { createTransientFeedback } from "./transient-feedback.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
@@ -5,6 +6,7 @@ const libraryStorage = getLibraryStorage();
 import { createBlobDigestCache } from "./blob-digest.js";
 import { installWorkspaceReader, libraryWorkspaceReferences } from "./workspace-context.js";
 import { createSelectionWriter, REFERENCE_SELECTION_KEY } from "./reference-selection.js";
+import { setPdReferenceDragData as writePdReferenceDragData } from './pd-reference.js';
 import { createLibraryLayout } from "./library-layout.js";
 import { renderBrowseNavigation, appendCaseRowDetails } from "./library-browse-view.js";
 import { attachDetailSplit } from "./detail-split.js";
@@ -307,9 +309,11 @@ const documentPreviewConcurrency = Math.max(1, Math.min(2, Math.floor((navigator
 let activeDocumentPreviews = 0;
 
 let entries = [];
+let dragLibraryId = '';
 let compoundCases = [];
 let logicalCases = [];
 let libraryRefreshGeneration = 0;
+let libraryLoadingIssue = '';
 let taxonomy = { nodes: [] };
 let classificationRules = [];
 let facetCatalog = { facets: [], nodes: [] };
@@ -503,7 +507,9 @@ chrome.runtime.onMessage.addListener((message) => {
   renderExtensionUpdateStatus(message.status);
 });
 void installWorkspaceReader({ chromeApi: chrome, readContext: async () => {
-  if (document.body.dataset.libraryState !== "ready") throw new Error("案例库尚未就绪，请稍后重读。");
+  if (document.body.dataset.libraryState !== "ready") throw new Error(libraryLoadingIssue
+    ? `案例库打开失败：${libraryLoadingIssue}`
+    : "案例库尚未就绪，请等待页面加载完成。");
   const selection = JSON.stringify([...selectedCaseIds]);
   const projectId = selectedCollectionId;
   const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
@@ -554,10 +560,17 @@ void refreshExtensionUpdateStatus().then(async () => {
     renderExtensionUpdateStatus(extensionUpdateStatus);
   } catch (error) { showUpdateFeedback(error.message, true); }
 });
-await refreshLibrary();
-await openRequestedLibraryTarget();
-await resumeImportJob();
-openRequestedSettings();
+try {
+  await refreshLibrary();
+  await openRequestedLibraryTarget();
+  await resumeImportJob();
+  openRequestedSettings();
+} catch (error) {
+  libraryLoadingIssue = error?.message || String(error);
+  const status = document.querySelector('#library-loading strong');
+  if (status) status.textContent = translateUiMessage(`无法打开资料库：${error?.message || String(error)}`);
+  console.error('PromptDirector library startup', error);
+}
 
 window.addEventListener("pagehide", saveLibraryReturnSnapshot);
 
@@ -1113,12 +1126,14 @@ async function refreshLibrary() {
   const refreshGeneration = ++libraryRefreshGeneration;
   let response;
   try {
-    const [state, _derived, diagnosticState] = await Promise.all([
+    const [state, _derived, diagnosticState, dragIdentity] = await Promise.all([
       chrome.runtime.sendMessage({ type: "GET_STATE" }),
       loadImageDerivedMetadata(),
-      chrome.storage.local.get("analysisDiagnostics")
+      chrome.storage.local.get("analysisDiagnostics"),
+      chrome.runtime.sendMessage({ type: 'GET_LIBRARY_IDENTITY' }).catch(error => ({ message: error.message }))
     ]);
     response = state;
+    response.dragIdentity = dragIdentity;
     analysisDiagnostics = normalizeAnalysisDiagnostics(diagnosticState.analysisDiagnostics);
     analysisDiagnosticStartedAt = analysisDiagnostics[0]?.at || 0;
     renderAnalysisDiagnostics();
@@ -1134,6 +1149,7 @@ async function refreshLibrary() {
   }
   if (refreshGeneration !== libraryRefreshGeneration) return;
   entries = response.entries ?? [];
+  dragLibraryId = response.dragIdentity?.ok ? response.dragIdentity.identity.libraryId : '';
   if (!referenceSelectionInitialized) {
     try {
       const selection = await referenceSelectionWriter.initialize();
@@ -1200,6 +1216,7 @@ async function refreshLibrary() {
   rebuildLibraryDerivedState();
   updateSelectionBar();
   renderGallery();
+  libraryLoadingIssue = '';
   document.body.dataset.libraryState = "ready";
   if (!elements.searchInput.value.trim()) restoreLibraryScrollPosition();
   const cacheGeneration = ++documentCacheGeneration;
@@ -1563,8 +1580,19 @@ function caseCardForEntry(entry) {
   return card;
 }
 
+function setPdReferenceDragData(dataTransfer, input) {
+  const entry = logicalCases.find(item => item.id === input.caseId) ?? entries.find(item => item.id === input.caseId);
+  let linkBase = chrome.runtime.getManifest().homepage_url;
+  try {
+    const source = new URL(entry?.url);
+    if (['http:', 'https:'].includes(source.protocol) && !source.username && !source.password) linkBase = source.href;
+  } catch { /* Locally created notes have no source webpage. */ }
+  return writePdReferenceDragData(dataTransfer, { ...input, linkBase });
+}
+
 function syncCaseCardInteraction(card, entry) {
   const selectable = Boolean(selectionMode);
+  card.draggable = !selectable && !caseOrderManagementActive;
   const ineligible = selectionMode === "vision" && !isVisionSelectableEntry(entry);
   card.classList.toggle("share-selectable", selectable);
   card.classList.toggle("selection-ineligible", ineligible);
@@ -1642,9 +1670,10 @@ function createCaseCard(entry) {
   bindCaseOrderDrag(card, entry, (value) => { suppressSelectionClick = value; });
   card.draggable = !selectionMode && !caseOrderManagementActive;
   card.addEventListener("dragstart", (event) => {
-    if (selectionMode || caseOrderManagementActive || !event.dataTransfer) return;
-    event.dataTransfer.setData("application/x-promptdirector-case", entry.id);
-    event.dataTransfer.effectAllowed = "move";
+    if (selectionMode || caseOrderManagementActive) { event.preventDefault(); return; }
+    if (!event.dataTransfer) return;
+    if (!dragLibraryId) { event.preventDefault(); showFeedback('资料库身份暂不可读，请刷新后再拖动', true); return; }
+    setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, name: entry.title });
   });
   const open = () => {
     if (suppressSelectionClick) {
@@ -1685,7 +1714,8 @@ function createCaseCard(entry) {
     }
     const image = document.createElement("img");
     image.className = "case-shot";
-    image.alt = translateUiMessage(`${entry.title} 对应画面`);
+    image.alt = entry.title;
+    if (mainVisual && mainVisual.kind !== "image") image.draggable = false;
     image.dataset.visualId = cover.id;
     image.decoding = "async";
     image.loading = "lazy";
@@ -1708,6 +1738,7 @@ function createCaseCard(entry) {
     image.addEventListener("pointerdown", prepareOriginal);
     card.addEventListener("dragstart", event => {
       if (selectionMode || caseOrderManagementActive || !event.dataTransfer) return;
+      if (mainVisual && mainVisual.kind !== "image") return;
       if (!exportUrl) {
         event.preventDefault();
         prepareOriginal();
@@ -1715,16 +1746,9 @@ function createCaseCard(entry) {
         return;
       }
       image.src = exportUrl;
-      event.dataTransfer.clearData();
-      event.dataTransfer.setData("application/x-promptdirector-case", entry.id);
-      event.dataTransfer.effectAllowed = "copyMove";
-      event.dataTransfer.setData("DownloadURL", `${cover.mimeType || "application/octet-stream"}:${copyFilename(cover, entry.title, 0)}:${exportUrl}`);
-      event.dataTransfer.setData("text/uri-list", exportUrl);
-      event.dataTransfer.setData("text/plain", exportUrl);
-      const exportedImage = document.createElement("img");
-      exportedImage.src = exportUrl;
-      exportedImage.alt = image.alt;
-      event.dataTransfer.setData("text/html", exportedImage.outerHTML);
+      if (!dragLibraryId) { event.preventDefault(); return; }
+      setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, name: entry.title,
+        file: { kind: 'image', url: exportUrl, mimeType: cover.mimeType, name: copyFilename(cover, entry.title, 0) } });
     });
     wrap.append(image);
     card.append(wrap);
@@ -1739,7 +1763,8 @@ function createCaseCard(entry) {
       }
       const image = document.createElement("img");
       image.className = "case-shot";
-      image.alt = translateUiMessage(`${entry.title} 视频封面`);
+      image.alt = entry.title;
+      image.draggable = false;
       image.dataset.visualId = poster?.id || mainVisual.id;
       image.dataset.videoId = mainVisual.id;
       image.decoding = "async";
@@ -1766,6 +1791,9 @@ function createCaseCard(entry) {
   } else {
     card.append(entry.text?.trim() ? createTextCaseCover(entry) : textEl("div", "case-shot-missing", "无媒体"));
   }
+  if (mainVisual?.storageMode === "managed" && mainVisual.kind !== "image") {
+    bindOriginalMediaDrag(card, entry, mainVisual);
+  }
   card.addEventListener("contextmenu", event => {
     event.preventDefault(); event.stopPropagation();
     showCaseQuickMenu(entry, card, { x: event.clientX, y: event.clientY });
@@ -1775,6 +1803,35 @@ function createCaseCard(entry) {
   });
   card.append(textEl("span", "share-check", "✓"));
   return card;
+}
+
+function bindOriginalMediaDrag(node, entry, asset, { assetReference = false } = {}) {
+  let exportUrl = "";
+  let preparingOriginal;
+  const prepareOriginal = () => {
+    if (exportUrl || preparingOriginal) return;
+    preparingOriginal = mediaObjectUrl(asset.id).then(url => { exportUrl = url; })
+      .catch(error => console.debug("PromptDirector original file drag", error))
+      .finally(() => { preparingOriginal = null; });
+  };
+  node.addEventListener("pointerenter", prepareOriginal);
+  node.addEventListener("focusin", prepareOriginal);
+  node.addEventListener("pointerdown", prepareOriginal);
+  node.addEventListener("dragstart", event => {
+    if (selectionMode || caseOrderManagementActive || !event.dataTransfer) return;
+    if (!exportUrl) {
+      event.preventDefault();
+      prepareOriginal();
+      showFeedback("原件正在读取，请稍后再拖动", true);
+      return;
+    }
+    if (!dragLibraryId) { event.preventDefault(); return; }
+    const name = copyFilename(asset, entry.title, 0);
+    setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id,
+      assetId: assetReference ? asset.id : '', name: assetReference ? name : entry.title,
+      file: { kind: asset.kind, url: exportUrl, mimeType: asset.mimeType, name } });
+    if (assetReference) event.stopPropagation();
+  });
 }
 
 function bindCaseOrderDrag(card, entry, setSuppressClick) {
@@ -2759,6 +2816,7 @@ function getVisionSelectableEntries(scope = "filtered") {
 }
 
 function isVisionSelectableEntry(entry) {
+  if (!entry) return false;
   const sourceEntries = entry.memberEntryIds?.length
     ? entry.memberEntryIds.map((id) => entries.find((item) => item.id === id)).filter(Boolean)
     : [entry];
@@ -3841,13 +3899,15 @@ async function createCompleteFolderBackup() {
       });
     }
     const creativeSkills = structuredClone(response.creativeSkills ?? { version: 1, items: [] });
-    for (const skill of creativeSkills.items ?? []) {
+    for (const skill of creativeSkills.items ?? []) for (const owner of skillFileOwners(skill)) {
       const packageFiles = [];
-      for (const file of skill.packageFiles ?? []) {
+      for (const file of owner.packageFiles ?? []) {
         try {
-          const blob = await getMediaBlob(file.assetId);
-          if (!blob) throw new Error(`外部 Skill 原包文件缺失：${file.path}`);
           const archivePath = skillFolderPath(skill.portableId, file.assetId, file.path);
+          const blob = plannedFiles.get(archivePath) ?? await getMediaBlob(file.assetId);
+          if (!blob) throw new Error(`外部 Skill 原包文件缺失：${file.path}`);
+          if (file.sha256 && await digest(blob) !== file.sha256) throw new Error(`Skill文件与保存时摘要不一致：${file.path}`);
+          const firstCopy = !plannedFiles.has(archivePath);
           plannedFiles.set(archivePath, blob);
           packageFiles.push({
             ...file,
@@ -3855,8 +3915,7 @@ async function createCompleteFolderBackup() {
             byteSize: blob.size,
             mimeType: blob.type || file.mimeType || "application/octet-stream"
           });
-          mediaCount += 1;
-          byteSize += blob.size;
+          if (firstCopy) { mediaCount += 1; byteSize += blob.size; }
         } catch (error) {
           if (error?.name === "AbortError") throw error;
           preflightDiagnostics.push(backupResourceDiagnostic("skill_file_dropped", file, error, {
@@ -3865,7 +3924,7 @@ async function createCompleteFolderBackup() {
           }));
         }
       }
-      skill.packageFiles = packageFiles;
+      owner.packageFiles = packageFiles;
     }
     const composerSessions = structuredClone(response.composerSessions ?? []);
     for (const session of composerSessions) {
@@ -4708,7 +4767,7 @@ function backupMediaPaths(library) {
       .map((asset) => asset.assetPath || asset.screenshotPath).filter(Boolean)),
     ...(library?.creativeRuns ?? []).flatMap((run) => (run.outputs ?? [])
       .map((output) => output.visual?.assetPath || output.visual?.screenshotPath).filter(Boolean)),
-    ...(library?.creativeSkills?.items ?? []).flatMap((skill) => (skill.packageFiles ?? [])
+    ...(library?.creativeSkills?.items ?? []).flatMap((skill) => skillPackageFiles(skill)
       .map((file) => file.archivePath).filter(Boolean)),
     ...(library?.composerSessions ?? []).flatMap((session) => (session.referenceSnapshots ?? [])
       .filter((reference) => reference?.sourceType === "temporary")
@@ -5638,12 +5697,19 @@ function createLocalDiscovery(entry) {
       }
       const image = document.createElement("img");
       image.className = "case-shot";
-      image.alt = `${item.entry.title || "相似案例"} 对应画面`;
+      image.alt = item.entry.title || "相似案例";
       image.dataset.visualId = item.visualId;
       image.decoding = "async";
       image.loading = "lazy";
       const cached = thumbnailUrls.get(item.visualId);
       if (cached) image.src = cached;
+      image.draggable = false;
+      button.draggable = true;
+      button.addEventListener('dragstart', event => {
+        if (!event.dataTransfer) return;
+        if (!dragLibraryId) { event.preventDefault(); showFeedback('资料库身份暂不可读，请刷新后再拖动', true); return; }
+        setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: item.entry.id, name: item.entry.title });
+      });
       media.append(image);
     } else {
       const asset = primaryMediaAsset(item.entry);
@@ -5916,6 +5982,13 @@ async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
     image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
     image.alt = asset.sourceTitle || entry.title;
     image.loading = "lazy";
+    image.addEventListener('dragstart', event => {
+      if (!event.dataTransfer) return;
+      if (!dragLibraryId) { event.preventDefault(); showFeedback('资料库身份暂不可读，请刷新后再拖动', true); return; }
+      setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, assetId: asset.id,
+        name: copyFilename(asset, entry.title, 0), file: { kind: 'image', url: image.src, mimeType: asset.mimeType, name: copyFilename(asset, entry.title, 0) } });
+      event.stopPropagation();
+    });
     image.addEventListener("click", () => openImageLightbox(image, entry));
     card.append(image);
   } else if (asset.kind === "video") {
@@ -5925,11 +5998,19 @@ async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
     link.href = (post ? entry.url : "") || asset.reference?.url || asset.sourceUrl || entry.url || "#";
     link.target = "_blank";
     link.rel = "noopener noreferrer";
+    if (asset.storageMode === 'managed') bindOriginalMediaDrag(link, entry, asset, { assetReference: true });
+    else link.addEventListener('dragstart', event => {
+      if (!event.dataTransfer) return;
+      if (!dragLibraryId) { event.preventDefault(); showFeedback('资料库身份暂不可读，请刷新后再拖动', true); return; }
+      setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, assetId: asset.id, name: copyFilename(asset, entry.title, 0) });
+      event.stopPropagation();
+    });
     if (posterBlob) {
       link.classList.add("has-poster");
       const image = document.createElement("img");
       image.src = rememberDetailBlobUrl(posterBlob);
-      image.alt = `${entry.title} 视频封面`;
+      image.alt = entry.title;
+      image.draggable = false;
       link.append(image);
     }
     link.append(rawTextEl("strong", "", t(post ? "打开原帖观看视频" : "打开视频来源")));
@@ -6644,15 +6725,14 @@ async function createMediaViewer(asset, imageUrl, entry) {
     const image = document.createElement("img");
     image.className = "detail-image";
     image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
-    image.alt = `${entry.title} 图片`;
+    image.alt = copyFilename(asset, entry.title, 0);
     image.src = imageUrl;
     image.draggable = true;
     image.addEventListener("dragstart", event => {
       if (!event.dataTransfer || !imageUrl) return;
-      // Preserve native image drag data and add Chrome's file-export payload.
-      event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData("DownloadURL", `${asset.mimeType || "application/octet-stream"}:${copyFilename(asset, entry.title, 0)}:${imageUrl}`);
-      event.dataTransfer.setData("text/uri-list", imageUrl);
+      if (!dragLibraryId) { event.preventDefault(); showFeedback('资料库身份暂不可读，请刷新后再拖动', true); return; }
+      setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, assetId: asset.id,
+        name: copyFilename(asset, entry.title, 0), file: { kind: 'image', url: imageUrl, mimeType: asset.mimeType, name: copyFilename(asset, entry.title, 0) } });
       event.stopPropagation();
     });
     image.tabIndex = 0;
@@ -6679,6 +6759,15 @@ async function createMediaViewer(asset, imageUrl, entry) {
     video.preload = "none";
     video.autoplay = false;
     video.playsInline = true;
+    video.draggable = true;
+    video.addEventListener('dragstart', event => {
+      if (!event.dataTransfer) return;
+      if (!dragLibraryId) { event.preventDefault(); showFeedback('资料库身份暂不可读，请刷新后再拖动', true); return; }
+      const name = copyFilename(asset, entry.title, 0);
+      setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, assetId: asset.id, name,
+        file: { kind: 'video', url, mimeType: asset.mimeType, name } });
+      event.stopPropagation();
+    });
     const poster = posterAssetForVideo(entry, asset);
     if (poster) video.poster = await originalScreenshotUrl(poster.id);
     video.controls = false;

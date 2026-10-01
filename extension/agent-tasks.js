@@ -15,6 +15,7 @@ export function canonicalInput(value) {
 export function createAgentTasks({ storage, execute, getLibraryId, allowLegacyTasks = false, now = () => new Date().toISOString() }) {
   if (typeof getLibraryId !== "function") throw new Error("Agent 任务缺少资料库身份。");
   const running = new Set();
+  const completions = new Map();
   let queue = Promise.resolve();
   const serialize = fn => {
     const operation = queue.then(fn, fn);
@@ -65,18 +66,29 @@ export function createAgentTasks({ storage, execute, getLibraryId, allowLegacyTa
           if (prior.operation !== operation || JSON.stringify(canonicalInput(prior.input)) !== JSON.stringify(canonicalInput(input))) {
             throw agentError("request_conflict", "这个请求编号已用于其他内容；请使用新的编号。");
           }
-          return this.inspect(id);
+          return { ...(await this.inspect(id)), replayed: true };
         }
         const libraryId = await currentLibraryId();
         const task = { id, operation, input, libraryId, state: "queued", createdAt: now(), updatedAt: now() };
         await put(task);
         // Start before returning so a live worker never mistakes its queued job
         // for an interrupted one. run catches execution failures into receipts.
-        void run(task).catch(error => console.error("PromptDirector agent receipt write failed", error.code || error.name));
+        const completion = run(task).catch(error => console.error("PromptDirector agent receipt write failed", error.code || error.name))
+          .finally(() => completions.delete(task.id));
+        completions.set(task.id, completion);
         return { id, operation, state: "queued", createdAt: task.createdAt };
       });
     },
     async inspect(id, options = {}) {
+      if (options.waitMs !== undefined) {
+        requireInteger(options.waitMs, { min: 0, max: 15000 });
+        const completion = completions.get(id);
+        if (completion && options.waitMs) {
+          let timer;
+          try { await Promise.race([completion, new Promise(resolve => { timer = setTimeout(resolve, options.waitMs); })]); }
+          finally { clearTimeout(timer); }
+        }
+      }
       const stored = await get(id);
       if (!stored) throw agentError("task_not_found", "没有找到这个任务，请核对请求编号与所连接的案例库。");
       const task = await ownTask(stored);

@@ -6,6 +6,8 @@ export function createLibraryStorage({ backend, changes, lock }) {
   }
   return Object.freeze({
     get: keys => backend.get(keys),
+    // Available before our minimum Chrome version; never load values to enumerate keys.
+    getKeys: () => backend.getKeys(),
     set: values => lock(() => backend.set(values)),
     remove: keys => lock(() => backend.remove(keys)),
     // Read/modify/write is serialized with every set/remove using this backend.

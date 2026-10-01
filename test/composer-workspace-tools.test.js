@@ -17,7 +17,7 @@ test('workspace help and Skill tools work with case search disabled, without lea
  const list=await tools.execute('list_skills',{query:''},{callId:'list'});
  assert.equal(list.data.items[0].callName,'布光'); assert.ok(!JSON.stringify(list).includes('secret'));
  const read=await tools.execute('read_skill',{skillId:skill.id},{callId:'read'});
- assert.equal(read.data.skillMarkdown,'先判断主光方向。');
+ assert.equal(read.data.content,'先判断主光方向。');
  assert.ok(!tools.specs.some(s=>s.name==='inspect_case_tags'));
 });
 test('Skill draft uses the current response, survives session normalization, saves once after review',async()=>{

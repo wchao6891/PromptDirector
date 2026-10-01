@@ -1,3 +1,4 @@
+import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { libraryStoredAssets } from "./library-asset-inventory.js";
 import { mediaIdentity, sameMediaIdentity, sharedLibraryMediaFiles } from "./library-shared-media.js";
 import { normalizeFacetCatalog, uniqueNames } from "./facets.js";
@@ -461,9 +462,9 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
     const retainedVisualIds = new Set(retainedOutputs.map((output) => output.visual.id));
     run.events = run.events.filter((event) => retainedVisualIds.has(event.visualId));
   }
-  for (const skill of data.creativeSkills.items) {
+  for (const skill of data.creativeSkills.items) for (const owner of skillFileOwners(skill)) {
     const retainedFiles = [];
-    for (const file of skill.packageFiles) {
+    for (const file of owner.packageFiles ?? []) {
       const path = clean(file.archivePath);
       if (!/^skills\/[A-Za-z0-9._/-]+$/i.test(path) || path.includes("..")) {
         if (!salvageInvalidMedia) throw new Error(`外部 Skill 原包路径无效：${file.path}`);
@@ -493,10 +494,16 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         importDiagnostics.push(privateResourceDiagnostic("skill_file_dropped", file, path, "byte_size_mismatch"));
         continue;
       }
+      if (!claimMedia({ id: file.assetId, kind: 'skill-file' }, blob)) {
+        if (!salvageInvalidMedia) throw new Error(`Skill版本包含冲突的文件编号：${file.path}`);
+        importStats.droppedSkillFiles += 1;
+        importDiagnostics.push(privateResourceDiagnostic('skill_file_dropped', file, path, 'duplicate_asset_id'));
+        continue;
+      }
       skillAssets.set(file.assetId, blob);
       retainedFiles.push(file);
     }
-    skill.packageFiles = retainedFiles;
+    owner.packageFiles = retainedFiles;
   }
   return {
     ...data,
@@ -1323,7 +1330,7 @@ function packageImagePlaceholders(value) {
       : [])
   );
   const skillFiles = normalizeCreativeSkillsState(value?.creativeSkills).items.flatMap((skill) =>
-    skill.packageFiles.flatMap((file) => file.archivePath
+    skillPackageFiles(skill).flatMap((file) => file.archivePath
       ? [[file.archivePath, new Blob(["placeholder"], { type: file.mimeType || "application/octet-stream" })]]
       : [])
   );

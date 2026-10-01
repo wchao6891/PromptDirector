@@ -1,3 +1,9 @@
+import { createOriginalFileDragHost } from './original-file-drag.js';
+import {createExternalAnalysisBatches} from './external-analysis-batches.js';
+import {ANALYSIS_BATCH_SPECS} from './analysis-batch-specs.js';
+import { skillPackageLimits } from './creative-skill-package.js';
+import { createSkillWriter } from './skill-writer.js';
+import { createSkillOperations } from './skill-operations.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
 import { getLibraryStorage, createLibraryCommitter } from "./library-storage.js";
 import { createProjectOperations } from "./project-operations.js";
@@ -14,9 +20,11 @@ import { splitArticleCases } from "./article-case-groups.js";
 import { createAgentConnection } from "./agent-connection.js";
 import { createAgentTasks } from "./agent-tasks.js";
 import { createAgentLibrary } from "./agent-library.js";
+import { createCaseLibraryReader } from "./case-library-state.js";
 import { createAgentWorkspace } from "./agent-workspace.js";
 import { createReferenceSelection } from "./reference-selection.js";
 import { createCaseOperations } from "./case-operations.js";
+import { CASE_OPERATION_SPECS } from './case-operation-specs.js';
 import { createAgentTransfers } from "./agent-transfers.js";
 import { saveAgentMaterial } from "./agent-save.js";
 import { captureAgentUrl } from "./agent-capture.js";
@@ -37,7 +45,7 @@ import {
   createSourceRule
 } from "./classifier.js";
 import { migrateLibraryState, needsMigration } from "./migration.js";
-import { planCaseCopies } from "./library-folder-ownership.js";
+import { planCaseCopies, assertCompoundProjectScope } from "./library-folder-ownership.js";
 import { remapEntryMediaIds } from "./library-portable-media.js";
 import {
   CONTENT_TYPE_VISIBILITY,
@@ -563,17 +571,22 @@ const captureRuntime = createCaptureWorkspace({
   resolveSourceContext: resolveCaptureSourceContext
 });
 
+const readCaseLibraryState = createCaseLibraryReader({ storage: libraryStorage, readFullState: readState });
+const skillOperations = createSkillOperations({ loadState: () => enqueue(() => libraryStorage.get(STORAGE_KEYS.creativeSkills)), readBlob: getMediaBlob });
 const agentLibrary = createAgentLibrary({
-  loadState: () => enqueue(readState),
+  loadState: () => enqueue(readCaseLibraryState),
   readBlob: async id => await getMediaBlob(id) || await getScreenshotBlob(id),
   readDerived: getDerivedMedia, readDerivedMetadata: getAllDerivedMetadata,
   libraryUrl: chrome.runtime.getURL("library.html")
 });
-const projectOperations = createProjectOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
-const caseOperations = createCaseOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const projectOperations = createProjectOperations({ loadState: readState, loadReadState: readCaseLibraryState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const caseOperations = createCaseOperations({ loadState: readState, loadReadState: readCaseLibraryState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
 const libraryIdentity = createBrowserLibraryIdentity({ storage: libraryStorage,
   getLegacyId: async () => (await agentConnection.prepare()).instanceId });
-const referenceSelection = createReferenceSelection({ storage: libraryStorage, loadState: readState,
+const externalAnalysisBatches = createExternalAnalysisBatches({storage:libraryStorage,loadState:readState,
+  commit:commitLocalChanges,enqueue,readBlob:async id=>await getMediaBlob(id)||await getScreenshotBlob(id),
+  getLibraryId:async()=>(await libraryIdentity.read()).libraryId});
+const referenceSelection = createReferenceSelection({ storage: libraryStorage, loadState: readCaseLibraryState,
   readDerived: getDerivedMedia, getLibraryId: async () => (await libraryIdentity.read()).libraryId, enqueue });
 const agentWorkspace = createAgentWorkspace({ chromeApi: chrome, readCase: input => caseOperations.read(input),
   readSelection: input => referenceSelection.read(input) });
@@ -586,6 +599,8 @@ const agentTransfers = createAgentTransfers({
     return response.prepared;
   }
 });
+const skillWriter = createSkillWriter({ storage: libraryStorage, transfers: agentTransfers,
+  readBlob: getMediaBlob, commit: commitLocalChanges, enqueue, cleanup: deleteUnreferencedMedia });
 const agentTasks = createAgentTasks({ storage: libraryStorage,
   getLibraryId: async () => (await libraryIdentity.read()).libraryId,
   // This browser library may adopt its receipts predating library IDs.
@@ -626,8 +641,19 @@ void agentConnection.start();
 async function dispatchAgentOperation(operation, input) {
   switch (operation) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
-      extensionVersion: chrome.runtime.getManifest().version,
-      capabilities: ["read_projects", "create_project", "update_project", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation"], workspaceContentParts: ["instruction", "reference", "selection"], searchFilters: ["minDurationMs", "maxDurationMs", "expectedRevision", "mediaKind", "hasOriginalPrompt", "alternatives", "sort", "countOnly"] };
+      extensionVersion: chrome.runtime.getManifest().version, skillPackageLimits: skillPackageLimits(),
+      caseOperationFeatures: Object.fromEntries(CASE_OPERATION_SPECS.filter(spec => spec.name !== 'read_case_details').map(spec => [spec.name, spec.name === 'edit_case' ? Object.keys(spec.parameters.properties.patch.properties) : spec.parameters.properties.action.enum])),
+      capabilities: [...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, searchFilters: ["minDurationMs", "maxDurationMs", "expectedRevision", "mediaKind", "hasOriginalPrompt", "alternatives", "sort", "countOnly"] };
+    case "manage_analysis_batch":
+    case "list_analysis_batches":
+    case "read_analysis_batch":
+    case "submit_analysis_results":
+    case "submit_analysis_result": return externalAnalysisBatches.execute(operation,input);
+    case "save_skill":
+    case "restore_skill": return skillWriter.execute(operation, input);
+    case "list_skills":
+    case "read_skill":
+    case "read_skill_file": return skillOperations.execute(operation, input);
     case "read_projects": return projectOperations.read(input);
     case "create_project":
     case "update_project": return projectOperations.execute(operation, input);
@@ -733,7 +759,13 @@ chrome.action.onClicked.addListener((tab) => {
     .catch((error) => console.error("PromptDirector toolbar side panel open failed", error));
 });
 
+const originalFileDrag = createOriginalFileDragHost(chrome);
+const syncOriginalFileDrag = () => originalFileDrag.sync().catch(error => console.error('PromptDirector file drop setup failed', error));
+chrome.permissions.onAdded.addListener(syncOriginalFileDrag);
+chrome.permissions.onRemoved.addListener(syncOriginalFileDrag);
+void syncOriginalFileDrag();
 chrome.runtime.onConnect.addListener((port) => {
+  if (originalFileDrag.connect(port)) return;
   if (port.name !== "capture-region") return;
   port.onMessage.addListener(() => undefined);
 });
@@ -765,6 +797,10 @@ function openCreativeResultSidePanel(message, sender) {
 
 async function handleMessage(message, interaction = {}) {
   switch (message?.type) {
+    case 'GET_LIBRARY_IDENTITY': {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(''))) throw new Error('资料库身份只能从插件工作空间读取');
+      return { ok: true, identity: await libraryIdentity.read() };
+    }
     case "GET_REFERENCE_SELECTION":
     case "SET_REFERENCE_SELECTION": {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
@@ -773,10 +809,18 @@ async function handleMessage(message, interaction = {}) {
       return { ok: true, selection: message.type === "GET_REFERENCE_SELECTION"
         ? await referenceSelection.get() : await referenceSelection.update(message.input) };
     }
+    case "SKILL_OPERATION": {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
+        throw new Error("Skill操作只能从插件工作空间调用");
+      }
+      return { ok: true, data: await (["save_skill", "restore_skill"].includes(message.operation)
+        ? skillWriter.execute(message.operation, message.input) : skillOperations.execute(message.operation, message.input)) };
+    }
     case "CASE_OPERATION": {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
         throw new Error("案例操作只能从插件工作空间调用");
       }
+      if (ANALYSIS_BATCH_SPECS.some(spec=>spec.name===message.operation)) return externalAnalysisBatches.execute(message.operation,message.input);
       if (message.operation === "read_projects") return projectOperations.read(message.input);
       if (["create_project", "update_project"].includes(message.operation)) return projectOperations.execute(message.operation, message.input);
       if (message.operation === "save_material") {
@@ -800,6 +844,12 @@ async function handleMessage(message, interaction = {}) {
     }
     case "GET_STATE": {
       return enqueue(async () => ({ ok: true, ...publicLibraryState(await readState()) }));
+    }
+    case "GET_CASE_LIBRARY_STATE": {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
+        throw new Error("案例读取只能从插件工作空间调用");
+      }
+      return enqueue(async () => ({ ok: true, ...await readCaseLibraryState() }));
     }
     case "GET_FOLDER_BACKUP_STATE":
       return enqueue(async () => ({ ok: true, ...folderBackupState(await readState()) }));
@@ -2224,6 +2274,7 @@ async function startCaptureForCase(caseId, partEntryId = "") {
 
 async function createCompoundCaseAction(message) {
   const state = await readState();
+  assertCompoundProjectScope(state, message.memberEntryIds || []);
   const result = createCompoundCase(state.compoundCases, state.entries, {
     id: message.compoundCaseId,
     title: message.title,
@@ -2237,6 +2288,7 @@ async function createCompoundCaseAction(message) {
 
 async function updateCompoundCaseAction(message) {
   const state = await readState();
+  if (message.memberEntryIds) assertCompoundProjectScope(state, message.memberEntryIds);
   const result = updateCompoundCase(state.compoundCases, state.entries, message.compoundCaseId, {
     title: message.title,
     memberEntryIds: message.memberEntryIds,
@@ -3350,8 +3402,10 @@ async function createCreativeSkillAction(message) {
 
 async function saveCreativeSkillVersionAction(message) {
   const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
+  const before = normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]).items.find(item => item.id === message.skillId);
   const result = saveCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.version);
   await commitSkillCoverResult(result, message.cover);
+  await deleteUnreferencedMedia(skillPackageAssetIds(before)).catch(error => console.warn("Skill资源清理未完成", error));
   return { ok: true, message: message.version?.coverOnly ? "Skill 已保存" : "Skill 新版本已保存", creativeSkills: result.state, skill: result.skill };
 }
 
@@ -3368,9 +3422,13 @@ async function commitSkillCoverResult(result, cover) {
 
 async function restoreCreativeSkillVersionAction(message) {
   const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
+  const before = normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]).items.find(item => item.id === message.skillId);
+  const source = before?.versions.find(item => item.id === message.versionId);
+  const filesKnown = source?.id === before?.currentVersionId || Array.isArray(source?.packageFiles);
   const result = restoreCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.versionId);
   await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
-  return { ok: true, message: "已将所选版本恢复为新的当前版本", creativeSkills: result.state, skill: result.skill };
+  await deleteUnreferencedMedia(skillPackageAssetIds(before)).catch(error => console.warn("Skill资源清理未完成", error));
+  return { ok: true, message: filesKnown ? "已将所选版本恢复为新的当前版本" : "已恢复文字版本；此旧版本没有文件记录，当前包文件保留", creativeSkills: result.state, skill: result.skill };
 }
 
 async function deleteCreativeSkillAction(skillId) {

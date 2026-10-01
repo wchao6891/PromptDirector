@@ -151,3 +151,37 @@ test('transport key order and internal display-only classification labels do not
   const cache=createSearchIndexCache();cache.build(state.entries);
   assert.equal(cache.build(state.entries.map(e=>Object.fromEntries(Object.entries(e).reverse()))).rebuilt,0);
 });
+
+test('repeated pages reuse validated result facts instead of serializing every long prompt again', async () => {
+  let bodyReads = 0;
+  const entry = { id: 'long', title: 'long prompt', mediaAssets: [],
+    get text() { bodyReads++; return '完整原始提示词'.repeat(20000); } };
+  const entries = [entry], cache = createSearchIndexCache();
+  const firstIndex = cache.build(entries);
+  const first = await searchCaseResult(entries, firstIndex.index, {}, {}, firstIndex.resultVersion);
+  const nextIndex = cache.build(entries);
+  bodyReads = 0;
+  const next = await searchCaseResult(entries, nextIndex.index, {}, { expectedRevision: first.revision }, nextIndex.resultVersion);
+  assert.equal(next.revision, first.revision);
+  assert.equal(bodyReads, 0, 'a validated unchanged prompt should not be re-read to version the next page');
+});
+
+test('cached result versions match uncached reads and retain their snapshot across interleaved queries', async () => {
+  const {state} = fixture(), cache = createSearchIndexCache();
+  const before = structuredClone(state.entries);
+  const oldIndex = cache.build(before);
+  const first = await searchCaseResult(before, oldIndex.index, state.organizerState, {}, oldIndex.resultVersion);
+  state.entries[0].mediaAssets[0].byteSize = 200;
+  const changed = cache.build(state.entries);
+  const fresh = await searchCaseResult(state.entries, changed.index, state.organizerState, {}, changed.resultVersion);
+  const uncached = await searchCaseResult(state.entries, buildSearchIndex(state.entries), state.organizerState);
+  assert.notEqual(fresh.revision, first.revision, 'a changed original descriptor must invalidate the old page');
+  assert.equal(fresh.revision, uncached.revision);
+  const held = await searchCaseResult(before, oldIndex.index, state.organizerState, {}, oldIndex.resultVersion);
+  assert.equal(held.revision, first.revision, 'another cache build must not change an already loaded snapshot');
+  const scoped = cache.build([state.entries[1]], undefined, new Map(), new Map(), new Set(state.entries.map(e=>e.id)));
+  await searchCaseResult(state.entries, scoped.index, state.organizerState, {}, scoped.resultVersion);
+  const restored = cache.build(structuredClone(state.entries));
+  assert.equal(restored.rebuilt, 0);
+  assert.equal((await searchCaseResult(state.entries, restored.index, state.organizerState, {}, restored.resultVersion)).revision, fresh.revision);
+});

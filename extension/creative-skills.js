@@ -1,3 +1,5 @@
+import { skillFileOwners, skillPackageFiles } from './skill-files.js';
+
 export const CREATIVE_SKILLS_VERSION = 1;
 export const CREATIVE_SKILL_VERSION_LIMIT = 10;
 
@@ -65,18 +67,28 @@ export function saveCreativeSkillVersion(stateValue, skillId, input = {}, option
         normalizeMarkdown(input.skillMarkdown) !== current.skillMarkdown) throw new Error("Skill 内容已变化，请重新保存");
     return { state, skill, version: current };
   }
+  // Capture only the version whose files are actually known now. Older legacy
+  // text versions have no file snapshot and must not inherit today's scripts.
+  const previous = skill.versions.find(item => item.id === skill.currentVersionId);
+  previous.packageFiles = normalizePackageFiles(skill.packageFiles);
+  previous.description = skill.description;
+  previous.runtimeDependencies = [...skill.runtimeDependencies];
+  previous.textModeConfirmed = skill.textModeConfirmed;
   const version = normalizeCreativeSkillVersion({
     id: cleanText(options.versionId) || `skill-version:${crypto.randomUUID()}`,
     createdAt: now,
     reason: input.reason || "improved",
     skillMarkdown: input.skillMarkdown,
-    references: input.references,
-    provenanceMarkdown: input.provenanceMarkdown,
+    references: input.references ?? current.references,
+    provenanceMarkdown: input.provenanceMarkdown ?? current.provenanceMarkdown,
     source: input.source || "generated"
   });
   if (!version) throw new Error("Skill 正文不能为空");
   skill.callName = callName;
   skill.description = cleanText(input.description ?? skill.description);
+  if (Object.hasOwn(input, 'packageFiles')) skill.packageFiles = normalizePackageFiles(input.packageFiles);
+  if (Object.hasOwn(input, 'runtimeDependencies')) skill.runtimeDependencies = normalizeStringList(input.runtimeDependencies);
+  if (Object.hasOwn(input, 'textModeConfirmed')) skill.textModeConfirmed = input.textModeConfirmed === true;
   skill.currentVersionId = version.id;
   skill.versions = [...skill.versions, version].slice(-CREATIVE_SKILL_VERSION_LIMIT);
   skill.updatedAt = now;
@@ -90,11 +102,14 @@ export function restoreCreativeSkillVersion(stateValue, skillId, versionId, opti
   if (!source) throw new Error("没有找到需要恢复的 Skill 版本");
   return saveCreativeSkillVersion(state, skill.id, {
     callName: skill.callName,
-    description: skill.description,
+    description: source.description ?? skill.description,
     skillMarkdown: source.skillMarkdown,
     references: source.references,
     provenanceMarkdown: source.provenanceMarkdown,
     source: source.source,
+    ...(Array.isArray(source.packageFiles) ? { packageFiles: source.packageFiles } : {}),
+    ...(Array.isArray(source.runtimeDependencies) ? { runtimeDependencies: source.runtimeDependencies } : {}),
+    ...(typeof source.textModeConfirmed === 'boolean' ? { textModeConfirmed: source.textModeConfirmed } : {}),
     reason: "restored"
   }, options);
 }
@@ -175,7 +190,8 @@ export function findCreativeSkillsBySlashQuery(stateValue, query) {
 }
 
 export function skillPackageAssetIds(skillValue) {
-  return normalizeCreativeSkill(skillValue)?.packageFiles.map((item) => item.assetId) ?? [];
+  const skill = normalizeCreativeSkill(skillValue);
+  return skill ? [...new Set(skillPackageFiles(skill).map(item => item.assetId))] : [];
 }
 
 export function mergeCreativeSkillsState(currentValue, importedValue, options = {}) {
@@ -183,10 +199,11 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
   const imported = normalizeCreativeSkillsState(importedValue);
   const usedSkillIds = new Set(state.items.map((item) => item.id));
   const usedVersionIds = new Set(state.items.flatMap((item) => item.versions.map((version) => version.id)));
-  const usedAssetIds = new Set(state.items.flatMap((item) => item.packageFiles.map((file) => file.assetId)));
+  const usedAssetIds = new Set(state.items.flatMap(skillPackageAssetIds));
   const skillIdMap = {};
   const skillVersionIdMap = { ...(options.skillVersionIdMap ?? {}) };
   const packageAssetIdMap = { ...(options.packageAssetIdMap ?? {}) };
+  const remapped = new Map();
   let importedSkillCount = 0;
   let skippedSkillCount = 0;
 
@@ -221,14 +238,20 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
     });
     const currentVersionIndex = source.versions.findIndex((version) => version.id === source.currentVersionId);
     skill.currentVersionId = skill.versions[Math.max(0, currentVersionIndex)]?.id ?? skill.versions.at(-1)?.id;
-    skill.packageFiles = skill.packageFiles.map((file) => {
+    for (const owner of skillFileOwners(skill)) owner.packageFiles = (owner.packageFiles ?? []).map((file) => {
+      if (remapped.has(file.assetId)) {
+        const { archivePath, syncObjectId, syncContentType, ...rest } = file;
+        return { ...rest, assetId: remapped.get(file.assetId) };
+      }
       const preferredAssetId = cleanText(options.packageAssetIdMap?.[file.assetId]);
       let assetId = preferredAssetId && !usedAssetIds.has(preferredAssetId) ? preferredAssetId : file.assetId;
       if (usedAssetIds.has(assetId)) assetId = uniqueEntityId("skill-file", usedAssetIds);
       usedAssetIds.add(assetId);
       packageAssetIdMap[file.assetId] = assetId;
       const { archivePath: _archivePath, syncObjectId: _syncObjectId, syncContentType: _syncContentType, ...rest } = file;
-      return { ...rest, assetId };
+      const mapped = { ...rest, assetId };
+      remapped.set(file.assetId, assetId);
+      return mapped;
     });
     state.items.push(skill);
     importedSkillCount += 1;
@@ -274,7 +297,11 @@ function normalizeCreativeSkillVersion(value) {
     source: normalizeSource(value?.source),
     skillMarkdown,
     references: normalizeReferences(value?.references),
-    provenanceMarkdown: normalizeMarkdown(value?.provenanceMarkdown)
+    provenanceMarkdown: normalizeMarkdown(value?.provenanceMarkdown),
+    ...(Array.isArray(value?.packageFiles) ? { packageFiles: normalizePackageFiles(value.packageFiles) } : {}),
+    ...(typeof value?.description === 'string' ? { description: cleanText(value.description) } : {}),
+    ...(Array.isArray(value?.runtimeDependencies) ? { runtimeDependencies: normalizeStringList(value.runtimeDependencies) } : {}),
+    ...(typeof value?.textModeConfirmed === 'boolean' ? { textModeConfirmed: value.textModeConfirmed } : {})
   };
 }
 
@@ -307,6 +334,7 @@ function normalizePackageFiles(values) {
       assetId,
       byteSize,
       mimeType: cleanText(value?.mimeType) || "application/octet-stream",
+      ...(/^[a-f0-9]{64}$/u.test(value?.sha256 ?? '') ? { sha256: value.sha256 } : {}),
       ...(archivePath ? { archivePath } : {}),
       ...(syncObjectId ? {
         syncObjectId,

@@ -80,7 +80,7 @@ test('library projections search current cases and expose original prompts witho
 });
 
 test('creation saves sources and project with receipt in one commit, and lost acknowledgement cannot duplicate', async () => {
-  const state = { entries: [{ id: 'source', title: '参考', url: 'https://example.org/' }], organizerState: { collections: [{ id: 'p', name: '项目' }] } };
+  const state = { entries: [{ id: 'source', title: '参考', url: 'https://example.org/' }], organizerState: { collections: [{ id: 'p', name: '项目', entryIds: [] }] } };
   let commits = 0;
   const deps = { loadState: async () => state, transfers: { get: async () => assert.fail(), key: id => id }, buildEntry,
     classify: () => ({}), place: (_, entries, ids, placement) => ({ collections: state.organizerState.collections, placement, ids }),
@@ -180,4 +180,27 @@ test('large generation prompt conflicts are paged through task receipts without 
   do {const part=await tasks.inspect('large-conflict',{conflictToken:'token',conflictPart:'embeddedText',offset,length:49152});text+=part.content;offset=part.nextOffset;} while(offset!==null);
   assert.equal(text,large+'new');
   await assert.rejects(tasks.inspect('large-conflict',{conflictToken:'missing',conflictPart:'embeddedText'}),{code:'invalid_input'});
+});
+
+test('waiting on a submitted save returns its persisted terminal receipt without submitting it twice', async () => {
+  let release, executions = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const tasks = createAgentTasks({ storage: storage(), getLibraryId: async () => 'library', execute: async () => { executions++; await gate; return { ok: true, results: [{ status: 'saved', entryId: 'new' }] }; } });
+  await tasks.submit('save_material', {}, 'wait-save');
+  const pending = await tasks.inspect('wait-save', { waitMs: 1 });
+  assert.equal(pending.state, 'running');
+  const waiting = tasks.inspect('wait-save', { waitMs: 1000 }); release();
+  const completed = await waiting;
+  assert.equal(completed.state, 'completed'); assert.equal(completed.result.results[0].entryId, 'new');
+  const replay = await tasks.submit('save_material', {}, 'wait-save');
+  assert.equal(replay.state, 'completed'); assert.equal(replay.replayed, true);
+  assert.equal(executions, 1);
+});
+
+test('a failed save remains failed when waiting, and worker restart cannot invent completion', async () => {
+  const store = storage();
+  const tasks = createAgentTasks({ storage: store, getLibraryId: async () => 'library', execute: async () => { throw Error('storage unavailable'); } });
+  await tasks.submit('save_material', {}, 'failed-wait');
+  const receipt = await tasks.inspect('failed-wait', { waitMs: 1000 });
+  assert.equal(receipt.state, 'failed'); assert.match(receipt.error.message, /storage unavailable/);
 });

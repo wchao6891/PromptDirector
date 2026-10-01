@@ -573,6 +573,10 @@ export async function executeComposerTurnWithService(input, settingsValue, prepa
     options = { ...options, toolRuntime: { ...runtime, execute: async (...args) => {
       const result = await runtime.execute(...args);
       if (input.session.imageReferenceMode === "conditioned" && result.images?.length) {
+        for(const image of result.images) {
+          const index=preparedImages.findIndex(item=>item.visualId===image.visualId);
+          if(index>=0) preparedImages[index]=image;
+        }
         const additional = result.images.filter(image => !preparedImages.some(item => item.visualId === image.visualId));
         preparedImages.push(...additional);
         input.session = { ...input.session, referenceSnapshots: [...input.session.referenceSnapshots, ...additional.map(image => ({

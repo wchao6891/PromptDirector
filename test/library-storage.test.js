@@ -8,6 +8,7 @@ function fixture(initial = {}) {
   let tail = Promise.resolve(), failure = null;
   const lock = fn => { const result = tail.then(fn); tail = result.catch(() => {}); return result; };
   const backend = {
+    async getKeys() { if (failure) throw failure; return Object.keys(data); },
     async get(keys) {
       if (failure) throw failure;
       if (keys == null) return structuredClone(data);
@@ -46,6 +47,13 @@ test('browser metadata reads do not pass a directory option in the Chrome callba
     set() {}, remove() {}
   } });
   assert.deepEqual(await storage.get(keys), { entries: [{ id: 'kept', text: '完整正文' }] });
+});
+
+test('key discovery returns only names, propagates failure and does not read the library values', async () => {
+  const run=fixture({entries:['private content'],task:{}});
+  run.backend.get=()=>assert.fail('getKeys must not read values');
+  assert.deepEqual(await run.storage.getKeys(),['entries','task']);
+  run.fail(new Error('unavailable'));await assert.rejects(run.storage.getKeys(),/unavailable/);
 });
 
 test('concurrent commits preserve both dirty-original sets and commit metadata with the corresponding change', async () => {

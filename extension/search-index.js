@@ -2,6 +2,8 @@ import { normalizeFacetCatalog } from "./facets.js";
 import { entrySearchText } from "./library-model.js";
 import { entryMediaAssets } from "./media.js";
 import { matchesSearchDocument, parseSearchQuery, searchFieldsForEntry } from "./search-query.js";
+import { sha256 } from "./vendor/noble-hashes/sha2.js";
+import { bytesToHex } from "./vendor/noble-hashes/utils.js";
 
 // Chrome messages/storage and file readers can return different object-key
 // orders for the same content. Versions depend on meaning, not transport order.
@@ -9,6 +11,16 @@ export function serializeSearchValue(value) {
   return JSON.stringify(value, (_key, item) => item instanceof Set ? [...item].sort()
     : item && typeof item === 'object' && !Array.isArray(item)
       ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+}
+
+const encoder = new TextEncoder();
+// Version searchable facts and returned candidates, excluding host-only display
+// decorations. A compact content digest keeps pagination independent of text size.
+export function searchResultVersion(entry, index) {
+  return bytesToHex(sha256(encoder.encode(serializeSearchValue({
+    id: entry.id, title: entry.title, text: entry.text || '', url: entry.url || '',
+    savedAt: entry.savedAt, tags: entry.customLabels || [], media: entryMediaAssets(entry), index
+  }))));
 }
 
 export function buildSearchIndex(entries = [], catalogValue, documentTextByAsset = new Map(), derivedMetadataByAsset = new Map()) {
@@ -24,6 +36,12 @@ function indexEntry(entry, catalog, nodeById, documentTextByAsset, derivedMetada
       fullText: clean([entrySearchText(entry, catalog, nodeById), ...mediaAssets.map((asset) => documentTextByAsset.get(asset.id))].filter(Boolean).join("\n")),
       ...searchFieldsForEntry(entry, nodeById, derivedMetadataByAsset)
     };
+}
+
+// Most storage snapshots keep the same key order. Compare their exact JSON
+// first; canonical sorting is only needed when those snapshots differ.
+function snapshot(value) {
+  return JSON.stringify(value, (_key, item) => item instanceof Set ? [...item].sort() : item);
 }
 
 // Cache only derived search rows, never library truth. Fresh document text and
@@ -42,17 +60,29 @@ export function createSearchIndexCache() {
       }
       for (const id of rows.keys()) if (!activeIds.has(id)) rows.delete(id);
       let rebuilt = 0;
+      const selected = new WeakMap();
       const index = entries.map(entry => {
         const assets = entryMediaAssets(entry);
-        const signature = serializeSearchValue([entry, assets.map(asset => [asset.id, documents.get(asset.id), derived.get(asset.id)])]);
+        const signature = snapshot([entry, assets.map(asset => [asset.id, documents.get(asset.id), derived.get(asset.id)])]);
         let row = rows.get(entry.id);
-        if (!row || row.signature !== signature) {
+        const same = row && (row.signature === signature ||
+          (row.canonical ??= serializeSearchValue(JSON.parse(row.signature))) === serializeSearchValue(JSON.parse(signature)));
+        if (!same) {
           row = { signature, document: indexEntry(entry, catalog, nodeById, documents, derived) };
           rows.set(entry.id, row); rebuilt++;
-        }
+        } else row.signature = signature;
+        selected.set(entry, row);
         return row.document;
       });
-      return { index, rebuilt, reused: entries.length - rebuilt };
+      return { index, rebuilt, reused: entries.length - rebuilt,
+        resultVersion(entry, document) {
+          // Capture this build's rows: another query may update the cache while
+          // a caller still holds an earlier snapshot. Never consult the live map.
+          const row = selected.get(entry);
+          if (!row || row.document !== document) return searchResultVersion(entry, document);
+          return row.resultVersion ??= searchResultVersion(entry, document);
+        }
+      };
     }
   };
 }

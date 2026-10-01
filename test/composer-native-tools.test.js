@@ -37,19 +37,20 @@ test('unknown compatible model keeps ordinary creation without declaring unsuppo
   assert.equal(catalog.find(item => item.serviceId === 'compatible').nativeTools, false);
 });
 
-test('image generation carries a tool-authorized original from prompt assembly to the image endpoint', async () => {
+for(const previouslyPrepared of [false,true]) test(`image generation uses the delivered original, including replacement of stale prepared bytes: ${previouslyPrepared}`, async () => {
   const entries = [{ id: 'a', title: '雨夜案例', text: '雨夜', mediaAssets: [{ id: 'a-image', kind: 'image', usage: 'content', mimeType: 'image/png', storageMode: 'managed' }] }];
   const session = createComposerSession({ outputMode: 'create_image', imageReferenceMode: 'conditioned',
     aiProfile: { serviceId: 'openai', model: 'gpt-5-mini' }, generationAiProfile: { serviceId: 'compatible', model: 'fixture-planner' },
+    referenceSnapshots: previouslyPrepared?[{entryId:'a',title:'雨夜案例',alias:'@雨夜案例',referenceKind:'vision',imageRefs:[{visualId:'a-image'}],assetRefs:[]}]:[],
     messages: [{ role: 'user', content: '用雨夜案例的图片生成画面' }] });
   const original = 'data:image/png;base64,aW1hZ2U=';
   const runtime = createComposerLibraryTools({ session, vision: true, maxCharacters: 750000,
-    loadLibrary: async () => ({ entries }), readImage: async () => ({ dataUrl: original }) });
+    loadLibrary: async () => ({ entries }), readImage: async () => ({ dataUrl: original, sha256:'a'.repeat(64) }), readImageDigest:async()=>'a'.repeat(64) });
   const requests = [];
   const result = await executeComposerTurnWithService({ session, route: 'compose', composerSettings: normalizeComposerSettings() }, { ai: {}, vision: {
     consent: true, openai: { apiKey: 'fixture', model: 'gpt-5-mini' }, compatible: { endpoint: 'https://fixture.invalid/v1/responses', protocol: 'responses', apiKey: 'fixture', model: 'fixture-planner',
       imageGeneration: { protocol: 'images_generations', endpoint: 'https://fixture.invalid/v1/images/generations', editsEndpoint: 'https://fixture.invalid/v1/images/edits', apiKey: 'fixture-image', model: 'fixture-image', size: '1024x1024', sizes: ['1024x1024'] } }
-  } }, [], { toolRuntime: runtime, fetchImpl: async (url, init) => {
+  } }, previouslyPrepared?[{visualId:'a-image',dataUrl:'data:image/png;base64,b2xk'}]:[], { toolRuntime: runtime, fetchImpl: async (url, init) => {
     const body = init.body instanceof FormData ? init.body : JSON.parse(init.body); requests.push({ url, body });
     const payload = requests.length === 1 ? { status: 'completed', output: [{ type: 'function_call', call_id: 'image', name: 'use_case_images', arguments: '{"caseId":"a","imageIds":["a-image"]}' }] }
       : requests.length === 2 ? { status: 'completed', output_text: '雨夜街道，冷色光，忠实保持主体构图。' }

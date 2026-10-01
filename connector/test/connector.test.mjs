@@ -48,7 +48,17 @@ test('real native broker binds one library, authenticates and forwards response'
       for (const [name, args] of [
         ['search_cases', { query: '动作', mediaKind: 'video', hasOriginalPrompt: true, alternatives: ['打斗'], sort: 'newest', minDurationMs: 1000, maxDurationMs: 5000, expectedRevision: 'search-version', countOnly: false, offset: 0, limit: 24 }],
         ['read_workspace_content', { part: 'selection', expectedRevision: 'selected-version', offset: 0, length: 49152 }],
+        ['manage_analysis_batch',{action:'create',requestId:'batch',instruction:'分析',items:[{caseId:'case',expectedRevision:'revision',assets:[]}]}],
+        ['list_analysis_batches',{query:'广告',status:'partial'}],
+        ['read_analysis_batch',{batchId:'batch',part:'items',offset:24,expectedRevision:2}],
+        ['submit_analysis_results',{requestId:'page',batchId:'batch',epoch:0,items:[{caseId:'case',attemptId:'attempt',result:{tags:[{g:'scene.place'}]}}]}],
+        ['submit_analysis_result',{requestId:'result',batchId:'batch',caseId:'case',epoch:0,attemptId:'attempt',result:{tags:[{g:'scene.place'}]}}],
+        ['list_skills', {query: '动作'}],
+        ['read_skill', {skillId: 'skill', part: 'files', expectedRevision: 'revision', offset: 0, length: 31}],
+        ['read_skill_file', {skillId: 'skill', expectedRevision: 'revision', source: 'package', path: 'scripts/frames.py', encoding: 'text'}],
         ['read_projects', { offset: 0, length: 31 }],
+        ['read_projects', { name: '目标项目' }],
+        ['read_projects', { path: ['父项目', '目标项目'] }],
         ['create_project', { requestId: 'project', name: '子项目', parentId: 'parent', requirements: '完整要求' }],
         ['update_project', { requestId: 'brief', projectId: 'parent', expectedRevision: 'version', requirements: '新要求' }],
         ['read_case_details', { caseId: 'case', part: 'source', length: 31 }],
@@ -71,8 +81,14 @@ test('SDK client performs real stdio MCP handshake and discovers bounded tools',
   try {
     await client.connect(transport);
     const list = await client.listTools();
-    assert.equal(list.tools.length, 17);
+    assert.equal(list.tools.length, 28);
     assert(list.tools.some(tool => tool.name === 'promptdirector_capture_url'));
+    const organize = list.tools.find(tool => tool.name === 'promptdirector_organize_case').inputSchema.properties;
+    assert(organize.action.enum.includes('combine_cases'));
+    assert(organize.action.enum.includes('split_compound'));
+    assert(organize.additionalCases.items.properties.expectedRevision);
+    const edit = list.tools.find(tool => tool.name === 'promptdirector_edit_case').inputSchema.properties.patch.properties;
+    assert(edit.coverVisualId);
     const bad = await client.callTool({ name: 'promptdirector_capture_url', arguments: { requestId: '../bad', url: 'no' } });
     assert.equal(bad.isError, true);
   } finally { await client.close(); }
@@ -138,7 +154,7 @@ test('installer creates a reviewable private runtime and origin-bound registrati
 
     assert(!JSON.stringify(paired).includes('secret'));
     const client = new Client({ name: 'installed-runtime-test', version: '1' });
-    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.equal((await client.listTools()).tools.length, 17); }
+    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.equal((await client.listTools()).tools.length, 28); }
     finally { await client.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -146,7 +162,72 @@ test('installer creates a reviewable private runtime and origin-bound registrati
 test('CLI discovers the same MCP operations without a second command registry', {timeout:5000}, async () => {
   const {callFromCli}=await import('../call.mjs');
   const result=await callFromCli('list');
-  assert.equal(result.tools.length,17);
+  assert.equal(result.tools.length,28);
   assert(result.tools.some(tool=>tool.name==='promptdirector_read_workspace_context'));
   await assert.rejects(callFromCli('not_a_real_operation'), /not|unknown|不存在/i);
+});
+
+test('MCP save returns completion in one tool round; lost wait replies and old running backends retain the same task identity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pd-save-wait-'));
+  const input = new PassThrough(), output = new PassThrough();
+  const extensionId = 'a'.repeat(32), instanceId = randomUUID();
+  await writeFile(join(root, 'config.json'), JSON.stringify({ extensionId }));
+  await writeFile(join(root, 'selected.json'), JSON.stringify({ instanceId }));
+  const tasks = new Map(), calls = []; let saves = 0, loseReply = false, oldBackend = false, selectionChanged = false;
+  let ready; const readiness = new Promise(resolve => { ready = resolve; });
+  output.on('data', frameDecoder(message => {
+    if (message.type === 'ready') return ready();
+    if (message.type !== 'request') return;
+    calls.push(message.operation);
+    const { requestId } = message.input;
+    let result, error;
+    if (message.operation === 'read_workspace_context') result = { revision: 'current-selection', selectedCaseCount: 2 };
+    else if (message.operation === 'read_workspace_content') {
+      assert.equal(message.input.expectedRevision, 'current-selection');
+      if (selectionChanged) error = { code: 'selection_changed', message: 'Selection changed between the reads' };
+      else result = { revision: 'current-selection', content: 'complete original prompts', nextOffset: null };
+    } else if (message.operation === 'save_material') {
+      if (!tasks.has(requestId)) { saves++; tasks.set(requestId, { id: requestId, state: 'completed', result: { ok: true, results: [{ status: 'saved', entryId: requestId }] } }); }
+      result = { id: requestId, state: 'queued' };
+    } else if (message.operation === 'get_task') {
+      assert.equal(message.input.waitMs, 15000);
+      if (loseReply) error = { code: 'connector_offline', message: 'Lost acknowledgement' };
+      else result = oldBackend ? { id: requestId, state: 'running' } : tasks.get(requestId);
+    } else assert.fail(`Unexpected operation ${message.operation}`);
+    input.write(encodeFrame({ type: 'response', id: message.id, ...(error ? { error } : { result }) }));
+  }));
+  const host = await startNativeHost({ root, origin: `chrome-extension://${extensionId}/`, input, output });
+  const client = new Client({ name: 'save-wait-test', version: '1' });
+  try {
+    input.write(encodeFrame({ type: 'hello', protocolVersion: 1, extensionId, instanceId })); await readiness;
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../mcp.mjs', import.meta.url))], env: { ...process.env, PROMPTDIRECTOR_CONNECTOR_HOME: root } }));
+    const save = async requestId => {
+      const response = await client.callTool({ name: 'promptdirector_save_material', arguments: { requestId, title: 'Fixture', text: 'Complete text' } });
+      assert(!response.isError, JSON.stringify(response)); return JSON.parse(response.content[0].text);
+    };
+    assert.equal((await save('first')).state, 'completed');
+    assert.deepEqual(calls, ['save_material', 'get_task']);
+    loseReply = true;
+    const uncertain = await save('second');
+    assert.equal(uncertain.id, 'second'); assert.equal(uncertain.state, 'queued');
+    assert.equal(uncertain.waitError.code, 'connector_offline');
+    loseReply = false;
+    assert.equal((await save('second')).result.results[0].entryId, 'second');
+    assert.equal(saves, 2, 'Lost acknowledgement must never trigger a second save');
+    oldBackend = true; assert.equal((await save('old')).state, 'running');
+    calls.length = 0;
+    const read = args => client.callTool({ name: 'promptdirector_read_workspace_content', arguments: args });
+    const full = await read({ part: 'selection' });
+    assert.equal(JSON.parse(full.content[0].text).content, 'complete original prompts');
+    assert.deepEqual(calls, ['read_workspace_context', 'read_workspace_content']);
+    calls.length = 0;
+    assert.equal((await read({ part: 'selection', offset: 1 })).isError, true);
+    assert.equal((await read({ part: 'reference', referenceId: 'ref' })).isError, true);
+    assert.deepEqual(calls, [], 'An unpinned continuation must never get a fresh version');
+    await read({ part: 'selection', expectedRevision: 'current-selection', offset: 1 });
+    assert.deepEqual(calls, ['read_workspace_content'], 'Reuse an existing version without rediscovery');
+    selectionChanged = true;
+    const changed = await read({ part: 'selection' });
+    assert.equal(changed.isError, true); assert.equal(JSON.parse(changed.content[0].text).code, 'selection_changed');
+  } finally { await client.close(); await host.close(); input.destroy(); output.destroy(); await rm(root, { recursive: true, force: true }); }
 });

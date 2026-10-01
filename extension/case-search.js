@@ -1,4 +1,4 @@
-import { searchIndexedEntries, serializeSearchValue } from './search-index.js';
+import { searchIndexedEntries, serializeSearchValue, searchResultVersion } from './search-index.js';
 import { collectionEntryIds } from './organizer.js';
 import { entryMediaAssets } from './media.js';
 import { caseOriginalPromptText, detailPromptSources } from './prompt-sources.js';
@@ -62,7 +62,7 @@ export function searchCaseEntries(entries, index, organizerState, input = {}) {
 
 // An offset identifies a position only within this exact result revision. Do not
 // combine old and new pages when another window edits, deletes or imports cases.
-export async function searchCaseResult(entries, index, organizerState, input = {}) {
+export async function searchCaseResult(entries, index, organizerState, input = {}, resultVersion = searchResultVersion) {
   const matches = searchCaseEntries(entries, index, organizerState, input);
   if ((input.offset || 0) > 0 && !input.expectedRevision) throw invalid('继续翻页需要首屏返回的 revision。', 'search_revision_required');
   const query = Object.fromEntries(Object.keys(CASE_SEARCH_PROPERTIES).filter(key => !['expectedRevision', 'countOnly'].includes(key))
@@ -80,10 +80,7 @@ export async function searchCaseResult(entries, index, organizerState, input = {
   const byId = new Map(index.map(row => [row.id, row]));
   const projectScope = (organizerState?.collections || []).map(({ id, name, parentId }) => ({ id, name, parentId: parentId || null }));
   const revision = await sha256Blob(new Blob([serializeSearchValue({ query, projects: projectScope, durationCoverage,
-    // GET_STATE adds display-only classification labels. Version the searchable
-    // facts and returned candidates, not those host-specific decorations.
-    results: matches.map(entry => ({ id: entry.id, title: entry.title, text: entry.text || '', url: entry.url || '',
-      savedAt: entry.savedAt, tags: entry.customLabels || [], media: entryMediaAssets(entry), index: byId.get(entry.id) })) })]));
+    results: matches.map(entry => resultVersion(entry, byId.get(entry.id))) })]));
   if (input.expectedRevision && input.expectedRevision !== revision) throw invalid('搜索结果或筛选已变化，请从第一页重新读取，不能拼接旧结果。', 'search_changed');
   return { matches, revision, ...(durationCoverage ? { durationCoverage } : {}) };
 }

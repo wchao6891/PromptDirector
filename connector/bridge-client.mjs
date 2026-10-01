@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { connectorRoot, instancePaths, readJson, ensurePrivateRoot } from "./paths.mjs";
 import { encodeFrame, frameDecoder } from "./framing.mjs";
 
-export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = 30000, instanceId } = {}) {
+export const CONNECTOR_TIMEOUT_MS = 30000;
+
+export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = CONNECTOR_TIMEOUT_MS, instanceId } = {}) {
   await ensurePrivateRoot(root);
   let instance;
   try { instance = instanceId || process.env.PROMPTDIRECTOR_INSTANCE || (await readJson(join(root, "selected.json"))).instanceId; }

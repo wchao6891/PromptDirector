@@ -1,3 +1,5 @@
+import { caseRevision } from "./case-operations.js";
+import { projectRevision } from "./project-operations.js";
 import { materialProvenance } from "./material-provenance.js";
 import { canonicalInput } from "./agent-tasks.js";
 import { sha256Blob } from "./blob-digest.js";
@@ -20,7 +22,6 @@ export function resolveAgentProject(state, project = "") {
 
 export async function saveAgentMaterial(input, requestId, deps) {
   const { loadState, transfers, buildEntry, classify, place, commit, notify, schemaVersion } = deps;
-  const state = await loadState();
   const instanceId = await deps.getInstanceId?.() || "";
   const fingerprint = await sha256Blob(new Blob([JSON.stringify(canonicalInput(input))]));
   const receiptKey = `materialOperation:${instanceId}:${requestId}`;
@@ -29,10 +30,11 @@ export async function saveAgentMaterial(input, requestId, deps) {
     if (receipt.fingerprint !== fingerprint) throw agentError('request_conflict', '此请求编号已用于其他保存内容');
     return { ...receipt.result, replayed: true };
   }
+  const state = await loadState();
   const prior = state.entries.find(entry => entry.agentProvenance?.requestId === requestId && entry.agentProvenance.instanceId === instanceId);
   if (prior) {
     if (prior.agentProvenance.fingerprint && prior.agentProvenance.fingerprint !== fingerprint) throw agentError('request_conflict', '此请求编号已用于其他保存内容');
-    return { ok: true, results: [{ status: "duplicate", entryId: prior.id, title: prior.title }] };
+    return { ok: true, replayed: true, results: [{ status: "duplicate", entryId: prior.id, title: prior.title }] };
   }
   if (!String(input.title || "").trim()) throw agentError("invalid_input", "请提供案例标题。");
   const collectionId = resolveAgentProject(state, input.project);
@@ -48,6 +50,7 @@ export async function saveAgentMaterial(input, requestId, deps) {
   const records = [];
   for (const id of [...new Set(input.transferIds || [])]) {
     const record = await transfers.get(id);
+    if (record.purpose) throw agentError('invalid_transfer_purpose', 'Skill包文件不能作为案例媒体入库。');
     if (record.state !== "ready") throw agentError("transfer_not_ready", "附件尚未准备好，或已经用于另一次入库。");
     records.push(record);
   }
@@ -88,7 +91,13 @@ export async function saveAgentMaterial(input, requestId, deps) {
   entry = promptPlan.entry;
   const entries = [...state.entries, entry];
   const organizerState = place(state.organizerState, entries, [entry.id], { collectionId });
-  const result = { ok: true, results: [{ status: warnings.length ? "partial" : "saved", entryId: entry.id, title: entry.title, warnings }] };
+  const savedProject = organizerState.collections.find(project => project.id === collectionId);
+  const result = { ok: true, results: [{ status: warnings.length ? "partial" : "saved", entryId: entry.id, title: entry.title, warnings,
+    revision: await caseRevision({ ...state, entries, organizerState }, entry),
+    body: { characters: entry.text.length, sha256: await sha256Blob(new Blob([entry.text])) },
+    project: savedProject ? { id: savedProject.id, name: savedProject.name, revision: await projectRevision(savedProject) } : null,
+    sourceCaseIds, sourceReferences: entry.agentProvenance.references || [],
+    creationVersion: entry.agentProvenance.creationVersion || null }] };
   // Receipt provenance and transfer ownership are committed with the entry.
   // Retrying after a lost acknowledgement cannot create another case.
   await commit({ entries, organizerState,

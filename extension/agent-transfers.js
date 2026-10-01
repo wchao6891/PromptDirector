@@ -1,5 +1,6 @@
 import { AGENT_CHUNK_BYTES, AGENT_UPLOAD_PREFIX, base64ToBytes, agentError, requireAgentId, requireInteger } from "./agent-protocol.js";
 import { sha256Blob } from "./blob-digest.js";
+import { PORTABLE_LIBRARY_LIMITS } from './resource-limits.js';
 
 export function createAgentTransfers({ storage, readBlob, writeBlob, deleteBlob, prepare }) {
   let queue = Promise.resolve();
@@ -28,19 +29,25 @@ export function createAgentTransfers({ storage, readBlob, writeBlob, deleteBlob,
     begin(input) {
       return lock(async () => {
         const id = requireAgentId(input.id);
-        requireInteger(input.byteSize, { min: 1 });
+        if (input.purpose !== undefined && input.purpose !== 'skill-file') throw agentError('invalid_input', '未知文件用途。');
+        requireInteger(input.byteSize, { min: input.purpose === 'skill-file' ? 0 : 1 });
+        if (input.purpose === 'skill-file' && input.byteSize > PORTABLE_LIBRARY_LIMITS.maxFileBytes) {
+          throw agentError('skill_file_too_large', 'Skill单文件超过现有导入上限，未开始传输。');
+        }
         if (!/^[a-f0-9]{64}$/u.test(input.sha256 || "") || !input.name || /[/\\\u0000]/u.test(input.name)) {
           throw agentError("invalid_input", "文件名称或 SHA-256 无效。");
         }
         const prior = (await storage.get(key(id)))[key(id)];
         if (prior) {
-          if (prior.sha256 !== input.sha256 || prior.byteSize !== input.byteSize || prior.name !== input.name || prior.mimeType !== (input.mimeType || "") || prior.forceImport !== (input.forceImport === true)) {
+          if (prior.sha256 !== input.sha256 || prior.byteSize !== input.byteSize || prior.name !== input.name || prior.mimeType !== (input.mimeType || "") || prior.forceImport !== (input.forceImport === true) || prior.purpose !== input.purpose) {
             throw agentError("transfer_conflict", "传输编号已对应另一文件。");
           }
           return { id, offset: prior.offset, state: prior.state, chunkBytes: AGENT_CHUNK_BYTES };
         }
         const record = { id, name: input.name, mimeType: input.mimeType || "", byteSize: input.byteSize, sha256: input.sha256, forceImport: input.forceImport === true,
-          offset: 0, chunks: 0, state: "uploading", createdAt: new Date().toISOString(), assetId: `agent-file:${id}` };
+          ...(input.purpose ? { purpose: input.purpose } : {}),
+          offset: 0, chunks: 0, state: "uploading", createdAt: new Date().toISOString(),
+          assetId: input.purpose === 'skill-file' ? `skill-file:agent-${id}` : `agent-file:${id}` };
         await storage.set({ [key(id)]: record });
         return { id, offset: 0, state: "uploading", chunkBytes: AGENT_CHUNK_BYTES };
       });
@@ -72,7 +79,7 @@ export function createAgentTransfers({ storage, readBlob, writeBlob, deleteBlob,
         const blob = new Blob(chunks, { type: record.mimeType });
         if (blob.size !== record.byteSize || await sha256Blob(blob) !== record.sha256) throw agentError("integrity_failed", "文件摘要不一致，未完成入库。");
         await writeBlob(record.assetId, blob);
-        const prepared = await prepare(record);
+        const prepared = record.purpose === 'skill-file' ? { kind: 'skill-file' } : await prepare(record);
         record.state = "ready"; record.prepared = prepared;
         await storage.set({ [key(id)]: record });
         await clearChunks(record);
@@ -82,7 +89,7 @@ export function createAgentTransfers({ storage, readBlob, writeBlob, deleteBlob,
     abort({ id }) {
       return lock(async () => {
         const record = await get(id);
-        if (record.state === "committed") throw agentError("already_committed", "这个文件已属于案例，不能作为临时传输删除。");
+        if (record.state === "committed") throw agentError("already_committed", "这个文件已入库，不能作为临时传输删除。");
         await clearChunks(record);
         await deleteBlob(record.assetId);
         if (record.prepared?.poster) await deleteBlob(record.prepared.poster.id);

@@ -158,3 +158,17 @@ test('imported project requirements do not overwrite or disappear behind a same-
   const merged = mergeOrganizerStateWithMap({collections:[{id:'p',name:'广告',entryIds:[]}]},imported,{source:'received'});
   assert.equal(merged.state.collections[0].requirements,'导入完整要求');
 });
+
+test('save acknowledgement identifies persisted body, exact sources and project revision without routine extra reads', async () => {
+  const run = setup();
+  const { project } = await run.api.execute('create_project', { requestId: 'receipt-project', name: '保存回执' });
+  const ref = { caseId: 'reference', expectedRevision: await caseRevision(run.state, run.state.entries[0]), assetId: 'video' };
+  const result = await run.save({ title: '成果', text: '逐字保存的正文', kind: 'creation', project: project.id, projectRevision: project.revision, sourceReferences: [ref] }, 'receipt-save');
+  const item = result.results[0], saved = run.state.entries.find(e => e.id === item.entryId);
+  assert.equal(item.revision, await caseRevision(run.state, saved));
+  assert.equal(item.project.id, project.id);
+  assert.equal(item.project.revision, await projectRevision(run.state.organizerState.collections[0]));
+  assert.deepEqual(item.sourceReferences, saved.agentProvenance.references);
+  assert.equal(item.body.characters, saved.text.length);
+  assert.match(item.body.sha256, /^[a-f0-9]{64}$/);
+});

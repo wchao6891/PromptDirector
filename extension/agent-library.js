@@ -49,10 +49,10 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
       filterCaseSearchEntries([], state.organizerState, input);
       const scoped = filterCaseSearchEntries(state.entries, state.organizerState, indexScope);
       const docs = await documents(scoped);
-      const { index } = searchCache.build(scoped, state.facetCatalog, docs, await readDerivedMetadata(), new Set(state.entries.map(e => e.id)));
+      const { index, resultVersion } = searchCache.build(scoped, state.facetCatalog, docs, await readDerivedMetadata(), new Set(state.entries.map(e => e.id)));
       // Coverage must include unknown-duration candidates; structural project/type
       // scoping happens below, while index reads already skip unrelated projects.
-      const { matches: entries, revision, durationCoverage } = await searchCaseResult(state.entries, index, state.organizerState, input);
+      const { matches: entries, revision, durationCoverage } = await searchCaseResult(state.entries, index, state.organizerState, input, resultVersion);
       const projects = (state.organizerState?.collections || []).map(item => ({ id: item.id, name: item.name, parentId: item.parentId || null }));
       const cases = input.countOnly === true ? [] : entries.slice(offset, offset + limit).map(entry => ({ ...summary(entry), excerpt: caseFilesUnavailable(entry) ? '' : String(entry.text || "").slice(0, 240), excerptOnly: true }));
       return { cases, query, revision, ...(durationCoverage ? { durationCoverage } : {}), total: entries.length, offset, nextOffset: !input.countOnly && offset + cases.length < entries.length ? offset + cases.length : null,

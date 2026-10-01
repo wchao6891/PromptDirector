@@ -31,7 +31,20 @@ def main():
                 }''', [op, args])
 
             filters = {'query': '动作', 'mediaKind': 'video', 'minDurationMs': 1000, 'maxDurationMs': 3000}
+            worker.evaluate('''() => {
+              globalThis.searchStorageReads = [];
+              const get = chrome.storage.local.get.bind(chrome.storage.local);
+              chrome.storage.local.get = async keys => {
+                searchStorageReads.push({keys, caseRead: new Error().stack.includes('/case-library-state.js')});
+                return get(keys);
+              };
+            }''')
             first = call('search', {**filters, 'limit': 1})
+            reads = worker.evaluate('searchStorageReads')
+            # Background sync and UI refresh may read their own state concurrently.
+            # Attribute reads to the case reader rather than asserting global silence.
+            case_reads = [read['keys'] for read in reads if read['caseRead']]
+            assert case_reads and not any(isinstance(keys, list) and 'composerSessions' in keys for keys in case_reads), reads
             assert first['total'] == 3 and first['durationCoverage']['unknownDurationMedia'] == 1, first
             second = call('search', {**filters, 'limit': 1, 'offset': first['nextOffset'], 'expectedRevision': first['revision']})
             assert second['cases'][0]['caseId'] != first['cases'][0]['caseId']

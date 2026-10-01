@@ -10,6 +10,7 @@ import { blobToDataUrl } from './vision.js';
 import { createSearchIndexCache } from './search-index.js';
 import { filterCaseSearchEntries } from './case-search.js';
 import { withComposerCaseOperations } from './composer-case-operations.js';
+import {sha256Blob} from './blob-digest.js';
 
 const searchCache = createSearchIndexCache();
 
@@ -19,7 +20,7 @@ export function createLocalComposerLibraryTools(options) {
     ...options,
     maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS,
     loadLibrary: async ({ name, args, signal }) => {
-      const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+      const state = await chrome.runtime.sendMessage({ type: 'GET_CASE_LIBRARY_STATE' });
       if (!state?.ok) throw new Error(state?.message || '无法读取案例库');
       const entries = materializeLogicalCases(state.entries, normalizeCompoundCases(state.compoundCases, state.entries));
       signal?.throwIfAborted();
@@ -31,17 +32,28 @@ export function createLocalComposerLibraryTools(options) {
       const ids = [...new Set(documentEntries.flatMap(entry => entryMediaAssets(entry)).filter(asset => asset.kind === 'document').map(asset => asset.id))];
       const documents = new Map(await Promise.all(ids.map(async id => [id, (await getDerivedMedia(id))?.searchText || ''])));
       const documentTextByEntryId = new Map(documentEntries.map(entry => [entry.id, entryMediaAssets(entry).map(asset => documents.get(asset.id)).filter(Boolean).join('\n')]));
+      const search = needsIndex ? searchCache.build(scoped, state.facetCatalog, documents, await getAllDerivedMetadata(), new Set(entries.map(e => e.id))) : null;
       return { entries, documentTextByEntryId, organizerState: state.organizerState, facetCatalog: state.facetCatalog,
-        searchIndex: needsIndex ? searchCache.build(scoped, state.facetCatalog, documents, await getAllDerivedMetadata(), new Set(entries.map(e => e.id))).index : undefined };
+        searchIndex: search?.index, searchResultVersion: search?.resultVersion };
     },
     readImage: async (id, signal) => {
       signal?.throwIfAborted();
       const blob = await getMediaBlob(id) ?? await getScreenshotBlob(id);
       if (!blob) throw new Error('指定图片已不存在');
-      return { dataUrl: await blobToDataUrl(blob), mimeType: blob.type };
+      return { dataUrl: await blobToDataUrl(blob), mimeType: blob.type, sha256: await sha256Blob(blob) };
+    },
+    readImageDigest: async (id,signal) => {
+      signal?.throwIfAborted();
+      const blob=await getMediaBlob(id)??await getScreenshotBlob(id);
+      if(!blob) throw new Error('指定图片已不存在');
+      return sha256Blob(blob);
     }
   });
-  const workspace = createComposerWorkspaceTools({ ...options, caseTools, loadState: async () => {
+  const workspace = createComposerWorkspaceTools({ ...options, caseTools, invokeSkill: async (operation,input) => {
+    const response = await chrome.runtime.sendMessage({type:'SKILL_OPERATION',operation,input});
+    if (!response?.ok) throw new Error(response?.message || '无法读取Skill');
+    return response.data;
+  }, loadState: async () => {
     const state = await chrome.runtime.sendMessage({type:'GET_STATE'});
     if (!state?.ok) throw new Error(state?.message || '无法读取插件资料');
     return state;

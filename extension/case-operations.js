@@ -3,10 +3,11 @@ import { sha256Blob } from './blob-digest.js';
 import { updateEntryText, markEntryTextChanged } from './analysis-revision.js';
 import { updateArticleText, ARTICLE_TEXT_KINDS } from './article-edit.js';
 import { articleDocumentText } from './article-document.js';
-import { setEntryMediaPrompt, addTimeNote, removeTimeNote } from './media.js';
+import { setEntryMediaPrompt, addTimeNote, removeTimeNote, setCaseCover } from './media.js';
+import { createCompoundCase, updateCompoundCase, splitCompoundCase } from './compound-cases.js';
 import { uniqueNames } from './facets.js';
 import { moveEntriesBetweenCollections } from './organizer.js';
-import { planCaseCopies } from './library-folder-ownership.js';
+import { planCaseCopies, assertCompoundProjectScope } from './library-folder-ownership.js';
 import { agentError } from './agent-protocol.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
 
@@ -24,7 +25,32 @@ function organization(state, id) {
   return { projects: (state.organizerState?.collections || []).filter(c => c.entryIds.includes(id)).map(({ entryIds, ...c }) => c),
     compounds: (state.compoundCases || []).filter(c => c.memberEntryIds.includes(id)) };
 }
-export const caseRevision = (state, entry) => hash({ entry, organization: organization(state, entry.id) });
+export const caseRevision = (state, entry, memberships = organization(state, entry.id)) => hash({ entry, organization: memberships });
+const compoundRevision = (state, compound) => {
+  const byId = new Map(state.entries.map(entry => [entry.id, entry]));
+  const memberships = caseOrganizationIndex(state, compound.memberEntryIds);
+  return hash({ compound, members: compound.memberEntryIds.map(id => {
+    const entry = byId.get(id);
+    if (!entry) fail('case_not_found', '组合成员已不存在，请重新核对');
+    assertCaseFilesReadable(entry);
+    return { entry, organization: memberships.get(id) };
+  }) });
+};
+async function operationCase(state, id) {
+  const compound = state.compoundCases?.find(item => item.id === id);
+  const entry = compound || entryFor(state, id);
+  return { caseId: id, title: entry.title, revision: compound ? await compoundRevision(state, compound) : await caseRevision(state, entry) };
+}
+// Batch registration checks the same membership meaning as a single read,
+// without scanning every project's entire case list once per incoming case.
+export function caseOrganizationIndex(state, ids) {
+  const result=new Map(ids.map(id=>[id,{projects:[],compounds:[]} ]));
+  for(const {entryIds,...project} of state.organizerState?.collections??[])
+    for(const id of new Set(entryIds)) if(result.has(id)) result.get(id).projects.push(project);
+  for(const compound of state.compoundCases??[])
+    for(const id of new Set(compound.memberEntryIds)) if(result.has(id)) result.get(id).compounds.push(compound);
+  return result;
+}
 async function checkedEntry(state, id, revision) {
   const entry = entryFor(state, id);
   if (await caseRevision(state, entry) !== revision) fail('case_conflict', '案例或项目关系已变化，请重新读取后修改');
@@ -97,6 +123,13 @@ export function editCaseEntry(entry, patch, now = new Date().toISOString()) {
     if (!next.mediaAssets?.some(a => a.id === patch.primaryMediaId && a.usage !== 'poster')) fail('asset_not_in_case', '主要媒体不属于该案例');
     next.primaryMediaId = patch.primaryMediaId;
   }
+  if (Object.hasOwn(patch, 'coverVisualId')) {
+    if (patch.coverVisualId === null || patch.coverVisualId === '') delete next.coverVisualId;
+    else {
+      if (!next.mediaAssets?.some(a => a.id === patch.coverVisualId && a.kind === 'image')) fail('asset_not_in_case', '封面必须是该案例中的图片');
+      next = { ...next, coverVisualId: setCaseCover(next, patch.coverVisualId).coverVisualId };
+    }
+  }
   return JSON.stringify(canonical(next)) === JSON.stringify(canonical(entry)) ? entry : { ...next, libraryUpdatedAt: now };
 }
 
@@ -155,6 +188,22 @@ function assertRemaining(entry) {
 
 export async function planCaseOperation(state, operation, input, { now = new Date().toISOString(), idFactory = () => crypto.randomUUID() } = {}) {
   validateCaseOperation(operation, input);
+  const compound = state.compoundCases?.find(item => item.id === input.caseId);
+  if (compound) {
+    if (await compoundRevision(state, compound) !== input.expectedRevision) fail('case_conflict', '组合或成员资料已变化，请重新读取后修改');
+    if (operation === 'organize_case' && input.action === 'split_compound') {
+      const result = splitCompoundCase(state.compoundCases, state.entries, compound.id);
+      return { update: { compoundCases: result.compoundCases }, caseIds: result.memberEntryIds };
+    }
+    if (operation !== 'edit_case') fail('compound_member', '此操作请指定组合中的成员；拆开组合使用 split_compound');
+    if (Object.keys(input.patch).some(key => !['title', 'customLabels', 'coverVisualId'].includes(key))) fail('compound_member', '组合仅修改名称、标签和封面；正文及媒体修改请指定成员');
+    if (input.patch.coverVisualId) {
+      const ids = new Set(compound.memberEntryIds);
+      if (!state.entries.some(e => ids.has(e.id) && e.mediaAssets?.some(a => a.kind === 'image' && a.usage !== 'poster' && a.id === input.patch.coverVisualId))) fail('asset_not_in_case', '组合封面必须是成员中的内容图片');
+    }
+    const result = updateCompoundCase(state.compoundCases, state.entries, compound.id, { ...input.patch, updatedAt: now });
+    return { update: { compoundCases: result.compoundCases }, caseIds: [compound.id] };
+  }
   const current = await checkedEntry(state, input.caseId, input.expectedRevision);
   if (operation === 'edit_case') {
     const next = editCaseEntry(current, input.patch, now);
@@ -162,6 +211,22 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
   }
   if (operation !== 'organize_case') fail('unknown_operation', '未知写入操作');
   if (organization(state, current.id).compounds.length) fail('compound_member', '请先处理组合关系，不能单独移动或拆分组合成员');
+  if (input.action === 'combine_cases') {
+    if (!input.title || !input.additionalCases?.length) fail('invalid_input', '请提供组合名称及其他已读取版本的案例');
+    const ids = [current.id, ...input.additionalCases.map(item => item.caseId)];
+    if (new Set(ids).size !== ids.length) fail('invalid_input', '组合成员不能重复');
+    for (const item of input.additionalCases) {
+      await checkedEntry(state, item.caseId, item.expectedRevision);
+      if (organization(state, item.caseId).compounds.length) fail('compound_member', '成员已在另一个组合中，请先拆开原组合');
+    }
+    assertCompoundProjectScope(state, ids);
+    if (input.coverVisualId && !state.entries.some(e => ids.includes(e.id) && e.mediaAssets?.some(a => a.id === input.coverVisualId && a.kind === 'image' && a.usage !== 'poster'))) fail('asset_not_in_case', '组合封面必须是成员中的内容图片');
+    const result = createCompoundCase(state.compoundCases, state.entries, {
+      id: idFactory(), title: input.title, memberEntryIds: ids, coverVisualId: input.coverVisualId, now
+    });
+    return { update: { compoundCases: result.compoundCases }, caseIds: [result.compoundCase.id] };
+  }
+  if (input.action === 'split_compound') fail('invalid_input', '请指定要拆开的组合案例');
   if (['move_project', 'copy_project'].includes(input.action)) {
     if (!input.projectId || input.groups || input.assetIds || input.targetCaseId || input.targetRevision) fail('invalid_input', '项目整理只接受目标项目');
     if (input.action === 'copy_project') {
@@ -233,19 +298,19 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
   return { update: { entries: [...state.entries.map(e => e.id === current.id ? { ...remaining, libraryUpdatedAt: now } : e), ...newEntries], organizerState }, caseIds: [current.id, ...newEntries.map(e => e.id)] };
 }
 
-export function createCaseOperations({ loadState, storage, commit, enqueue }) {
+export function createCaseOperations({ loadState, loadReadState = loadState, storage, commit, enqueue }) {
   return {
     read: input => enqueue(async () => {
       validateCaseOperation('read_case_details', input);
-      const state = await loadState();
+      const state = await loadReadState();
       const compound = state.compoundCases?.find(c => c.id === input.caseId);
       const entry = compound || entryFor(state, input.caseId);
-      const revision = compound ? await hash({ compound, members: state.entries.filter(e => compound.memberEntryIds.includes(e.id)) }) : await caseRevision(state, entry);
+      const revision = compound ? await compoundRevision(state, compound) : await caseRevision(state, entry);
       if (input.expectedRevision && revision !== input.expectedRevision) fail('case_conflict', '案例已变化，请从第一页重新读取');
       const part = input.part || 'overview';
       const parts = compound ? { overview: { kind: 'compound', ...compound } } : {
         overview: { id: entry.id, title: entry.title, textCharacters: (entry.text || '').length, textRevision: entry.textRevision || 1,
-          primaryMediaId: entry.primaryMediaId, mediaCount: (entry.mediaAssets || []).length, savedAt: entry.savedAt, libraryUpdatedAt: entry.libraryUpdatedAt },
+          primaryMediaId: entry.primaryMediaId, coverVisualId: entry.coverVisualId, mediaCount: (entry.mediaAssets || []).length, savedAt: entry.savedAt, libraryUpdatedAt: entry.libraryUpdatedAt },
         source: { url: entry.url || '', sourceFacts: entry.sourceFacts || {}, sourcePages: entry.sourcePages || [], provenance: entry.agentProvenance || null },
         media: entry.mediaAssets || [], document: { text: entry.text || '', articleDocument: entry.articleDocument || null },
         annotations: { customLabels: entry.customLabels || [], classification: entry.classification, facetAssignments: entry.facetAssignments || [],
@@ -270,7 +335,7 @@ export function createCaseOperations({ loadState, storage, commit, enqueue }) {
       const plan = await planCaseOperation(state, operation, input);
       const after = { ...state, ...plan.update };
       const result = { ok: true, requestId: input.requestId, operation,
-        cases: await Promise.all(plan.caseIds.map(async id => { const e = entryFor(after, id); return { caseId: id, title: e.title, revision: await caseRevision(after, e) }; })) };
+        cases: await Promise.all(plan.caseIds.map(id => operationCase(after, id))) };
       // Commit metadata and acknowledgement together. No media bytes or backup copies.
       await commit({ ...plan.update, [key]: { fingerprint, result } });
       return result;

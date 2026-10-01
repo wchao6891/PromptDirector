@@ -41,7 +41,7 @@ export async function install(plan, { register = registerWindowsHost } = {}) {
   const sharedDirectory = join(plan.root, 'extension');
   await mkdir(sharedDirectory, { recursive: true, mode: 0o700 });
   await atomicWrite(join(sharedDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
-  for (const name of ['case-operation-specs.js', 'project-operation-specs.js']) {
+  for (const name of ['case-operation-specs.js', 'project-operation-specs.js', 'skill-operation-specs.js', 'analysis-batch-specs.js']) {
     await cp(resolve(source, '../extension', name), join(sharedDirectory, name));
   }
   for (const entry of await readdir(source, { withFileTypes: true })) {
