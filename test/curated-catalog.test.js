@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 
 import {
   applyCuratedOrigin,
@@ -11,8 +12,23 @@ import {
   prepareCuratedEntryPackage,
   prepareCuratedPackageVersion,
   validateCuratedPackageContents,
-  validateCuratedPackageIndex
+  validateCuratedPackageIndex,
+  verifyCuratedPackageBlob
 } from "../extension/curated-catalog.js";
+
+test("a curated archive above 128 MiB still requires its catalog size and SHA-256", async () => {
+  const chunk = new Uint8Array(1024 * 1024);
+  const parts = Array(128).fill(chunk);
+  parts.push(new Uint8Array([1]));
+  const archive = new Blob(parts);
+  const hash = createHash("sha256");
+  for (const part of parts) hash.update(part);
+  const digest = hash.digest("hex");
+
+  assert.equal(await verifyCuratedPackageBlob(archive, digest, archive.size), true);
+  await assert.rejects(verifyCuratedPackageBlob(archive, digest, archive.size - 1), /大小与目录不一致/);
+  await assert.rejects(verifyCuratedPackageBlob(new Blob([new Uint8Array(22)]), digest, 22), /校验失败/);
+});
 
 function catalogItem(overrides = {}) {
   return {

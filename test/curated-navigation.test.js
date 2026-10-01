@@ -95,7 +95,7 @@ test("preview prompts stay inert and package bytes are verified before curated i
   assert.match(page, /copyCasePrompt\(entry, copy\)/);
   assert.doesNotMatch(page, /innerHTML|insertAdjacentHTML|eval\(|new Function/);
   const verifiedArchive = page.slice(page.indexOf("async function loadVerifiedArchive"), page.indexOf("async function loadPackageIndex"));
-  assert.match(verifiedArchive, /verifyCuratedPackageBlob\(archive, item\.sha256\)/);
+  assert.match(verifiedArchive, /verifyCuratedPackageBlob\(archive, item\.sha256, item\.archiveBytes\)/);
   const save = page.slice(page.indexOf("async function savePreviewCase"), page.indexOf("function openSavedCase"));
   assert.match(save, /saveCuratedSelection\(item, \[previewEntry\.id\]/);
   assert.match(save, /prepareCuratedEntriesPackage/);

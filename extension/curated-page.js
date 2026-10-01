@@ -565,9 +565,8 @@ async function loadVerifiedArchive(item, onProgress = () => undefined) {
         const archive = await readResponseBlobWithProgress(response, {
           onProgress: (progress) => emitProgress(item.id, { stage: "downloading", ...progress })
         });
-        if (archive.size !== item.archiveBytes) throw new Error("精选案例包下载大小与目录不一致");
         emitProgress(item.id, { stage: "verifying" });
-        await verifyCuratedPackageBlob(archive, item.sha256);
+        await verifyCuratedPackageBlob(archive, item.sha256, item.archiveBytes);
         return archive;
       })().catch((error) => {
         archivePromises.delete(item.id);

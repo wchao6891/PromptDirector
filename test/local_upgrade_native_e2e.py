@@ -101,8 +101,10 @@ def main():
             button = page.get_by_role("button", name="选择安装文件夹并升级", exact=True)
             expect(button).to_be_visible(timeout=60_000)
             button.click()
-            deadline = time.monotonic() + 240
+            started = time.monotonic()
+            deadline = started + 240
             last_progress = ""
+            progress_updates = 0
             while not page.is_closed() and time.monotonic() < deadline:
                 try:
                     status = page.locator(".app-dialog-status")
@@ -110,6 +112,12 @@ def main():
                         progress = status.inner_text()
                         if progress != last_progress and ("error" in (status.get_attribute("class") or "")):
                             raise AssertionError(progress)
+                        if progress != last_progress:
+                            # Hundreds of verified disk writes can be slower on
+                            # hosted Windows. Fail on stalled work, while still
+                            # requiring the actual reload and data proof below.
+                            deadline = time.monotonic() + 240
+                            progress_updates += 1
                         last_progress = progress
                     page.wait_for_timeout(200)
                 except Exception:
@@ -117,7 +125,7 @@ def main():
                     # established below from a new page and the reloaded extension.
                     if not page.is_closed():
                         raise
-            assert page.is_closed(), f"Updater did not reload: {last_progress}"
+            assert page.is_closed(), f"Updater stopped progressing before reload: {last_progress} ({progress_updates} progress updates)"
             check = context.new_page()
             check.goto("chrome://extensions")
             check.wait_for_function("""async ({id,version}) =>
@@ -164,7 +172,8 @@ def main():
             assert directory_proof["reused"] and directory_proof["name"] == installed.name, directory_proof
             print(json.dumps({"native_in_place_upgrade": "passed", "previous": previous["version"], "current": target["version"],
                               "case_media_identity_retained": True, "installation_directory_reused": True,
-                              "permission": "preauthorized isolated profile"}), flush=True)
+                              "permission": "preauthorized isolated profile", "progress_updates": progress_updates,
+                              "upgrade_seconds": round(time.monotonic() - started, 1)}), flush=True)
         except Exception:
             for candidate in context.pages:
                 if candidate.url.startswith(f"chrome-extension://{extension_id}/"):

@@ -1,5 +1,4 @@
-import { sha256Hex } from "./sync-crypto.js";
-import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { sha256Blob } from "./blob-digest.js";
 import { selectLibraryPackage } from "./library-package.js";
 
 export const CURATED_CATALOG_FORMAT = "prompt-director-curated";
@@ -261,12 +260,14 @@ export function prepareCuratedEntriesPackage(libraryValue = {}, entryIdValues = 
   return selected;
 }
 
-export async function verifyCuratedPackageBlob(blob, expectedSha256) {
+export async function verifyCuratedPackageBlob(blob, expectedSha256, expectedBytes) {
   if (!(blob instanceof Blob) || blob.size < 22) throw new Error("精选案例包为空或无效");
-  if (blob.size > PORTABLE_LIBRARY_LIMITS.maxArchiveBytes) throw new Error("精选案例包超过安全大小上限");
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 22 || blob.size !== expectedBytes) {
+    throw new Error("精选案例包下载大小与目录不一致");
+  }
   const expected = String(expectedSha256 ?? "").toLocaleLowerCase("en-US");
   if (!/^[a-f0-9]{64}$/.test(expected)) throw new Error("精选案例包缺少有效校验值");
-  const actual = await sha256Hex(blob);
+  const actual = await sha256Blob(blob);
   if (actual !== expected) throw new Error("精选案例包校验失败，文件可能损坏或被替换");
   return true;
 }
