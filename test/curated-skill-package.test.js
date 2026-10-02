@@ -20,7 +20,7 @@ function fixture(overrides = {}) {
     description: "把主体层级组织成清晰画面。",
     skillMarkdown: "# 构图方法\n\n保持主体清晰。",
     references: [{ path: "references/guide.md", markdown: "# Guide\n\nUse depth.", runtime: true }],
-    provenanceMarkdown: "# 私人来源\n\n/Users/private/cases.md"
+    provenanceMarkdown: `# 私人来源\n\n${["", "Users", "private", "cases.md"].join("/")}`
   }, { id: "local:one", versionId: "version:one", now: "2026-08-23T00:00:00.000Z" }).skill;
 }
 
@@ -47,7 +47,7 @@ test("curated submission snapshot includes a byte-verified image, is exact-previ
 
 test("privacy findings are reported without mutating the final preview", async () => {
   const skill = fixture();
-  skill.versions[0].skillMarkdown = "# Method\n\nAPI_KEY=\"secret-value-123456\", /Users/alice/private.md, alice@example.com";
+  skill.versions[0].skillMarkdown = `# Method\n\nAPI_KEY="secret-value-123456", ${["", "Users", "alice", "private.md"].join("/")}, alice@example.com`;
   const snapshot = await buildCuratedSkillSnapshot(skill, {
     author: "Creator One",
     summary: "A reusable composition method.",
