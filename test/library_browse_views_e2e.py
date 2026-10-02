@@ -5,6 +5,10 @@ from playwright.sync_api import expect
 from e2e_support import extension_session, base_entry
 
 
+def set_scope(page, checked):
+    page.locator('#include-subprojects').set_checked(checked)
+
+
 def main():
     output = Path(tempfile.gettempdir()) / 'pd-browse18-evidence'
     output.mkdir(exist_ok=True)
@@ -22,31 +26,26 @@ def main():
         page = session.open_page('library.html', wait_until='networkidle')
         page.locator('.project-row[data-collection-id="root"] .project-filter').click()
         expect(page.locator('#case-list .case-card')).to_have_count(1)
-        page.locator('#include-subprojects').uncheck()
+        set_scope(page, False)
         expect(page.locator('#case-list .case-card')).to_have_count(1)
-        toolbar_geometry = """() => [...document.querySelectorAll('#browse-scope, [data-gallery-view], #gallery-sort, #manage-case-order, #select-cases')].map(el => {
+        toolbar_geometry = """() => [...document.querySelectorAll('[data-gallery-view], #gallery-size, #select-cases')].map(el => {
           const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};
         })"""
         before_scope = page.evaluate(toolbar_geometry)
+        menu = page.locator('.project-row[data-collection-id="root"] .project-menu')
+        menu.locator('summary').click(); menu.get_by_role('button',name='调整案例顺序',exact=True).click()
+        expect(page.locator('#manage-case-order')).to_be_visible()
+        expect(page.locator('#select-cases')).to_be_hidden()
         page.locator('#manage-case-order').click()
-        expect(page.locator('#select-cases')).to_be_visible()
-        expect(page.locator('#select-cases')).to_be_disabled()
-        assert page.evaluate(toolbar_geometry) == before_scope
-        page.locator('#manage-case-order').click()
-        page.locator('#gallery-sort').select_option('added-desc')
         expect(page.locator('#select-cases')).to_be_enabled()
         assert page.evaluate(toolbar_geometry) == before_scope
-        page.locator('#include-subprojects').check()
+        set_scope(page, True)
         expect(page.locator('#case-list .case-card')).to_have_count(4)
-        expect(page.locator('#manage-case-order')).to_be_visible()
-        expect(page.locator('#manage-case-order')).to_be_disabled()
+        expect(page.locator('#manage-case-order')).to_be_hidden()
+        menu.locator('summary').click();expect(menu.get_by_role('button',name='调整案例顺序',exact=True)).to_be_disabled();menu.locator('summary').click()
         assert page.evaluate(toolbar_geometry) == before_scope
-        page.locator('#browse-scope span').dblclick()
-        assert page.evaluate('getSelection().toString()') == ''
         assert page.locator('#search-input').evaluate('el => getComputedStyle(el).userSelect') == 'text'
         assert page.locator('.case-row-title').first.evaluate('el => getComputedStyle(el).userSelect') == 'none'
-        page.locator('#include-subprojects').check()
-        assert page.evaluate(toolbar_geometry) == before_scope
         for button in page.locator('[data-gallery-view]').all():
             assert not button.inner_text().strip()
             assert button.get_attribute('aria-label')
@@ -65,7 +64,7 @@ def main():
             expect(page.locator('#case-list .case-card')).to_have_count(4)
             page.screenshot(path=str(output / f'desktop-{mode}.png'))
             if mode == 'list': page.locator('#gallery-view-controls').screenshot(path=str(output / 'view-controls.png'))
-        page.locator('#include-subprojects').uncheck()
+        set_scope(page, False)
         page.locator('.project-folder-card[data-collection-id="child"]').click()
         expect(page.locator('#case-list .case-card')).to_have_count(2)
         page.locator('.project-folder-card[data-collection-id="grand"]').click()
@@ -91,7 +90,7 @@ def main():
         page.locator('.project-row[data-collection-id="child"] .project-menu summary').click()
         expect(page.locator('.project-row[data-collection-id="child"] .project-menu[open]')).to_contain_text('重命名')
         page.locator('.project-row[data-collection-id="child"] .project-menu summary').click()
-        page.locator('#include-subprojects').check()
+        set_scope(page, True)
         page.locator('[data-gallery-view="list"]').click()
         sidebar = page.locator('#filter-sidebar').bounding_box()
         project_geometry = """() => [...document.querySelectorAll('.project-row')].map(row => {
@@ -115,14 +114,13 @@ def main():
         expect(page.locator('#detail-drawer')).to_have_attribute('aria-hidden','false')
         assert page.locator('#detail-content').evaluate('el => getComputedStyle(el).userSelect') != 'none'
         page.keyboard.press('Escape')
-        page.locator('#include-subprojects').uncheck()
+        set_scope(page, False)
         browse_geometry = """() => ['.gallery-heading','#project-folder-list','#case-list','#case-list .case-card'].map(selector => {
-          const r=document.querySelector(selector).getBoundingClientRect(); return {selector,x:r.x,y:r.y,width:r.width,height:r.height};
+          const r=document.querySelector(selector).getBoundingClientRect(); return selector === '.gallery-heading' ? {selector,y:r.y,height:r.height} : {selector,x:r.x,y:r.y,width:r.width,height:r.height};
         })"""
         for width in [1440,900,390]:
             page.set_viewport_size({'width':width,'height':844})
             for mode in ['waterfall','list']:
-                if width <= 1100: page.locator('#toolbar-more > summary').click()
                 page.locator(f'[data-gallery-view="{mode}"]').click()
                 page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), (width,mode)
@@ -130,13 +128,8 @@ def main():
                     assert name.evaluate('el => el.scrollWidth <= el.clientWidth + 1')
                 page.screenshot(path=str(output / f'{width}-{mode}.png'))
                 assert page.locator('.gallery-heading').bounding_box()['height'] <= 53
-                scope_box = page.locator('#browse-scope').bounding_box()
                 controls_box = page.locator('#gallery-view-controls').bounding_box()
-                if width > 1100:
-                    assert abs(scope_box['y'] + scope_box['height']/2 - controls_box['y'] - controls_box['height']/2) <= 1
-                else:
-                    assert scope_box['x'] >= 0 and scope_box['x'] + scope_box['width'] <= width
-                    assert controls_box['y'] <= scope_box['y'] < controls_box['y'] + controls_box['height']
+                assert controls_box['x'] >= 0 and controls_box['x'] + controls_box['width'] <= width
                 before_browse = page.evaluate(browse_geometry)
                 page.locator('#select-cases').click()
                 assert page.evaluate(browse_geometry) == before_browse, ('enter management',width,mode,before_browse,page.evaluate(browse_geometry))
@@ -155,7 +148,6 @@ def main():
         expect(page.locator('[data-gallery-view="list"]')).to_have_attribute('title','List')
         page.screenshot(path=str(output / '390-light-en-list.png'))
         english_before = page.evaluate(browse_geometry)
-        page.locator('#toolbar-more > summary').click()
         page.locator('#select-cases').click()
         page.locator('#case-list .case-card').first.click()
         assert page.evaluate(browse_geometry) == english_before

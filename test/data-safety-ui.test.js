@@ -118,7 +118,7 @@ test("multi-ZIP import uses one wide preflight with blocking failures and one ba
   assert.match(dialog, /library-package-import-byte-size/);
   assert.doesNotMatch(dialog, /library-package-import-select-all/);
   assert.doesNotMatch(dialog, /library-package-import-remove/);
-  assert.match(dialog, /class="data-safety-actions import-actions"/);
+  assert.match(dialog, /class="data-safety-actions import-actions ui-dialog-footer"/);
   assert.doesNotMatch(dialog, /type="checkbox"/);
   assert.match(flow, /for \(const item of batch\.items\)/);
   assert.match(flow, /await inspectLibraryPackageBatchItem\(batch, item\)/);

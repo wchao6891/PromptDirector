@@ -1,3 +1,4 @@
+import { createLibraryViewReader } from './library-view-state.js';
 import { setTaskFeedbackState } from "./task-feedback.js";
 import { getLibraryStorage } from './library-storage.js';
 import { createSourceVideoPreview, bindSourceVideoCover } from "./source-video-preview.js";
@@ -11,7 +12,6 @@ import {
   appendComposerMessage,
   appendDiagnosticEvent,
   clearComposerFailure,
-  COMPOSER_INPUT_MAX_CHARACTERS,
   composerInputUsage,
   composerProfileForTaskAssignment,
   completeComposerAssemblySnapshot,
@@ -329,7 +329,7 @@ function bindEvents() {
 
 async function refreshCreativeResultState() {
   const revision = ++creativeStateRefreshRevision;
-  const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  const response = await readWorkspaceLibraryState();
   if (!response?.ok || revision !== creativeStateRefreshRevision) return;
   const nextPhysicalEntries = response.entries ?? physicalEntries;
   const nextCompoundCases = normalizeCompoundCases(response.compoundCases ?? compoundCases, nextPhysicalEntries);
@@ -392,7 +392,7 @@ async function syncCreativeJobState(expectedRevision = null) {
 }
 
 async function initializeComposer() {
-  const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  const response = await readWorkspaceLibraryState();
   if (!response?.ok) throw new Error(response?.message || "无法读取创作资料");
   ({ ai: composerAiSettings, vision: composerVisionSettings } = await privateComposerServiceSettings());
   physicalEntries = response.entries ?? [];
@@ -1401,6 +1401,7 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
   let pendingImageIds = preparedImages.map(image => image.visualId);
   const toolRuntime = createLocalComposerLibraryTools({
     session: operation.session,
+    userMessageId: operation.userMessageId,
     vision: operation.session.imageReferenceMode !== "text_only",
     onEvent: async event => {
       operation.controller.signal.throwIfAborted();
@@ -3441,8 +3442,7 @@ function renderSendState() {
   const toolState = composerSession.libraryTools;
   const requestLabel = toolState.requestCount ? `本轮已请求 ${toolState.requestCount} 次 · ${toolState.usage && toolState.usageRequestCount === toolState.requestCount ? `输入 ${toolState.usage.promptTokens} / 输出 ${toolState.usage.completionTokens} tokens` : "用量未知"}` : "按任务执行";
   const retrievalLabel = !libraryRetrievalEnabled ? " · 案例库：关闭" : composerLibraryToolService(composerSession, composerAiSettings, composerVisionSettings).nativeTools ? " · 案例库：按需" : " · 案例库：手动选择";
-  elements.composerSendNote.textContent = `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel} · 本轮已附 ${toolState.imageIds.length} 张图片`;
-  elements.composerSendNote.classList.toggle("error", usage.overLimit);
+  elements.composerSendNote.textContent = `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel} · 本轮已附 ${toolState.imageIds.length} 张图片`;
   const currentRun = activeOperation?.kind === "compose" && activeOperation.sessionId === composerSession.id;
   if (currentRun) {
     elements.composerAction.dataset.state = activeOperation.phase === "stopping" ? "stopping" : "stop";
@@ -3451,7 +3451,7 @@ function renderSendState() {
     setUiIcon(elements.composerAction, activeOperation.phase === "stopping" ? "ellipsis" : "square");
   } else {
     elements.composerAction.dataset.state = "send";
-    elements.composerAction.disabled = usage.overLimit || Boolean(activeOperation);
+    elements.composerAction.disabled = Boolean(activeOperation);
     elements.composerAction.setAttribute("aria-label", t("发送"));
     setUiIcon(elements.composerAction, "send");
   }
@@ -3815,4 +3815,14 @@ function rawTextEl(tag, className, text) {
 
 function textEl(tag, className, text) {
   return rawTextEl(tag, className, t(text));
+}
+
+async function readWorkspaceLibraryState() {
+  const reader = createLibraryViewReader({
+    storage: getLibraryStorage(),
+    prepare: ({ summaryOnly, creativeSummary } = {}) => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
+    uiLanguage: chrome.i18n.getUILanguage(),
+    includeCreativeState: true
+  });
+  return reader();
 }

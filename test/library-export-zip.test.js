@@ -6,7 +6,6 @@ import { renderLibraryJson } from "../extension/lib.js";
 import { parseLibraryPackage } from "../extension/library-package.js";
 import { createArchiveUrl } from "../extension/offscreen.js";
 import { readZipBlob, createZipBlob } from "../extension/zip.js";
-import { PORTABLE_LIBRARY_LIMITS } from "../extension/resource-limits.js";
 
 test("downloaded Skill archives survive case export and import unchanged as inert attachments", async () => {
   const skill = await createZipBlob([{ name: "fixture/SKILL.md", data: "# Fixture\nOriginal skill bytes." }]);
@@ -25,7 +24,7 @@ test("downloaded Skill archives survive case export and import unchanged as iner
 
 test("an original image above 16 MiB survives export and default package import with its cover relationship", async () => {
   // Transport-only bytes: this test checks packaging, not image decoding.
-  const image = new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1).fill(137)], { type: "image/png" });
+  const image = new Blob([new Uint8Array(16 * 1024 * 1024 + 1).fill(137)], { type: "image/png" });
   const assetPath = "images/large-case/original.png";
   const libraryJson = renderLibraryJson([{
     id: "large-case", title: "Large original fixture", text: "Original image transport test",
@@ -44,7 +43,7 @@ test("an original image above 16 MiB survives export and default package import 
 
 test("a video above 16 MiB survives export and default package import with its cover relationship", async () => {
   // Transport-only bytes: this test checks packaging, not image decoding.
-  const image = new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1).fill(137)], { type: "video/mp4" });
+  const image = new Blob([new Uint8Array(16 * 1024 * 1024 + 1).fill(137)], { type: "video/mp4" });
   const assetPath = "videos/large-case/original.mp4";
   const libraryJson = renderLibraryJson([{
     id: "large-case", title: "Large original fixture", text: "Original image transport test",
@@ -162,7 +161,7 @@ test("self-read keeps a JPEG case while the production parser drops only its bro
 });
 
 test("export self-read accepts original attachments above the capture budget through default import", async () => {
-  const bytes = new Blob([new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1)]);
+  const bytes = new Blob([new Uint8Array(16 * 1024 * 1024 + 1)]);
   const assetPath = "attachments/source/original.psd";
   const libraryJson = renderLibraryJson([{
     id: "source", title: "Original source", text: "Keep original bytes",

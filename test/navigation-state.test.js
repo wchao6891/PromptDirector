@@ -182,7 +182,7 @@ test("old library return snapshots gain safe default sorting", () => {
   });
 });
 
-test("removed oldest-first snapshots fall back to recent-first", () => {
+test("header ascending sorting survives return from creation", () => {
   const snapshot = parseLibraryReturnSnapshot(JSON.stringify({
     collectionId: "",
     contentId: "",
@@ -193,7 +193,7 @@ test("removed oldest-first snapshots fall back to recent-first", () => {
     sortMode: "added-asc",
     projectSortMode: "manual"
   }));
-  assert.equal(snapshot.sortMode, "added-desc");
+  assert.equal(snapshot.sortMode, "added-asc");
 });
 
 test("returning from creation preserves the unassigned workspace alongside its filters", () => {

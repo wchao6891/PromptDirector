@@ -1,8 +1,15 @@
+import { selectedCaseTags } from './case-tags.js';
 import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { createTransientFeedback } from "./transient-feedback.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
 const libraryStorage = getLibraryStorage();
+import { createLibraryViewReader } from './library-view-state.js';
+const readLibraryViewState = createLibraryViewReader({
+  storage: libraryStorage,
+  prepare: ({ summaryOnly, creativeSummary } = {}) => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
+  uiLanguage: chrome.i18n.getUILanguage()
+});
 import { createBlobDigestCache } from "./blob-digest.js";
 import { installWorkspaceReader, libraryWorkspaceReferences } from "./workspace-context.js";
 import { createSelectionWriter, REFERENCE_SELECTION_KEY } from "./reference-selection.js";
@@ -20,6 +27,7 @@ import { previewLibraryImportInWorker } from "./library-import-preview.js";
 import { readZipResources } from "./zip-reader.js";
 import { attachArticleEditor } from "./article-editor.js";
 import { renderArticleBlockText } from "./article-text-view.js";
+import { articleBlockIsMarkdown } from "./article-document.js";
 import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
 import { readImageDimensions } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
@@ -59,7 +67,6 @@ import { analysisDiagnosticSummary } from "./analysis-response.js";
 import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 import {
   ASSET_IMPORT_FAILURE_CODES,
-  PORTABLE_LIBRARY_LIMITS,
   LIBRARY_TRANSFER_LIMITS,
   assertImageDimensions,
   formatBytes,
@@ -115,6 +122,9 @@ import {
   updateUiPreferences
 } from "./i18n.js";
 import { createStableMasonry } from "./stable-masonry.js";
+import { createVirtualGallery } from "./virtual-gallery.js";
+import { ResourceCache } from "./resource-cache.js";
+import { operationBudget, readJsonWithResourceBudget } from "./resource-policy.js";
 import {
   DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE,
   normalizeVisionSettings,
@@ -185,7 +195,7 @@ import {
   collectionSelectorLabelsById,
   collectionSubtreeEntryIdsById,
   collectionSubtreeIds,
-  isEntryVisibleInLibrary
+  createLibraryVisibilityReader
 } from "./organizer.js";
 import { visualAnalysisPromptReplacement } from "./image-prompt.js";
 import { detailPromptSources } from "./prompt-sources.js";
@@ -218,7 +228,9 @@ import {
   serializeLibraryReturnSnapshot
 } from "./navigation-state.js";
 import { CURATED_SUBMISSION_URL } from "./curated-config.js";
-import { moveProjectLogicalCase, sortLibraryCases } from "./library-view.js";
+import { moveProjectLogicalCase, sortLibraryCases, nextCaseSortMode } from "./library-view.js";
+import { createGalleryControls } from "./library-gallery-controls.js";
+import { caseListMetadata } from "./library-list.js";
 import { createTagEditor, normalizeTagValue } from "./tag-editor.js";
 import { attachProjectCombobox } from "./project-combobox.js";
 import { createProjectTreeInteractions, projectTreeRows, readProjectExpansion } from "./project-tree.js";
@@ -245,14 +257,14 @@ const elements = Object.fromEntries([
   "creative-experiment-file", "export-creative-experiments", "import-creative-experiments",
   "create-node-form", "delete-content-type", "detail-close", "detail-content", "detail-drawer", "detail-mode-toggle", "detail-navigation", "detail-next",
   "detail-prev", "detail-resizer", "drawer-backdrop", "drawer-toolbar", "empty-filter", "empty-library", "empty-state",
-  "facet-filters", "feedback", "filter-sidebar", "sidebar-resizer", "gallery-heading", "gallery-sort", "gallery-view-controls", "manage-case-order", "project-manual-sort-option", "legacy-candidates",
+  "facet-filters", "feedback", "filter-sidebar", "sidebar-resizer", "gallery-heading", "gallery-view-controls", "manage-case-order", "legacy-candidates",
   "image-lightbox", "image-lightbox-close", "image-lightbox-image", "library-title", "load-more", "load-sentinel", "manage-facets", "manager-close", "manager-dialog", "manager-feedback",
   "manager-pending", "manager-content-types", "manager-vocabulary", "new-node-aliases",
   "new-node-name", "new-node-parent", "pending-count", "pending-filter",
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "organize-detail-progress", "data-safety-progress", "library-package-import-progress", "maintenance-progress-bar", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-public", "share-dialog-public-panel", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-copy-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
+  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-label-mode", "selection-label-add-field", "selection-removable-tags", "selection-remove-labels", "selection-copy-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
   "facet-recovery-actions", "analysis-recovery-actions", "library-recovery-actions", "import-recovery-actions",
   "project-section", "project-root-drop", "collapse-projects", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
@@ -283,14 +295,44 @@ const managerPanels = {
   vocabulary: elements.managerVocabulary
 };
 const workspace = document.querySelector(".workspace");
-let galleryMasonry = createStableMasonry(elements.caseList, {
-  layoutDependencies: [document.querySelector(".topbar")],
+let galleryMasonry = createVirtualGallery(elements.caseList, {
+  mode: () => uiPreferences.galleryView,
+  createCard: id => { const entry = visibleEntryById.get(id); return entry && caseCardForEntry(entry); },
+  mountCard: card => { observePendingCardMedia([card]); scheduleVisibleMediaHydration(); },
+  releaseCard: card => {
+    for (const image of card.querySelectorAll('img')) { imageObserver.unobserve(image); documentObserver.unobserve(image); }
+    caseCardCache.delete(card.dataset.entryId);
+  },
+  protectedCard: card => card === mediaDragCard || card === caseOrderDragState?.card || card === caseSelectionSweep?.capture,
+  onWindow: () => { caseCardCache.trim(); for (const cache of [thumbnailUrls, originalUrls, documentPreviewUrls, documentDerived]) cache.trim(); },
   onLayout: () => scheduleLoadCheck()
 });
 const PAGE_SIZE = 24;
 const DETAIL_TAG_PREVIEW_LIMIT = 6;
-const thumbnailUrls = new Map();
-const originalUrls = new Map();
+const cacheWorkingBytes = operationBudget().workingBytes / 4;
+const previewCacheEntries = Math.max(PAGE_SIZE * 2, Math.floor(cacheWorkingBytes / (640 * 640 * 4)));
+let mediaDragCard = null;
+const mediaDragUrls = new Set();
+const urlProtected = url => mediaDragUrls.has(url) || [...document.querySelectorAll('img[src],video[src],audio[src],source[src]')].some(node => node.src === url);
+const urlCache = () => new ResourceCache({ maxEntries: previewCacheEntries, protectedValue: urlProtected, dispose: url => URL.revokeObjectURL(url) });
+const thumbnailUrls = urlCache();
+const originalUrls = urlCache();
+document.addEventListener('dragstart', event => {
+  mediaDragCard = event.target.closest?.('.case-card') || null;
+  mediaDragUrls.clear();
+  const entry = visibleEntryById.get(mediaDragCard?.dataset.entryId);
+  for (const asset of entry?.mediaAssets || []) {
+    for (const cache of [thumbnailUrls, originalUrls, documentPreviewUrls]) {
+      const url = cache.get(asset.id); if (url) mediaDragUrls.add(url);
+    }
+  }
+  for (const node of (mediaDragCard || event.target).querySelectorAll?.('img[src],video[src],audio[src],source[src]') || []) mediaDragUrls.add(node.src);
+  if (event.target.src) mediaDragUrls.add(event.target.src);
+}, true);
+document.addEventListener('dragend', () => {
+  mediaDragCard = null; mediaDragUrls.clear();
+  for (const cache of [thumbnailUrls, originalUrls, documentPreviewUrls]) cache.trim();
+}, true);
 const loadingImages = new Map();
 const thumbnailQueue = [];
 const thumbnailConcurrency = Math.max(1, Math.min(2, Math.floor((navigator.hardwareConcurrency || 2) / 4)));
@@ -298,8 +340,9 @@ let activeThumbnails = 0;
 const detailMediaUrls = new Set();
 const detailControllerCleanups = new Set();
 let activeDetailDiscovery = null;
-const documentPreviewUrls = new Map();
-const documentDerived = new Map();
+const documentPreviewUrls = urlCache();
+const documentDerived = new ResourceCache({ maxEntries: previewCacheEntries, maxBytes: cacheWorkingBytes,
+  cost: value => (value.searchText?.length || 0) * 2 + (value.thumbnail?.size || 0) + (value.remoteImages || []).reduce((sum, image) => sum + (image.blob?.size || 0), 0) });
 let imageDerivedMetadata = new Map();
 let imageDerivedMetadataLoaded = false;
 let imageDerivedMetadataLoadPromise = null;
@@ -337,7 +380,52 @@ let renderedCount = 0;
 let selectedContentId = "";
 let selectedCollectionId = "";
 let unassignedViewActive = false;
-let caseSortMode = "added-desc";
+let caseSortMode = uiPreferences.gallerySort;
+let listMetadataCache = new WeakMap();
+let listTagNames = null;
+const galleryControls = createGalleryControls({
+  getPreferences: () => uiPreferences,
+  onSort: column => {
+    caseSortMode = nextCaseSortMode(caseSortMode, column);
+    caseOrderManagementActive = false;
+    renderGalleryResults({ refreshNavigation: false });
+    void persistGalleryPreference({ gallerySort: caseSortMode });
+  },
+  onSize: size => {
+    galleryMasonry.resize(() => {
+      uiPreferences = { ...uiPreferences, galleryZoom: size };
+      galleryControls.applySize();
+    });
+  },
+  onSizeCommit: () => { void persistGalleryPreference({ galleryZoom: uiPreferences.galleryZoom }); },
+  onColumns: hidden => {
+    uiPreferences = { ...uiPreferences, galleryHiddenColumns: hidden };
+    galleryControls.sync(caseSortMode);
+    galleryMasonry.resize();
+    void persistGalleryPreference({ galleryHiddenColumns: hidden });
+  }
+});
+// Serialize preference writes so rapid slider changes cannot overwrite the final value.
+let galleryPreferenceWrite = Promise.resolve();
+function persistGalleryPreference(change) {
+  uiPreferences = { ...uiPreferences, ...change };
+  galleryPreferenceWrite = galleryPreferenceWrite.then(async () => {
+    await updateUiPreferences({ ...uiPreferences, ...change });
+  }).catch(error => showFeedback(error.message, true));
+  return galleryPreferenceWrite;
+}
+function listMetadata(entry) {
+  listTagNames ??= new Map(facetCatalog.nodes.map(item => [item.id, item.name]));
+  if (!listMetadataCache.has(entry)) {
+    listMetadataCache.set(entry, caseListMetadata(entry, {
+      typeLabel: entryContentTypeIds(entry).map(contentLabel).join(" · "),
+      tagNames: [ ...(entry.customLabels ?? []), ...(entry.facetAssignments ?? [])
+        .filter(item => item.status === "confirmed")
+        .map(item => listTagNames.get(item.nodeId)).filter(Boolean) ]
+    }));
+  }
+  return listMetadataCache.get(entry);
+}
 let caseOrderManagementActive = false;
 let caseOrderDragState = null;
 let projectTreeInteractions;
@@ -421,7 +509,8 @@ let librarySearchIndexById = new Map();
 let logicalIdByEntryId = new Map();
 let localSimilarityIndex = createSimilarityIndex([], facetCatalog);
 let documentCacheGeneration = 0;
-const caseCardCache = new Map();
+const caseCardCache = new ResourceCache({ maxEntries: previewCacheEntries, protectedValue: card => card.isConnected });
+let visibleEntryById = new Map();
 let lightboxTrigger = null;
 const transientFeedback = createTransientFeedback();
 let syncStatus = {};
@@ -512,7 +601,7 @@ void installWorkspaceReader({ chromeApi: chrome, readContext: async () => {
     : "案例库尚未就绪，请等待页面加载完成。");
   const selection = JSON.stringify([...selectedCaseIds]);
   const projectId = selectedCollectionId;
-  const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  const state = await readLibraryViewState();
   if (!state?.ok) throw new Error(state?.message || "无法读取案例库");
   const materials = await libraryWorkspaceReferences(state, JSON.parse(selection), getDerivedMedia);
   if (selection !== JSON.stringify([...selectedCaseIds]) || projectId !== selectedCollectionId) {
@@ -778,16 +867,13 @@ function bindEvents() {
       await saveBrowsePreference({ galleryView: button.dataset.galleryView });
     });
   }
-  document.querySelector("#include-subprojects").addEventListener("change", async (event) => {
-    await saveBrowsePreference({ includeSubprojects: event.target.checked });
+  document.querySelector("#include-subprojects").addEventListener("change", event => {
+    void saveBrowsePreference({ includeSubprojects: event.target.checked });
   });
   elements.createCollection.addEventListener("click", () => createProjectCollection(elements.createCollection));
-  elements.gallerySort.addEventListener("change", () => {
-    caseSortMode = elements.gallerySort.value;
-    caseOrderManagementActive = false;
-    renderGalleryResults({ refreshNavigation: false });
-  });
   elements.manageCaseOrder.addEventListener("click", toggleCaseOrderManagement);
+  document.querySelector("#empty-import").addEventListener("click", () => elements.addMedia.click());
+  document.querySelector("#empty-curated").addEventListener("click", () => elements.openCurated.click());
   elements.collapseProjects.addEventListener("click", () => {
     projectTreeController().cancel();
     expandedProjectIds.clear();
@@ -904,6 +990,11 @@ function bindEvents() {
     void addLabelsToSelection();
   });
   elements.selectionAddLabels.addEventListener("click", addLabelsToSelection);
+  elements.selectionLabelMode.addEventListener("change", renderSelectionTagControls);
+  elements.selectionRemovableTags.addEventListener("change", () => {
+    elements.selectionRemoveLabels.disabled = !elements.selectionRemovableTags.querySelector("input:checked");
+  });
+  elements.selectionRemoveLabels.addEventListener("click", removeLabelsFromSelection);
   elements.selectionSetClassification.addEventListener("click", setSelectionClassification);
   elements.selectionContentType.addEventListener("change", updateSelectionBar);
   elements.selectionCopyProject.addEventListener("click", copySelectionToProject);
@@ -1127,7 +1218,7 @@ async function refreshLibrary() {
   let response;
   try {
     const [state, _derived, diagnosticState, dragIdentity] = await Promise.all([
-      chrome.runtime.sendMessage({ type: "GET_STATE" }),
+      readLibraryViewState(),
       loadImageDerivedMetadata(),
       chrome.storage.local.get("analysisDiagnostics"),
       chrome.runtime.sendMessage({ type: 'GET_LIBRARY_IDENTITY' }).catch(error => ({ message: error.message }))
@@ -1168,8 +1259,8 @@ async function refreshLibrary() {
   organizerState = response.organizerState ?? { collections: [] };
   importJobsState = response.importJobs ?? { items: [] };
   trashItems = Array.isArray(response.trashState?.items) ? response.trashState.items : [];
-  elements.trashCount.hidden = trashItems.length === 0;
-  elements.trashCount.textContent = String(trashItems.length);
+  elements.trashCount.hidden = response.trashCount === 0;
+  elements.trashCount.textContent = String(response.trashCount ?? trashItems.length);
   aiSettings = response.aiSettings ?? aiSettings;
   visionSettings = response.visionSettings ?? visionSettings;
   aiServiceProfiles = response.aiServiceProfiles ?? aiServiceProfiles;
@@ -1182,7 +1273,10 @@ async function refreshLibrary() {
   }
   composerSettings = normalizeComposerSettings(response.composerSettings);
   creativeExperimentSettings = response.creativeExperimentSettings ?? creativeExperimentSettings;
-  syncStatus = response.syncStatus ?? {};
+  void chrome.runtime.sendMessage({ type: 'GET_LIBRARY_VIEW_STATUS' }).then(status => {
+    if (refreshGeneration !== libraryRefreshGeneration || !status?.ok) return;
+    syncStatus = status.syncStatus ?? {};
+  }).catch(error => console.error('PromptDirector sync status', error));
   canUndoFacetUpdate = Boolean(response.canUndoFacetUpdate);
   const previousAnalysisJob = analysisBatchJob;
   analysisBatchJob = response.analysisBatchJob ?? null;
@@ -1213,6 +1307,8 @@ async function refreshLibrary() {
   }
   sanitizeSelections();
   caseCardCache.clear();
+  listMetadataCache = new WeakMap();
+  listTagNames = null;
   rebuildLibraryDerivedState();
   updateSelectionBar();
   renderGallery();
@@ -1220,8 +1316,9 @@ async function refreshLibrary() {
   document.body.dataset.libraryState = "ready";
   if (!elements.searchInput.value.trim()) restoreLibraryScrollPosition();
   const cacheGeneration = ++documentCacheGeneration;
-  void loadDocumentDerivedCache(entries).then(() => {
+  void loadDocumentDerivedCache(entries).then(changed => {
     if (cacheGeneration !== documentCacheGeneration) return;
+    if (!changed) return;
     rebuildLibrarySearchIndex();
     gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
     updateCachedDocumentCards();
@@ -1252,10 +1349,18 @@ async function loadDocumentDerivedCache(entryValues) {
     .filter((asset) => asset.kind === "document" && asset.mimeType === "application/pdf")
     .map((asset) => asset.id))];
   const active = new Set(ids);
-  for (const id of [...documentDerived.keys()]) if (!active.has(id)) documentDerived.delete(id);
+  let changed = false;
+  for (const id of [...documentDerived.keys()]) if (!active.has(id)) {
+    documentDerived.delete(id);
+    changed = true;
+  }
   const missing = ids.filter((id) => !documentDerived.has(id));
   const values = await Promise.all(missing.map(async (id) => [id, await getDerivedMedia(id).catch(() => null)]));
-  for (const [id, value] of values) if (value) documentDerived.set(id, value);
+  for (const [id, value] of values) if (value) {
+    documentDerived.set(id, value);
+    changed = true;
+  }
+  return changed;
 }
 
 function documentSearchText() {
@@ -1305,10 +1410,11 @@ function renderGallery() {
   const assignedEntryIds = unassignedViewActive
     ? new Set(organizerState.collections.flatMap((collection) => collection.entryIds))
     : null;
+  const isVisibleInLibrary = createLibraryVisibilityReader(organizerState);
   const modeEntries = selectedCollectionId || selectionMode === "project" || unassignedViewActive
     ? logicalCases
     : logicalCases.filter((entry) => (entry.memberEntryIds ?? [entry.id])
-      .some((entryId) => isEntryVisibleInLibrary(organizerState, entryId)));
+      .some(isVisibleInLibrary));
   const projectEntryIds = selectedCollectionId && selectionMode !== "project"
     ? new Set(selectionMode === "vision" || uiPreferences.includeSubprojects
       ? collectionEntryIds(organizerState, selectedCollectionId, { subtree: true })
@@ -1380,8 +1486,10 @@ function renderGalleryResults({ refreshNavigation }) {
   syncBrowseView(project);
   visibleEntries = sortLibraryCases(visibleEntries, {
     mode: caseSortMode,
+    columnValues: listMetadata,
     projectEntryIds: project?.entryIds ?? []
   });
+  visibleEntryById = new Map(visibleEntries.map(entry => [entry.id, entry]));
   renderedCount = 0;
   imageObserver.disconnect();
   reconcileInitialCaseCards();
@@ -1399,7 +1507,7 @@ function renderGalleryResults({ refreshNavigation }) {
   layoutBrowseCards();
   observePendingCardMedia([...elements.caseList.children]);
   scheduleVisibleMediaHydration();
-  renderedCount = elements.caseList.children.length;
+  renderedCount = galleryMasonry?.count ?? elements.caseList.children.length;
   updateLoadMore();
   requestAnimationFrame(() => {
     if (generation !== galleryGeneration) return;
@@ -1421,9 +1529,10 @@ function renderGalleryResults({ refreshNavigation }) {
 }
 
 async function saveBrowsePreference(change) {
-  const controls = [...document.querySelectorAll("[data-gallery-view], #include-subprojects")];
+  const controls = [...document.querySelectorAll("[data-gallery-view], .include-subprojects")];
   controls.forEach((control) => { control.disabled = true; });
   try {
+    await galleryPreferenceWrite;
     uiPreferences = await updateUiPreferences({ ...uiPreferences, ...change });
     caseOrderManagementActive = false;
   } catch (error) {
@@ -1442,29 +1551,24 @@ function navigateBrowseProject(id) {
 }
 
 function syncBrowseView(project) {
+  const scope = document.querySelector("#include-subprojects");
+  scope.checked = uiPreferences.includeSubprojects;
+  scope.disabled = Boolean(selectionMode || caseOrderManagementActive);
+  document.querySelector("#browse-scope").hidden = !project;
   const view = uiPreferences.galleryView;
   document.querySelector(".gallery-shell").dataset.view = view;
   for (const button of document.querySelectorAll("[data-gallery-view]")) {
     button.setAttribute("aria-pressed", String(button.dataset.galleryView === view));
   }
   document.querySelector(".browse-location").hidden = !project;
-  document.querySelector("#browse-scope").hidden = !project;
-  document.querySelector("#include-subprojects").checked = uiPreferences.includeSubprojects;
-  document.querySelector("#include-subprojects").disabled = ["project", "vision", "combine"].includes(selectionMode);
+  galleryControls.sync(caseSortMode, visibleEntries.length > 0);
   renderBrowseNavigation({
     breadcrumb: document.querySelector("#browse-breadcrumb"),
     path: collectionPath(organizerState, selectedCollectionId),
     disabled: ["project", "vision", "combine"].includes(selectionMode), selectedId: selectedCollectionId,
     rootLabel: t("案例库"), navigate: navigateBrowseProject
   });
-  if (view !== "waterfall") {
-    galleryMasonry?.destroy();
-    galleryMasonry = null;
-  } else if (!galleryMasonry) {
-    galleryMasonry = createStableMasonry(elements.caseList, {
-      layoutDependencies: [document.querySelector(".topbar")], onLayout: () => scheduleLoadCheck()
-    });
-  }
+
 }
 
 function clearBrowseCardPositions(cards) {
@@ -1512,18 +1616,13 @@ function projectManualOrderAvailable() {
 function syncGallerySortControl() {
   const available = projectManualOrderAvailable();
   if (!available) caseOrderManagementActive = false;
-  elements.projectManualSortOption.hidden = !available;
-  elements.projectManualSortOption.disabled = !available;
-  if (!available && caseSortMode === "project-manual") caseSortMode = "added-desc";
-  elements.gallerySort.value = caseSortMode;
-  elements.manageCaseOrder.hidden = false;
+  if (!available && caseSortMode === "project-manual") caseSortMode = uiPreferences.gallerySort === "project-manual" ? "added-desc" : uiPreferences.gallerySort;
+  elements.manageCaseOrder.hidden = !caseOrderManagementActive;
   elements.manageCaseOrder.disabled = !available;
+  elements.galleryHeading.classList.toggle("manual-order-mode", caseOrderManagementActive);
   elements.selectCases.hidden = false;
   elements.selectCases.disabled = caseOrderManagementActive;
-  const label = caseOrderManagementActive ? "完成案例排序" : "管理案例顺序";
-  elements.manageCaseOrder.setAttribute("aria-label", label);
-  elements.manageCaseOrder.title = t(available ? label : "仅当前项目、无筛选时可手动排序");
-  elements.manageCaseOrder.replaceChildren(createUiIcon(caseOrderManagementActive ? "circle-check-big" : "sliders-horizontal"));
+
 }
 
 function toggleCaseOrderManagement() {
@@ -1616,7 +1715,7 @@ function renderNextBatch(generation = galleryGeneration) {
   const fragment = document.createDocumentFragment();
   fragment.append(...cards);
   elements.caseList.append(fragment);
-  if (galleryMasonry) galleryMasonry.append([...elements.caseList.children].slice(renderedCount));
+  if (galleryMasonry) galleryMasonry.append(cards);
   else clearBrowseCardPositions(cards);
   observePendingCardMedia(cards);
   scheduleVisibleMediaHydration();
@@ -1658,7 +1757,10 @@ function renderEmptyFilter() {
   }
   const add = textEl("button", "", "从案例库添加案例");
   add.addEventListener("click", () => enterProjectSelection(collection.id));
-  elements.emptyFilter.replaceChildren(rawTextEl("strong", "", collection.name), add);
+  add.prepend(createUiIcon("plus"));
+  const icon = createUiIcon("folder"); icon.classList.add("empty-icon");
+  elements.emptyFilter.replaceChildren(icon, textEl("strong", "", "这个项目还没有案例"),
+    textEl("p", "", "从已有案例中选择，加入这个项目。"), add);
 }
 
 function createCaseCard(entry) {
@@ -1724,11 +1826,10 @@ function createCaseCard(entry) {
     let exportUrl = "";
     let preparingOriginal;
     const prepareOriginal = () => {
-      if (exportUrl) { image.src = exportUrl; return; }
+      if (exportUrl) return;
       if (preparingOriginal) return;
       preparingOriginal = originalScreenshotUrl(cover.id).then(url => {
         exportUrl = url;
-        if (url && image.isConnected) image.src = url;
       }).catch(error => console.debug("PromptDirector original image drag", error))
         .finally(() => { preparingOriginal = null; });
     };
@@ -1745,7 +1846,6 @@ function createCaseCard(entry) {
         showFeedback("原图正在读取，请稍后再拖动", true);
         return;
       }
-      image.src = exportUrl;
       if (!dragLibraryId) { event.preventDefault(); return; }
       setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, name: entry.title,
         file: { kind: 'image', url: exportUrl, mimeType: cover.mimeType, name: copyFilename(cover, entry.title, 0) } });
@@ -1799,7 +1899,7 @@ function createCaseCard(entry) {
     showCaseQuickMenu(entry, card, { x: event.clientX, y: event.clientY });
   });
   appendCaseRowDetails(card, entry, {
-    typeLabel: entryContentTypeIds(entry).map(contentLabel).join(" · "), locale: currentLocale()
+    metadata: listMetadata(entry), locale: currentLocale()
   });
   card.append(textEl("span", "share-check", "✓"));
   return card;
@@ -2253,9 +2353,9 @@ function createProjectMenu(collection) {
     summary.append(createUiIcon("ellipsis"));
     summary.setAttribute("aria-label", `${t("管理项目")}：${collection.name}`);
     summary.title = `${t("管理项目")}：${collection.name}`;
-    const actions = el("div", "project-menu-panel");
-    const manage = textEl("button", "project-menu-primary", "管理案例");
-    const share = textEl("button", "button-secondary", "分享项目");
+    const actions = el("div", "project-menu-panel ui-action-menu");
+    const manage = textEl("button", "button-secondary", "管理案例");
+    const share = textEl("button", "button-primary", "分享项目");
     const analyze = textEl("button", "button-secondary", "批量分析");
     const visibility = textEl(
       "button",
@@ -2270,8 +2370,8 @@ function createProjectMenu(collection) {
       void projectTreeController().openMove(collection);
     });
     const rename = textEl("button", "button-secondary", "重命名");
-    const remove = textEl("button", "quiet-danger", "仅删除项目");
-    const removeWithEntries = textEl("button", "quiet-danger", "删除项目及案例");
+    const remove = textEl("button", "button-secondary quiet-danger", "仅删除项目");
+    const removeWithEntries = textEl("button", "button-secondary quiet-danger", "删除项目及案例");
     manage.addEventListener("click", () => enterProjectSelection(collection.id));
     share.addEventListener("click", () => shareProjectCollection(collection));
     analyze.addEventListener("click", () => enterVisionSelection(collection));
@@ -2279,7 +2379,20 @@ function createProjectMenu(collection) {
     rename.addEventListener("click", () => renameProjectCollection(collection));
     remove.addEventListener("click", () => deleteProjectCollection(collection));
     removeWithEntries.addEventListener("click", () => deleteProjectCollectionWithEntries(collection, removeWithEntries));
-    actions.append(manage, move, analyze, share, visibility, rename, remove, removeWithEntries);
+    for (const [button, icon] of [
+      [manage, "square-check-big"], [move, "folder"], [analyze, "sparkles"],
+      [share, "external-link"], [visibility, "layers"], [rename, "pencil"],
+      [remove, "trash-2"], [removeWithEntries, "trash-2"]
+    ]) button.prepend(createUiIcon(icon));
+    const order = textEl("button", "button-secondary", "调整案例顺序");
+    order.prepend(createUiIcon("grip-vertical"));
+    order.disabled = Boolean(selectionMode || selectedContentId || selectedFacets.size || elements.pendingFilter.checked || elements.searchInput.value.trim() || (uiPreferences.includeSubprojects && projectChildren(collection.id).length));
+    order.title = order.disabled ? t("仅当前项目、无筛选时可手动排序") : "";
+    order.addEventListener("click", () => {
+      menu.open = false; selectedCollectionId = collection.id; unassignedViewActive = false;
+      renderGallery(); toggleCaseOrderManagement();
+    });
+    actions.append(manage, move, analyze, share, order, visibility, rename, remove, removeWithEntries);
     menu.append(summary, actions);
   return menu;
 }
@@ -2696,28 +2809,23 @@ function updateSelectionBar() {
   elements.selectionSimpleActions.hidden = false;
   elements.projectSelectionActions.hidden = !taskSelecting;
   elements.projectSelectionTitle.hidden = !taskSelecting;
-  elements.resultCount.hidden = Boolean(selectionMode);
+  elements.resultCount.hidden = false;
   elements.selectCases.hidden = Boolean(selectionMode);
   elements.galleryViewControls.hidden = Boolean(selectionMode);
-  elements.projectSelectionTitle.textContent = selectionMode === "combine"
-    ? `${t("组合案例")} · ${translateUiMessage(`已选择 ${selectedCaseIds.size} 个案例`)}`
-    : project
-    ? selectionMode === "vision"
-      ? `${t("批量分析画面")} · ${project.name}`
-      : `${translateUiMessage(`为“${project.name}”选择案例`)} · ${translateUiMessage(`已选择 ${selectedCaseIds.size} 个案例`)}`
-    : "";
+  elements.projectSelectionTitle.textContent = selectionMode === "combine" ? t("组合案例")
+    : project ? `${t(selectionMode === "vision" ? "批量分析" : "加入项目")} · ${project.name}` : "";
   elements.projectSelectionSave.textContent = ["vision", "combine"].includes(selectionMode) ? t("继续") : t("保存项目案例");
   elements.projectSelectionSave.disabled = selectionMode === "combine" ? selectedCaseIds.size < 2 : selectionMode === "vision" && !selectedCaseIds.size;
-  elements.projectSelectionCount.hidden = !visionSelection;
-  elements.projectSelectionCount.textContent = visionSelection
-    ? translateUiMessage(`已选 ${selectedCaseIds.size} / 当前 ${filteredEligibleCount} / 全部 ${allEligibleCount}`)
-    : "";
+  elements.projectSelectionCount.hidden = !taskSelecting;
+  elements.projectSelectionCount.textContent = translateUiMessage(`已选 ${selectedCaseIds.size}`);
   elements.projectSelectionSelectFiltered.hidden = !visionSelection;
   elements.projectSelectionSelectFiltered.disabled = filteredEligibleCount === 0;
-  elements.projectSelectionSelectFiltered.textContent = translateUiMessage(`选中当前筛选（${filteredEligibleCount}）`);
+  elements.projectSelectionSelectFiltered.textContent = t("全选当前");
+  elements.projectSelectionSelectFiltered.title = translateUiMessage(`选中当前筛选（${filteredEligibleCount}）`);
   elements.projectSelectionSelectAll.hidden = !visionSelection;
   elements.projectSelectionSelectAll.disabled = allEligibleCount === 0;
-  elements.projectSelectionSelectAll.textContent = translateUiMessage(`选中全部可分析（${allEligibleCount}）`);
+  elements.projectSelectionSelectAll.textContent = t("全部可分析");
+  elements.projectSelectionSelectAll.title = translateUiMessage(`选中全部可分析（${allEligibleCount}）`);
   elements.projectSelectionClear.hidden = !visionSelection;
   elements.projectSelectionClear.disabled = selectedCaseIds.size === 0;
   elements.shareCount.textContent = currentLocale() === "en" ? `Selected ${selectedCaseIds.size}` : `已选 ${selectedCaseIds.size}`;
@@ -2765,6 +2873,7 @@ function updateSelectionBar() {
   elements.selectionClear.disabled = selectedCaseIds.size === 0;
   elements.selectionSelectedActions.hidden = selectedCaseIds.size === 0;
   elements.selectionAddLabels.disabled = !selectedCaseIds.size || !splitInput(elements.selectionLabelInput.value).length;
+  renderSelectionTagControls();
   elements.selectionCombine.disabled = selectedCaseIds.size < 2;
   elements.selectionCombine.title = selectedCaseIds.size < 2 ? t("至少选择 2 个案例") : "";
   elements.selectionNewProject.disabled = !selectedCaseIds.size;
@@ -2780,7 +2889,7 @@ function updateSelectionBar() {
   elements.selectionAnalyze.title = selectionHasAnalyzableImage ? "" : t("所选案例中没有可分析的图片");
   elements.selectionVideoAnalyze.disabled = !selectionHasAnalyzableVideo;
   elements.selectionVideoAnalyze.title = selectionHasAnalyzableVideo ? "" : t("所选案例中没有可分析的本地视频");
-  elements.shareExport.textContent = t("分享");
+  elements.shareExport.replaceChildren(createUiIcon("external-link"), document.createTextNode(t("分享")));
   elements.shareExport.disabled = !selectedCaseIds.size;
   elements.selectionTrash.disabled = !selectedCaseIds.size;
   if (!selectedCaseIds.size) {
@@ -2871,6 +2980,43 @@ async function setSelectionClassification() {
   });
   const response = await perform(elements.selectionSetClassification, payload, false);
   if (!response?.ok) return;
+  exitSelectionMode();
+  await refreshLibrary();
+}
+
+function renderSelectionTagControls() {
+  const removing = elements.selectionLabelMode.value === "remove";
+  elements.selectionLabelAddField.hidden = removing;
+  elements.selectionAddLabels.hidden = removing;
+  elements.selectionRemovableTags.hidden = !removing;
+  elements.selectionRemoveLabels.hidden = !removing;
+  if (!removing) return;
+  const selected = new Set([...elements.selectionRemovableTags.querySelectorAll("input:checked")].map(input => input.value));
+  const tags = selectedCaseTags({ entries, compoundCases, facetCatalog }, [...selectedCaseIds]);
+  elements.selectionRemovableTags.replaceChildren(...tags.map(tag => {
+    const label = el("label", "selection-tag-option");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = JSON.stringify([tag.kind, tag.id]);
+    input.checked = selected.has(input.value);
+    label.append(input, rawTextEl("span", "", tag.label));
+    return label;
+  }));
+  if (!tags.length) elements.selectionRemovableTags.append(textEl("p", "selection-tags-empty", "所选案例暂无标签"));
+  elements.selectionRemoveLabels.disabled = !elements.selectionRemovableTags.querySelector("input:checked");
+}
+
+async function removeLabelsFromSelection() {
+  const tags = [...elements.selectionRemovableTags.querySelectorAll("input:checked")].map(input => JSON.parse(input.value));
+  if (!tags.length || !selectedCaseIds.size) return;
+  const response = await perform(elements.selectionRemoveLabels, {
+    type: "BATCH_REMOVE_CASE_TAGS", caseIds: [...selectedCaseIds],
+    customLabels: tags.filter(([kind]) => kind === "custom").map(([, id]) => id),
+    nodeIds: tags.filter(([kind]) => kind === "facet").map(([, id]) => id)
+  }, false);
+  if (!response?.ok) return;
+  elements.selectionRemovableTags.replaceChildren();
+  elements.selectionLabelMode.value = "add";
   exitSelectionMode();
   await refreshLibrary();
 }
@@ -4158,8 +4304,8 @@ async function restoreCompleteFolderBackup() {
     const completion = envelope.marker;
     const libraryFile = envelope.libraryFile;
     let library;
-    try { library = JSON.parse(await libraryFile.text()); }
-    catch { throw new Error("library.json 已损坏，无法恢复"); }
+    try { library = await readJsonWithResourceBudget(libraryFile, { label: 'library.json' }); }
+    catch (error) { if (error?.code === 'RESOURCE_BUDGET_REACHED') throw error; throw new Error("library.json 已损坏，无法恢复"); }
     const backupPaths = backupMediaPaths(library);
     const backupMediaSizes = [...backupPaths].map((path) => files.get(path)?.size ?? 0);
     const totalBytes = backupMediaSizes.reduce((sum, size) => sum + size, 0);
@@ -4419,9 +4565,8 @@ async function inspectLibraryPackageBatchItem(batch, item) {
       throw new Error(`library.json 超过 ${formatBytes(LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes)}`);
     }
     let library;
-    const libraryText = await libraryFile.text();
-    try { library = JSON.parse(libraryText); }
-    catch { throw new Error("library.json 已损坏"); }
+    try { library = await readJsonWithResourceBudget(libraryFile, { signal: batch.controller.signal, label: 'library.json' }); }
+    catch (error) { if (error?.code === 'RESOURCE_BUDGET_REACHED' || error?.name === 'AbortError') throw error; throw new Error("library.json 已损坏"); }
     const resources = await readZipResources(file, reader.names.filter((name) => name !== "library.json"), limits, {
       signal: batch.controller.signal,
       onProgress: ({ extractedBytes }) => updateLibraryPackageProgress(batch, item,
@@ -5059,8 +5204,8 @@ async function createThumbnailUrl(visualId) {
   }
   const blob = await screenshotBlob(visualId);
   if (!blob) return "";
-  if (blob.size > PORTABLE_LIBRARY_LIMITS.maxImageBytes) {
-    throw new Error(`图片超过 ${formatBytes(PORTABLE_LIBRARY_LIMITS.maxImageBytes)} 上限`);
+  if (blob.size > LIBRARY_TRANSFER_LIMITS.maxImageBytes) {
+    throw new Error(`图片超过 ${formatBytes(LIBRARY_TRANSFER_LIMITS.maxImageBytes)} 上限`);
   }
   const metadata = await readImageDimensions(blob);
   assertImageDimensions(metadata.width, metadata.height);
@@ -5558,7 +5703,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   elements.detailPrev.disabled = visibleIndex <= 0;
   elements.detailNext.disabled = visibleIndex < 0 || visibleIndex >= visibleEntries.length - 1;
   const content = document.createDocumentFragment();
-  const body = el("div", "detail-body");
+  const body = el("div", "detail-body ui-scrollbar");
   body.dataset.mediaIdentity = mediaIdentity;
   body.dataset.presentation = presentation;
   const hasPrimaryMedia = entryHasMedia(entry);
@@ -5629,7 +5774,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
 }
 
 function createDetailBody(entry) {
-  const body = el("div", "detail-body");
+  const body = el("div", "detail-body ui-scrollbar");
   body.append(createDetailHeader(entry));
   if (isEntryPending(entry)) body.append(createPendingReviewPanel(entry));
   for (const section of [createVisualSetAnalyses(entry), createDetailAttributes(entry), createDetailQuickOrganization(entry),
@@ -6061,9 +6206,9 @@ async function createArticleDocumentReader(entryValue) {
         continue;
       }
       if (["paragraph", "list", "quote", "code", "table"].includes(block.kind)) {
-        const tagName = block.kind === "quote" ? "blockquote" : block.kind === "list" ? "div" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
+        const tagName = articleBlockIsMarkdown(block, entry) ? "div" : block.kind === "quote" ? "blockquote" : block.kind === "list" ? "div" : block.kind === "code" || block.kind === "table" ? "pre" : "p";
         const node = rawTextEl(tagName, block.kind === "table" ? "article-table-text" : "", block.text);
-        renderArticleBlockText(node, block);
+        renderArticleBlockText(node, block, { entry });
         node.dataset.articleBlockId = block.id;
         reader.append(node);
         continue;
@@ -6149,7 +6294,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   const contentAssets = entry.mediaAssets.filter(asset => asset.usage !== "poster");
   const gallery = el("section", "detail-visual-gallery");
   gallery.classList.toggle("is-immersive", immersive);
-  const stage = el("div", "detail-visual-stage");
+  const stage = el("div", "detail-visual-stage ui-scrollbar");
   const rail = el("div", "detail-visual-rail");
   const notes = el("section", "time-notes");
   rail.setAttribute("aria-label", t("案例内媒体"));
@@ -6953,7 +7098,7 @@ async function loadRemoteMarkdownImage(assetId, urlValue) {
   if (!response.ok) throw new Error(`图片服务器返回 HTTP ${response.status}`);
   const blob = await response.blob();
   if (!blob.type.startsWith("image/") || !blob.size) throw new Error("这个地址没有返回图片");
-  if (blob.size > PORTABLE_LIBRARY_LIMITS.maxImageBytes) throw new Error("图片过大，未保存到本机");
+  if (blob.size > LIBRARY_TRANSFER_LIMITS.maxImageBytes) throw new Error("图片过大，未保存到本机");
   await saveDerivedMedia(assetId, {
     ...cached,
     remoteImages: [...(cached?.remoteImages ?? []).filter((item) => item.url !== url.href), { url: url.href, blob }]
@@ -8606,7 +8751,7 @@ async function fetchVideoReferencePoster(value) {
   const posterResponse = await fetch(imageUrl.href, { credentials: "omit", redirect: "follow" });
   if (!posterResponse.ok) return null;
   const posterBlob = await posterResponse.blob();
-  if (!posterBlob.type.startsWith("image/") || !posterBlob.size || posterBlob.size > PORTABLE_LIBRARY_LIMITS.maxImageBytes) return null;
+  if (!posterBlob.type.startsWith("image/") || !posterBlob.size || posterBlob.size > LIBRARY_TRANSFER_LIMITS.maxImageBytes) return null;
   return posterBlob;
 }
 
@@ -11131,7 +11276,7 @@ async function deleteCaseIncrementally(button, entryId) {
       else visibleCard.remove();
       indexedGalleryEntries = indexedGalleryEntries.filter((item) => item.id !== entryId);
       visibleEntries = visibleEntries.filter((item) => item.id !== entryId);
-      renderedCount = elements.caseList.children.length;
+      renderedCount = galleryMasonry?.count ?? elements.caseList.children.length;
       gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
       renderProjectFilters();
       renderContentFilters(indexedGalleryEntries);
@@ -11222,7 +11367,7 @@ function renderTrashItems() {
     restore.setAttribute("aria-label", `恢复：${preview.title}`);
     restore.title = t("恢复");
     restore.append(createUiIcon("refresh-cw"));
-    const remove = el("button", "icon-button quiet-danger");
+    const remove = el("button", "icon-button button-secondary quiet-danger");
     remove.type = "button";
     remove.setAttribute("aria-label", `永久删除：${preview.title}`);
     remove.title = t("永久删除");
@@ -11715,6 +11860,8 @@ async function originalScreenshotUrl(entryId) {
   if (originalUrls.has(entryId)) return originalUrls.get(entryId);
   const blob = await screenshotBlob(entryId);
   if (!blob) return "";
+  const dimensions = await readImageDimensions(blob);
+  assertImageDimensions(dimensions.width, dimensions.height);
   const url = URL.createObjectURL(blob);
   originalUrls.set(entryId, url);
   return url;

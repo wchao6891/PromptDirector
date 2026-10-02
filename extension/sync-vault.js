@@ -15,6 +15,7 @@ import {
   isSupportedSyncSnapshotVersion
 } from "./sync-model.js";
 import { assetFormatsForMimeType } from "./asset-formats.js";
+import { readJsonWithResourceBudget } from './resource-policy.js';
 
 export const SYNC_DIRECTORY_NAME = "PromptDirector-Sync";
 const HEADER_FILENAME = "vault.json";
@@ -229,8 +230,7 @@ async function readJsonFile(directory, filename) {
 
 async function readJsonHandle(handle) {
   const file = await handle.getFile();
-  if (file.size > 32 * 1024 * 1024) throw new Error("同步状态文件异常过大");
-  return JSON.parse(await file.text());
+  return readJsonWithResourceBudget(file, { label: '同步元信息' });
 }
 
 async function hasFile(directory, filename) {

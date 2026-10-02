@@ -269,10 +269,19 @@ export function setCollectionVisibility(stateValue, collectionId, visibility) {
 }
 
 export function isEntryVisibleInLibrary(stateValue, entryId) {
-  const id = cleanId(entryId);
-  if (!id) return false;
-  const memberships = normalizeOrganizerState(stateValue).collections.filter((item) => item.entryIds.includes(id));
-  return !memberships.length || memberships.some((item) => item.visibility === COLLECTION_VISIBILITY.library);
+  return createLibraryVisibilityReader(stateValue)(entryId);
+}
+
+export function createLibraryVisibilityReader(stateValue) {
+  const memberships = new Map();
+  for (const collection of normalizeOrganizerState(stateValue).collections) {
+    const visible = collection.visibility === COLLECTION_VISIBILITY.library;
+    for (const id of collection.entryIds) memberships.set(id, visible || memberships.get(id) === true);
+  }
+  return entryId => {
+    const id = cleanId(entryId);
+    return Boolean(id) && memberships.get(id) !== false;
+  };
 }
 
 export function removeEntriesFromOrganizer(stateValue, entryIds) {

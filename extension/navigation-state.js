@@ -1,3 +1,5 @@
+import { normalizeCaseSortMode } from "./library-view.js";
+
 const DEFAULT_SOURCES = ["library", "composer"];
 export const LIBRARY_RETURN_STORAGE_KEY = "promptDirector.libraryReturn";
 
@@ -98,9 +100,7 @@ function normalizeLibraryReturnSnapshot(value) {
   const pendingOnly = typeof value?.pendingOnly === "boolean" ? value.pendingOnly : null;
   const query = typeof value?.query === "string" ? value.query : null;
   const scrollY = Number.isFinite(value?.scrollY) ? Math.max(0, Math.round(value.scrollY)) : null;
-  const sortMode = ["added-desc", "updated-desc", "title", "project-manual"].includes(value?.sortMode)
-    ? value.sortMode
-    : "added-desc";
+  const sortMode = normalizeCaseSortMode(value?.sortMode);
   if (collectionId === null || contentId === null || facetNodeIds === null || pendingOnly === null || query === null || scrollY === null) return null;
   const unassignedViewActive = !collectionId && value?.unassignedViewActive === true;
   return { collectionId, unassignedViewActive, contentId, facetNodeIds, pendingOnly, query, scrollY, sortMode };

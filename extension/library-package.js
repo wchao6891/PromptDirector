@@ -17,7 +17,7 @@ import { normalizeCreativeExperimentSettings, normalizeCreativeRuns } from "./cr
 import { mergeCreativeSkillsState, normalizeCreativeSkillsState } from "./creative-skills.js";
 import { formatBytes, libraryTransferLimits, portableAssetByteLimit } from "./resource-limits.js";
 import { normalizeEntryVisuals } from "./visuals.js";
-import { normalizeEntryMedia, removeEntryMedia } from "./media.js";
+import { normalizeEntryMedia, removeEntryMedia, remapMediaAnalysisAssets } from "./media.js";
 import { expandLogicalCaseIds, normalizeCompoundCases, removeEntriesFromCompoundCases } from "./compound-cases.js";
 import { prepareLibraryPackageDraft } from "./library-package-migrations.js";
 import { remapArticleDocumentAssets } from "./article-document.js";
@@ -358,6 +358,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
   data.organizerState = normalizeOrganizerState(data.organizerState, [...ids]);
   data.composerSettings = normalizeComposerSettings(data.composerSettings);
   data.composerSessions = normalizeComposerSessions(data.composerSessions);
+  for (const session of data.composerSessions) for (const checkpoint of Object.values(session.toolContinuations || {})) checkpoint.needsTargetReview = true;
   for (const session of data.composerSessions) {
     for (const reference of session.referenceSnapshots) {
       if (reference.sourceType !== "temporary") continue;
@@ -854,10 +855,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       ...prompt,
       assetId: visualIdMap[prompt.assetId] ?? prompt.assetId
     }));
-    entry.videoAnalyses = (entry.videoAnalyses ?? []).map((analysis) => ({
-      ...analysis,
-      ...(analysis.assetId ? { assetId: visualIdMap[analysis.assetId] ?? analysis.assetId } : {})
-    }));
+    Object.assign(entry, remapMediaAnalysisAssets(entry, visualIdMap));
     entry.facetAssignments = (entry.facetAssignments ?? []).map((item) => {
       const facetId = facetIds.get(item.facetId);
       const nodeId = nodeIds.get(item.nodeId);
@@ -1101,6 +1099,7 @@ function mergeCreativeRuns(
 function remapAppliedSkillReferences(value, skillIdMap = {}, skillVersionIdMap = {}) {
   return {
     ...value,
+    toolSkillVersionIds: (value?.toolSkillVersionIds || []).map(id => skillVersionIdMap[id] ?? id),
     appliedSkills: (Array.isArray(value?.appliedSkills) ? value.appliedSkills : []).map((skill) => ({
       ...skill,
       skillId: skillIdMap[skill.skillId] ?? skill.skillId,
@@ -1307,10 +1306,7 @@ function remapTrashedEntrySnapshot(entryValue, targetEntryId, usedVisualIds, pre
     ...prompt,
     assetId: visualIdMap[prompt.assetId] ?? prompt.assetId
   }));
-  entry.videoAnalyses = (entry.videoAnalyses ?? []).map((analysis) => ({
-    ...analysis,
-    ...(analysis.assetId ? { assetId: visualIdMap[analysis.assetId] ?? analysis.assetId } : {})
-  }));
+  Object.assign(entry, remapMediaAnalysisAssets(entry, visualIdMap));
   entry.facetAssignments = (entry.facetAssignments ?? []).map((assignment) => ({
     ...assignment,
     ...(assignment.visualId ? { visualId: visualIdMap[assignment.visualId] ?? assignment.visualId } : {})

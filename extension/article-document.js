@@ -4,6 +4,17 @@ const TEXT_BLOCK_KINDS = new Set(["heading", "paragraph", "list", "quote", "code
 const ASSET_BLOCK_KINDS = new Set(["image", "video", "document", "attachment"]);
 const BLOCK_KINDS = new Set([...TEXT_BLOCK_KINDS, ...ASSET_BLOCK_KINDS, "link"]);
 
+export function articleBlockIsMarkdown(block, entry) {
+  if (block?.kind !== "paragraph") return false;
+  if (block.mimeType) return block.mimeType === "text/markdown";
+  // Existing Agent body-file saves did not retain the body MIME type. Only
+  // recognize their single body block backed by the primary Markdown document.
+  if (!entry?.agentProvenance || block.id !== "body"
+    || entry.articleDocument?.blocks?.filter(item => TEXT_BLOCK_KINDS.has(item.kind)).length !== 1) return false;
+  const primary = entry.mediaAssets?.find(asset => asset.id === entry.primaryMediaId);
+  return primary?.kind === "document" && (primary.mimeType === "text/markdown" || primary.extractedTextFormat === "markdown");
+}
+
 export function normalizeArticleDocument(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const seen = new Set();
@@ -83,7 +94,7 @@ function normalizeArticleBlock(value, index) {
   const kind = BLOCK_KINDS.has(value.kind) ? value.kind : "";
   if (!kind) return null;
   const id = clean(value.id) || `article-block:${index + 1}`;
-  const text = kind === "code"
+  const text = kind === "code" || articleBlockIsMarkdown(value)
     ? String(value.text ?? "").replace(/\r\n?/gu, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "")
     : cleanMultiline(value.text);
   const assetId = clean(value.assetId);

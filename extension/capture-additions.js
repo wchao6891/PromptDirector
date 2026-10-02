@@ -1,7 +1,7 @@
 import { normalizePageCaptureCandidate, pageCaptureMediaIdentity } from "./page-capture.js";
 
 // Add only new material. Existing block IDs and selection decisions remain authoritative.
-export function appendCaptureCandidate(candidate, addition, selection) {
+export function appendCaptureCandidate(candidate, addition, selection, { includeExistingMedia = false } = {}) {
   const textBlocks = [...candidate.textBlocks];
   const media = [...candidate.media];
   const blocks = [...(candidate.articleDocument?.blocks || [])];
@@ -21,7 +21,19 @@ export function appendCaptureCandidate(candidate, addition, selection) {
     const existing = media.find(m => m.id === item.id || item.localAssetId && m.localAssetId === item.localAssetId
       || item.contentHash && m.contentHash === item.contentHash
       || item.url && m.url && pageCaptureMediaIdentity(item.url) === pageCaptureMediaIdentity(m.url));
-    if (existing) { remapped.set(item.id, existing.id); continue; }
+    if (existing) {
+      remapped.set(item.id, existing.id);
+      // Explicitly adding a selected reply includes its already discovered
+      // attachments as well. Ordinary draft merges keep earlier choices.
+      if (includeExistingMedia) {
+        mediaIds.add(existing.id);
+        const index = media.indexOf(existing);
+        media[index] = { ...existing, placement: 'inline',
+          originalWorkUrl: existing.originalWorkUrl || item.originalWorkUrl || '',
+          posterUrl: existing.posterUrl || item.posterUrl || '' };
+      }
+      continue;
+    }
     const added = { ...item, id: `added:${addition.id}:${item.id}`, placement: "inline" };
     media.push(added);
     mediaIds.add(added.id);

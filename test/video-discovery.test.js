@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { videoResource, installVideoDiscovery, addDiscoveredVideos } from '../extension/video-discovery.js';
 
+test('an X photo post never inherits ancestor playback manifests or MP4 initialization segments', () => {
+  const batch = {adapter:'x', candidates:[{canonicalUrl:'https://x.com/director/status/123', media:[{id:'photo',kind:'image',url:'https://pbs.twimg.com/media/photo.jpg'}]}]};
+  assert.equal(addDiscoveredVideos(batch, [{key:'other',url:'https://video.twimg.com/amplify_video/999/pl/master.m3u8',mimeType:'application/x-mpegurl'}]), batch);
+});
+
 test('video discovery rejects audio, segments, failures and non-tab requests', () => {
   for (const details of [ { url: 'https://example.com/one.m4s', mime: 'video/mp4' }, { url:'https://example.com/audio',mime:'audio/mp4' }, {url:'https://example.com/movie.mp4',statusCode:403}, {url:'https://example.com/movie.mp4',tabId:-1} ]) {
     assert.equal(videoResource({tabId:1,statusCode:200,responseHeaders:[{name:'Content-Type',value:details.mime||''}],...details}),null);

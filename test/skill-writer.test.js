@@ -103,7 +103,7 @@ test('unknown legacy script history is explicit; complete restore refuses it and
   assert.equal(f.data.creativeSkills.items[0].packageFiles[0].assetId,'today');
 });
 
-test('historical Skill files survive backup parsing, conflicting IDs on import, sync references and version-limit cleanup',async()=>{
+test('historical Skill files survive backup parsing, conflicting IDs on import and sync without automatic history deletion',async()=>{
   const f=fixture();const a=await f.writer().execute('save_skill',{requestId:'a',files:await f.stage(pack('A'))});
   const b=await f.writer().execute('save_skill',{requestId:'b',skillId:a.skillId,expectedRevision:a.revision,files:await f.stage(pack('B'))});
   const archived=structuredClone(f.data.creativeSkills),files=new Map();
@@ -124,9 +124,9 @@ test('historical Skill files survive backup parsing, conflicting IDs on import, 
   for(const owner of skillFileOwners(synced.creativeSkills.items[0]))for(const file of owner.packageFiles)assert.equal(file.syncObjectId,refs[file.assetId].objectId);
   let revision=b.revision;
   for(let i=0;i<10;i++)({revision}=await f.writer().execute('save_skill',{requestId:`more-${i}`,skillId:a.skillId,expectedRevision:revision,files:await f.stage(pack(`new-${i}`))}));
-  assert.equal(f.data.creativeSkills.items[0].versions.length,10);
-  assert.equal(libraryStoredAssetIds(f.data).size,50);
-  assert.equal(f.blobs.size,50,'Only versions no longer referenced anywhere may release files');
+  assert.equal(f.data.creativeSkills.items[0].versions.length,12);
+  assert.equal(libraryStoredAssetIds(f.data).size,60);
+  assert.equal(f.blobs.size,60,'Every retained version must keep its original files');
 });
 
 test('same file referenced under two historical paths survives verified ZIP export; conflicting bytes do not',async()=>{

@@ -504,9 +504,13 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
 .duplicate-panel .quiet { border-color: #c9ad64; color: #5c470d; background: transparent; }
 
 #feedback {
-  --ui-feedback-bottom: 76px;
-  right: 14px;
-  max-width: min(360px, calc(100vw - 28px));
+  position: static;
+  flex: 1 0 100%;
+  width: 100%;
+  max-width: none;
+  max-height: var(--collector-feedback-space, 100dvh);
+  overflow: auto;
+  pointer-events: auto;
 }
 
 .collector-footer {
@@ -518,6 +522,7 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
   border-top: 1px solid var(--line);
   padding: 10px 14px;
   background: var(--paper);
+  flex-wrap: wrap;
 }
 .collector-footer .primary { min-width: 150px; }
 
@@ -538,7 +543,7 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
 }
 
 /* Compact capture surface using the same director workbench language. */
-main { gap: 12px; padding: 12px 12px 82px; }
+main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space, 0px) + 12px)); }
 .collector-header { min-height: 42px; }
 .brand { gap: 9px; }
 .brand img { width: 36px; height: 36px; border-radius: 7px; }

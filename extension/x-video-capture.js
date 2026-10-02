@@ -1,4 +1,5 @@
 import { PAGE_CAPTURE_LIMITS } from "./resource-limits.js";
+import { readXPostHtml, xVideoSourcesFromHtml } from './x-post-metadata.js';
 
 // Serialized into the document-start runtime by build:capture-runtime.
 // Observe the selected post's normal responses; never issue API requests.
@@ -108,18 +109,36 @@ export function applyXVideoSources(snapshot, result) {
   return { ...snapshot, candidates: (snapshot.candidates || []).map(candidate => {
     if (xPostId(candidate.canonicalUrl) !== result.postId) return candidate;
     const videos = candidate.media.filter(item => item.kind === "video" && !item.isQuoted);
-    return { ...candidate, media: candidate.media.map(item => {
+    const replacements = new Map();
+    const media = candidate.media.map(item => {
       if (!videos.includes(item)) return item;
-      const source = result.media.find(value => value.posterUrl && value.posterUrl === item.posterUrl)
+      const source = result.media.find(value => value.posterUrl && item.posterUrl
+        && xPosterIdentity(value.posterUrl) === xPosterIdentity(item.posterUrl))
         || (videos.length === 1 && result.media.length === 1 ? result.media[0] : null);
       if (!source) return item;
       const best = source.variants[0];
+      replacements.set(item.id, best.url);
       return { ...item, url: best.url, variants: [], mimeType: best.mimeType,
         sourceKind: "site-original", originalWorkUrl: candidate.canonicalUrl,
         ...(source.variants.find(value => value.mimeType === "application/x-mpegURL")
           ? { streamUrl: source.variants.find(value => value.mimeType === "application/x-mpegURL").url } : {}) };
-    }) };
+    });
+    return { ...candidate, media, ...(candidate.articleDocument ? { articleDocument: {
+      ...candidate.articleDocument, blocks: candidate.articleDocument.blocks.map(block => replacements.has(block.assetId)
+        ? { ...block, sourceUrl: replacements.get(block.assetId) } : block)
+    } } : {}) };
   }) };
+}
+
+function xPosterIdentity(value) {
+  try {
+    const url = new URL(value);
+    if (url.hostname === 'pbs.twimg.com') {
+      url.pathname = url.pathname.replace(/\.(?:jpe?g|png|webp)$/iu, '');
+      url.search = '';
+    }
+    return url.href;
+  } catch { return ''; }
 }
 
 function xPostId(value) {
@@ -130,11 +149,25 @@ function xPostId(value) {
   } catch { return ""; }
 }
 
-export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () => false } = {}) {
+export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () => false, readHtml = readXPostHtml, allowTabReload = true } = {}) {
   const postId = xPostId(tab.url);
   const unresolved = (snapshot.candidates || []).some(candidate => xPostId(candidate.canonicalUrl) === postId
     && candidate.media?.some(item => item.kind === "video" && !item.isQuoted && !/\.mp4(?:\?|$)/iu.test(item.url || "")));
   if (!postId || !unresolved || cancelled()) return snapshot;
+  const deadline = Date.now() + PAGE_CAPTURE_LIMITS.navigationTimeoutMs;
+  const controller = new AbortController();
+  const cancelCheck = setInterval(() => { if (cancelled()) controller.abort(); }, 250);
+  try {
+    const result = xVideoSourcesFromHtml(await readHtml(tab.url, { signal: controller.signal }), tab.url);
+    if (cancelled()) return snapshot;
+    if (result?.media.some(item => item.variants[0]?.mimeType === 'video/mp4')) {
+      snapshot = applyXVideoSources(snapshot, result);
+      if (!(snapshot.candidates || []).some(candidate => xPostId(candidate.canonicalUrl) === postId
+        && candidate.media?.some(item => item.kind === 'video' && !item.isQuoted && !/\.mp4(?:\?|$)/iu.test(item.url || '')))) return snapshot;
+    }
+  } catch { /* Logged-in-only posts retain the normal-response observer path. */ }
+  finally { clearInterval(cancelCheck); }
+  if (!allowTabReload || cancelled() || Date.now() >= deadline) return snapshot;
   const id = `capture-x-video-${tab.id}`;
   let registered = false;
   try {
@@ -144,7 +177,6 @@ export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () 
       js: ["x-video-observer.js"], world: "MAIN", runAt: "document_start", persistAcrossSessions: false }]);
     registered = true;
     await api.tabs.reload(tab.id);
-    const deadline = Date.now() + PAGE_CAPTURE_LIMITS.navigationTimeoutMs;
     while (Date.now() < deadline && !cancelled()) {
       const current = await api.tabs.get(tab.id);
       if (xPostId(current.url) !== postId) break;

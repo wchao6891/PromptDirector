@@ -9,9 +9,6 @@ import {
   planComposerTurn as planDeepSeekTurn
 } from "./deepseek.js";
 import {
-  COMPOSER_INPUT_MAX_CHARACTERS,
-  assertComposerInputBudget,
-  assertComposerRequestBudget,
   normalizeComposerAiProfile,
   normalizeComposerSettings,
   normalizePlannerResult,
@@ -25,7 +22,7 @@ import {
 } from "./composer-agent.js";
 import { composerAutoResponseProtocolFacts, createComposerAutoResponseProjector } from "./composer-auto-response.js";
 import { normalizeVisionSettings, OPENAI_RESPONSES_ENDPOINT, OPENAI_VIDEOS_ENDPOINT } from "./vision.js";
-import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia } from "./bounded-media.js";
 import { createAiProviderModule } from "./ai-provider-module.js";
 import { getAiModelCapability } from "./ai-model-capabilities.js";
@@ -65,6 +62,9 @@ export class ComposerServiceError extends Error {
 }
 
 export function composerServiceErrorDetails(error) {
+  if (error?.code === 'RESOURCE_BUDGET_REACHED') return {
+    kind: 'budget', message: error.message, retryable: Boolean(error.checkpoint && !error.checkpoint.uncertainCallId), actualStages: []
+  };
   if (error?.name === "AbortError") {
     return {
       kind: "stopped",
@@ -539,7 +539,6 @@ export async function planComposerTurnWithService(input, settingsValue, options 
   if (service.planning === false) {
     throw new ComposerServiceError(`${service.label} 的所选模型未声明创作规划能力，请重新分配模型`, 422, { retryable: false });
   }
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const systemInstruction = compileAgentPlanningPrompt({
     settings: input.composerSettings,
@@ -797,7 +796,7 @@ async function generateProviderVideoTurn(input, service, settingsValue, prepared
   }
   options.onPhase?.("downloading");
   const downloaded = await module.download(completed);
-  if (downloaded.blob.size > PORTABLE_LIBRARY_LIMITS.maxVideoBytes) {
+  if (downloaded.blob.size > LIBRARY_TRANSFER_LIMITS.maxVideoBytes) {
     throw new ComposerServiceError("视频成品超过本地素材库单文件上限", 413, { retryable: false });
   }
   return {
@@ -867,7 +866,7 @@ async function videoBlobRequest(url, apiKey, options, label = "OpenAI 视频服�
   try {
     return await boundedMediaBlobFromResponse(response, {
       kind: "video",
-      maxBytes: PORTABLE_LIBRARY_LIMITS.maxVideoBytes
+      maxBytes: LIBRARY_TRANSFER_LIMITS.maxVideoBytes
     });
   } catch (error) {
     throw new ComposerServiceError(error.message || "视频服务没有返回有效视频文件", 503, { retryable: true, cause: error });
@@ -941,7 +940,6 @@ function normalizeRemoteVideo(value, expectedServiceId = "") {
 }
 
 async function executeVisualTextTurn(input, service, preparedImages, options) {
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = executionRequest(input);
   const route = request.route;
   const automatic = route === "auto";
@@ -1348,10 +1346,11 @@ async function requestText(service, instructions, content, options = {}) {
     if (options.conversation) applyComposerConversation(body, options.conversation, service.protocol);
     if (body.stream && service.protocol !== "responses") body.stream_options = { include_usage: true };
     return runComposerToolLoop({ body, protocol: service.protocol === "responses" ? "responses" : "chat_completions",
-      runtime: { ...options.toolRuntime, chatImagePart: image => chatImagePart(service, image) },
-      signal: options.signal, onDelta: options.onDelta, maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS,
-      request: async nextBody => {
-        const response = await requestRaw(service.endpoint, service.apiKey, nextBody, options, REQUEST_TIMEOUT_MS, service.label);
+      runtime: { ...options.toolRuntime, contextLength: getAiModelCapability(service.providerId ?? service.serviceId ?? service.id, body.model)?.contextLength,
+        chatImagePart: image => chatImagePart(service, image) },
+      signal: options.signal, onDelta: options.onDelta,
+      request: async (nextBody, { signal }) => {
+        const response = await requestRaw(service.endpoint, service.apiKey, nextBody, { ...options, signal }, REQUEST_TIMEOUT_MS, service.label);
         if (!response.ok) throw responseError(service.label, response.status, await response.json().catch(() => ({})), { secrets: [service.apiKey] });
         return response;
       }
@@ -1389,9 +1388,9 @@ async function requestResponsesImage(service, instructions, content, fallbackPro
   body.tools = [{ ...imageTool, ...requestParameters }];
   const loopResult = options.toolRuntime?.specs.length ? await runComposerToolLoop({
     body, protocol: "responses",
-    runtime: options.toolRuntime, signal: options.signal, maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS, allowImageOutput: true,
-    request: async nextBody => {
-      const response = await requestRaw(service.endpoint, service.apiKey, nextBody, options, IMAGE_REQUEST_TIMEOUT_MS, service.label);
+    runtime: options.toolRuntime, signal: options.signal, allowImageOutput: true,
+    request: async (nextBody, { signal }) => {
+      const response = await requestRaw(service.endpoint, service.apiKey, nextBody, { ...options, signal }, IMAGE_REQUEST_TIMEOUT_MS, service.label);
       if (!response.ok) throw responseError(service.label, response.status, await response.json().catch(() => ({})), { secrets: [service.apiKey] });
       return response;
     }
@@ -1495,7 +1494,6 @@ async function requestImageEdits(service, prompt, referenceImages, requestParame
     const maskBlob = imageBlobFromDataUrl(imageEdit.mask.dataUrl);
     body.append("mask", maskBlob, "edit-mask.png");
   }
-  assertComposerRequestBudget([{ content: prompt }]);
   const response = await requestRaw(image.editsEndpoint, image.apiKey, body, options, IMAGE_REQUEST_TIMEOUT_MS, service.label);
   return parseImagesEndpointResponse(service, response, options);
 }
@@ -1575,7 +1573,6 @@ async function requestJson(service, body, options = {}, timeoutMs = REQUEST_TIME
 
 async function requestRaw(url, apiKey, body, options, timeoutMs, label, extraHeaders = {}) {
   const multipart = typeof FormData !== "undefined" && body instanceof FormData;
-  if (!multipart) assertComposerRequestBudget(textMessagesForBudget(body));
   const controller = new AbortController();
   let timedOut = false;
   const onAbort = () => controller.abort();
@@ -2237,18 +2234,6 @@ function parseObject(content, message) {
   }
 }
 
-function textMessagesForBudget(body) {
-  if (Array.isArray(body.messages)) return body.messages.map((item) => ({ content: typeof item.content === "string" ? item.content : JSON.stringify(item.content?.filter?.((part) => part.type === "text") ?? []) }));
-  if (typeof body.input === "string") return [{ content: body.input }];
-  if (Array.isArray(body.input) && body.input.some((item) => item?.type === "text" || item?.type === "image")) {
-    return body.input.filter((item) => item?.type === "text").map((item) => ({ content: item.text ?? "" }));
-  }
-  return [
-    { content: body.instructions || "" },
-    { content: JSON.stringify((body.input ?? []).map((item) => ({ ...item, content: item.content?.filter?.((part) => part.type === "input_text") }))) }
-  ];
-}
-
 function responseError(label, status, payload, options = {}) {
   const detail = redactSecrets(String(payload?.error?.message ?? payload?.message ?? "").trim(), options.secrets);
   const referenceLimit = referenceLimitFromMessage(detail);
@@ -2321,7 +2306,7 @@ function base64Image(value, mimeType) {
   } catch {
     throw new ComposerServiceError("生图服务返回了无效图片数据", 422, { retryable: true });
   }
-  if (!bytes.length || bytes.length > PORTABLE_LIBRARY_LIMITS.maxImageBytes) {
+  if (!bytes.length || bytes.length > LIBRARY_TRANSFER_LIMITS.maxImageBytes) {
     throw new ComposerServiceError("生成图片为空或超过本地单图容量上限", 422, { retryable: false });
   }
   return new Blob([bytes], { type: mimeType });
@@ -2349,7 +2334,7 @@ async function downloadGeneratedImage(value, options = {}) {
   try {
     const blob = await fetchBoundedMedia(url, {
       kind: "image",
-      maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
+      maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes,
       timeoutMs: IMAGE_REQUEST_TIMEOUT_MS,
       signal: options.signal,
       fetchImpl: options.fetchImpl,

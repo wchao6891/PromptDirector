@@ -27,7 +27,6 @@ import { translateForLocale } from "./i18n.js";
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 import {
   SMART_VISUAL_MINIMUM_EDGE,
-  SMART_VISUAL_SELECTION_LIMIT
 } from "./resource-limits.js";
 import {
   SMART_VISUAL_SELECTION_STATUS,
@@ -375,7 +374,6 @@ export function createCaptureWorkspace({
           sessionId,
           candidateLabel: translateForLocale("选择图片", locale),
           minimumSize: SMART_VISUAL_MINIMUM_EDGE,
-          maximumSelections: SMART_VISUAL_SELECTION_LIMIT,
           browserFullscreen,
           hideFloatingControls: true
         }]
@@ -531,7 +529,6 @@ export function createCaptureWorkspace({
           add: translateForLocale("加入素材", locale),
           cancel: translateForLocale("取消", locale),
           minimumSize: SMART_VISUAL_MINIMUM_EDGE,
-          maximumSelections: SMART_VISUAL_SELECTION_LIMIT,
           hideFloatingControls: true
         }]
       });

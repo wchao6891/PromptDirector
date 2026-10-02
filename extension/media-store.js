@@ -1,3 +1,4 @@
+import { withMediaWriteLock } from "./resource-policy.js";
 import { assetFormatsForMimeType } from "./asset-formats.js";
 import {
   ASSET_IMPORT_FAILURE_CODES,
@@ -25,7 +26,11 @@ export async function savePortableAssetBlob(assetId, blob, options = {}) {
   return writeMediaBlob(assetId, blob, options);
 }
 
-export async function savePortableAssetBlobs(items, options = {}) {
+export function savePortableAssetBlobs(items, options = {}) {
+  return withMediaWriteLock(() => writePortableAssetBlobs(items, options));
+}
+
+async function writePortableAssetBlobs(items, options) {
   if (!Array.isArray(items)) throw new Error("媒体文件列表无效");
   const ids = new Set();
   let bytes = 0;
@@ -60,7 +65,11 @@ export async function savePortableAssetBlobs(items, options = {}) {
   }
 }
 
-async function writeMediaBlob(assetId, blob, options = {}) {
+function writeMediaBlob(assetId, blob, options = {}) {
+  return withMediaWriteLock(() => writeMediaBlobUnlocked(assetId, blob, options));
+}
+
+async function writeMediaBlobUnlocked(assetId, blob, options) {
   if (options.checkCapacity !== false) {
     const estimate = await storageEstimate(options.estimateStorage);
     assertStorageCapacity(estimate, blob.size);
@@ -81,20 +90,7 @@ export async function saveSkillPackageBlob(assetId, blob, options = {}) {
   validateAssetId(assetId);
   if (!String(assetId).startsWith("skill-file:")) throw new Error("Skill 包文件缺少有效编号");
   if (!(blob instanceof Blob)) throw new Error("Skill 包文件无效");
-  if (options.checkCapacity !== false) {
-    const estimate = await storageEstimate(options.estimateStorage);
-    assertStorageCapacity(estimate, blob.size);
-  }
-  try {
-    const transaction = (await openDatabase()).transaction(MEDIA_STORE, "readwrite");
-    const completed = transactionAsPromise(transaction);
-    await Promise.all([
-      requestAsPromise(transaction.objectStore(MEDIA_STORE).put(blob, assetId)),
-      completed
-    ]);
-  } catch (error) {
-    throw mediaStorageWriteError(error);
-  }
+  return writeMediaBlob(assetId, blob, options);
 }
 
 export async function getMediaBlob(assetId) {

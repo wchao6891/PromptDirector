@@ -1,3 +1,4 @@
+import { createLibraryViewReader } from './library-view-state.js';
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
 const libraryStorage = getLibraryStorage();
@@ -176,7 +177,7 @@ function bindEvents() {
 }
 
 async function refreshState() {
-  const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  const response = await readWorkspaceLibraryState();
   if (!response?.ok) throw new Error(response?.message || t("无法读取 Skill 资料"));
   entries = Array.isArray(response.entries) ? response.entries : [];
   organizerState = response.organizerState ?? organizerState;
@@ -1720,4 +1721,14 @@ function excerpt(value, length) {
 
 function camel(value) {
   return value.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+}
+
+async function readWorkspaceLibraryState() {
+  const reader = createLibraryViewReader({
+    storage: getLibraryStorage(),
+    prepare: ({ summaryOnly, creativeSummary } = {}) => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
+    uiLanguage: chrome.i18n.getUILanguage(),
+    includeCreativeState: true
+  });
+  return reader();
 }

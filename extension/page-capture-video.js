@@ -1,6 +1,6 @@
 import { assetFormatForExtension, fileExtension } from "./asset-formats.js";
 import { fetchBoundedMedia } from "./bounded-media.js";
-import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 
 export function isPageCaptureVideoFileUrl(value, { declaredVideo = false } = {}) {
   try {
@@ -18,9 +18,9 @@ export async function downloadPageCaptureVideo(value, options = {}) {
   if (!isPageCaptureVideoFileUrl(value, options)) return null;
   return fetchBoundedMedia(value, {
     kind: "video",
-    maxBytes: PORTABLE_LIBRARY_LIMITS.maxVideoBytes,
-    timeoutMs: 60_000,
+    maxBytes: LIBRARY_TRANSFER_LIMITS.maxVideoBytes,
     accept: "video/*",
+    revalidateCache: true,
     ...options
   });
 }

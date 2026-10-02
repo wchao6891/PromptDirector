@@ -1,3 +1,5 @@
+import { normalizeCreativeSkillsState } from './creative-skills.js';
+import { getLibraryStorage } from './library-storage.js';
 import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
 import { isSkillCoverPath } from "./skill-cover.js";
 import { sha256Hex } from "./sync-crypto.js";
@@ -45,7 +47,7 @@ async function start() {
   try {
     const [response, local] = await Promise.all([
       fetch(CURATED_SKILL_CATALOG_URL, { credentials: "omit", cache: "no-store" }),
-      chrome.runtime.sendMessage({ type: "GET_STATE" })
+      getLibraryStorage().get('creativeSkills').then(stored => ({ ok: true, creativeSkills: normalizeCreativeSkillsState(stored.creativeSkills) }))
     ]);
     if (!response.ok) {
       const error = new Error("catalog-request-failed");

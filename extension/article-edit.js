@@ -1,4 +1,4 @@
-import { articleDocumentText, normalizeArticleDocument } from "./article-document.js";
+import { articleBlockIsMarkdown, articleDocumentText, normalizeArticleDocument } from "./article-document.js";
 import { entryTextRevision, markEntryTextChanged } from "./analysis-revision.js";
 
 export const ARTICLE_TEXT_KINDS = new Set(["heading", "paragraph", "list", "quote", "code", "table"]);
@@ -19,7 +19,8 @@ export function updateArticleText(entry, patches, expectedRevision) {
     changes.set(patch.blockId, patch.text);
   }
   const articleDocument = normalizeArticleDocument({ ...entry.articleDocument,
-    blocks: blocks.map(block => changes.has(block.id) ? { ...block, text: changes.get(block.id) } : block) });
+    blocks: blocks.map(block => changes.has(block.id) ? { ...block, text: changes.get(block.id),
+      ...(articleBlockIsMarkdown(block, entry) ? { mimeType: "text/markdown" } : {}) } : block) });
   if (!articleDocument) throw new Error("文章正文不能为空");
   const next = markEntryTextChanged(entry, articleDocumentText(articleDocument));
   // A block edit can change structure without changing the flattened search text.

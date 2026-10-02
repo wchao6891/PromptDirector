@@ -59,7 +59,7 @@ test("投稿拒绝外链媒体、空提示词和缺少封面的视频", () => {
 
 test("投稿清单和分卷清单使用完整 SHA-256 身份", () => {
   const hash = "a".repeat(64);
-  assert.equal(CURATED_SUBMISSION_MAX_FILE_BYTES, 24 * 1024 * 1024);
+  assert.equal(CURATED_SUBMISSION_MAX_FILE_BYTES, 25 * 1_000_000);
   assert.ok(CURATED_SUBMISSION_PART_PAYLOAD_BYTES < CURATED_SUBMISSION_MAX_FILE_BYTES);
   assert.equal(submissionManifest({
     submissionId: hash,

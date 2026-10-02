@@ -1,6 +1,25 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "全部可分析": "All eligible",
+  "全选当前": "Select current",
+  "图片、视频、提示词，都可以保存在这里。": "Keep images, videos and prompts here.",
+  "保存第一个创作参考": "Save your first creative reference",
+  "从已有案例中选择，加入这个项目。": "Choose existing cases to add to this project.",
+  "这个项目还没有案例": "No cases in this project yet",
+  "完成案例排序": "Finish reordering",
+  "完成排序": "Done",
+  "调整案例顺序": "Reorder cases",
+  "加入时间": "Date added",
+  "素材数": "Assets",
+  "显示列": "Columns",
+  "案例大小，双击恢复默认": "Case size; double-click to reset",
+  "案例大小": "Case size",
+  "移除标签": "Remove tags",
+  "标签操作": "Tag action",
+  "所选案例暂无标签": "No tags on the selected cases",
+  "请选择要移除的标签": "Select tags to remove",
+  "所选案例已无这些标签": "These tags are no longer on the selected cases",
   "查看草稿": "View draft",
   "返回选材": "Back to sources",
   "重新提炼": "Refine again",
@@ -2557,6 +2576,7 @@ export function translateUiMessage(value) {
   if (EN[source]) return EN[source];
   if (source.includes("；")) return source.split("；").map((part) => translateUiMessage(part)).join("; ");
   const rules = [
+    [/^已从 (\d+) 个案例移除标签$/, "Removed tags from $1 cases"],
     [/^AI 为同一标签返回了不同名称（「(.+)」和「(.+)」），本次没有修改标签$/, "AI returned conflicting names for the same tag (“$1” and “$2”); no tags were changed."],
     [/^AI 返回的标签名称超过 (\d+) 个字符，本次没有修改标签$/, "AI returned a tag name longer than $1 characters; no tags were changed."],
     [/^米醋( · .+)?$/, "Micu$1"],

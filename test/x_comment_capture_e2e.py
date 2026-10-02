@@ -1,5 +1,7 @@
 """Reconstructed X comment layouts; production reader and sidebar save, isolated storage."""
 import json
+import base64
+import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -11,17 +13,24 @@ REPLY = 'https://x.com/director/status/124'
 FULL = 'Character prompt:\n\n' + '\n'.join(f'Shot {i}: preserve identity, lighting and continuous motion.' for i in range(180))
 
 
-def html(public=False):
+def html(public=False, attachments=False, public_video=False):
     article = '' if public else ' data-testid="tweet"'
     text = 'dir="auto" class="whitespace-pre-wrap"' if public else 'data-testid="tweetText"'
     more = '' if public else ' data-testid="tweet-text-show-more-link"'
     date = 'Today' if public else '<time>Today</time>'
+    media = ''
+    if attachments:
+        media = ''.join(f'<a href="{REPLY}/photo/{i}"><img src="https://pbs.twimg.com/media/reply-{i}.png" style="width:200px;height:150px"></a>' for i in range(1, 5))
+        media += '<video '+('' if public_video else 'src="https://video.twimg.com/reply.mp4" ')+ 'poster="https://pbs.twimg.com/media/poster.png" style="width:200px;height:150px"></video>'
+    metadata=''
+    if public_video:
+        metadata='<script type="application/x-fixture">($R=>$R[1]={media_entities:$R[2]=[$R[3]={expanded_url:"'+REPLY+'/video/1",id_str:"555",media_url_https:"https://pbs.twimg.com/media/poster.png",video_info:$R[4]={variants:$R[5]=[$R[6]={bitrate:10,content_type:"video/mp4",url:"https://video.twimg.com/reply.mp4"}]}}],rest_id:"124"})($R["tsr"])</script>'
     return f'''<html><head><link rel="canonical" href="{REPLY}"></head><body>
     <article{article}><div data-testid="User-Name"><a href="/other">Other</a></div>
     <div {text}>Unrelated text must never be used.</div><a href="/other/status/999">{date}</a></article>
     <article{article}><div data-testid="User-Name"><a href="/director">Director</a></div>
     <div {text}><span>Character prompt: short preview</span><button{more} onclick="this.parentElement.textContent=window.fullPrompt">Show more</button></div>
-    <a href="/director/status/124">{date}</a></article></body></html>'''
+    {media}<a href="/director/status/124">{date}</a></article>{metadata}</body></html>'''
 
 
 def main():
@@ -51,18 +60,20 @@ def main():
         print({'classic_and_public_full_comment': True, 'characters': len(FULL)})
 
 
-def sidebar_journey():
+def sidebar_journey(public_video=False):
     with tempfile.TemporaryDirectory(prefix='x-comment-runtime-') as temp:
         extension = Path(temp)
         for file in EXTENSION_DIR.iterdir():
             if file.name != 'manifest.json':
                 (extension / file.name).symlink_to(file, target_is_directory=file.is_dir())
         manifest = json.loads((EXTENSION_DIR / 'manifest.json').read_text())
-        manifest['host_permissions'] += ['https://x.com/*']
+        manifest['host_permissions'] += ['https://x.com/*', 'https://pbs.twimg.com/*', 'https://video.twimg.com/*']
         (extension / 'manifest.json').write_text(json.dumps(manifest))
         with extension_session('pd-x-comment-save-', extension_dir=extension) as run:
             failure = [True]
             worker = run.context.service_workers[0]
+            if public_video:
+                worker.evaluate('''body=>{const original=fetch;globalThis.fetch=(url,options)=>String(url)==='https://x.com/director/status/124'?Promise.resolve(new Response(body,{headers:{'content-type':'text/html'}})):original(url,options)}''',html(public=True,attachments=True,public_video=True))
             # Extension-created initial navigations bypass Playwright context routes in this runtime.
             # Pause only that navigation boundary until the harness has attached and loaded its fixture.
             worker.evaluate('''() => {
@@ -82,13 +93,27 @@ def sidebar_journey():
                 if r.request.url == REPLY and failure[0]:
                     r.fulfill(body="<script>history.replaceState({}, '', '/login')</script>Login required", content_type='text/html')
                     return
-                body = html().replace('https://x.com/director/status/124', r.request.url)
+                body = html(public=public_video,attachments=True,public_video=public_video).replace(f'<link rel="canonical" href="{REPLY}">', f'<link rel="canonical" href="{r.request.url}">')
                 if r.request.url == MAIN:
                     body = body.replace('/other/status/999', '/director/status/123').replace('href="/other"', 'href="/director"').replace('Other</a>', 'Director</a>').replace('Unrelated text must never be used.', 'Main case text stays unchanged.')
                 body += '<script>window.fullPrompt=' + json.dumps(FULL) + '</script>'
                 r.fulfill(body=body, content_type='text/html')
             run.context.route('https://x.com/**', route)
             collector = run.open_page('collector.html')
+            images = collector.evaluate('''async()=>{
+              const values=[];for(let i=0;i<5;i++){
+                const c=document.createElement('canvas');c.width=64;c.height=48;
+                const ctx=c.getContext('2d');ctx.fillStyle=`rgb(${30+i*35},70,120)`;ctx.fillRect(0,0,64,48);
+                values.push(c.toDataURL('image/png').split(',')[1]);
+              }return values;
+            }''')
+            image_bytes = [base64.b64decode(value) for value in images]
+            video_bytes = (Path(__file__).parent / 'fixtures/detail-portrait-smoke.mp4').read_bytes()
+            def media_route(r):
+                index = 4 if '/poster.png' in r.request.url else int(r.request.url.split('reply-')[1].split('.png')[0])-1
+                r.fulfill(body=image_bytes[index], content_type='image/png', headers={'Access-Control-Allow-Origin':'*'})
+            run.context.route('https://pbs.twimg.com/**', media_route)
+            run.context.route('https://video.twimg.com/**', lambda r:r.fulfill(body=video_bytes,content_type='video/mp4',headers={'Access-Control-Allow-Origin':'*'}))
             run.seed_storage(collector, {'entries': [], 'capturePermissionOnboarding': {'version': 1, 'acknowledgedAt': '2026-09-19T00:00:00Z', 'clipboardIncluded': True}})
             source = run.context.new_page()
             source.goto(MAIN)
@@ -97,11 +122,15 @@ def sidebar_journey():
             expect(collector.locator('.page-capture-confirm')).to_have_count(1)
             collector.locator('.page-capture-confirm').click()
             collector.locator('.page-capture-supplements > summary').click()
+            # The user left the original source after scanning. Exercise the
+            # temporary-page path without reading or navigating this new page.
+            source_after_navigation = 'https://x.com/other/status/999'
+            source.goto(source_after_navigation)
             add_comment()
             expect(collector.locator('#feedback')).to_contain_text('当前草稿已保留')
             expect(collector.locator('.page-capture-supplements')).to_have_count(1)
             expect(collector.locator('.page-capture-excerpt')).not_to_contain_text('Shot 179:')
-            assert source.url == MAIN
+            assert source.url == source_after_navigation
             assert not any(p.url == 'https://x.com/login' for p in run.context.pages), 'temporary failed tab leaked'
             failure[0] = False
             collector.locator('.page-capture-supplements > summary').click()
@@ -122,6 +151,9 @@ def sidebar_journey():
                     collector.set_viewport_size({'width': width, 'height': 900})
                     assert collector.locator('#page-capture').evaluate('e=>e.scrollWidth<=e.clientWidth'), (theme, width)
                     collector.screenshot(path=str(evidence / f'comment-{theme}-{width}.png'))
+            collector.evaluate('''()=>{const send=chrome.runtime.sendMessage.bind(chrome.runtime);
+              chrome.runtime.sendMessage=async m=>{if(m.type==='COMMIT_PAGE_CAPTURE')window.savedCapturePayload=m.batch;return send(m)};
+            }''')
             collector.locator('#page-capture-save').click()
             expect(collector.locator('#page-capture')).to_be_hidden(timeout=15000)
             entries = collector.evaluate("async()=> (await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
@@ -131,14 +163,30 @@ def sidebar_journey():
             assert 'short preview' not in entry['text']
             assert any(b.get('sourceUrl') == REPLY for b in entry['articleDocument']['blocks'])
             assert entry['sourceFacts']['status'] == 'complete'
-            assert source.url == MAIN
+            content = [asset for asset in entry['mediaAssets'] if asset.get('usage') != 'poster']
+            payload = collector.evaluate('window.savedCapturePayload')
+            assert len(payload['candidates'][0]['media']) == 5, payload
+            assert len(payload['selections'][0]['selectedMediaIds']) == 5, payload
+            assert len([asset for asset in content if asset['kind']=='image']) == 4, entry['mediaAssets']
+            assert len([asset for asset in content if asset['kind']=='video']) == 1, entry['mediaAssets']
+            hashes = collector.evaluate('''async assets=>{
+              const {getMediaBlob}=await import('./media-store.js');const {sha256Blob}=await import('./blob-digest.js');
+              return Promise.all(assets.map(async a=>({id:a.id,kind:a.kind,sha256:await sha256Blob(await getMediaBlob(a.id))})));
+            }''', content)
+            assert sorted(item['sha256'] for item in hashes if item['kind']=='image') == sorted(hashlib.sha256(b).hexdigest() for b in image_bytes[:4])
+            assert next(item['sha256'] for item in hashes if item['kind']=='video') == hashlib.sha256(video_bytes).hexdigest()
+            assert len({asset['id'] for asset in content}) == 5
+            assert all(any(block.get('assetId')==asset['id'] for block in entry['articleDocument']['blocks']) for asset in content)
+            assert source.url == source_after_navigation
             assert not any(p.url == REPLY for p in run.context.pages), 'temporary success tab leaked'
             library = run.open_page('library.html')
             library.locator('.case-card').first.click()
             expect(library.locator('#detail-drawer')).to_contain_text('Shot 179:')
-            print({'failed_read_preserves_draft': True, 'retry_and_undo': True, 'full_saved_once': len(FULL), 'library_readback': True, 'source_page_unchanged': True, 'temporary_tabs_closed': True, 'screenshots': str(evidence)})
+            print({'public_ssr_video':public_video,'failed_read_preserves_draft': True, 'retry_and_undo': True, 'full_saved_once': len(FULL), 'four_photos_and_video_bytes_verified': True, 'library_readback': True, 'source_page_unchanged': True, 'temporary_tabs_closed': True, 'screenshots': str(evidence)})
 
 
 if __name__ == '__main__':
-    main()
-    sidebar_journey()
+    if 'public-video' in __import__('sys').argv: sidebar_journey(public_video=True)
+    else:
+        main()
+        sidebar_journey()

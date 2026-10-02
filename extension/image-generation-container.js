@@ -1,14 +1,19 @@
-import { PORTABLE_LIBRARY_LIMITS } from './resource-limits.js';
+import { operationBudget } from './resource-policy.js';
 
-// Match the existing JSON preparation budget. This bounds parsing, never the
-// original file: records beyond it remain in the unchanged original image.
-export const GENERATION_TEXT_BUDGET = PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes;
+// Only metadata extraction is budgeted. The complete original remains in its Blob.
+export const GENERATION_TEXT_BUDGET = operationBudget().maxTextBytes;
 const utf8 = bytes => new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-const latin = bytes => Array.from(bytes, byte => String.fromCharCode(byte)).join('');
+const latin = bytes => {
+  // TextDecoder('latin1') implements Windows-1252, not PNG's ISO-8859-1.
+  const parts = [];
+  for (let at = 0; at < bytes.length; at += 8192) parts.push(String.fromCharCode(...bytes.subarray(at, at + 8192)));
+  return parts.join('');
+};
 const ascii = (bytes, start, length) => latin(bytes.subarray(start, start + length));
 const corrupt = () => new Error('图片生成信息结构损坏；原图保留');
 
-export async function readGenerationTextRecords(blob, { signal } = {}) {
+export async function readGenerationTextRecords(blob, { signal, budget } = {}) {
+  const textBudget = operationBudget(budget).maxTextBytes;
   const records = [], warnings = [];
   let used = 0;
   const check = () => signal?.throwIfAborted();
@@ -20,16 +25,16 @@ export async function readGenerationTextRecords(blob, { signal } = {}) {
     return bytes;
   }
   function add(keyword, text, location) {
-    used += new TextEncoder().encode(text).length;
-    if (used > GENERATION_TEXT_BUDGET) throw new Error('图片生成信息超过文本解析预算；完整信息仍保留在原图');
+    used += new TextEncoder().encode(text).length + keyword.length * 2 + location.length * 2;
+    if (used > textBudget) throw new Error('图片生成信息超过文本解析预算；完整信息仍保留在原图');
     records.push({ keyword, text, location });
   }
   async function textBytes(offset, length) {
-    if (length > GENERATION_TEXT_BUDGET) throw new Error('图片生成信息超过文本解析预算；完整信息仍保留在原图');
+    if (length + used > textBudget) throw new Error('图片生成信息超过文本解析预算；完整信息仍保留在原图');
     return bytesAt(offset, length);
   }
   async function inflate(bytes) {
-    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')).getReader();
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'), { signal }).getReader();
     const chunks = []; let size = 0;
     try {
       while (true) {
@@ -37,7 +42,7 @@ export async function readGenerationTextRecords(blob, { signal } = {}) {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.length;
-        if (size + used > GENERATION_TEXT_BUDGET) throw new Error('图片生成信息解压后超过文本解析预算；原图保留');
+        if (size + used > textBudget) throw new Error('图片生成信息解压后超过文本解析预算；原图保留');
         chunks.push(value);
       }
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }

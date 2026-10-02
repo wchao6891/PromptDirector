@@ -102,6 +102,26 @@ function event() {
   const listeners = new Set();
   return { addListener: f => listeners.add(f), removeListener: f => listeners.delete(f), emit: (...args) => Promise.all([...listeners].map(f => f(...args))) };
 }
+
+test('MCP bodyFile carries Markdown format through save, source text and package roundtrip', async () => {
+  const text = '# 方法\n\n| 步骤 | 目标 |\n| --- | --- |\n| 白模 | 空间 |\n\n```js\n    keep();\n```';
+  const state = { entries: [], organizerState: { collections: [] } };
+  const record = { id: 'md', assetId: 'doc', state: 'ready', prepared: { contentText: text,
+    asset: { id: 'doc', kind: 'document', mimeType: 'text/markdown', storageMode: 'managed' } } };
+  const deps = { loadState: async () => state, transfers: { get: async () => record, key: id => id }, buildEntry,
+    classify: () => ({}), place: value => value, commit: async update => Object.assign(state, update), notify: async () => {}, schemaVersion: 1 };
+  await saveAgentMaterial({ title: '方法', kind: 'creation', transferIds: ['md'], bodyTransferId: 'md' }, 'markdown-body', deps);
+  const entry = state.entries[0];
+  assert.equal(entry.text, text);
+  assert.equal(entry.articleDocument.blocks[0].mimeType, 'text/markdown');
+  const selected = selectLibraryPackage({ ...state, taxonomy: createDefaultTaxonomy() }, [entry.id]);
+  selected.entries[0].mediaAssets[0].assetPath = 'documents/method.md';
+  const restored = parseLibraryPackage({ ...selected, format: 'prompt-case-library', version: 3 }, new Map([
+    ['documents/method.md', new Blob([text], { type: 'text/markdown' })]
+  ]));
+  assert.equal(restored.entries[0].articleDocument.blocks[0].mimeType, 'text/markdown');
+  assert.equal(restored.entries[0].text, text);
+});
 test('disabling during permission lookup cannot reconnect the library', async () => {
   const local = storage({ agentConnection: { enabled: true, instanceId: crypto.randomUUID() } });
   let release; let lookups = 0; let connects = 0;

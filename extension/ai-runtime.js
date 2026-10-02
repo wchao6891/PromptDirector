@@ -3,6 +3,7 @@ import { getAiModelCapability } from "./ai-model-capabilities.js";
 import { normalizeVisionSettings } from "./vision.js";
 import { DEFAULT_VIDEO_ANALYSIS_INSTRUCTIONS_BY_LOCALE } from "./video-analysis.js";
 import { migratedVideoMethod } from "./ai-preference-migrations.js";
+import { sameUndoState } from "./undo-state.js";
 import {
   normalizeAiProviderRegistry,
   normalizeAiTaskAssignments,
@@ -27,6 +28,13 @@ export function aiConfigurationFromStorage(stored = {}) {
     assignments: normalizeAiTaskAssignments(stored.aiTaskAssignments, registry),
     preferences: normalizeAiPreferences(stored.aiPreferences)
   };
+}
+
+export function aiConfigurationNeedsStorageUpdate(stored, configuration = aiConfigurationFromStorage(stored)) {
+  return !stored.aiProviderRegistry
+    || Number(stored.aiProviderRegistry.version) !== configuration.registry.version
+    || !stored.aiPreferences
+    || !sameUndoState(stored.aiTaskAssignments ?? {}, configuration.assignments);
 }
 
 export function normalizeAiPreferences(value = {}) {

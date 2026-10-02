@@ -4,11 +4,12 @@ import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { randomUUID, createHash } from 'node:crypto';
-import { encodeFrame, frameDecoder } from '../framing.mjs';
+import { encodeFrame, frameDecoder, NATIVE_FROM_CHROME_MAX } from '../framing.mjs';
+import { createAgentLibrary } from '../../extension/agent-library.js';
 import { startNativeHost } from '../native-host.mjs';
 import { callExtension } from '../bridge-client.mjs';
 import { receiveMedia, stageFiles } from '../transfers.mjs';
@@ -21,6 +22,54 @@ test('native framing preserves split Unicode messages and refuses oversized fram
   for (const byte of bytes) decode(Buffer.from([byte]));
   assert.deepEqual(messages, [{ text: '案例🚀' }, { n: 2 }]);
   assert.throws(() => encodeFrame({ text: '12345' }, 3));
+});
+
+test('a large native response is assembled without copying the growing prefix for every pipe chunk', () => {
+  const value = { data: 'a'.repeat(4 * 1024 * 1024) };
+  const frame = encodeFrame(value, 64 * 1024 * 1024);
+  let copied = 0;
+  const concat = Buffer.concat;
+  const messages = [];
+  try {
+    Buffer.concat = (parts, ...args) => { copied += parts.reduce((sum, part) => sum + part.length, 0); return concat(parts, ...args); };
+    const decode = frameDecoder(message => messages.push(message));
+    for (let offset = 0; offset < frame.length; offset += 32 * 1024) decode(frame.subarray(offset, offset + 32 * 1024));
+  } finally { Buffer.concat = concat; }
+  assert.deepEqual(messages, [value]);
+  assert(copied <= frame.length * 3, `Frame assembly copied ${copied} bytes for a ${frame.length} byte response`);
+});
+
+test('large original crosses the authenticated native broker in full and verified local cache stays current', { timeout: 15000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pd-large-original-'));
+  const input = new PassThrough(), output = new PassThrough();
+  const extensionId = 'd'.repeat(32), instanceId = randomUUID();
+  const bytes = Buffer.alloc(32 * 1024 * 1024 + 47, 109);
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  let reads = 0;
+  const library = createAgentLibrary({loadState:async()=>({entries:[{id:'case', mediaAssets:[{id:'original',kind:'video',mimeType:'video/mp4'}]}]}),readBlob:async()=>new Blob([bytes],{type:'video/mp4'})});
+  await writeFile(join(root, 'config.json'), JSON.stringify({ extensionId }));
+  await writeFile(join(root, 'selected.json'), JSON.stringify({ instanceId }));
+  let ready; const readiness = new Promise(resolve => { ready = resolve; });
+  output.on('data', frameDecoder(message => {
+    if (message.type === 'ready') ready();
+    else if (message.type === 'request') {
+      reads++;
+      void library.media(message.input).then(result=>{
+        const frame=encodeFrame({type:'response',id:message.id,result},NATIVE_FROM_CHROME_MAX);
+        for(let offset=0;offset<frame.length;offset+=32*1024) input.write(frame.subarray(offset,offset+32*1024));
+      });
+    }
+  }));
+  const host = await startNativeHost({ root, origin:`chrome-extension://${extensionId}/`, input, output });
+  try {
+    input.write(encodeFrame({type:'hello',protocolVersion:1,extensionId,instanceId}));await readiness;
+    const call=(op,args)=>callExtension(op,args,{root});
+    const result=await receiveMedia({caseId:'case',assetId:'original'},call,root);
+    assert.equal(result.byteSize,bytes.length);assert.equal(result.sha256,hash);
+    assert.deepEqual(await readFile(result.path),bytes);assert.equal(reads,3);
+    const cached=await receiveMedia({caseId:'case',assetId:'original'},call,root);
+    assert.equal(cached.path,result.path);assert.equal(reads,4,'A cache hit still consults the current library');
+  } finally {await host.close();input.destroy();output.destroy();await rm(root,{recursive:true,force:true});}
 });
 
 test('real native broker binds one library, authenticates and forwards response', { timeout: process.platform === 'win32' ? 30000 : 5000 }, async () => {
@@ -62,6 +111,12 @@ test('real native broker binds one library, authenticates and forwards response'
         ['create_project', { requestId: 'project', name: '子项目', parentId: 'parent', requirements: '完整要求' }],
         ['update_project', { requestId: 'brief', projectId: 'parent', expectedRevision: 'version', requirements: '新要求' }],
         ['read_case_details', { caseId: 'case', part: 'source', length: 31 }],
+        ['read_case_details', { caseId: 'case', part: 'analysis_coverage' }],
+        ['submit_analysis_result',{requestId:'complete-result',batchId:'batch',caseId:'case',epoch:0,attemptId:'attempt',result:{
+          imageAnalyses:[{assetId:'image',reconstructionPrompt:'完整图片',tags:[{g:'scene.place',t:'摄影棚'}]}],
+          videoAnalyses:[{assetId:'video',reconstructionPrompt:'完整视频',tags:Array.from({length:4},(_,i)=>({g:`group${i}`,t:'标签'})),uncertainties:['焦距未知'],analysisScope:'visual'}],
+          visualSetAnalyses:[{assetIds:['image'],imageRoles:[{assetId:'image',role:'角色'}],sharedVisualSystem:[],differences:[],continuity:[],compositionRules:[],reusablePrompt:'整组提示词'}]
+        }}],
         ['edit_case', { requestId: 'edit', caseId: 'case', expectedRevision: 'version', patch: { sourceFacts: { engagement: null }, title: '新标题' } }],
         ['organize_case', { requestId: 'split', caseId: 'case', expectedRevision: 'version', action: 'split_media', groups: [{ assetIds: ['media'], title: '独立案例', text: '', sourceUrl: 'https://example.com/post' }] }]
       ]) {
@@ -89,6 +144,10 @@ test('SDK client performs real stdio MCP handshake and discovers bounded tools',
     assert(organize.additionalCases.items.properties.expectedRevision);
     const edit = list.tools.find(tool => tool.name === 'promptdirector_edit_case').inputSchema.properties.patch.properties;
     assert(edit.coverVisualId);
+    const result=list.tools.find(tool=>tool.name==='promptdirector_submit_analysis_result').inputSchema.properties.result.properties;
+    assert(result.imageAnalyses.items.properties.reconstructionPrompt);
+    assert(result.videoAnalyses.items.properties.uncertainties);
+    assert(result.visualSetAnalyses.items.properties.imageRoles);
     const bad = await client.callTool({ name: 'promptdirector_capture_url', arguments: { requestId: '../bad', url: 'no' } });
     assert.equal(bad.isError, true);
   } finally { await client.close(); }
@@ -130,6 +189,8 @@ test('installer creates a reviewable private runtime and origin-bound registrati
     const plan = await installationPlan({ root, nativeDirectory: join(root, 'registration'), extensionId });
     await install(plan, { register: async () => {} });
     await install(plan, { register: async () => {} }); // Updating keeps the same runtime and pairing location.
+    const installedSpecs=await import(pathToFileURL(join(root,'extension/analysis-batch-specs.js')).href);
+    assert(installedSpecs.ANALYSIS_RESULT_FIELDS.includes('imageAnalyses'));
     const manifest = JSON.parse(await readFile(plan.registration, 'utf8'));
     assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${extensionId}/`]);
     assert.equal(manifest.path, plan.launcher);

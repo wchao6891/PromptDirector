@@ -108,7 +108,9 @@ test("facet undo history keeps only the latest ten real edits", () => {
   }
   assert.equal(FACET_UNDO_LIMIT, 10);
   assert.equal(facetUndoCount(history), 10);
-  assert.equal(history.steps[0].facetCatalog.revision, 2);
+  let restored = { facetCatalog: { ...catalog, revision: 12 }, entries: [] };
+  while (facetUndoCount(history)) { const result = undoFacetHistory(restored, history); restored = result.state; history = result.history; }
+  assert.equal(restored.facetCatalog.revision, 2);
 });
 
 test("legacy oversized history is trimmed during normalization", () => {
@@ -122,7 +124,21 @@ test("legacy oversized history is trimmed during normalization", () => {
     }))
   });
   assert.equal(history.steps.length, 10);
-  assert.equal(history.steps[0].facetCatalog.revision, 5);
+  let remaining = history, current = { facetCatalog: { ...catalog, revision: 15 }, entries: [] };
+  while (facetUndoCount(remaining)) { const result = undoFacetHistory(current, remaining); current = result.state; remaining = result.history; }
+  assert.equal(current.facetCatalog.revision, 5);
+});
+
+test('tag undo stores small differences, not copies of an unchanged long original', () => {
+  const original = '完整原词'.repeat(128 * 1024);
+  const catalog = createDefaultFacetCatalog();
+  const before = { facetCatalog: catalog, entries: [{ id: 'one', text: original, facetAssignments: [] }] };
+  const after = { ...before, entries: [{ ...before.entries[0], facetAssignments: [{ nodeId: 'new' }] }] };
+  const history = appendFacetUndo(null, before, after);
+  assert.ok(JSON.stringify(history).length < 1024);
+  assert.equal(undoFacetHistory(after, history).state.entries[0].text, original);
+  assert.deepEqual(undoFacetHistory(after, history).state.entries[0].facetAssignments, []);
+  assert.throws(() => undoFacetHistory({ ...after, entries: [{ ...after.entries[0], text: original + '后续编辑' }] }, history), /保护新内容/);
 });
 
 test("tag undo refuses to orphan a tag adopted by a later case or recoverable trash case", () => {

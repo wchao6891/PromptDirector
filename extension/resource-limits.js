@@ -1,3 +1,4 @@
+import { operationBudget } from './resource-policy.js';
 const MEBIBYTE = 1024 * 1024;
 
 export const ASSET_IMPORT_FAILURE_CODES = Object.freeze({
@@ -48,23 +49,13 @@ export function importFailureDetails(value) {
   };
 }
 
-export const PORTABLE_LIBRARY_LIMITS = Object.freeze({
-  maxArchiveBytes: 128 * MEBIBYTE,
-  maxFileCount: 4096,
-  maxFileBytes: 16 * MEBIBYTE,
-  maxLibraryJsonBytes: 16 * MEBIBYTE,
-  maxEntries: 5000,
-  maxCollections: 5000,
-  maxImageBytes: 32 * MEBIBYTE,
-  maxImagePixels: 40_000_000,
-  maxVideoBytes: 128 * MEBIBYTE
-});
-
-// Transfer limits describe representable byte/count values, not a library quota.
-// Interactive capture and provider inputs retain their own bounded-media policy.
-export const LIBRARY_TRANSFER_LIMITS = Object.freeze(Object.fromEntries(
-  Object.keys(PORTABLE_LIBRARY_LIMITS).map((key) => [key, Number.MAX_SAFE_INTEGER])
-));
+// Numeric representation boundary only. Files, libraries and user input have no
+// fixed product quota. Explicit limits belong to the actual destination or a
+// measured operation; callers must not turn a transport/page size into a quota.
+export const LIBRARY_TRANSFER_LIMITS = Object.freeze(Object.fromEntries([
+  'maxArchiveBytes', 'maxFileCount', 'maxFileBytes', 'maxLibraryJsonBytes',
+  'maxEntries', 'maxCollections', 'maxImageBytes', 'maxImagePixels', 'maxVideoBytes'
+].map(key => [key, Number.MAX_SAFE_INTEGER])));
 
 export function libraryTransferLimits(value = {}) {
   const limits = { ...LIBRARY_TRANSFER_LIMITS, ...value };
@@ -76,30 +67,31 @@ export function libraryTransferLimits(value = {}) {
   return portableLibraryLimits(limits);
 }
 
-export const SMART_VISUAL_SELECTION_LIMIT = 12;
 export const SMART_VISUAL_MINIMUM_EDGE = 64;
 export const MEDIA_FINGERPRINT_CHUNK_BYTES = 8 * MEBIBYTE;
 export const PAGE_CAPTURE_LIMITS = Object.freeze({
   maxCandidates: 100,
-  maxMediaPerCandidate: 24,
+  maxMediaPerCandidate: Number.MAX_SAFE_INTEGER,
   maxScrollSteps: 30,
   navigationTimeoutMs: 30_000,
-  maxInlinePixelDataCharacters: Math.ceil(PORTABLE_LIBRARY_LIMITS.maxImageBytes * 4 / 3) + 512
+  // Chrome JSON messages are limited to 64 MiB. Reserve half for complete
+  // text, metadata and encoding overhead; this is one transport budget.
+  maxInlinePixelDataCharacters: Math.min(Math.floor(operationBudget().maxTextBytes / 2), 32 * MEBIBYTE)
 });
 
-// Product limits confirmed for the local, non-AI page-capture review flow.
+// Existing automatic review work budgets, independent of stored file or library
+// capacity. They are application choices, not browser restrictions.
 export const PAGE_CAPTURE_QUALITY_LIMITS = Object.freeze({
   maxRegionCandidates: 5,
   maxCandidateChoices: 10,
   maxCreativeSections: 5,
   maxPossibleOmissions: 5,
-  maxContentTargetsPerCandidate: 200,
   minOrdinarySectionCharacters: 200
 });
 
 export function portableLibraryLimits(value = {}) {
   const result = {};
-  for (const [key, fallback] of Object.entries(PORTABLE_LIBRARY_LIMITS)) {
+  for (const [key, fallback] of Object.entries(LIBRARY_TRANSFER_LIMITS)) {
     const candidate = Number(value?.[key]);
     result[key] = Number.isSafeInteger(candidate) && candidate > 0 ? candidate : fallback;
   }
@@ -115,6 +107,7 @@ export function portableAssetByteLimit(kind, limitsValue = {}) {
 
 export function assertImageDimensions(width, height, limitsValue = {}) {
   const limits = portableLibraryLimits(limitsValue);
+  const maxPixels = Math.min(limits.maxImagePixels, operationBudget(limitsValue.budget).maxImagePixels);
   const w = Number(width);
   const h = Number(height);
   if (!Number.isSafeInteger(w) || !Number.isSafeInteger(h) || w < 1 || h < 1) {
@@ -123,11 +116,11 @@ export function assertImageDimensions(width, height, limitsValue = {}) {
       "无法读取有效的图片尺寸"
     );
   }
-  if (w * h > limits.maxImagePixels) {
+  if (!Number.isSafeInteger(w * h) || w * h > maxPixels) {
     throw assetImportError(
       ASSET_IMPORT_FAILURE_CODES.SAFETY_LIMIT_EXCEEDED,
-      `图片像素超过 ${formatCount(limits.maxImagePixels)} 安全上限，不能强制导入`,
-      { maxPixels: limits.maxImagePixels, actualPixels: w * h }
+      `图片像素超过本次解码预算（${formatCount(maxPixels)}），不能强制导入解码；原件可保留`,
+      { maxPixels, actualPixels: w * h }
     );
   }
 }

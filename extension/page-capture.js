@@ -1,5 +1,5 @@
 import { PAGE_CAPTURE_ADAPTERS, resolvePageCaptureAdapter } from "./page-capture-adapter-registry.js";
-import { PAGE_CAPTURE_QUALITY_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { PAGE_CAPTURE_QUALITY_LIMITS, LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { normalizeArticleDocument, remapArticleDocumentAssets } from "./article-document.js";
 import { isSupportedDocumentMimeType } from "./bounded-media.js";
 
@@ -382,7 +382,8 @@ export function normalizePageCaptureCandidate(value = {}) {
     supplements: (Array.isArray(value.supplements) ? value.supplements : []).flatMap(item => {
       const text = normalizeText(item?.text);
       const sourceUrl = safeUrl(item?.sourceUrl);
-      return text && sourceUrl ? [{ id: clean(item.id) || stableCandidateId(sourceUrl, text), text, sourceUrl, partial: item.partial === true }] : [];
+      return (text || item?.media?.length) && sourceUrl ? [{ id: clean(item.id) || stableCandidateId(sourceUrl, text), text, sourceUrl,
+        media: suppressVideoPosterImages(uniqueMedia(item.media)), partial: item.partial === true }] : [];
     }),
     batchStructureStatus: value.batchStructureStatus === "review" ? "review" : value.batchStructureStatus === "matched" ? "matched" : "",
     region: normalizeCaptureRegion(value.region),
@@ -449,12 +450,12 @@ function normalizeCaptureRegion(value = {}) {
         mediaIds: [...new Set((Array.isArray(target.mediaIds) ? target.mediaIds : []).map(clean).filter(Boolean))],
         sourceOrder: Number.isSafeInteger(Number(target.sourceOrder)) ? Number(target.sourceOrder) : index
       }];
-    }).slice(0, PAGE_CAPTURE_QUALITY_LIMITS.maxContentTargetsPerCandidate),
+    }),
     edits: (Array.isArray(value.edits) ? value.edits : []).flatMap((edit) => {
       const path = clean(edit?.path);
       const mode = edit?.mode === "exclude" ? "exclude" : edit?.mode === "include" ? "include" : "";
       return path && mode ? [{ mode, path }] : [];
-    }).slice(0, 200)
+    })
   };
 }
 
@@ -647,6 +648,15 @@ export async function resolvePageCaptureImage(mediaValue = {}, options = {}) {
   throw new Error(reason);
 }
 
+export function readPageCaptureInjectionResult(injected) {
+  const error = injected?.error || injected?.result?.captureError;
+  if (error) throw Object.assign(new Error(error.message || "网页扫描失败；当前草稿已保留"), { code: error.code || "PAGE_CAPTURE_FAILED" });
+  if (!injected?.result || typeof injected.result !== "object") {
+    throw new Error("网页扫描未返回结果，请重新扫描；当前草稿已保留");
+  }
+  return injected.result;
+}
+
 export async function collectPageCaptureSnapshot(options = {}) {
   function clean(value) {
     return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
@@ -668,10 +678,17 @@ export async function collectPageCaptureSnapshot(options = {}) {
   };
   if (sessionId) globalThis.chrome?.runtime?.onMessage?.addListener?.(handleCaptureMessage);
   const maxCandidates = positiveInteger(options.maxCandidates, 100);
-  let maxMedia = positiveInteger(options.maxMedia, 24);
-  const maxInlinePixelDataCharacters = positiveInteger(options.maxInlinePixelDataCharacters, 1);
+  let maxMedia = positiveInteger(options.maxMedia, Number.MAX_SAFE_INTEGER);
+  const maxInlinePixelDataCharacters = positiveInteger(options.maxInlinePixelDataCharacters, 32 * 1024 * 1024);
+  let inlinePixelCharacters = 0;
+  function reserveInlinePixels(dataUrl) {
+    inlinePixelCharacters += dataUrl.length;
+    if (inlinePixelCharacters > maxInlinePixelDataCharacters) throw Object.assign(new Error('本次采集的像素传输超过工作预算；页面原件保留，请分批选择'), { code: 'RESOURCE_BUDGET_REACHED' });
+    return dataUrl;
+  }
   const wholePage = options.mode === "whole";
   const originalScroll = { x: window.scrollX, y: window.scrollY };
+  let xSourceScroll = null;
 
   try {
     if (options.manualContentHtml) {
@@ -712,10 +729,11 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const declaredContent = (assetDetail ? [] : adapter.fields?.content || []).map(selector => document.querySelector(selector)).find(Boolean);
     if (declaredContent) maxMedia = Math.max(maxMedia, declaredContent.querySelectorAll("img,video").length);
     const pendingContentMedia = (options.feishuDocument ? 0 : await prepareArticleImages(declaredContent)) + (assetDetail ? 0 : await prepareContentMedia(adapter)) + (Number(options.downloads?.failures) || 0) + (Number(options.feishuDocument?.pendingMediaCount) || 0);
-    const canonicalUrl = safeHttpUrl(document.querySelector('link[rel="canonical"]')?.href || location.href);
+    const canonicalUrl = (adapter.id === "x" && xPostCanonicalUrl(location.href))
+      || safeHttpUrl(document.querySelector('link[rel="canonical"]')?.href || location.href);
     const metadata = collectMetadata();
     const structured = collectStructuredData();
-    const article = readArticle();
+    const article = adapter.id === "x" ? null : readArticle();
     const siteData = options.siteData && typeof options.siteData === "object" ? options.siteData : null;
     const pageSelection = options.mode === "whole" ? null : collectPageSelection();
     let contentRoot = !pageSelection
@@ -759,8 +777,24 @@ export async function collectPageCaptureSnapshot(options = {}) {
       };
     }
     if (adapter.id === "x" && !pageSelection) {
-      const posts = [...document.querySelectorAll('article')].filter(post => ownPostLinks(post).length);
-      const current = posts.find(post => ownPostLinks(post).some(link => xPostIdentity(link.href) === xPostIdentity(canonicalUrl)));
+      // Let the current render commit its thread nodes; decoding photos is
+      // unnecessary and would stall a long post whose media is far offscreen.
+      let thread = xThreadRoot();
+      const deadline = Date.now() + positiveInteger(options.mediaTimeoutMs, 1200);
+      let posts = [...thread.querySelectorAll('article')].filter(post => ownPostLinks(post).length);
+      let current = posts.find(post => ownPostLinks(post).some(link => xPostIdentity(link.href) === xPostIdentity(canonicalUrl)));
+      if (!current && xPostIdentity(canonicalUrl)) {
+        let scrollRoot = null;
+        for (let node = posts[0]?.parentElement || thread; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+          if (node.scrollHeight > node.clientHeight && /auto|scroll/u.test(getComputedStyle(node).overflowY)) { scrollRoot = node; break; }
+        }
+        xSourceScroll = { target: scrollRoot || window, top: scrollRoot ? scrollRoot.scrollTop : window.scrollY, left: scrollRoot ? scrollRoot.scrollLeft : window.scrollX };
+        xSourceScroll.target.scrollTo({ top: 0, behavior: "instant" });
+        current = await waitForXPost(xPostIdentity(canonicalUrl), deadline);
+        thread = xThreadRoot();
+      }
+      await waitForScrollRender(current || thread, isXContentMutation, Math.max(1, deadline - Date.now()));
+      posts = [...thread.querySelectorAll('article')].filter(post => ownPostLinks(post).length);
       if (current || !wholePage) {
         const roots = current ? [current] : posts;
         const candidates = roots.slice(0, maxCandidates).flatMap((root, index) => {
@@ -771,13 +805,11 @@ export async function collectPageCaptureSnapshot(options = {}) {
           return candidate ? [candidate] : [];
         });
         if (current && candidates[0]) {
-          const author = collectAdapterFields(current, adapter).handle;
-          candidates[0].supplements = posts.filter(post => post !== current && author && collectAdapterFields(post, adapter).handle === author)
-            .flatMap(post => {
-              const content = xPostContent(post);
-              const url = collectAdapterFields(post, adapter).canonicalUrl;
-              return content?.text && url ? [{ id: "supplement:" + hashText(url), text: content.text, sourceUrl: url, partial: content.partial }] : [];
-            });
+          candidates[0].supplements = await collectXAuthorThread(current, adapter, thread, canonicalUrl, deadline);
+          if (scanIncomplete) {
+            candidates[0].completeness = "partial";
+            candidates[0].sourceFacts.status = "partial";
+          }
         }
         return { id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id, candidates, capturedAt };
       }
@@ -875,7 +907,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (bodyCandidate && documentRoot) {
       bodyCandidate.region = markCaptureRegion(documentRoot, 0, bodyCandidate.contentText, bodyCandidate.media.length);
       if (bodyCandidate.region) bodyCandidate.region.contentTargets = collectContentTargets(documentRoot,
-        bodyCandidate.articleDocument?.blocks || [], bodyCandidate.media, positiveInteger(options.maxContentTargets, 200));
+        bodyCandidate.articleDocument?.blocks || [], bodyCandidate.media);
     }
     if (bodyCandidate) await attachViewportFallbacks([bodyCandidate]);
     const regionCandidates = !contentRoot && !siteData && !pageSelection && !["feed", "gallery"].includes(pageType)
@@ -905,7 +937,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
       candidates,
       capturedAt
     };
+  } catch (error) {
+    // Chrome may resolve executeScript with a null result when the injected
+    // promise rejects. Carry the failure explicitly across that boundary.
+    if (!options.serializeErrors) throw error;
+    return { captureError: { message: error?.message || "网页扫描失败；当前草稿已保留", code: error?.code || "PAGE_CAPTURE_FAILED" } };
   } finally {
+    if (xSourceScroll) xSourceScroll.target.scrollTo({ top: xSourceScroll.top, left: xSourceScroll.left, behavior: "instant" });
     if (wholePage) window.scrollTo(originalScroll.x, originalScroll.y);
     if (sessionId) globalThis.chrome?.runtime?.onMessage?.removeListener?.(handleCaptureMessage);
   }
@@ -984,23 +1022,53 @@ export async function collectPageCaptureSnapshot(options = {}) {
     }
   }
 
-  async function waitForScrollRender(root) {
-    if (typeof MutationObserver !== "function" || !root) return;
-    // Two paint frames allow scroll handlers to run; then require a quiet render interval.
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    if (cancelled) return;
+  async function waitForScrollRender(root, relevant = () => true, timeoutMs = positiveInteger(options.mediaTimeoutMs, 1200)) {
+    if (typeof MutationObserver !== "function" || !root || cancelled) return;
     await new Promise(resolve => {
       let quiet;
-      const finish = () => { clearTimeout(quiet); clearTimeout(deadline); observer.disconnect(); cancellation.signal.removeEventListener("abort", finish); resolve(); };
-      const changed = () => { clearTimeout(quiet); quiet = setTimeout(() => {
+      let frame = null;
+      let framesReady = document.hidden || typeof requestAnimationFrame !== "function";
+      const finish = () => {
+        clearTimeout(quiet); clearTimeout(deadline);
+        if (frame !== null) cancelAnimationFrame(frame);
+        observer.disconnect();
+        document.removeEventListener("visibilitychange", visibilityChanged);
+        cancellation.signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      const changed = records => {
+        if (!framesReady) return;
+        if (records?.length && !records.some(relevant)) return;
+        clearTimeout(quiet); quiet = setTimeout(() => {
         if (root.matches?.('[aria-busy="true"]') || root.querySelector?.('[aria-busy="true"]')) return;
+        // Timeline pagination matters; a buffering player is not a requirement
+        // for discovering the post's original-media URLs.
+        if (relevant === isXContentMutation && [...root.querySelectorAll('[role="progressbar"]')]
+          .some(node => {
+            const rect = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            return !node.closest('[data-testid="videoPlayer"],[data-testid="videoComponent"]')
+              && style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' && Number(style.opacity) !== 0
+              && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+          })) return;
         finish();
       }, 150); };
+      const visibilityChanged = () => {
+        if (!document.hidden || framesReady) return;
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null; framesReady = true; changed();
+      };
       const observer = new MutationObserver(changed);
       observer.observe(root, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["aria-busy"] });
-      const deadline = setTimeout(() => { scanIncomplete = true; finish(); }, positiveInteger(options.mediaTimeoutMs, 1200));
+      // Hidden comment tabs do not paint. The same deadline and cancellation
+      // cover visible paint frames as well as DOM settling if visibility changes.
+      const deadline = setTimeout(() => { scanIncomplete = true; finish(); }, timeoutMs);
       cancellation.signal.addEventListener("abort", finish, { once: true });
-      changed();
+      document.addEventListener("visibilitychange", visibilityChanged);
+      if (framesReady) changed();
+      else frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => { frame = null; framesReady = true; changed(); });
+      });
     });
   }
 
@@ -1263,6 +1331,33 @@ export async function collectPageCaptureSnapshot(options = {}) {
     } catch { return ""; }
   }
 
+  function xThreadRoot() {
+    // Conversation IDs may identify individual cells, not the whole timeline.
+    return document.querySelector('[data-testid="primaryColumn"]') || document.querySelector('main') || document.body;
+  }
+
+  function findXPost(postId) {
+    return [...xThreadRoot().querySelectorAll('article')].find(post => ownPostLinks(post).some(link => xPostIdentity(link.href) === postId));
+  }
+
+  function waitForXPost(postId, deadline) {
+    const sourceId = xPostIdentity(location.href);
+    return new Promise((resolve, reject) => {
+      const finish = (post, error) => { clearTimeout(timer); observer.disconnect(); cancellation.signal.removeEventListener('abort', abort); error ? reject(error) : resolve(post); };
+      const abort = () => finish(null, new Error('网页扫描已取消；当前草稿已保留'));
+      const check = () => {
+        if (xPostIdentity(location.href) !== sourceId) return finish(null, new Error('采集页面已改变，请重新扫描；当前草稿已保留'));
+        const post = findXPost(postId);
+        if (post) finish(post);
+      };
+      const observer = new MutationObserver(check);
+      const timer = setTimeout(() => finish(null, Object.assign(new Error('未能找到选中的 X 帖子，请检查页面加载后重新扫描；当前草稿已保留'), { code: 'X_POST_NOT_MOUNTED' })), Math.max(1, deadline - Date.now()));
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      cancellation.signal.addEventListener('abort', abort, { once: true });
+      if (cancelled) abort(); else check();
+    });
+  }
+
   function xPostCanonicalUrl(value) {
     if (!xPostIdentity(value)) return "";
     const url = new URL(value);
@@ -1284,29 +1379,148 @@ export async function collectPageCaptureSnapshot(options = {}) {
         || xPostTextNodes(root).some(node => node.contains(button)) && /^(?:Show more|显示更多|顯示更多)$/iu.test(button.textContent.trim())));
   }
 
+  function isXContentMutation(record) {
+    // Player clocks and reaction counters keep changing even when the post
+    // content is ready. Only text, post nodes and media affect capture.
+    const text = '[data-testid="tweetText"],div[dir="auto"].whitespace-pre-wrap';
+    const content = `article,${text},video,[data-testid="tweetPhoto"],a[href*="/photo/"] img,[role="progressbar"],[aria-busy]`;
+    if (record.type === 'attributes') return true;
+    const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+    if (target?.closest(text)) return true;
+    return [...record.addedNodes, ...record.removedNodes].some(node => node.nodeType === 1
+      && (node.matches(content) || node.querySelector(content)));
+  }
+
+  async function collectXAuthorThread(current, adapter, thread, canonicalUrl, deadline) {
+    const author = collectAdapterFields(current, adapter).handle.toLocaleLowerCase("en-US");
+    if (!author) return [];
+    const postId = xPostIdentity(canonicalUrl);
+    const parts = new Map();
+    let ended = false;
+    let lastOwn = current;
+    let scrollRoot = null;
+    for (let node = current.parentElement; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      if (node.scrollHeight > node.clientHeight && /auto|scroll/u.test(getComputedStyle(node).overflowY)) { scrollRoot = node; break; }
+    }
+    const scroller = scrollRoot || window;
+    const start = { top: scrollRoot ? scrollRoot.scrollTop : window.scrollY, left: scrollRoot ? scrollRoot.scrollLeft : window.scrollX };
+    const collect = () => {
+      for (const post of thread.querySelectorAll('article')) {
+        const fields = collectAdapterFields(post, adapter);
+        const id = xPostIdentity(fields.canonicalUrl);
+        // Ancestors on a reply page are not supplements. IDs retain ordering
+        // when X recycles the earlier DOM nodes during scrolling.
+        if (!id || BigInt(id) < BigInt(postId)) continue;
+        if (id === postId) { lastOwn = post; continue; }
+        if (fields.handle.toLocaleLowerCase("en-US") !== author) { ended = true; break; }
+        lastOwn = post;
+        const content = xPostContent(post);
+        if (content && (content.text || content.media.length)) parts.set(id, xSupplementContent(content, fields.canonicalUrl));
+      }
+    };
+    let stableRounds = 0;
+    try {
+      collect();
+      while (!ended && !cancelled && Date.now() < deadline && stableRounds < 3) {
+        if (xPostIdentity(location.href) !== postId) throw new Error("采集页面已改变，请重新扫描；当前草稿已保留");
+        const position = scrollRoot ? scrollRoot.scrollTop : window.scrollY;
+        const viewport = Math.max(1, scrollRoot ? scrollRoot.clientHeight : window.innerHeight);
+        const height = scrollRoot ? scrollRoot.scrollHeight : Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        const count = parts.size;
+        const tail = lastOwn?.isConnected ? lastOwn.getBoundingClientRect().bottom - (scrollRoot?.getBoundingClientRect().top || 0) : 0;
+        // Visit the end of the already captured author segment rather than
+        // scrolling through every screen of a long prompt or decoding photos.
+        const nextTop = Math.min(Math.max(0, height - viewport), position + Math.max(Math.round(viewport * 0.85), tail - Math.round(viewport * 0.15)));
+        scroller.scrollTo({ top: nextTop, behavior: "instant" });
+        await waitForScrollRender(thread, isXContentMutation, Math.max(1, deadline - Date.now()));
+        collect();
+        const nextHeight = scrollRoot ? scrollRoot.scrollHeight : Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        const nextPosition = scrollRoot ? scrollRoot.scrollTop : window.scrollY;
+        stableRounds = count === parts.size && position === nextPosition && nextPosition + viewport >= nextHeight ? stableRounds + 1 : 0;
+      }
+      if (cancelled || !ended && stableRounds < 3) scanIncomplete = true;
+      return [...parts.values()];
+    } finally {
+      scroller.scrollTo({ ...start, behavior: "instant" });
+    }
+  }
+
   async function readXSupplement(sourceUrl) {
     const postId = xPostIdentity(sourceUrl);
-    if (!postId || xPostIdentity(location.href) !== postId) throw new Error("评论页面已改变，请重新选择评论");
-    return new Promise((resolve, reject) => {
-      const clicked = new WeakSet();
-      const finish = (value, error) => { observer.disconnect(); clearTimeout(timer); error ? reject(error) : resolve(value); };
-      const check = () => {
-        if (xPostIdentity(location.href) !== postId) return finish(null, new Error("评论页面已改变，请重新选择评论"));
-        const root = [...document.querySelectorAll('article')].find(post => ownPostLinks(post).some(link => xPostIdentity(link.href) === postId));
-        if (!root) return;
-        const buttons = xExpandButtons(root);
-        if (buttons.length) {
-          for (const button of buttons) if (!clicked.has(button)) { clicked.add(button); button.click(); }
-          return;
+    const sourceId = xPostIdentity(location.href);
+    if (!postId || !sourceId || (options.xSourceUrl && location.href !== options.xSourceUrl)
+      || (!options.xSupplementInThread && sourceId !== postId)) throw new Error("评论页面已改变，请重新选择评论；当前草稿已保留");
+    const deadline = Date.now() + positiveInteger(options.mediaTimeoutMs, 1200);
+    let sourceScroll = null;
+    try {
+      if (options.xSupplementInThread) {
+        let scrollRoot = null;
+        for (let node = findXPost(sourceId)?.parentElement || xThreadRoot(); node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+          if (node.scrollHeight > node.clientHeight && /auto|scroll/u.test(getComputedStyle(node).overflowY)) { scrollRoot = node; break; }
         }
-        const content = xPostContent(root, { textOnly: true, includeQuotes: false });
-        if (content?.text) finish({ text: content.text, sourceUrl, partial: false });
-      };
-      const observer = new MutationObserver(check);
-      const timer = setTimeout(() => finish(null, new Error("未能取得评论全文，请检查登录、网络或原评论是否仍可展开；当前草稿已保留")), options.mediaTimeoutMs);
-      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-      check();
-    });
+        sourceScroll = { target: scrollRoot || window, top: scrollRoot ? scrollRoot.scrollTop : window.scrollY, left: scrollRoot ? scrollRoot.scrollLeft : window.scrollX };
+        if (!findXPost(postId)) {
+          sourceScroll.target.scrollTo({ top: 0, behavior: 'instant' });
+          let stableRounds = 0;
+          while (!findXPost(postId) && !cancelled && Date.now() < deadline && stableRounds < 3) {
+            if (xPostIdentity(location.href) !== sourceId) throw new Error('评论页面已改变，请重新选择评论；当前草稿已保留');
+            await waitForScrollRender(xThreadRoot(), isXContentMutation, Math.max(1, deadline - Date.now()));
+            if (findXPost(postId)) break;
+            const position = scrollRoot ? scrollRoot.scrollTop : window.scrollY;
+            const viewport = Math.max(1, scrollRoot ? scrollRoot.clientHeight : innerHeight);
+            const height = scrollRoot ? scrollRoot.scrollHeight : Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+            sourceScroll.target.scrollTo({ top: Math.min(Math.max(0, height - viewport), position + Math.round(viewport * 0.85)), behavior: 'instant' });
+            stableRounds = position === (scrollRoot ? scrollRoot.scrollTop : window.scrollY) ? stableRounds + 1 : 0;
+          }
+          if (!findXPost(postId)) await waitForXPost(postId, deadline);
+        }
+      }
+      // Text and its player can arrive in separate React commits.
+      const selectedPost = findXPost(postId) || await waitForXPost(postId, deadline);
+      await waitForScrollRender(selectedPost, isXContentMutation, Math.max(1, deadline - Date.now()));
+      return await new Promise((resolve, reject) => {
+        const clicked = new WeakSet();
+        let settling = false;
+        let finished = false;
+        const finish = (value, error) => { if (finished) return; finished = true; observer.disconnect(); clearTimeout(timer); cancellation.signal.removeEventListener("abort", abort); error ? reject(error) : resolve(value); };
+        const abort = () => finish(null, new Error("评论读取已取消；当前草稿已保留"));
+        const check = () => {
+          if (finished) return;
+          if (xPostIdentity(location.href) !== sourceId) return finish(null, new Error("评论页面已改变，请重新选择评论；当前草稿已保留"));
+          const root = findXPost(postId);
+          if (!root) return;
+          const buttons = xExpandButtons(root);
+          if (buttons.length) {
+            for (const button of buttons) if (!clicked.has(button)) { clicked.add(button); button.click(); }
+            return;
+          }
+          if (!settling) {
+            settling = true;
+            void waitForScrollRender(root, isXContentMutation, Math.max(1, deadline - Date.now())).then(() => {
+              if (finished) return;
+              if (!root.isConnected) { settling = false; check(); return; }
+              const content = xPostContent(root, { includeQuotes: false });
+              if (content && !content.partial && (content.text || content.media.length)) finish(xSupplementContent(content, sourceUrl));
+              else { settling = false; check(); }
+            });
+          }
+        };
+        const observer = new MutationObserver(check);
+        const timer = setTimeout(() => finish(null, new Error("未能取得评论全文，请检查登录、网络或原评论是否仍可展开；当前草稿已保留")), Math.max(1, deadline - Date.now()));
+        observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+        cancellation.signal.addEventListener("abort", abort, { once: true });
+        if (cancelled) abort(); else check();
+      });
+    } finally {
+      if (sourceScroll) sourceScroll.target.scrollTo({ top: sourceScroll.top, left: sourceScroll.left, behavior: 'instant' });
+    }
+  }
+
+  function xSupplementContent(content, sourceUrl) {
+    const id = "supplement:" + hashText(sourceUrl);
+    return { id, text: content.text, sourceUrl, partial: content.partial,
+      media: content.media.filter(item => !item.isQuoted).map(item => ({ ...item, id: `${id}:${item.id}`,
+        originalWorkUrl: sourceUrl, quotedPostUrl: "" })) };
   }
 
   function copyPostInline(source, target) {
@@ -1332,7 +1546,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function xPostContent(root, { textOnly = false, includeQuotes = true } = {}) {
     const texts = xPostTextNodes(root);
-    if (!texts.length && !root.querySelector("video, [data-testid=tweetPhoto]")) return null;
+    if (!texts.length && !root.querySelector('video, [data-testid=tweetPhoto],a[href*="/photo/"] img')) return null;
     const fragment = document.createElement("div");
     const content = [];
     for (const node of texts) {
@@ -1455,8 +1669,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       region.contentTargets = collectContentTargets(
         root,
         article.blocks,
-        media,
-        positiveInteger(options.maxContentTargets, 200)
+        media
       );
     }
     const placed = reconcileArticlePlacement({ version: 1, blocks: article.blocks }, media, region?.contentTargets || []);
@@ -1646,7 +1859,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return false;
   }
 
-  function collectContentTargets(root, articleBlocks, media, limit) {
+  function collectContentTargets(root, articleBlocks, media) {
     const semanticSelector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,code[data-language],table,img,video,iframe,a[href]";
     const pathFor = (element) => {
       const parts = [];
@@ -1743,8 +1956,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       }];
     });
     return [...leaves.map(({ element, ...target }) => target), ...groups]
-      .sort((left, right) => left.sourceOrder - right.sourceOrder || (left.kind === "group" ? 1 : -1))
-      .slice(0, limit);
+      .sort((left, right) => left.sourceOrder - right.sourceOrder || (left.kind === "group" ? 1 : -1));
   }
 
   function contentRootHtml(root, parts = []) {
@@ -2183,11 +2395,14 @@ export async function collectPageCaptureSnapshot(options = {}) {
       if (element.matches?.("img") && playerForCompanionPoster(element, root)) continue;
       if (element instanceof HTMLCanvasElement) {
         try {
-          const dataUrl = element.toDataURL("image/webp", 0.92);
+          const maxPixels = Number(options.maxCanvasPixels) || maxInlinePixelDataCharacters / 8;
+          if (element.width * element.height > maxPixels) throw Object.assign(new Error('画布超过本次像素读取预算；页面原件保留'), { code: 'RESOURCE_BUDGET_REACHED' });
+          const dataUrl = reserveInlinePixels(element.toDataURL("image/webp", 0.92));
           if (dataUrl.length <= maxInlinePixelDataCharacters) {
             media.push({ id: `canvas:${elementIndex}:${element.width}x${element.height}`, kind: "image", url: "", dataUrl, posterUrl: "", alt: cleanText(element.getAttribute("aria-label")), width: element.width, height: element.height, captureMethod: "pixel-fallback" });
           }
-        } catch {
+        } catch (error) {
+          if (error.code === "RESOURCE_BUDGET_REACHED") throw error;
         }
         if (media.length >= limit) break;
         continue;
@@ -2361,8 +2576,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
       canvas.height = height;
       canvas.getContext("2d", { alpha: false })?.drawImage(image, 0, 0, width, height);
       const dataUrl = canvas.toDataURL("image/webp", 0.92);
-      return dataUrl.length <= maxInlinePixelDataCharacters ? dataUrl : "";
-    } catch {
+      return reserveInlinePixels(dataUrl);
+    } catch (error) {
+      if (error.code === "RESOURCE_BUDGET_REACHED") throw error;
       return "";
     }
   }
@@ -2492,7 +2708,11 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const postVideo = element.matches("video") && Boolean(xPostMediaUrl(element));
     if (!postPhoto && !postVideo && element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
     const rect = element.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || rect.width < 48 || rect.height < 48) return true;
+    // X may defer intrinsic dimensions until a photo is opened. Its owned
+    // photo link plus a real source identifies the asset without decoding it.
+    const deferredPostPhoto = postPhoto && element.matches("img") && collectImageVariants(element).length > 0;
+    const deferredPostVideo = postVideo && Boolean(safeHttpUrl(element.poster) || collectVideoVariants(element).length);
+    if (!deferredPostPhoto && !deferredPostVideo && (rect.width < 48 || rect.height < 48)) return true;
     const style = typeof globalThis.getComputedStyle === "function" ? globalThis.getComputedStyle(element) : null;
     if (style?.display === "none" || style?.visibility === "hidden" || !postPhoto && Number(style?.opacity) === 0) return true;
     const description = `${element.alt || ""} ${element.className || ""} ${element.id || ""} ${element.getAttribute?.("aria-label") || ""}`.toLowerCase();
@@ -2603,7 +2823,7 @@ function uniqueMedia(values) {
       filename: clean(value.filename),
       mimeType: clean(value.mimeType).toLocaleLowerCase("en-US"),
       ...(["document", "attachment"].includes(kind) && /^data:(?:text\/[a-z0-9.+-]+|application\/(?:pdf|rtf|zip|gzip|x-gzip|octet-stream))(?:;charset=[a-z0-9-]+)?;base64,[a-z0-9+/=]+$/i.test(value.downloadDataUrl || "")
-        && value.downloadDataUrl.length <= PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes ? { downloadDataUrl: value.downloadDataUrl } : {}),
+        && value.downloadDataUrl.length <= LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes ? { downloadDataUrl: value.downloadDataUrl } : {}),
       sourceTitle: cleanCaptureImageDescription(value.sourceTitle),
       sourceAuthor: clean(value.sourceAuthor),
       originalWorkUrl: safeUrl(value.originalWorkUrl),

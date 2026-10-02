@@ -156,17 +156,14 @@ function setupCompactToolbar() {
   summary.append(createUiIcon("ellipsis"));
   const panel = document.createElement("div");
   panel.className = "toolbar-more-panel";
-  const context = document.createElement("div");
-  context.className = "toolbar-context";
   const copy = heading.querySelector(".gallery-heading-copy");
   const breadcrumb = heading.querySelector(".browse-location");
   const count = document.getElementById("result-count");
   menu.append(summary, panel); heading.append(menu);
-  const compact = matchMedia("(max-width: 1100px)");
+  const compact = matchMedia("(max-width: 640px)");
   function apply() {
     if (compact.matches) {
-      context.append(breadcrumb, count);
-      panel.append(context, controls, add, compose);
+      panel.append(add, compose);
     }
     else {
       copy.prepend(breadcrumb); copy.append(count);

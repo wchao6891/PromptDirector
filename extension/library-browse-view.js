@@ -1,5 +1,5 @@
 import { createUiIcon } from './ui-icons.js';
-import { caseViewProjection } from './library-view.js';
+import { LIST_COLUMNS, formatListBytes } from './library-list.js';
 
 // Navigation changes the scope; the existing case renderer owns filtering,
 // selection and details in every view.
@@ -22,7 +22,7 @@ export function renderBrowseNavigation({ breadcrumb, path, selectedId, rootLabel
   }
 }
 
-export function appendCaseRowDetails(card, entry, { typeLabel, locale }) {
+export function appendCaseRowDetails(card, entry, { metadata, locale }) {
   if (!card.querySelector('img')) {
     card.classList.add('has-row-placeholder');
     const placeholder = document.createElement('span');
@@ -32,19 +32,19 @@ export function appendCaseRowDetails(card, entry, { typeLabel, locale }) {
   }
   const details = document.createElement('div');
   details.className = 'case-row-details';
-  const title = document.createElement('strong');
-  title.className = 'case-row-title';
-  title.textContent = entry.title;
-  const type = document.createElement('span');
-  type.className = 'case-row-type';
-  type.textContent = typeLabel;
-  const date = document.createElement('time');
-  date.className = 'case-row-date';
-  const saved = caseViewProjection(entry).addedAt;
-  if (saved) {
-    date.dateTime = saved;
-    date.textContent = new Date(saved).toLocaleDateString(locale);
+  for (const [key] of LIST_COLUMNS) {
+    const cell = document.createElement(key === 'title' ? 'strong' : key === 'added' ? 'time' : 'span');
+    cell.className = `case-row-${key}`;
+    cell.dataset.column = key;
+    const value = metadata[key];
+    if (key === 'added' && value) {
+      cell.dateTime = value;
+      cell.textContent = new Date(value).toLocaleDateString(locale);
+    } else if (key === 'size') {
+      cell.textContent = metadata.size == null && metadata.knownBytes ? `≥ ${formatListBytes(metadata.knownBytes, locale)}` : formatListBytes(value, locale);
+    } else cell.textContent = value === '' || value == null ? '—' : String(value);
+    cell.title = cell.textContent;
+    details.append(cell);
   }
-  details.append(title, type, date);
   card.append(details);
 }

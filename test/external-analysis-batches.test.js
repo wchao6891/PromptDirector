@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createExternalAnalysisBatches} from '../extension/external-analysis-batches.js';
-import {caseRevision} from '../extension/case-operations.js';
+import {caseRevision, planCaseOperation, createCaseOperations} from '../extension/case-operations.js';
+import {selectLibraryPackage, parseLibraryPackage, mergeLibraryPackage} from '../extension/library-package.js';
+import {moveMediaToTrash, restoreTrashItems} from '../extension/trash.js';
+import {caseAnalysisCoverage} from '../extension/analysis-coverage.js';
 import {createFixedFacetCatalog} from '../extension/tag-taxonomy.js';
 import {sha256Blob} from '../extension/blob-digest.js';
 import {normalizeEntryMedia} from '../extension/media.js';
@@ -226,4 +229,131 @@ test('taxonomy pagination refuses changed taxonomy even when batch status is unc
  const canceled=await f.call('manage_analysis_batch',{action:'cancel',batchId:'batch',requestId:'stop',expectedRevision:before.revision,epoch:before.epoch});
  assert.equal(canceled.status,'canceled');assert.equal(canceled.saved,1);
  await assert.rejects(f.submit(before.items[1],{result:tags}),{code:'analysis_batch_canceled'});
+});
+
+const imageResult = assetId => ({assetId,reconstructionPrompt:`完整画面 ${assetId}`,tags:[{g:'scene.place',t:'摄影棚'}]});
+const videoResult = assetId => ({assetId,reconstructionPrompt:'视频完整逆推，角色向镜头奔跑',tags:[
+ {g:'scene.place',t:'摄影棚'},{g:'style.render',t:'电影写实'},{g:'camera.shot',t:'近景'},{g:'light.direction',t:'逆光'}
+],uncertainties:['真实焦距无法确认'],analysisScope:'visual'});
+const groupResult = ids => ({assetIds:ids,imageRoles:ids.map((assetId,i)=>({assetId,role:`角色 ${i}`})),
+ sharedVisualSystem:['暖色逆光'],differences:['不同机位'],continuity:['同一角色'],compositionRules:['中心构图'],reusablePrompt:'两张画面中的角色与背景保持一致'});
+
+async function fullFixture() {
+ const f=setup(1);f.blobs.set('img2',new Blob(['second image']));f.blobs.set('vid',new Blob(['video original']));
+ f.data.entries[0]=normalizeEntryMedia({...f.data.entries[0],mediaAssets:[...f.data.entries[0].mediaAssets,
+  {id:'img2',kind:'image',storageMode:'managed'},{id:'vid',kind:'video',storageMode:'managed',durationMs:10000}]});
+ const input=await f.item('c0',true);
+ for(const assetId of ['img2','vid'])input.assets.push({assetId,sha256:await sha256Blob(f.blobs.get(assetId)),coverage:assetId==='vid'?'仅查看0至2秒画面，未听音频':'完整原图'});
+ await f.create([input]);return f;
+}
+
+const completeResult = () => ({imageAnalyses:[imageResult('img'),imageResult('img2')],videoAnalyses:[videoResult('vid')],visualSetAnalyses:[groupResult(['img','img2'])]});
+
+test('complete image/video/set analysis survives native normalization with exact scope, manual originals and receipt replay',async()=>{
+ const f=await fullFixture(),row=(await f.read()).items[0];
+ const saved=await f.submit(row,{model:'host-model',result:completeResult()});assert.equal(saved.item.state,'saved',JSON.stringify(saved));
+ const entry=normalizeEntryMedia(f.data.entries[0]);
+ assert.equal(entry.text,'人工正文');assert.deepEqual(entry.customLabels,['人工标签']);assert.equal(entry.mediaPrompts[0].text,'真实原词');
+ for(const id of ['img','img2']) {
+  const analysis=entry.mediaAssets.find(a=>a.id===id).visionAnalysis;
+  assert.equal(analysis.providerType,'external');assert.equal(analysis.model,'host-model');
+  assert.equal(analysis.imageFingerprint,await sha256Blob(f.blobs.get(id)));assert.equal(analysis.inputEvidence.assets[0].assetId,id);
+  assert.equal(analysis.inputEvidence.batchId,'batch');assert.equal(analysis.inputEvidence.attemptId,row.attemptId);
+ }
+ assert.equal(entry.videoAnalyses[0].reconstructionPrompt,videoResult('vid').reconstructionPrompt);
+ assert.deepEqual(entry.videoAnalyses[0].uncertainties,['真实焦距无法确认']);
+ assert.equal(entry.videoAnalyses[0].inputEvidence.assets[0].coverage,'仅查看0至2秒画面，未听音频');
+ assert.equal(entry.videoAnalyses[0].analysisScope,'visual');assert.equal(entry.videoAnalyses[0].provider,'external');
+ assert.deepEqual(entry.visualSetAnalyses[0].imageRoles,groupResult(['img','img2']).imageRoles);
+ assert.deepEqual(entry.visualSetAnalyses[0].continuity,['同一角色']);assert.equal(entry.visualSetAnalyses[0].reusablePrompt,groupResult(['img','img2']).reusablePrompt);
+ assert.deepEqual(f.data.entries[0],entry);
+ assert.equal(saved.item.savedRevision,await caseRevision(f.data,entry));
+ const before=f.commits;assert((await f.submit(row,{model:'host-model',result:completeResult()})).replayed);assert.equal(f.commits,before);
+});
+
+test('complete result is atomic when a later video is invalid, a group is incomplete or an original changed',async()=>{
+ for(const failure of ['tags','roles','original','scope','missing-image']) {
+  const f=await fullFixture(),before=structuredClone(f.data.entries),result=completeResult();
+  if(failure==='tags')result.videoAnalyses[0].tags[3]={g:'not-a-group',t:'无效'};
+  if(failure==='roles')result.visualSetAnalyses[0].imageRoles.pop();
+  if(failure==='original')f.blobs.set('vid',new Blob(['changed']));
+  if(failure==='scope')result.imageAnalyses[0].assetId='vid';
+  if(failure==='missing-image')result.imageAnalyses.pop();
+  const saved=await f.submit((await f.read()).items[0],{result});
+  assert.equal(saved.item.state,'failed',failure);assert.deepEqual(f.data.entries,before,failure);
+ }
+});
+
+test('complete analyses reject duplicates and saved or manually edited prompts rather than bypass existing protections',async()=>{
+ for(const failure of ['duplicate','saved','edited-image','edited-video']) {
+  const f=await fullFixture(),result=completeResult();
+  if(failure==='duplicate')result.mediaPrompts=[{assetId:'img',text:'另一份'}];
+  if(failure==='saved')f.data.entries[0].mediaPrompts.push({assetId:'img',source:'ai-suggestion',text:'先前保存的词'});
+  if(failure==='edited-image')f.data.entries[0].mediaAssets[0].visionAnalysis={reconstructionPrompt:'人工改过',userEdited:true};
+  if(failure==='edited-video')f.data.entries[0].videoAnalyses=[{assetId:'vid',userEdited:true}];
+  const row=(await f.read()).items[0];row.expectedRevision=await caseRevision(f.data,f.data.entries[0]);
+  // Register the edited state as fresh input: protection must hold even without a version conflict.
+  f.data['externalAnalysis:batch:item:0'].expectedRevision=row.expectedRevision;
+  const before=structuredClone(f.data.entries),saved=await f.submit(row,{result});
+  assert.equal(saved.item.state,'failed',failure);assert.equal(saved.item.error.code,failure==='duplicate'?'invalid_input':'manual_analysis_conflict');
+  assert.deepEqual(f.data.entries,before);
+ }
+});
+
+test('portable analysis data keeps all set fields and remaps nested media identities on import collisions',async()=>{
+ const f=await fullFixture();assert.equal((await f.submit((await f.read()).items[0],{result:completeResult()})).item.state,'saved');
+ const selected=selectLibraryPackage({entries:f.data.entries,facetCatalog:f.data.facetCatalog},['c0']);
+ const portable={...selected,format:'prompt-case-library',version:3};
+ portable.entries[0].mediaAssets=portable.entries[0].mediaAssets.map(asset=>({...asset,assetPath:`${asset.kind==='video'?'videos':'images'}/${asset.id}.${asset.kind==='video'?'mp4':'png'}`,mimeType:asset.kind==='video'?'video/mp4':'image/png'}));
+ const files=new Map(portable.entries[0].mediaAssets.map(asset=>[asset.assetPath,new Blob([f.blobs.get(asset.id)],{type:asset.mimeType})]));
+ const parsed=parseLibraryPackage(portable,files,{skipMediaByteValidation:true});
+ assert.deepEqual(parsed.entries[0].visualSetAnalyses[0].imageRoles,f.data.entries[0].visualSetAnalyses[0].imageRoles);
+ assert.equal(parsed.entries[0].videoAnalyses[0].inputEvidence.assets[0].coverage,'仅查看0至2秒画面，未听音频');
+ const current={entries:[normalizeEntryMedia({id:'local',title:'本地案例',text:'独立人工正文',mediaAssets:[{id:'img',kind:'image',storageMode:'managed',contentHash:'different'}]})],facetCatalog:createFixedFacetCatalog()};
+ const merged=mergeLibraryPackage(current,portable),entry=merged.state.entries.find(e=>e.id==='c0');
+ const changed=entry.mediaAssets.find(a=>a.id!=='img2'&&a.kind==='image');assert.notEqual(changed.id,'img');
+ assert.equal(entry.visualSetAnalyses[0].imageRoles[0].assetId,changed.id);
+ assert.equal(changed.visionAnalysis.inputEvidence.assets[0].assetId,changed.id);
+ assert.equal(entry.visualSetAnalyses[0].inputEvidence.assets[0].assetId,changed.id);
+ assert.equal(changed.visionAnalysis.inputEvidence.assets[0].sha256,await sha256Blob(f.blobs.get('img')));
+ assert.equal(merged.state.entries[0].text,'独立人工正文');
+});
+
+test('complete group follows a media move or split; partial group retains report as invalidated history',async()=>{
+ for(const [action,ids] of [['move_media',['img','img2']],['split_media',['img','img2']],['split_media',['img']]]) {
+  const f=await fullFixture();assert.equal((await f.submit((await f.read()).items[0],{result:completeResult()})).item.state,'saved');
+  f.data.entries.push(normalizeEntryMedia({id:'target',title:'目标',text:'目标人工正文'}));
+  const base={requestId:'organize',action,caseId:'c0',expectedRevision:await caseRevision(f.data,f.data.entries[0])};
+  const input=action==='move_media'?{...base,assetIds:ids,targetCaseId:'target',targetRevision:await caseRevision(f.data,f.data.entries[1])}:
+    {...base,groups:[{assetIds:ids,title:'拆分案例',text:'独立说明',sourceUrl:''}]};
+  const plan=await planCaseOperation(f.data,'organize_case',input,{idFactory:()=> 'split'});
+  const source=plan.update.entries.find(e=>e.id==='c0'),target=plan.update.entries.find(e=>e.id===(action==='move_media'?'target':'split'));
+  assert.equal(source.visualSetAnalyses[0].invalidated,true);assert.equal(source.visualSetAnalyses[0].text,groupResult(ids).reusablePrompt);
+  assert.equal(target.visualSetAnalyses.length,ids.length===2?1:0);
+  assert.equal(target.mediaAssets[0].visionAnalysis.reconstructionPrompt,imageResult('img').reconstructionPrompt);
+  assert.equal(source.videoAnalyses[0].reconstructionPrompt,videoResult('vid').reconstructionPrompt);
+ }
+});
+
+test('media trash and restore preserve structured group history without pretending partial inputs are complete',async()=>{
+ const f=await fullFixture();assert.equal((await f.submit((await f.read()).items[0],{result:completeResult()})).item.state,'saved');
+ const removed=moveMediaToTrash(f.data,'c0',['img']);assert.equal(removed.entries[0].visualSetAnalyses[0].invalidated,true);
+ const restored=restoreTrashItems(removed,removed.movedItemIds);assert.equal(restored.restoredItemIds.length,1);
+ assert.equal(restored.entries[0].mediaAssets.find(a=>a.id==='img').visionAnalysis.reconstructionPrompt,imageResult('img').reconstructionPrompt);
+ assert.deepEqual(restored.entries[0].visualSetAnalyses[0].imageRoles,groupResult(['img','img2']).imageRoles);
+ assert.equal(restored.entries[0].visualSetAnalyses[0].text,groupResult(['img','img2']).reusablePrompt);
+});
+
+test('coverage read distinguishes saved observations, unrecorded media and unknown legacy scope without re-reading originals',async()=>{
+ const f=await fullFixture();assert.equal((await f.submit((await f.read()).items[0],{result:completeResult()})).item.state,'saved');
+ f.data.entries[0].mediaAssets.push({id:'unknown',kind:'image'},{id:'legacy',kind:'image',visionAnalysis:{reconstructionPrompt:'旧版结果',inputEvidence:{assets:{unrecorded:true}}}},{id:'poster',kind:'image',usage:'poster'});
+ const api=createCaseOperations({loadState:async()=>f.data,enqueue:fn=>fn()});
+ const read=await api.read({caseId:'c0',part:'analysis_coverage'}),coverage=JSON.parse(read.content);
+ assert.equal(coverage.totalMedia,5);assert.equal(coverage.mediaWithRecordedScope,3);assert.equal(coverage.currentBytesVerified,false);
+ assert.equal(coverage.media.find(a=>a.assetId==='unknown').state,'unrecorded');
+ assert.equal(coverage.media.find(a=>a.assetId==='legacy').analyses[0].coverage,null);
+ assert.equal(coverage.media.find(a=>a.assetId==='vid').analyses[0].coverage,'仅查看0至2秒画面，未听音频');
+ assert.equal(coverage.media.find(a=>a.assetId==='vid').analyses[0].verification,'verified_at_save');
+ const first=await api.read({caseId:'c0',part:'analysis_coverage',length:31});f.data.entries[0].text='后来编辑';
+ await assert.rejects(api.read({caseId:'c0',part:'analysis_coverage',offset:first.nextOffset,expectedRevision:first.revision}),{code:'case_conflict'});
 });

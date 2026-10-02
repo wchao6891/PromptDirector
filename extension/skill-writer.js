@@ -1,5 +1,5 @@
 import { createCreativeSkill, normalizeCreativeSkillsState, saveCreativeSkillVersion, restoreCreativeSkillVersion,
-  skillPackageAssetIds, currentCreativeSkillVersion } from './creative-skills.js';
+  skillPackageAssetIds, currentCreativeSkillVersion, protectedSkillVersionIds } from './creative-skills.js';
 import { parseSkillFiles } from './creative-skill-package.js';
 import { SKILL_WRITE_SPECS } from './skill-operation-specs.js';
 import { validate } from './case-operation-specs.js';
@@ -23,7 +23,8 @@ export function createSkillWriter({ storage, transfers, readBlob, commit, enqueu
     validate(spec.parameters, input, name);
     const key = `skillOperation:${input.requestId}`;
     const fingerprint = await skillRevision({ name, input });
-    const stored = await storage.get(['creativeSkills', key]);
+    const stored = await storage.get(['creativeSkills', 'composerSessions', 'creativeRuns', 'creativeJobs', key]);
+    const historyOptions = { protectedVersionIds: protectedSkillVersionIds(stored) };
     if (stored[key]) {
       if (stored[key].fingerprint !== fingerprint) fail('request_conflict', '此请求编号已用于另一项Skill操作。');
       return { ...stored[key].result, replayed: true };
@@ -44,11 +45,11 @@ export function createSkillWriter({ storage, transfers, readBlob, commit, enqueu
       if (input.mode !== 'text') {
         if (!files) fail('skill_files_unrecorded', '这个旧版本没有包文件记录；只能在用户明确要求时恢复文字。');
         for (const file of files) await verifyFile(file);
-        changed = restoreCreativeSkillVersion(state, current.id, target.id);
+        changed = restoreCreativeSkillVersion(state, current.id, target.id, historyOptions);
       } else changed = saveCreativeSkillVersion(state, current.id, {
         skillMarkdown: target.skillMarkdown, references: target.references, provenanceMarkdown: target.provenanceMarkdown,
         source: target.source, reason: 'restored'
-      });
+      }, historyOptions);
     } else {
       let values = input;
       if (input.files) {
@@ -88,19 +89,19 @@ export function createSkillWriter({ storage, transfers, readBlob, commit, enqueu
         }
         if (new Set(input.references?.map(ref=>ref.path)).size !== (input.references?.length ?? 0)) fail('invalid_input', '参考路径不能重复。');
       }
-      changed = current ? saveCreativeSkillVersion(state, current.id, values) : createCreativeSkill(state, values);
+      changed = current ? saveCreativeSkillVersion(state, current.id, values, historyOptions) : createCreativeSkill(state, values);
     }
     const version = currentCreativeSkillVersion(changed.skill);
     const result = { ok: true, requestId: input.requestId, skillId: changed.skill.id, callName: changed.skill.callName,
       versionId: version.id, revision: await skillRevision(changed.skill),
       fileCount: changed.skill.packageFiles.length, restoredScope: name === 'restore_skill' ? input.mode ?? 'complete' : undefined };
     const update = { creativeSkills: changed.state, [key]: { fingerprint, result } };
-    for (const record of records) update[transfers.key(record.id)] = { ...record, state: 'committed', skillId: changed.skill.id };
+    for (const record of records) update[transfers.key(record.id)] = { ...record, prepared: null, chunks: 0, state: 'committed', skillId: changed.skill.id };
     // Uploaded files stay staged until this single commit publishes both the
     // Skill and its receipt. An ambiguous error never deletes referenced bytes.
     await commit(update);
-    const retained = new Set(skillPackageAssetIds(changed.skill));
-    const expired = current ? skillPackageAssetIds(current).filter(id => !retained.has(id)) : [];
+    const retained = new Set(changed.state.items.flatMap(skillPackageAssetIds));
+    const expired = state.items.flatMap(skillPackageAssetIds).filter(id => !retained.has(id));
     if (expired.length) {
       try { await cleanup(expired); }
       catch { return { ...result, warnings: ['Skill已保存；不再引用的旧文件清理未完成。'] }; }

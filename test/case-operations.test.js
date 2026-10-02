@@ -306,3 +306,19 @@ test('invalid keyframes, reversed time ranges and colliding annotations do not s
     action: 'move_media', assetIds: ['b'], targetCaseId: 'other', targetRevision: (await run.api.read({ caseId: 'other' })).revision }), { code: 'annotation_conflict' });
   assert.equal(run.commits, 0);
 });
+
+test('shared remove_tags validates reviewed version, commits undo atomically and replays without a second removal', async () => {
+  const run=service(combinationLibrary());
+  const combined=await run.api.execute('organize_case',await combineInput(run));
+  const caseId=combined.cases[0].caseId;
+  const input={requestId:'remove-tags',caseId,expectedRevision:combined.cases[0].revision,action:'remove_tags',customLabels:['导演选择']};
+  const result=await run.api.execute('organize_case',input);
+  assert.equal(result.updatedCount,1);assert.equal(result.canUndoFacetUpdate,true);
+  assert.deepEqual(run.data.entries[0].customLabels,[]);
+  assert.equal(run.data.facetUndo.steps.length,1);
+  assert((await run.api.execute('organize_case',input)).replayed);
+  assert.equal(run.data.facetUndo.steps.length,1);
+  await assert.rejects(run.api.execute('organize_case',{...input,requestId:'stale'}),{code:'case_conflict'});
+  const noOp=await run.api.execute('organize_case',{...input,requestId:'noop',expectedRevision:result.cases[0].revision});
+  assert.equal(noOp.updatedCount,0);assert.equal(run.data.facetUndo.steps.length,1);
+});

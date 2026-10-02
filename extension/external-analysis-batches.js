@@ -155,7 +155,7 @@ export function createExternalAnalysisBatches({storage,loadState,commit,enqueue,
         if(item.error) {row.state='failed';row.error={code:'external_analysis_failed',message:item.error};batch.failed++;}
         else {
           let plan;
-          try {plan=await planExternalAnalysisResult(state,row,item.result,{readBlob,entriesById,membershipsById});}
+          try {plan=await planExternalAnalysisResult(state,row,item.result,{readBlob,entriesById,membershipsById,model:item.model,batchId:batch.id});}
           catch(error) {
             row.state='failed';row.error={code:error.code||'analysis_result_invalid',message:error.message};batch.failed++;
           }

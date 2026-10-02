@@ -27,8 +27,8 @@ export const CASE_SEARCH_PROPERTIES = {
   countOnly: { type: 'boolean' }
 };
 export const CASE_OPERATION_SPECS = [
-  { name: 'read_case_details', description: '读取案例的完整结构与修改版本。part 分别读取概览、来源、媒体、正文结构、标注、项目关系；content 是分页 JSON，须按 nextOffset 读完再解析。后续分页携带 expectedRevision，避免混合不同版本。组合案例返回成员编号，编辑时指定成员。仅读取元数据，不下载原件。',
-    parameters: object({ caseId: id, part: { enum: ['overview', 'source', 'media', 'document', 'annotations', 'organization'] },
+  { name: 'read_case_details', description: '读取案例的完整结构与修改版本。part 分别读取概览、来源、媒体、正文结构、标注、项目关系；analysis_coverage列逐媒体已存分析、原件摘要和实际coverage，未记录范围为null，不能当作全图/全片。verification=verified_at_save只证明保存时核验，当前读取不重验文件字节。content 是分页 JSON，须按 nextOffset 读完再解析。后续分页携带 expectedRevision，避免混合不同版本。组合案例返回成员编号，编辑时指定成员。仅读取元数据，不下载原件。',
+    parameters: object({ caseId: id, part: { enum: ['overview', 'source', 'media', 'document', 'annotations', 'organization', 'analysis_coverage'] },
       expectedRevision: id, offset: { type: 'integer', minimum: 0 }, length: { type: 'integer', minimum: 1, maximum: 49152 } }, ['caseId']) },
   { name: 'edit_case', description: '在用户委托范围内编辑已有案例，先读取当前版本。仅修改 patch 提供的字段；sourceFacts 中 null 明确清除错误字段。coverVisualId设置已存在的图片为封面，null恢复自动封面，不替换视频原件。组合案例可改title/customLabels/coverVisualId，正文和媒体须指定成员。文章用 articlePatches 修改已读段落，不能用 text 覆盖结构化文章。媒体来源修改不改变原件；推断提示词使用 ai-suggestion，不冒称原始提示词。相同 requestId 重试返回原回执；版本冲突需重读，不能盲目覆盖。成功后返回真实修改版本。',
     parameters: object({ requestId, ...identity, patch: object({ title: id, text,
@@ -39,9 +39,9 @@ export const CASE_OPERATION_SPECS = [
       timeNotes: list(object({ id, assetId: id, startMs: { type: 'number', minimum: 0 }, endMs: { type: 'number', minimum: 0 }, text, frameAssetId: id }, ['assetId', 'startMs', 'text'])),
       removeTimeNoteIds: list(id)
     }) }, ['requestId', 'caseId', 'expectedRevision', 'patch']) },
-  { name: 'organize_case', description: '按用户指定范围整理案例。combine_cases用caseId作为首成员，additionalCases按顺序提供其他成员及expectedRevision，title必填，可指定成员图片coverVisualId；原案例/原件/项目关系保留，成员不能已属于其他组合。split_compound用已读组合编号/版本恢复独立成员，不删除案例。split_media 将明确选择的媒体分到新案例，保留原件、封面、逐媒体提示词和笔记；新案例需明确标题、正文、来源，不能把旧案例正文冒充新来源。textBlockIds 可移动对应的已读正文段落。未选择内容留在原案例，项目归属沿用。move_media 转移到已读的目标案例（须目标版本）。move_project 是移动，copy_project 创建独立副本但复用原件。不会删除原件或自动合并相似案例。',
-    parameters: object({ requestId, ...identity, action: { enum: ['split_media', 'move_media', 'move_project', 'copy_project', 'combine_cases', 'split_compound'] },
-      title: id, coverVisualId: id,
+  { name: 'organize_case', description: '按用户指定范围整理案例。remove_tags仅移除指定案例（组合含成员）的标签关联，customLabels为已读人工标签名称，nodeIds为已读分类标签编号；不删除词库、原件或其他案例，可在插件标签恢复入口撤回。combine_cases用caseId作为首成员，additionalCases按顺序提供其他成员及expectedRevision，title必填，可指定成员图片coverVisualId；原案例/原件/项目关系保留，成员不能已属于其他组合。split_compound用已读组合编号/版本恢复独立成员，不删除案例。split_media 将明确选择的媒体分到新案例，保留原件、封面、逐媒体提示词和笔记；新案例需明确标题、正文、来源，不能把旧案例正文冒充新来源。textBlockIds 可移动对应的已读正文段落。未选择内容留在原案例，项目归属沿用。move_media 转移到已读的目标案例（须目标版本）。move_project 是移动，copy_project 创建独立副本但复用原件。不会删除原件或自动合并相似案例。',
+    parameters: object({ requestId, ...identity, action: { enum: ['split_media', 'move_media', 'move_project', 'copy_project', 'combine_cases', 'split_compound', 'remove_tags'] },
+      title: id, coverVisualId: id, customLabels: list(id), nodeIds: list(id),
       additionalCases: { ...list(object(identity, ['caseId', 'expectedRevision'])), minItems: 1 },
       projectId: id, targetCaseId: id, targetRevision: id, assetIds: { ...list(id), minItems: 1, uniqueItems: true },
       groups: { ...list(object({ assetIds: { ...list(id), minItems: 1, uniqueItems: true }, title: id, text,

@@ -1,3 +1,5 @@
+import { createLibraryViewReader } from './library-view-state.js';
+import { getLibraryStorage } from './library-storage.js';
 import {
   curatedSourceKey,
   isTrustedCuratedResponseUrl,
@@ -137,7 +139,7 @@ function returnToLibrary() {
 }
 
 async function loadLocalState() {
-  const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  const response = await readWorkspaceLibraryState();
   if (!response?.ok) throw new Error(response?.message || "无法读取本地案例库");
   state.localEntries = response.entries ?? [];
   state.localStateAvailable = true;
@@ -739,6 +741,7 @@ function confirmPackSave(item) {
     };
     dialog.querySelector(".pack-save-confirm").onclick = () => finish(true);
     dialog.querySelector(".pack-save-cancel").onclick = () => finish(false);
+    dialog.querySelector(".pack-save-close").onclick = () => finish(false);
     dialog.oncancel = (event) => { event.preventDefault(); finish(false); };
     dialog.showModal();
   });
@@ -1030,4 +1033,14 @@ function element(tagName, className = "", text = "") {
 
 function camel(value) {
   return value.replace(/-([a-z])/g, (_, character) => character.toUpperCase());
+}
+
+async function readWorkspaceLibraryState() {
+  const reader = createLibraryViewReader({
+    storage: getLibraryStorage(),
+    prepare: () => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE' }),
+    uiLanguage: chrome.i18n.getUILanguage(),
+    includeCreativeState: false
+  });
+  return reader();
 }

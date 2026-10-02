@@ -917,6 +917,20 @@ test("OpenAI create-image mode sends original images through the Responses image
   assert.equal(result.finalPrompt, "参考1负责构图，参考2只负责风格");
 });
 
+test('Responses image tools cancel an in-flight paid request when the whole-turn deadline expires', async () => {
+  let aborted = false;
+  const session = referenceSessionWithMode('openai', 'conditioned');
+  await assert.rejects(executeComposerTurnWithService({ session, composerSettings: settings, route: 'compose',
+    instruction: '保留全部参考生成图片' }, visualSettings(), preparedImages, {
+    toolRuntime: { specs: [{ name: 'read_case', parameters: { type: 'object', properties: {} } }],
+      budget: { maxDurationMs: 40 }, execute: () => assert.fail('No response was delivered') },
+    fetchImpl: async (_url, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => { aborted = true; reject(new DOMException('cancelled', 'AbortError')); }, { once: true });
+    })
+  }), { code: 'RESOURCE_BUDGET_REACHED' });
+  assert.equal(aborted, true);
+});
+
 test("Gemini image capability comes only from the assigned model metadata", () => {
   const values = geminiImageSettings().vision;
   const profile = { serviceId: "gemini", model: "account-nano-banana-model" };

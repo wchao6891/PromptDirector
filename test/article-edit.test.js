@@ -35,3 +35,16 @@ test("article saves reject stale drafts and cannot replace resource blocks", () 
   assert.throws(() => updateArticleText(entry(), [{ blockId: "text", text: "a" }, { blockId: "text", text: "b" }], 1), /无效段落/);
   assert.deepEqual(updateArticleText(entry(), [], 1), entry());
 });
+
+test("editing an existing Markdown-backed Agent body preserves syntax, indentation and original attachments", () => {
+  const current = { ...entry(), agentProvenance: { kind: "creation" }, primaryMediaId: "md",
+    mediaAssets: [{ id: "md", kind: "document", mimeType: "text/markdown" }],
+    articleDocument: { version: 1, blocks: [{ id: "body", kind: "paragraph", sourceOrder: 0, text: "## 原标题" },
+      { id: "file", kind: "document", assetId: "md", sourceOrder: 1 }] } };
+  const text = "## 新标题\n\n```js\n    keep();\n```";
+  const updated = updateArticleText(current, [{ blockId: "body", text }], 1);
+  assert.equal(updated.text, text);
+  assert.equal(updated.articleDocument.blocks[0].mimeType, "text/markdown");
+  assert.deepEqual(updated.mediaAssets, current.mediaAssets);
+  assert.deepEqual(updated.articleDocument.blocks[1], current.articleDocument.blocks[1]);
+});

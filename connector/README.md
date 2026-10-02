@@ -35,7 +35,7 @@
 | `submit_analysis_results` | 一页结果共用一次保存，逐项保留成功与失败 |
 | `manage_analysis_batch` | 分批登记分析输入，封口、取消、恢复接收及失败项重试；不调用模型 |
 | `read_analysis_batch` | 分页读取进度、输入、完整结果与失败记录，断线后继续核对 |
-| `submit_analysis_result` | 按固定案例版本和原件摘要写回 AI 标签、提示词与时间笔记 |
+| `submit_analysis_result` | 按固定案例版本和原件摘要写回标签、提示词、时间笔记及完整图/视频/多图分析 |
 | `save_skill` | 新建 Skill 或按已读版本更新正文/完整本机文件包，重复请求返回原回执 |
 | `restore_skill` | 将保留的正文与已记录文件恢复为新版本；未知旧文件不以当前文件代替 |
 | `save_material` | 正文、附件和创作结果入库，保留精确来源与前一成果版本 |
@@ -47,11 +47,21 @@
 | `edit_case` | 按字段编辑标题、正文段落、来源、标签、逐媒体提示词和时间笔记 |
 | `organize_case` | 选定媒体拆为新案例、转移到另一案例、移动或独立复制到已有项目 |
 
-完整名称有 `promptdirector_` 前缀。创作由 Agent 完成，这些工具不额外调用模型。目前不包含删除、批量管理或全库自动分析。工具是否可用以当前连接器的工具列表及插件 `status` 回执为准；新增编辑能力需要同时更新两端。
+完整名称有 `promptdirector_` 前缀。创作由 Agent 完成，这些工具不额外调用模型。目前不包含删除或全库自动分析。工具是否可用以当前连接器的工具列表及插件 `status` 回执为准；新增编辑能力需要同时更新两端。
+
+原件下载根据 Chrome 原生消息的传输方向和当前工作内存分块，保留完整文件和摘要校验。回存相同的本机图片、视频或音频时，扩展可复用经实际字节校验的库内原件，避免重复上传和存储；有变化的文件仍走正常上传。同次附件即使内容相同，也保留不同逐文件提示词所需的身份。更新后须重载扩展并重新连接 Agent 的 MCP 服务，已启动的服务仍可能使用旧代码。
 
 外部批量分析：分析由宿主完成，插件接收结果。先读案例版本、实际需要的原件；用 `manage_analysis_batch(action:"create")` 登记 `instruction` 与 `items:[{caseId,expectedRevision,assets:[]}]`，返回的 `batchId` 就是创建请求编号。文字分析 `assets=[]`；视觉分析逐项提供 `{assetId,sha256,coverage}`，摘要来自 `read_media`，coverage 如实写全片、抽帧或具体范围。大清单可用 `add` 分批登记，结束用 `seal`；同一批次每个案例登记一次，多个素材放该案例的 assets。
 
-`read_analysis_batch` 给出每项 `attemptId`、输入版本和批次 `epoch`。宿主完成一项后用 `submit_analysis_result` 提交 `result` 或 `error`，二者互斥。result 当前接收 `tags:[{g,t?}]`、`mediaPrompts:[{assetId,text}]`、`timeNotes:[{assetId,startMs,endMs?,text}]`。标签 g 从 `part:"taxonomy"` 读取，异常、重复、过长或超限标签整项拒绝，不静默删减。图片提示词和时间笔记必须在登记素材内；标签追加且保留人工关系，提示词只写 AI 来源，时间笔记只新增。已有不同 AI 提示词或人工修改的逆推结果需单独核对后走 `edit_case`，不会被批量替换。完整自由格式分析报告用 `save_material` 保存并关联来源，本接口不接受任意底层字段。
+`read_analysis_batch` 给出每项 `attemptId`、输入版本和批次 `epoch`。宿主完成一项后用 `submit_analysis_result` 提交 `result` 或 `error`，二者互斥。result 接收 `tags:[{g,t?}]`、`mediaPrompts:[{assetId,text}]`、`timeNotes:[{assetId,startMs,endMs?,text}]`，以及以下与插件共用的完整结果：
+
+- `imageAnalyses:[{assetId,reconstructionPrompt,tags}]`：逐图逆推和1–6条标签，不伪造描述、坐标或十维结构。
+- `videoAnalyses:[{assetId,reconstructionPrompt,tags,uncertainties,analysisScope}]`：完整视频逆推、4–8条视觉标签及不确定项；`analysisScope` 为 `visual`（画面）或 `video`（音画），实际抽帧/时间范围仍以登记 `coverage` 为准。保存记录的 `finishReason=external_result` 表示宿主提交结果，并非插件发起的模型请求完成原因。
+- `visualSetAnalyses:[{assetIds,imageRoles,sharedVisualSystem,differences,continuity,compositionRules,reusablePrompt}]`：多图关系与创作总结；每张图必须已有与当前原件一致的有效独立分析，`imageRoles` 恰好覆盖指定素材，可在同项先保存逐图再总结。
+
+同一素材不能同时提交 `mediaPrompts` 和完整图/视频逆推。标签 g 从 `part:"taxonomy"` 读取，异常、重复、过长或超限标签整项拒绝，不静默删减。图片提示词和时间笔记必须在登记素材内；标签追加且保留人工关系，提示词只写 AI 来源，时间笔记只新增。已有不同 AI 提示词或人工修改的逆推结果需单独核对后走 `edit_case`，不会被批量替换。完整自由格式分析报告用 `save_material` 保存并关联来源，本接口不接受任意底层字段。
+
+完整图片结果在 `read_case_details(part:"media")` 读取，视频和整组在 `part:"annotations"` 读取；`inputEvidence` 保留输入案例版本、原件摘要、查看范围和尝试身份。`part:"analysis_coverage"` 列逐媒体已存分析和未知范围；缺失范围为 `null`，不能推断全片。`verification:"verified_at_save"` 只说明保存时核验，`currentBytesVerified:false` 明确本次元数据读取没有重新校验原件。该清单不是全库画面搜索索引。拆分/转移整组媒体时完整报告随素材保留；只拆部分时源报告保留为失效历史，不给子集冒充完整组分析。备份/分享保留结构和来源范围，导入媒体编号冲突时同步调整分析引用。`status.analysisResultVersion=2` 和 `analysisResultFields` 声明当前后台能力；源码/runtime更新后，Chrome重载及宿主工具重新发现分别核对。
 
 结果提交返回的是单项最终回执；`ok:true` 表示已记录回执，必须检查 `item.state` 是否 `saved`。失败项携带具体原因，`partial` 不能报告全批成功。案例、关系、原件发生变化时整项失败，不写旧结果。元数据、案例修改和回执一次提交；相同请求同参数重试不会重复添加标签或笔记。
 
@@ -65,7 +75,7 @@
 
 Skill 读取：先 `list_skills`，再按需 `read_skill`，后续页固定 `expectedRevision`。可用 `versionId` 读取保留版本。文件清单的 `current` 是所读版本正文和参考生成的文件，`package` 是原样保存的包（含脚本、额外 frontmatter 和二进制附件）；原包主文档可能早于人工文字编辑。没有说明的纯 Markdown 保持原文，`currentFileHasFrontmatter=false` 表示生成文件缺少完整可移植元信息。`packageFileScope=unrecorded` 表示旧版本未记录文件，不能用当前脚本代替。文件续读携带 `expectedHash`；用 `download_skill_file` 取得完整文件，按 `relativePath` 组织宿主目录。插件不执行脚本，下载成功不等于运行验证。
 
-Skill 写入：用户委托后用 `save_skill`。新建提供调用名 `callName` 与 `skillMarkdown`，或提供完整包 `files:[{path:"/absolute/path/SKILL.md",packagePath:"SKILL.md"}, ...]`。只上传明确指定的文件，无需手工压 ZIP。整包以 `SKILL.md` 为准，不能同时传另一份正文、引用、说明或可移植 ID；更新包内 `name` 必须与原 Skill 的 `portableId` 一致。更新需 `skillId` 和已读 `expectedRevision`；纯正文更新省略 `references` 会保留引用，显式 `[]` 才清空。连接器先检查后台能力及 `status.skillPackageLimits`，在上传前核对现有导入限制，拒绝旧后台和超限包。文件按摘要校验后与版本、请求回执关联；保存失败保留暂存，不删除可能已被提交引用的文件。
+Skill 写入：用户委托后用 `save_skill`。新建提供调用名 `callName` 与 `skillMarkdown`，或提供完整包 `files:[{path:"/absolute/path/SKILL.md",packagePath:"SKILL.md"}, ...]`。只上传明确指定的文件，无需手工压 ZIP。整包以 `SKILL.md` 为准，不能同时传另一份正文、引用、说明或可移植 ID；更新包内 `name` 必须与原 Skill 的 `portableId` 一致。更新需 `skillId` 和已读 `expectedRevision`；纯正文更新省略 `references` 会保留引用，显式 `[]` 才清空。连接器先检查后台能力及 `status.skillPackageLimits`，在上传前核对实际声明的边界，拒绝不具备完整包能力的旧后台；当前不设文件数或包大小配额。文件按摘要校验后与版本、请求回执关联；保存失败保留暂存，不删除可能已被提交引用的文件。
 
 用 `restore_skill` 恢复历史版本，默认同时恢复正文、引用和已记录文件。旧版本没有文件记录时拒绝完整恢复；只有用户明确要求仅恢复文字才用 `mode:"text"`，此时当前包文件保留。历史文件沿用插件现有版本保留上限；备份、同步和清理识别仍被保留版本引用的原件。新增文件快照无法补回升级前未知的历史脚本，不保证旧版插件再次改写后仍保留这些新字段。
 
@@ -87,7 +97,7 @@ Skill 写入与恢复直接返回最终回执，不用 `get_task`。每次操作
 
 `organize_case(action=combine_cases)` 用首个 `caseId/expectedRevision` 和按顺序列出的 `additionalCases` 创建组合，需 `title`。直接组合要求成员具有相同项目归属；跨项目不自动移动或复制成员。`split_compound` 携带已读组合编号和版本恢复独立成员，不删除案例。`edit_case` 可修改组合名称、标签与成员内容图片封面；成员正文/媒体仍须指定成员。普通案例 `patch.coverVisualId` 可设置已有图片（含视频封面），`null` 恢复自动封面；不会把封面当作视频原件。通过 `status.caseOperationFeatures` 核对后台的实际字段和动作。操作不会生成资料库备份或永久删除原件。
 
-图片、视频、多图和混合附件使用 `save_material(files=...)` 入库，单独封面也可作为图片保存。给已有案例上传新封面文件、指定视频时间点自动截图，以及直接启动插件内置模型的分析尚未开放。外部 Agent 可读取原件进行分析，写回接口目前支持 AI 标签、逐媒体逆推词和新增时间笔记；完整报告用 `save_material` 保存并关联来源，不代表任意分析结构已经接入。
+图片、视频、多图和混合附件使用 `save_material(files=...)` 入库，单独封面也可作为图片保存。给已有案例上传新封面文件、指定视频时间点自动截图，以及直接启动插件内置模型的分析尚未开放。外部 Agent 读取原件后，可按上述批次接口写回完整图片、视频和多图关系分析；自由格式报告用 `save_material` 保存并关联来源。
 
 `read_media` 返回本机文件路径。Agent 必须有相应图片、视频或文档读取能力，才能分析该文件。只下载原件不等于完成视觉分析。没有本地原件或链接文件授权时会明确报错，不用缩略图冒充原件。
 
@@ -135,10 +145,12 @@ npm run check
 
 ## Release 安装包
 
-从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.2.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。已发布连接器为 0.2.0，新增查看、编辑、整理、参考交接及CLI能力尚未发布；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
+从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.3.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器 0.3.0 支持查看、编辑、整理、参考交接及CLI；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
 
 读取与保存的正常路径：同次固定选择并读取完整内容 → 按名称/路径定位项目 → 保存。选材 `originalText` 完整保留一次；`referenceTextParts` 按序包含字符串及指向 `originalText` 或 `referenceSources[index].text` 的引用，来源 `textSource=originalText` 同理。`media` 返回所属案例、原件角色、封面编号与已知尺寸/时长；未知值不伪造。来源版本覆盖案例和组织关系，分页仍拒绝变化。
 
 `save_material` 沿原任务最多等待 15 秒（现有 30 秒连接超时的一半，为提交与传输留余量），快速保存直接返回终态；超时返回原任务状态，查 `get_task` 继续，不重复提交。完成回执包含正文长度/SHA-256、项目当前版本、来源及成果版本；这些是提交时的持久回执，独立验收仍需读回。旧后台不支持等待时仍返回处理中，不冒充完成。客户端丢回执保留请求身份，后续人工编辑和删除不被重放覆盖。
 
 直接读取完整选择时用 `read_workspace_content(part=selection)`，第一页可省略 `expectedRevision`；连接器在同一次调用里读取选择版本再读取正文，避免模型两轮工具之间的额外等待。数据仍按版本核对，不会将两次读取间变化的选择悄悄混用。续页或单份读取必须携带版本。仅需清单概览时才用 `read_workspace_context`。
+
+`organize_case(action=remove_tags)` 接收 `customLabels`（人工标签名称）和 `nodeIds`（分类标签编号），至少指定一项。对组合操作时包含成员，只移除所选案例的关系，保留词库、原件和分析。仍需已读取的 `expectedRevision` 与唯一 `requestId`；返回 `updatedCount` 和 `canUndoFacetUpdate`，可在插件“分类与标签 → 标签导航 → 撤回与恢复”撤回。

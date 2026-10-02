@@ -100,6 +100,56 @@ def main():
             assert call('read_analysis_batch', {'batchId': 'page-batch'})['saved'] == 1
             assert json.loads(call('read_case_details', {'caseId': 'second', 'part': 'document'})['content'])['text'] == '合并提交前人工新改'
             assert page_saved['items'][0]['savedRevision'] == call('read_case_details', {'caseId': 'first'})['revision']
+            # Fresh isolated fixture for the complete result shapes. No provider calls.
+            run.seed_storage(page, {'entries': [{'id': 'complete', 'title': '完整分析隔离案例', 'text': '保留人工正文',
+                'savedAt': '2026-10-01T00:00:00Z', 'primaryMediaId': 'full-image',
+                'mediaAssets': [{'id': asset_id, 'kind': kind, 'storageMode': 'managed', 'mimeType': mime, **({'durationMs': 10000} if kind == 'video' else {})}
+                                for asset_id, kind, mime in [('full-image', 'image', 'image/png'), ('full-image2', 'image', 'image/png'), ('full-video', 'video', 'video/mp4')]],
+                'mediaPrompts': [{'assetId': 'full-image', 'source': 'manual', 'text': '保留原始提示词'}]}]})
+            hashes = page.evaluate('''async () => {
+              const {saveMediaBlob}=await import('./media-store.js');const {sha256Blob}=await import('./blob-digest.js');
+              const image=await (await fetch('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==')).blob();
+              const video=new Blob(['isolated video bytes'],{type:'video/mp4'});
+              const values={};for(const [id,blob] of [['full-image',image],['full-image2',image],['full-video',video]]) {
+                await saveMediaBlob(id,blob);values[id]=await sha256Blob(blob);
+              }return values;
+            }''')
+            registered = call('manage_analysis_batch', {'action': 'create', 'requestId': 'complete-batch', 'instruction': '仅隔离夹具，模型未执行', 'items': [{
+                'caseId': 'complete', 'expectedRevision': call('read_case_details', {'caseId': 'complete'})['revision'],
+                'assets': [{'assetId': asset_id, 'sha256': sha, 'coverage': '仅0至2秒画面，无音频' if asset_id == 'full-video' else '完整图片'} for asset_id, sha in hashes.items()]}]})
+            assert registered['ok'], registered
+            row = call('read_analysis_batch', {'batchId': 'complete-batch'})['items'][0]
+            image_tags = [{'g': 'scene.place', 't': '摄影棚'}]
+            result = {'imageAnalyses': [{'assetId': asset_id, 'reconstructionPrompt': '隔离图片逆推 ' + asset_id, 'tags': image_tags} for asset_id in ['full-image', 'full-image2']],
+                'videoAnalyses': [{'assetId': 'full-video', 'reconstructionPrompt': '隔离视频逆推：角色走向镜头', 'tags': [
+                    {'g': 'style.render', 't': '电影写实'}, {'g': 'camera.shot', 't': '近景'}, {'g': 'light.palette', 't': '冷暖对比'}, {'g': 'action.change', 't': '渐变显现'}],
+                    'uncertainties': ['实际焦距未知'], 'analysisScope': 'visual'}],
+                'visualSetAnalyses': [{'assetIds': ['full-image', 'full-image2'], 'imageRoles': [{'assetId': 'full-image', 'role': '主体'}, {'assetId': 'full-image2', 'role': '场景'}],
+                    'sharedVisualSystem': ['暖色'], 'differences': ['不同机位'], 'continuity': ['同一人物'], 'compositionRules': ['中心构图'], 'reusablePrompt': '隔离整组人物场景提示词'}]}
+            complete_input = {'batchId': 'complete-batch', 'requestId': 'complete-save', 'caseId': 'complete', 'epoch': 0, 'attemptId': row['attemptId'], 'model': 'isolated-fixture', 'result': result}
+            complete_saved = page.evaluate('''async input => chrome.runtime.sendMessage({type:'CASE_OPERATION',operation:'submit_analysis_result',input})''', complete_input)
+            assert complete_saved['item']['state'] == 'saved', complete_saved
+            assert call('submit_analysis_result', complete_input)['replayed']
+            page.reload()
+            complete_media = call('read_case_details', {'caseId': 'complete', 'part': 'media'})
+            assert complete_media['revision'] == complete_saved['item']['savedRevision'], (complete_media, complete_saved)
+            media = json.loads(complete_media['content'])
+            assert media[0]['visionAnalysis']['providerType'] == 'external'
+            assert media[0]['visionAnalysis']['inputEvidence']['assets'][0]['sha256'] == hashes['full-image']
+            annotations = json.loads(call('read_case_details', {'caseId': 'complete', 'part': 'annotations'})['content'])
+            assert annotations['mediaPrompts'][0]['text'] == '保留原始提示词'
+            assert annotations['videoAnalyses'][0]['uncertainties'] == ['实际焦距未知']
+            assert annotations['visualSetAnalyses'][0]['imageRoles'] == result['visualSetAnalyses'][0]['imageRoles']
+            assert annotations['visualSetAnalyses'][0]['continuity'] == ['同一人物']
+            coverage = json.loads(call('read_case_details', {'caseId': 'complete', 'part': 'analysis_coverage'})['content'])
+            assert coverage['mediaWithRecordedScope'] == 3 and coverage['currentBytesVerified'] is False
+            assert coverage['media'][2]['analyses'][0]['coverage'] == '仅0至2秒画面，无音频'
+            page.locator('.case-card[data-entry-id="complete"]').click()
+            page.get_by_text('隔离图片逆推 full-image', exact=True).first.wait_for()
+            page.locator('.visual-set-analysis summary').click()
+            page.get_by_text('隔离整组人物场景提示词', exact=True).wait_for()
+            assert 'imageAnalyses' in call('status', {})['analysisResultFields']
+            print('PASS: complete image/video/set results through shared internal/external endpoints; durable normalization/revision, exact observed scope and rendered detail after reload')
             print('PASS: task discovery after reload and shared internal endpoint; merged page partial save, conflict preservation, receipt replay and persisted revision readback')
             print('PASS: isolated real extension batch register/write/readback, shared internal endpoint, native normalization revisions, original/manual preservation, conflict/partial/retry/cancel/resume, durable reload and failed-attempt evidence; no real library or model calls')
 

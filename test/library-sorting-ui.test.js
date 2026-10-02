@@ -8,18 +8,16 @@ const [html, source, css] = await Promise.all([
   readFile(new URL("../extension/library.css", import.meta.url), "utf8")
 ]);
 
-test("library exposes four case sorts and allows project management without a mode switch", () => {
-  const gallerySort = html.slice(html.indexOf('id="gallery-sort"'), html.indexOf("</select>", html.indexOf('id="gallery-sort"')));
-  assert.match(gallerySort, /value="added-desc"[^>]*>最近加入/);
-  assert.match(gallerySort, /value="updated-desc"[^>]*>最近更新/);
-  assert.match(gallerySort, /value="title"[^>]*>标题/);
-  assert.match(gallerySort, /value="project-manual"[^>]*hidden[^>]*>手动排序/);
-  assert.doesNotMatch(gallerySort, /最早加入|项目手动顺序/);
-  assert.match(html, /id="manage-case-order"[^>]*aria-label="管理案例顺序"/);
-
-  assert.doesNotMatch(html, /id="project-sort"|最近创建|项目排序/);
-  assert.match(html, /id="collapse-projects"[^>]*aria-label="全部折叠"/);
-  assert.doesNotMatch(html, /id="project-search"/);
+test("library sorts directly through list headers; manual order belongs to the project menu", () => {
+  assert.doesNotMatch(html, /id="gallery-sort"|project-manual-sort-option/);
+  assert.match(html, /id="case-list-header"/);
+  assert.match(html, /id="gallery-size"[^>]*type="range"/);
+  assert.match(source, /nextCaseSortMode\(caseSortMode, column\)/);
+  const projectMenu = source.slice(source.indexOf("function createProjectMenu"), source.indexOf("function projectChildren"));
+  assert.match(projectMenu, /调整案例顺序/);
+  assert.doesNotMatch(projectMenu, /include-subprojects/);
+  assert.match(html, /id="browse-scope"[\s\S]*id="include-subprojects"/);
+  assert.match(source, /manageCaseOrder.hidden = !caseOrderManagementActive/);
 });
 
 test("sidebar derives an unassigned workspace without persisting smart or import-batch views", () => {
@@ -68,9 +66,10 @@ test("project tree rendering indexes children once and traverses deep trees iter
   assert.match(index, /for \(const collection of organizerState\.collections\)/);
 });
 
-test("gallery sorting and selection share a quiet secondary toolbar", () => {
-  assert.match(css, /\.gallery-sort-field select\s*\{[^}]*border-color:\s*transparent[^}]*background-color:\s*transparent/);
-  assert.match(css, /\.gallery-view-controls > \.icon-button\s*\{[^}]*border-color:\s*transparent[^}]*background:\s*transparent/);
+test("list headings expose sorting without an extra toolbar dropdown", () => {
+  assert.match(css, /\.case-list-columns button/);
+  assert.match(css, /aria-sort="ascending"/);
+  assert.doesNotMatch(html, /gallery-sort-field/);
 });
 
 test("saving project membership retains the existing manual order before appending new cases", () => {

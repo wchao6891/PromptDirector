@@ -193,9 +193,17 @@ async function prepareLocalMediaValue(file, assetId, options) {
     ? options.readImageDimensions
     : readStoredImageDimensions;
   const dimensions = await readDimensions(blob);
-  assertImageDimensions(dimensions.width, dimensions.height, limits);
+  let decodeLimited = false;
+  let processingWarnings = [];
+  try { assertImageDimensions(dimensions.width, dimensions.height, { ...limits, budget: options.budget }); }
+  catch (error) {
+    if (error.code !== ASSET_IMPORT_FAILURE_CODES.SAFETY_LIMIT_EXCEEDED ||
+        (options.limits?.maxImagePixels && options.limits.maxImagePixels !== Number.MAX_SAFE_INTEGER)) throw error;
+    decodeLimited = true;
+    processingWarnings = ['原件完整保留；图片超过本次解码预算，未生成预览'];
+  }
   let poster = null;
-  if (format.extension === "gif") {
+  if (format.extension === "gif" && !decodeLimited) {
     const createFirstFrame = typeof options.createGifFirstFrame === "function"
       ? options.createGifFirstFrame
       : createGifFirstFrame;
@@ -212,7 +220,8 @@ async function prepareLocalMediaValue(file, assetId, options) {
   return {
     blob,
     ...(generationInfo?.warnings.length ? { warnings: generationInfo.warnings } : {}),
-    asset: { ...base, ...dimensions, ...(generationInfo ? { generationInfo } : {}), ...(poster ? { posterAssetId: poster.asset.id } : {}) },
+    asset: { ...base, ...dimensions, ...(processingWarnings.length ? { processingWarnings } : {}),
+      ...(generationInfo ? { generationInfo } : {}), ...(poster ? { posterAssetId: poster.asset.id } : {}) },
     ...(poster ? { poster } : {})
   };
 }

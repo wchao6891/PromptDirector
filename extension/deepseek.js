@@ -1,5 +1,6 @@
 import { applyComposerConversation } from './composer-conversation.js';
 import { runComposerToolLoop } from "./composer-tool-loop.js";
+import { getAiModelCapability } from './ai-model-capabilities.js';
 import { readEventStream } from "./event-stream.js";
 import {
   analysisTaxonomyPayload,
@@ -13,12 +14,9 @@ import { parseStructuredObject } from "./structured-output.js";
 import { inspectAnalysisResponse, fetchAnalysisJson } from "./analysis-response.js";
 import { ANALYSIS_RETRY_POLICY, createAnalysisRequestBudget, consumeAnalysisRequest, analysisRequestCounts } from "./analysis-retry-policy.js";
 import {
-  COMPOSER_INPUT_MAX_CHARACTERS,
   normalizeComposerAiProfile,
   normalizePlannerResult,
   plannerRequestPayload,
-  assertComposerInputBudget,
-  assertComposerRequestBudget,
   validateGeneratedPrompt
 } from "./composer.js";
 import {
@@ -159,7 +157,7 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
   const systemMessages = [
     { role: "system", content: analysisSystemInstruction(outputLocale) },
     { role: "system", content: analysisTaxonomyPrompt(catalogValue, outputLocale) },
-    { role: "system", content: settings.analysisInstructionsByLocale[outputLocale].slice(0, 1200) }
+    { role: "system", content: settings.analysisInstructionsByLocale[outputLocale] }
   ];
   const userMessage = { role: "user", content: analysisEntryInput(entry, input.text) };
   let usage = normalizeUsage();
@@ -329,7 +327,6 @@ export async function planComposerTurn(input, settingsValue, options = {}) {
   const settings = requireAiSettings(settingsValue, "生成");
   const providerLabel = aiProvider(settings).label;
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const body = withComposerProfile(structuredRequestBody({
     model: profile.model,
@@ -344,7 +341,6 @@ export async function planComposerTurn(input, settingsValue, options = {}) {
       { role: "user", content: JSON.stringify(request) }
     ]
   }, settings), profile);
-  assertComposerRequestBudget(body.messages);
   const result = await requestDeepSeek(body, settings, {
     fetchImpl: options.fetchImpl ?? fetch,
     signal: options.signal,
@@ -372,7 +368,6 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
   const settings = requireAiSettings(settingsValue, "生成");
   const provider = aiProvider(settings);
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const instruction = String(input.instruction ?? "").trim()
     || [...request.messages].reverse().find((item) => item.role === "user")?.content
@@ -394,7 +389,6 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
     ]
   }, profile);
   applyComposerConversation(body, executionRequest);
-  assertComposerRequestBudget(body.messages);
   const requestController = new AbortController();
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_COMPOSER_STREAM_TIMEOUT_MS;
   let timedOut = false;
@@ -430,7 +424,6 @@ export async function executeAgentTurn(input, settingsValue, options = {}) {
 
   const settings = requireAiSettings(settingsValue, "对话");
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const instruction = String(input.instruction ?? "").trim()
     || [...request.messages].reverse().find((item) => item.role === "user")?.content
@@ -518,7 +511,6 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
     ]
   }, profile);
   applyComposerConversation(body, executionRequest);
-  assertComposerRequestBudget(body.messages);
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs === null
     ? null
@@ -544,9 +536,10 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
 async function readComposerResponse(body, settings, options, signal) {
   const provider = aiProvider(settings);
   if (options.toolRuntime?.specs.length) {
-    return runComposerToolLoop({ body, protocol: "chat_completions", runtime: options.toolRuntime,
-      signal, onDelta: options.onDelta, maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS,
-      request: nextBody => fetchDeepSeekStream(nextBody, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart) });
+    return runComposerToolLoop({ body, protocol: "chat_completions", runtime: { ...options.toolRuntime,
+      contextLength: getAiModelCapability(normalizeAiSettings(settings).activeProvider, body.model)?.contextLength },
+      signal, onDelta: options.onDelta,
+      request: (nextBody, context) => fetchDeepSeekStream(nextBody, settings, options.fetchImpl ?? fetch, context.signal, options.onRequestStart) });
   }
   const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart);
   return readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey, signal);

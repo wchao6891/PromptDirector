@@ -1,11 +1,13 @@
+import { applyCompletedImageResult, applyCompletedVideoResult } from './media-analysis-results.js';
 import { createOriginalFileDragHost } from './original-file-drag.js';
 import {createExternalAnalysisBatches} from './external-analysis-batches.js';
-import {ANALYSIS_BATCH_SPECS} from './analysis-batch-specs.js';
+import {ANALYSIS_BATCH_SPECS, ANALYSIS_RESULT_FIELDS} from './analysis-batch-specs.js';
 import { skillPackageLimits } from './creative-skill-package.js';
 import { createSkillWriter } from './skill-writer.js';
 import { createSkillOperations } from './skill-operations.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
 import { getLibraryStorage, createLibraryCommitter } from "./library-storage.js";
+import { operationBudget, stagingByteBudget, RESOURCE_POLICY } from './resource-policy.js';
 import { createProjectOperations } from "./project-operations.js";
 import { createBrowserLibraryIdentity } from "./library-identity.js";
 import { validateProjectOperation } from "./project-operation-specs.js";
@@ -21,11 +23,15 @@ import { createAgentConnection } from "./agent-connection.js";
 import { createAgentTasks } from "./agent-tasks.js";
 import { createAgentLibrary } from "./agent-library.js";
 import { createCaseLibraryReader } from "./case-library-state.js";
+import { projectLibraryViewState, enrichContentMeanings } from "./library-view-state.js";
+import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, completeLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
 import { createAgentWorkspace } from "./agent-workspace.js";
 import { createReferenceSelection } from "./reference-selection.js";
 import { createCaseOperations } from "./case-operations.js";
 import { CASE_OPERATION_SPECS } from './case-operation-specs.js';
 import { createAgentTransfers } from "./agent-transfers.js";
+import { reusableAgentFile } from './agent-transfer-reuse.js';
+import { discardComposerToolProgress } from './composer-tool-progress.js';
 import { saveAgentMaterial } from "./agent-save.js";
 import { captureAgentUrl } from "./agent-capture.js";
 import { agentError, AGENT_PROTOCOL_VERSION } from "./agent-protocol.js";
@@ -70,12 +76,12 @@ import {
   uniqueNames
 } from "./facets.js";
 import { appendFacetUndo, facetUndoCount, undoFacetHistory } from "./facet-history.js";
+import { removeCaseTags } from './case-tags.js';
 import {
   acceptAnalysisCandidate,
   applyAnalysisCandidates,
   applyAnalysisImport,
   applyTextAnalysisTags,
-  applyVisionAnalysis,
   editVisionReconstructionPrompt,
   rejectAnalysisCandidate,
   undoVisionAnalysis,
@@ -210,6 +216,7 @@ import {
   normalizeCreativeSkillsState,
   restoreCreativeSkillVersion,
   saveCreativeSkillVersion,
+  protectedSkillVersionIds,
   skillPackageAssetIds
 } from "./creative-skills.js";
 import { commitSkillWithCover } from "./skill-cover-save.js";
@@ -221,7 +228,6 @@ import {
   entryMediaAssets,
   normalizeEntryMedia,
   setCaseCover,
-  replaceCurrentVideoReconstruction,
   removeTimeNote,
   setEntryMediaPrompt,
   setPrimaryMedia,
@@ -340,6 +346,7 @@ import {
   applyPageCaptureSelections,
   combinePageCaptureCandidates,
   collectPageCaptureSnapshot,
+  readPageCaptureInjectionResult,
   PAGE_CAPTURE_ADAPTERS,
   PAGE_CAPTURE_PLATFORM_ADAPTERS,
   normalizePageCaptureBatch,
@@ -366,7 +373,7 @@ import {
   preparePageSessionMedia,
   readPageSessionMediaChunk
 } from "./page-session-media.js";
-import { PAGE_CAPTURE_LIMITS, PAGE_CAPTURE_QUALITY_LIMITS, PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { PAGE_CAPTURE_LIMITS, PAGE_CAPTURE_QUALITY_LIMITS, LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { publicAiServiceProfiles } from "./ai-service-profiles.js";
 import {
   applyConnectionModelAssignments,
@@ -380,6 +387,7 @@ import {
 import {
   AI_RUNTIME_PROTOCOL_VERSION,
   aiConfigurationFromStorage,
+  aiConfigurationNeedsStorageUpdate,
   normalizeAiPreferences,
   projectAiRuntime,
   resolveTextTaskSettings,
@@ -592,6 +600,9 @@ const agentWorkspace = createAgentWorkspace({ chromeApi: chrome, readCase: input
   readSelection: input => referenceSelection.read(input) });
 const agentTransfers = createAgentTransfers({
   storage: libraryStorage, readBlob: getMediaBlob, writeBlob: savePortableAssetBlob, deleteBlob: deleteMediaBlob,
+  cleanup: deleteUnreferencedMedia,
+  reuse: async record => reusableAgentFile(record, await readCaseLibraryState(), getMediaBlob),
+  protectedIds: async () => [...collectRetainedLocalAssetIds(await readState())],
   prepare: async record => {
     await ensureOffscreenDocument();
     const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "PREPARE_AGENT_FILE", record });
@@ -625,7 +636,7 @@ function saveMaterial(input, requestId, scope) {
   return enqueue(() => agentTransfers.lock(async () => {
     await scope?.assertCurrent();
     return saveAgentMaterial(input, requestId, {
-      loadState: readState, storage: libraryStorage, transfers: agentTransfers, buildEntry,
+      loadState: readState, storage: libraryStorage, transfers: agentTransfers, buildEntry, readBlob: getMediaBlob,
       getInstanceId: async () => (await agentConnection.snapshot()).instanceId,
       classify: (entry, state) => classifyContent(entry, state.classificationRules, state.taxonomy),
       place: organizerAfterCapturePlacement, commit: async (update, options) => {
@@ -641,7 +652,7 @@ void agentConnection.start();
 async function dispatchAgentOperation(operation, input) {
   switch (operation) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
-      extensionVersion: chrome.runtime.getManifest().version, skillPackageLimits: skillPackageLimits(),
+      extensionVersion: chrome.runtime.getManifest().version, analysisResultVersion: 2, analysisResultFields: ANALYSIS_RESULT_FIELDS, skillPackageLimits: skillPackageLimits(),
       caseOperationFeatures: Object.fromEntries(CASE_OPERATION_SPECS.filter(spec => spec.name !== 'read_case_details').map(spec => [spec.name, spec.name === 'edit_case' ? Object.keys(spec.parameters.properties.patch.properties) : spec.parameters.properties.action.enum])),
       capabilities: [...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, searchFilters: ["minDurationMs", "maxDurationMs", "expectedRevision", "mediaKind", "hasOriginalPrompt", "alternatives", "sort", "countOnly"] };
     case "manage_analysis_batch":
@@ -678,7 +689,7 @@ async function dispatchAgentOperation(operation, input) {
         ...(item.entryId ? { openUrl: chrome.runtime.getURL(`library.html?case=${encodeURIComponent(item.entryId)}`) } : {}) }));
       return receipt;
     }
-    case "begin_transfer": return agentTransfers.begin(input);
+    case "begin_transfer": return enqueue(() => agentTransfers.begin(input));
     case "append_transfer": return agentTransfers.append(input);
     case "finish_transfer": return agentTransfers.finish(input);
     case "abort_transfer": return agentTransfers.abort(input);
@@ -713,6 +724,7 @@ restrictLocalStorageAccess().catch((error) => console.error("PromptDirector stor
 syncContextMenus().catch((error) => console.error("PromptDirector context menu sync failed", error));
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => console.error("PromptDirector side panel setup failed", error));
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'agent-temporary-maintenance') enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
   if (alarm.name === LIBRARY_MAINTENANCE_ALARM) scheduleLibraryMaintenanceRunner();
   if (alarm.name === AUTOMATIC_VISION_ALARM) scheduleAutomaticVisionRunner();
   if (alarm.name === ANALYSIS_BATCH_ALARM) scheduleAnalysisBatchRunner();
@@ -722,6 +734,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ANALYSIS_TASK_ALARM) return runQueuedAnalysisTasks();
 });
 scheduleLibraryMaintenanceRunner();
+chrome.alarms.create('agent-temporary-maintenance', { periodInMinutes: RESOURCE_POLICY.temporaryIdleMs / (24 * 60_000) }).catch(error => console.warn('临时传输维护未安排', error));
+enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
 scheduleAutomaticVisionRunner();
 recoverCreativeJobs().catch((error) => console.error("PromptDirector creative job recovery failed", error));
 enqueue(recoverImportJobs).catch((error) => console.error("PromptDirector local import recovery failed", error));
@@ -845,6 +859,22 @@ async function handleMessage(message, interaction = {}) {
     case "GET_STATE": {
       return enqueue(async () => ({ ok: true, ...publicLibraryState(await readState()) }));
     }
+    case "PREPARE_LIBRARY_VIEW_STATE": {
+      return enqueue(async () => {
+        const state = message.summaryOnly ? {} : await readState();
+        await libraryStorage.update([...LIBRARY_VIEW_SUMMARY_SOURCES], stored => ({
+          [LIBRARY_VIEW_SUMMARY_KEY]: completeLibraryViewSummary(stored)
+        }));
+        if (message.creativeSummary) await libraryStorage.update('composerSessions', stored => ({
+          composerSessionSummaries: composerSessionSummaries(normalizeComposerSessions(stored.composerSessions))
+        }));
+        return { ok: true, restoredArchivedFacetCount: state.restoredArchivedFacetCount };
+      });
+    }
+    case "GET_LIBRARY_VIEW_STATUS": {
+      const stored = await libraryStorage.get(STORAGE_KEYS.syncSettings);
+      return { ok: true, syncStatus: await publicSyncStatus(stored[STORAGE_KEYS.syncSettings]) };
+    }
     case "GET_CASE_LIBRARY_STATE": {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
         throw new Error("案例读取只能从插件工作空间调用");
@@ -929,13 +959,13 @@ async function handleMessage(message, interaction = {}) {
       const [picked] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPageContent, args: [{ commentLimit: 30, timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs }] });
       if (!picked?.result?.html) return { ok: false, cancelled: true };
       const [captured] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageCaptureSnapshot,
-        args: [{ sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
-      return { ok: true, supplement: picked.result.supplement, batch: { ...captured.result, tabId: tab.id } };
+        args: [{ serializeErrors: true, sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
+      return { ok: true, supplement: picked.result.supplement, batch: { ...readPageCaptureInjectionResult(captured), tabId: tab.id } };
     }
     case "START_PAGE_CAPTURE":
       return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount, message.requestId));
     case "READ_PAGE_CAPTURE_SUPPLEMENT":
-      return { ok: true, supplement: await readPageCaptureSupplement(message.supplement, chrome) };
+      return { ok: true, supplement: await readPageCaptureSupplement(message.supplement, chrome, { sourceTabId: message.sourceTabId, sourceUrl: message.sourceUrl }) };
     case "CANCEL_PAGE_CAPTURE":
       return cancelPageCapture(message.sessionId);
     case "PREVIEW_PAGE_CAPTURE_REGION":
@@ -1211,6 +1241,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => updateLocalAssetReferenceAction(message));
     case "BATCH_ADD_CUSTOM_LABELS":
       return enqueue(async () => batchAddCustomLabels(message));
+    case "BATCH_REMOVE_CASE_TAGS":
+      return enqueue(async () => batchRemoveCaseTags(message));
     case "BATCH_SET_CLASSIFICATION":
       return enqueue(async () => batchSetClassification(message));
     case "BATCH_SET_PROJECT":
@@ -1555,7 +1587,7 @@ async function collectPageCaptureTab(tab, options) {
       target: { tabId: tab.id }, world: "MAIN", func: collectPageCaptureDownloads,
       args: [{ contentSelector: adapter.fields.content[0], containerSelector: adapter.fields.mediaContainers[0],
         buttonSelector: adapter.fields.downloadButtons, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
-        maxBytes: PORTABLE_LIBRARY_LIMITS.maxFileBytes, maxPayloadBytes: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes,
+        maxBytes: operationBudget().maxTextBytes, maxPayloadBytes: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
         timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
         extensions: ["md", "markdown", "txt", "pdf", "html", "htm", "rtf", "skill"] }]
     });
@@ -1570,26 +1602,27 @@ async function collectPageCaptureTab(tab, options) {
     target: { tabId: tab.id },
     func: collectPageCaptureSnapshot,
     args: [{
+      serializeErrors: true,
       sessionId: options.sessionId,
       adapters: PAGE_CAPTURE_ADAPTERS,
       platformAdapters: PAGE_CAPTURE_PLATFORM_ADAPTERS,
       mode: options.mode,
       maxCandidates: options.maxCandidates,
       maxRegionCandidates: PAGE_CAPTURE_QUALITY_LIMITS.maxRegionCandidates,
-      maxContentTargets: PAGE_CAPTURE_QUALITY_LIMITS.maxContentTargetsPerCandidate,
       feishuDocument,
       maxMedia: Math.max(PAGE_CAPTURE_LIMITS.maxMediaPerCandidate, feishuDocument?.mediaCount || 0),
       maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
       listMode: options.listMode === true,
       mediaTimeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
       maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
+      maxCanvasPixels: operationBudget().maxImagePixels,
       editedRegion: options.editedRegion || null,
       downloads,
       videoFrameRules: PAGE_CAPTURE_VIDEO_FRAME_RULES,
       siteData
     }]
   });
-  let snapshot = injected?.result || {};
+  let snapshot = readPageCaptureInjectionResult(injected);
   if (siteData?.pageKind === "feed") {
     siteData = await readPageCaptureSiteData(tab, { installObserver: false, maxCandidates: options.maxCandidates }) || siteData;
     snapshot = { ...snapshot, candidates: siteData.candidates, siteStatus: siteData.completeness };
@@ -1673,14 +1706,14 @@ async function readPageCaptureSiteData(tab, { installObserver = true, maxCandida
       args: [{
         maxCandidates,
         maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
-        maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes
+        maxTextCharacters: LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes
       }]
     });
     if (/^https:\/\/(?:www\.)?pinterest\.com\/pin\/(?:[^/]*--)?\d+\/?(?:\?.*)?$/u.test(tab.url) && !sitePayloadResult?.result?.pin) {
       const html = await readPinterestHtml(tab.url);
       return normalizePageCaptureSitePayload(collectPageCaptureSitePayload({ pinterestUrl: tab.url, pinterestHtml: html,
         maxCandidates, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
-        maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes }), tab.url);
+        maxTextCharacters: LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes }), tab.url);
     }
     return sitePayloadResult?.result?.adapter === "libtv" ? normalizeLibTvPublicPayload(sitePayloadResult.result) : normalizePageCaptureSitePayload(sitePayloadResult?.result, tab.url);
   } catch (error) {
@@ -1866,7 +1899,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
             const documentOptions = {
               kind: media.kind,
               expectedMimeType: media.mimeType,
-              maxBytes: PORTABLE_LIBRARY_LIMITS.maxFileBytes,
+              maxBytes: LIBRARY_TRANSFER_LIMITS.maxFileBytes,
               timeoutMs: 60_000,
               accept: "application/zip,application/pdf,text/markdown,text/plain,text/html,application/rtf,text/rtf,application/x-rtf"
             };
@@ -1953,7 +1986,8 @@ async function commitPageCapture(batchValue, metadata = {}) {
                 originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl
               });
                 const poster = entries.flatMap(entryMediaAssets).find(asset => asset.id === existing.posterAssetId);
-                if (poster && !mediaAssets.some(asset => asset.id === poster.id)) mediaAssets.push(poster);
+                if (poster && !mediaAssets.some(asset => asset.id === poster.id)) mediaAssets.push({ ...poster,
+                  usage: 'poster', derivedFromAssetId: existing.id });
                 articleAssetIds.set(media.id, existing.id);
                 continue;
               }
@@ -1985,8 +2019,9 @@ async function commitPageCapture(batchValue, metadata = {}) {
           if (!videoAsset.posterAssetId && media.posterUrl) {
             try {
               const posterBlob = await fetchBoundedMedia(media.posterUrl, {
-                kind: "image", maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
-                maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels, timeoutMs: 60_000
+                kind: "image", maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes,
+                revalidateCache: true,
+                maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels, timeoutMs: 60_000
               }).catch(async error => {
                 if (batch.sessionMediaAllowed === false) throw error;
                 try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.posterUrl)).blob; }
@@ -2019,8 +2054,9 @@ async function commitPageCapture(batchValue, metadata = {}) {
               let metadata = null;
               const blob = await fetchBoundedMedia(url, {
                 kind: "image",
-                maxBytes: PORTABLE_LIBRARY_LIMITS.maxImageBytes,
-                maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels,
+                revalidateCache: true,
+                maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes,
+                maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels,
                 timeoutMs: 60_000,
                 accept: "image/avif,image/webp,image/png,image/jpeg,image/gif",
                 onMetadata: (value) => { metadata = value; }
@@ -2170,7 +2206,9 @@ async function commitPageCapture(batchValue, metadata = {}) {
 
 async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "image") {
   if (batch.sessionMediaAllowed === false) throw new Error("没有获得页面媒体读取权限");
-  const maxBytes = kind === "video" ? PORTABLE_LIBRARY_LIMITS.maxVideoBytes : PORTABLE_LIBRARY_LIMITS.maxImageBytes;
+  const maxBytes = await stagingByteBudget();
+  const timeoutMs = operationBudget().maxDurationMs;
+  const signal = AbortSignal.timeout(timeoutMs);
   if (!Number.isInteger(batch?.tabId)) throw new Error("原网页标签页已经不可用");
   const tab = await chrome.tabs.get(batch.tabId);
   let currentOrigin;
@@ -2195,7 +2233,8 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
         url: value,
         allowedUrls,
         maxBytes,
-        chunkBytes: PAGE_SESSION_MEDIA_CHUNK_BYTES
+        chunkBytes: Math.min(maxBytes, PAGE_SESSION_MEDIA_CHUNK_BYTES),
+        timeoutMs
       }]
     });
     const prepared = preparedResult?.result;
@@ -2205,6 +2244,7 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
     const chunks = [];
     let totalBytes = 0;
     for (let index = 0; index < prepared.chunkCount; index += 1) {
+      signal.throwIfAborted();
       const [chunkResult] = await chrome.scripting.executeScript({
         target: { tabId: batch.tabId },
         world: "MAIN",
@@ -2214,23 +2254,18 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
       const binary = globalThis.atob(String(chunkResult?.result || ""));
       const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
       totalBytes += bytes.byteLength;
-      if (totalBytes > maxBytes) throw new Error("页面媒体超过本地容量上限");
-      chunks.push(bytes);
+      if (totalBytes > maxBytes) throw new Error("页面媒体超过本次暂存预算");
+      chunks.push(new Blob([bytes]));
     }
     if (totalBytes !== prepared.totalBytes) throw new Error("页面媒体传输不完整");
-    const combined = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-      combined.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
     let metadata = null;
-    const blob = await boundedMediaBlobFromResponse(new Response(combined, {
+    const blob = await boundedMediaBlobFromResponse(new Response(new Blob(chunks), {
       headers: { "content-type": String(prepared.contentType || "application/octet-stream") }
     }), {
       kind,
       maxBytes,
-      maxPixels: PORTABLE_LIBRARY_LIMITS.maxImagePixels,
+      signal,
+      maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels,
       onMetadata: (value) => { metadata = value; }
     });
     return { blob, metadata };
@@ -3219,16 +3254,9 @@ async function discardSaveUndoBackup(undoValue) {
 }
 
 async function readState() {
-  const stored = await libraryStorage.get([
-    ...Object.values(STORAGE_KEYS),
-    "tagCatalog"
-  ]);
+  const stored = await libraryStorage.get([...Object.values(STORAGE_KEYS), "tagCatalog"]);
   const aiConfiguration = aiConfigurationFromStorage(stored);
-  const aiRuntime = projectAiRuntime(aiConfiguration);
-  const aiStorageOutdated = !stored[STORAGE_KEYS.aiProviderRegistry]
-    || Number(stored[STORAGE_KEYS.aiProviderRegistry]?.version) !== aiConfiguration.registry.version
-    || !stored[STORAGE_KEYS.aiPreferences]
-    || JSON.stringify(stored[STORAGE_KEYS.aiTaskAssignments] ?? {}) !== JSON.stringify(aiConfiguration.assignments);
+  const aiStorageOutdated = aiConfigurationNeedsStorageUpdate(stored, aiConfiguration);
   if (aiStorageOutdated) {
     await commitLocalChanges({
       [STORAGE_KEYS.aiProviderRegistry]: aiConfiguration.registry,
@@ -3285,15 +3313,12 @@ async function readState() {
     await libraryStorage.remove(STORAGE_KEYS.facetUndo);
     stored[STORAGE_KEYS.facetUndo] = null;
   }
-  const uiPreferences = normalizeUiPreferences(stored[STORAGE_KEYS.uiPreferences]);
-  const locale = resolveLocale(uiPreferences, chrome.i18n.getUILanguage());
   const composerSessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   if (JSON.stringify(stored[STORAGE_KEYS.composerSessions] ?? []) !== JSON.stringify(composerSessions)) {
     await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: composerSessions }, { markSyncDirty: false });
   }
   const creativeRuns = normalizeCreativeRuns(stored[STORAGE_KEYS.creativeRuns]);
   const creativeJobs = normalizeCreativeJobsState(stored[STORAGE_KEYS.creativeJobs]);
-  const importJobs = normalizeImportJobsState(stored[STORAGE_KEYS.importJobs]);
   const importStaging = normalizeImportStagingState(stored[STORAGE_KEYS.importStaging]);
   const creativeSkills = normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]);
   const creativeExperimentSettings = normalizeCreativeExperimentSettings(stored[STORAGE_KEYS.creativeExperimentSettings]);
@@ -3320,64 +3345,24 @@ async function readState() {
   if (Object.keys(creativeNormalizationUpdate).length) {
     await commitLocalChanges(creativeNormalizationUpdate, { markSyncDirty: false });
   }
-  const storedBatchJob = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
-  const textBatchSummary = storedBatchJob?.kind === "text_tags"
-    ? {
-        ...analysisBatchSummary(storedBatchJob),
-        ...analysisRebuildRecovery(storedBatchJob, stored[STORAGE_KEYS.analysisRebuildStaging])
-      }
-    : null;
-  const analysisUndo = stored[STORAGE_KEYS.analysisBatchUndo];
   return {
-    ...domainState(state),
-    settings: normalizeSettings(state.settings ?? {}, defaultSettingsForLocale(locale)),
-    uiPreferences,
-    aiSettings: publicAiSettings(aiRuntime.aiSettings),
-    visionSettings: publicVisionSettings(aiRuntime.visionSettings),
-    aiServiceProfiles: publicAiServiceProfiles(aiRuntime.aiServiceProfiles),
-    aiProviderRegistry: publicAiProviderRegistry(aiConfiguration.registry),
-    aiTaskAssignments: aiConfiguration.assignments,
-    aiPreferences: aiConfiguration.preferences,
-    composerSettings: normalizeComposerSettings(stored[STORAGE_KEYS.composerSettings]),
+    ...projectLibraryViewState({ ...stored, ...state }, {
+      aiConfiguration,
+      uiLanguage: chrome.i18n.getUILanguage(),
+      syncStatus: await publicSyncStatus(syncSettings),
+      restoredArchivedFacetCount: recoveredVocabulary.restoredFacetIds.length
+    }),
     composerSessions,
     composerSessionSummaries: composerSessions.map(sessionSummary),
-    creativeExperimentSettings,
     creativeRuns,
     creativeJobs,
-    importJobs,
     importStaging,
     creativeSkills,
     activeCreativeResult,
     folderOwnershipBackup: stored[STORAGE_KEYS.folderOwnershipBackup],
-    libraryReplacementRecoveryPoint: normalizeLibraryReplacementRecoveryPoint(
-      stored[STORAGE_KEYS.libraryReplacementRecoveryPoint]
-    ),
-    syncSettings,
-    syncStatus: await publicSyncStatus(syncSettings),
-    visionUndoEntryIds: Object.entries(stored[STORAGE_KEYS.visionAnalysisUndo] ?? {})
-      .filter(([, undo]) => undo?.appliedVisionAnalysis && Array.isArray(undo.appliedAssignments)
-        && Number.isInteger(undo.appliedCatalogRevision))
-      .map(([entryId]) => entryId),
-    pendingContentCount: state.entries.filter(
-      (entry) => entry.classification?.status === "needs_review"
-    ).length,
-    pendingSuggestionCount: state.entries.reduce((count, entry) =>
-      count + reusableAnalysisItems(entry.analysisCandidates).length, 0),
-    analysisPendingCount: state.entries.filter((entry) => entry.analysisPending).length,
-    migrationBackupExists: Boolean(
-      stored[STORAGE_KEYS.facetMigrationBackup] || stored[STORAGE_KEYS.migrationBackup] || shouldMigrate
-    ),
-    canUndoFacetUpdate: facetUndoCount(stored[STORAGE_KEYS.facetUndo]) > 0,
-    facetUndoCount: facetUndoCount(stored[STORAGE_KEYS.facetUndo]),
+    libraryReplacementRecoveryPoint: normalizeLibraryReplacementRecoveryPoint(stored[STORAGE_KEYS.libraryReplacementRecoveryPoint]),
+    migrationBackupExists: Boolean(stored[STORAGE_KEYS.facetMigrationBackup] || stored[STORAGE_KEYS.migrationBackup] || shouldMigrate),
     facetUndo: stored[STORAGE_KEYS.facetUndo] ?? null,
-    restoredArchivedFacetCount: recoveredVocabulary.restoredFacetIds.length,
-    analysisBatchJob: textBatchSummary,
-    maintenanceJob: libraryMaintenanceSummary(stored[STORAGE_KEYS.libraryMaintenanceJob]),
-    visionBatchJob: ["vision", "video"].includes(analysisBatchSummary(stored[STORAGE_KEYS.batchJob])?.kind)
-      ? analysisBatchSummary(stored[STORAGE_KEYS.batchJob])
-      : null,
-    canUndoAnalysisBatch: Boolean(textBatchSummary && analysisUndo?.jobId === textBatchSummary.id
-      && Array.isArray(analysisUndo.appliedEntries) && analysisUndo.appliedEntries.length),
     lastSaveUndo: normalizeLastSaveUndo(stored[STORAGE_KEYS.lastSaveUndo])
   };
 }
@@ -3401,11 +3386,10 @@ async function createCreativeSkillAction(message) {
 }
 
 async function saveCreativeSkillVersionAction(message) {
-  const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
-  const before = normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]).items.find(item => item.id === message.skillId);
-  const result = saveCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.version);
+  const stored = await libraryStorage.get(['creativeSkills', 'composerSessions', 'creativeRuns', 'creativeJobs']);
+  const result = saveCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.version, { protectedVersionIds: protectedSkillVersionIds(stored) });
   await commitSkillCoverResult(result, message.cover);
-  await deleteUnreferencedMedia(skillPackageAssetIds(before)).catch(error => console.warn("Skill资源清理未完成", error));
+  await deleteUnreferencedMedia(normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]).items.flatMap(skillPackageAssetIds)).catch(error => console.warn("Skill资源清理未完成", error));
   return { ok: true, message: message.version?.coverOnly ? "Skill 已保存" : "Skill 新版本已保存", creativeSkills: result.state, skill: result.skill };
 }
 
@@ -3421,13 +3405,13 @@ async function commitSkillCoverResult(result, cover) {
 }
 
 async function restoreCreativeSkillVersionAction(message) {
-  const stored = await libraryStorage.get(STORAGE_KEYS.creativeSkills);
+  const stored = await libraryStorage.get(['creativeSkills', 'composerSessions', 'creativeRuns', 'creativeJobs']);
   const before = normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]).items.find(item => item.id === message.skillId);
   const source = before?.versions.find(item => item.id === message.versionId);
   const filesKnown = source?.id === before?.currentVersionId || Array.isArray(source?.packageFiles);
-  const result = restoreCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.versionId);
+  const result = restoreCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.versionId, { protectedVersionIds: protectedSkillVersionIds(stored) });
   await commitLocalChanges({ [STORAGE_KEYS.creativeSkills]: result.state });
-  await deleteUnreferencedMedia(skillPackageAssetIds(before)).catch(error => console.warn("Skill资源清理未完成", error));
+  await deleteUnreferencedMedia(normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]).items.flatMap(skillPackageAssetIds)).catch(error => console.warn("Skill资源清理未完成", error));
   return { ok: true, message: filesKnown ? "已将所选版本恢复为新的当前版本" : "已恢复文字版本；此旧版本没有文件记录，当前包文件保留", creativeSkills: result.state, skill: result.skill };
 }
 
@@ -3727,6 +3711,8 @@ function upsertSessionList(values, sessionValue) {
   const session = createComposerSession(sessionValue);
   const sessions = normalizeComposerSessions(values);
   preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
+  session.toolContinuations = sessions.find(item => item.id === session.id)?.toolContinuations || {};
+  session.toolSkillVersionIds = sessions.find(item => item.id === session.id)?.toolSkillVersionIds || [];
   return normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
 }
 
@@ -4739,6 +4725,8 @@ async function upsertComposerSession(value) {
   const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   const session = createComposerSession(value);
   preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
+  session.toolContinuations = sessions.find(item => item.id === session.id)?.toolContinuations || {};
+  session.toolSkillVersionIds = sessions.find(item => item.id === session.id)?.toolSkillVersionIds || [];
   if (!isMeaningfulComposerSession(session)) return { ok: false, message: "空白新对话不会保存到历史" };
   const next = normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
   await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
@@ -4760,6 +4748,7 @@ async function deleteComposerSession(sessionId) {
     ...(active?.sessionId === sessionId ? { [STORAGE_KEYS.activeCreativeResult]: null } : {})
   });
   await deleteUnreferencedMedia(temporaryAssetIdsFromSession(removedSession));
+  await discardComposerToolProgress(libraryStorage, sessionId);
   return { ok: true, message: "创作草稿已删除", summaries: next.map(sessionSummary) };
 }
 
@@ -5633,25 +5622,11 @@ function canonicalAiTaskId(value) {
 }
 
 function applyCompletedVisionResult(state, entry, visual, result, { fingerprint, catalogRevision, locale, batchJobId = "" }) {
-  const analysisState = {
-    ...state,
-    entries: state.entries.map((item) => item.id === entry.id
-      ? { ...item, visionAnalysis: visual?.visionAnalysis } : item)
-  };
-  const applied = applyVisionAnalysis(analysisState, entry.id, result, {
-    version: VISION_ANALYSIS_VERSION, visualId: visual.id, imageFingerprint: fingerprint,
-    profileFingerprint: result.profileFingerprint, catalogRevision, locale,
+  return applyCompletedImageResult(state, entry, visual, result, {
+    imageFingerprint: fingerprint, profileFingerprint: result.profileFingerprint, catalogRevision, locale,
     providerType: result.providerType, model: result.model, usage: result.usage,
     cacheHit: result.cacheHit, attempts: result.attempts, batchJobId
   });
-  const analyzed = applied.state.entries.find((item) => item.id === entry.id);
-  const visionAnalysis = analyzed.visionAnalysis;
-  delete analyzed.visionAnalysis;
-  const normalized = updateEntryVisual(analyzed, visual.id, (item) => ({
-    ...item, contentHash: fingerprint, visionAnalysis
-  }));
-  applied.state.entries = applied.state.entries.map((item) => item.id === entry.id ? normalized : item);
-  return applied;
 }
 
 async function analyzeEntryImage(entryId, visualIdValue, outputLocale, batchJobIdValue = "", bypassCache = false, assignmentOverride = null, priority = "user_batch") {
@@ -5974,24 +5949,8 @@ async function completeVideoAnalysisAction(message) {
       finishReason: analysis.finishReason,
       userEdited: false
     };
-    let updated = replaceCurrentVideoReconstruction(current, asset.id, record);
-    const entryIndex = currentState.entries.findIndex((item) => item.id === current.id);
-    const preservedAssignments = (updated.facetAssignments ?? []).filter((item) =>
-      item.source !== "vision_model" || item.visualId !== asset.id
-    );
-    currentState.entries[entryIndex] = { ...updated, facetAssignments: preservedAssignments };
-    const assignmentStart = preservedAssignments.length;
-    const applied = applyFixedAnalysisTags(currentState, current.id, analysis.tags, {
-      source: "vision_model",
-      maxTags: 8,
-      replaceExisting: false
-    });
-    currentState = applied.state;
-    updated = normalizeEntryMedia(currentState.entries[entryIndex]);
-    updated.facetAssignments = updated.facetAssignments.map((item, index) =>
-      index >= assignmentStart && item.source === "vision_model" ? { ...item, visualId: asset.id } : item
-    );
-    currentState.entries[entryIndex] = updated;
+    currentState = applyCompletedVideoResult(currentState, current, asset, record).state;
+    const updated = currentState.entries.find(item => item.id === current.id);
     const savedRecord = currentVideoReconstruction(updated, asset.id);
     const actionResult = {
       ok: true,
@@ -6223,6 +6182,16 @@ async function batchAddCustomLabels(message) {
   if (!updatedCount) return { ok: true, message: "所选案例已经包含这些标签", updatedCount: 0, entries };
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
   return { ok: true, message: `已为 ${updatedCount} 个案例添加标签`, updatedCount, entries };
+}
+
+async function batchRemoveCaseTags(message) {
+  const state = await readState();
+  const before = domainState(state);
+  const result = removeCaseTags(before, message.caseIds, message);
+  if (!result.updatedCount) return { ok: true, message: '所选案例已无这些标签', updatedCount: 0 };
+  const saved = await persistDomainState(result.state, before);
+  return { ok: true, message: `已从 ${result.updatedCount} 个案例移除标签`, updatedCount: result.updatedCount,
+    canUndoFacetUpdate: facetUndoCount(saved[STORAGE_KEYS.facetUndo]) > 0 };
 }
 
 async function batchSetClassification(message) {
@@ -7927,6 +7896,7 @@ async function undoFacetUpdate() {
   const undone = undoFacetHistory(domainState(state), state.facetUndo);
   const update = {
     [STORAGE_KEYS.facetCatalog]: normalizeFacetCatalog(undone.state.facetCatalog),
+    ...(undone.compoundsChanged ? { [STORAGE_KEYS.compoundCases]: undone.state.compoundCases } : {}),
     ...(undone.entriesChanged ? { [STORAGE_KEYS.entries]: undone.state.entries } : {})
   };
   if (undone.remainingSteps) update[STORAGE_KEYS.facetUndo] = undone.history;
@@ -8062,10 +8032,6 @@ function analysisResultMessage(applied) {
   return `已写入 ${applied.appliedCount} 个检索标签`;
 }
 
-function reusableAnalysisItems(values) {
-  return (Array.isArray(values) ? values : []).filter((item) => item?.source && item.source !== "deepseek_text");
-}
-
 function domainState(state) {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -8124,17 +8090,6 @@ function folderBackupState(state) {
   };
 }
 
-function enrichContentMeanings(entriesValue, taxonomy) {
-  const normalizedTaxonomy = normalizeTaxonomy(taxonomy);
-  const names = new Map(normalizedTaxonomy.nodes.map((item) => [item.id, item.name]));
-  const roles = new Map(normalizedTaxonomy.nodes.map((item) => [item.id, item.role]));
-  return (Array.isArray(entriesValue) ? entriesValue : []).map((entry) => ({
-    ...entry,
-    contentRole: contentRoleForEntry(entry, normalizedTaxonomy, roles),
-    contentTypeName: names.get(entry.classification?.pathIds?.[0]) || ""
-  }));
-}
-
 function storagePayload(state) {
   return {
     [STORAGE_KEYS.schemaVersion]: SCHEMA_VERSION,
@@ -8158,6 +8113,7 @@ async function persistDomainState(state, undo, historyOptions) {
     );
   }
   await commitLocalChanges(update);
+  return update;
 }
 
 async function exportArchive(state, requestedEntryIds) {

@@ -317,11 +317,7 @@
 .composer-model-dynamic { display: grid; gap: 2px; }
 .composer-model-dynamic[hidden] { display: none; }
 .composer-model-empty { padding: 8px 10px; color: var(--muted); font-size: 10px; }
-.composer-assembly-dialog { width: min(820px, calc(100% - 28px)); max-height: min(760px, calc(100dvh - 28px)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; padding: 0; color: var(--ink); background: var(--paper); box-shadow: var(--shadow); }
-.composer-assembly-dialog::backdrop { background: rgba(10, 14, 22, .52); }
-.composer-assembly-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--card); }
-.composer-assembly-dialog > header strong { font-size: 15px; }
-.composer-assembly-dialog > header p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
+.composer-assembly-dialog { width: min(820px, calc(100% - 28px)); max-height: min(760px, calc(100dvh - 28px)); overflow: hidden; }
 .composer-assembly-content { display: grid; max-height: calc(100dvh - 110px); overflow: auto; gap: 0; }
 .composer-assembly-layer { display: grid; grid-template-columns: minmax(130px, .28fr) minmax(0, 1fr) auto; align-items: start; gap: 16px; padding: 18px; border-bottom: 1px solid var(--line); }
 .composer-assembly-layer:last-child { border-bottom: 0; }

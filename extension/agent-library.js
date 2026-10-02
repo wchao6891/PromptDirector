@@ -4,7 +4,7 @@ import { materializeLogicalCases, normalizeCompoundCases } from "./compound-case
 import { entryMediaAssets } from "./media.js";
 import { filterCaseSearchEntries, searchCaseResult } from "./case-search.js";
 import { caseTextPart } from "./composer-library-tools.js";
-import { AGENT_CHUNK_BYTES, agentError, bytesToBase64, requireInteger } from "./agent-protocol.js";
+import { AGENT_CHUNK_BYTES, agentDownloadChunkBytes, agentError, bytesToBase64, requireInteger } from "./agent-protocol.js";
 import { detailPromptSources } from "./prompt-sources.js";
 import { sha256Blob } from "./blob-digest.js";
 import { resolveCaseMediaId } from './media-identity-aliases.js';
@@ -104,7 +104,7 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
       // and rejects any concurrent content change; avoid rehashing GBs per chunk.
       const hash = offset === 0 || !expectedHash ? await sha256Blob(blob) : expectedHash;
       if (offset > blob.size) throw agentError("invalid_input", "读取位置超出原件大小。");
-      const bytes = new Uint8Array(await blob.slice(offset, offset + AGENT_CHUNK_BYTES).arrayBuffer());
+      const bytes = new Uint8Array(await blob.slice(offset, offset + agentDownloadChunkBytes()).arrayBuffer());
       return { assetId, mimeType: blob.type || asset.mimeType, name: asset.sourceTitle || assetId,
         byteSize: blob.size, sha256: hash, offset, data: bytesToBase64(bytes),
         nextOffset: offset + bytes.length < blob.size ? offset + bytes.length : null };

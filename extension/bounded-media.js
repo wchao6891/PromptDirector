@@ -1,4 +1,5 @@
-import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
+import { operationBudget, stagingByteBudget, withMediaDownloadSlot } from './resource-policy.js';
 
 const MEDIA_KINDS = new Set(["image", "video", "document", "attachment"]);
 export const SUPPORTED_DOCUMENT_MIME_TYPES = Object.freeze([
@@ -13,26 +14,34 @@ export const SUPPORTED_DOCUMENT_MIME_TYPES = Object.freeze([
 const DOCUMENT_MIME_TYPES = new Set(SUPPORTED_DOCUMENT_MIME_TYPES);
 
 export async function fetchBoundedMedia(value, options = {}) {
+  return withMediaDownloadSlot(() => fetchMediaWithDeadline(value, options), options.signal);
+}
+
+async function fetchMediaWithDeadline(value, options) {
   const url = assertRemoteMediaUrl(value, options);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new Error("当前环境无法下载媒体文件");
   const controller = new AbortController();
-  const abort = () => controller.abort();
+  const abort = () => controller.abort(options.signal?.reason);
   if (options.signal?.aborted) controller.abort();
   options.signal?.addEventListener?.("abort", abort, { once: true });
-  const timeoutMs = positiveInteger(options.timeoutMs, 0);
+  const timeoutMs = positiveInteger(options.timeoutMs, operationBudget(options.budget).maxDurationMs);
   const timeout = timeoutMs ? setTimeout(abort, timeoutMs) : 0;
   try {
     const response = await fetchImpl(url.href, {
       credentials: "omit",
       redirect: "error",
       referrerPolicy: "no-referrer",
-      cache: "no-store",
+      // Opted-in original media still asks the server to validate every reuse.
+      // Changed or uncached files are downloaded and verified in full below.
+      cache: options.revalidateCache === true ? "no-cache" : "no-store",
       signal: controller.signal,
       headers: options.accept ? { accept: String(options.accept) } : undefined
     });
     if (!response.ok) throw new Error(`媒体下载失败（HTTP ${response.status}）`);
-    return boundedMediaBlobFromResponse(response, { ...options, controller });
+    const availableBytes = await stagingByteBudget(options);
+    if (!availableBytes) throw new Error("本机没有足够的下载暂存空间");
+    return await boundedMediaBlobFromResponse(response, { ...options, maxBytes: Math.min(options.maxBytes || Number.MAX_SAFE_INTEGER, availableBytes), controller });
   } finally {
     if (timeout) clearTimeout(timeout);
     options.signal?.removeEventListener?.("abort", abort);
@@ -45,19 +54,21 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
   const declared = Number(response?.headers?.get?.("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel?.().catch(() => undefined);
-    throw new Error(`媒体文件超过本地容量上限（${maxBytes} bytes）`);
+    throw new Error(`媒体文件超过本次接收预算（${maxBytes} bytes）`);
   }
-  const bytes = await readBoundedBytes(response, maxBytes, options.controller);
+  const blob = await readBoundedBlob(response, maxBytes, options.controller?.signal ?? options.signal);
+  // Only inspect a header window. The browser-managed Blob sink can spill to
+  // disk; retaining all chunks and concatenating them duplicates large files.
+  const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
   const declaredType = cleanMimeType(response?.headers?.get?.("content-type"));
   if (kind === "attachment") {
     const zip = bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
     if (options.expectedMimeType !== "application/zip" || !zip) throw new Error("来源没有返回有效的 Skill 文件");
-    return new Blob([bytes], { type: "application/zip" });
+    return blob.slice(0, blob.size, "application/zip");
   }
-  const detectedType = kind === "document" ? detectDocumentMimeType(bytes) : detectMediaMimeType(bytes);
-  const mimeType = kind === "document"
-    ? verifiedDocumentMimeType(bytes, detectedType, declaredType, options.expectedMimeType)
-    : detectedType || declaredType;
+  if (kind === 'document') return verifiedDocumentBlob(blob.slice(0, blob.size, declaredType), options.expectedMimeType, maxBytes, options.controller?.signal ?? options.signal);
+  const detectedType = detectMediaMimeType(bytes);
+  const mimeType = detectedType || declaredType;
   if (kind !== "document" && (!mimeType.startsWith(`${kind}/`) || !detectedType)) {
     throw new Error(`来源没有返回有效${kind === "image" ? "图片" : "视频"}文件`);
   }
@@ -67,7 +78,7 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
     throw new Error(`图片像素超过 ${maxPixels.toLocaleString("en-US")} 上限`);
   }
   options.onMetadata?.({ mimeType, ...(dimensions || {}) });
-  return new Blob([bytes], { type: mimeType });
+  return blob.slice(0, blob.size, mimeType);
 }
 
 export function isSupportedDocumentMimeType(value) {
@@ -75,9 +86,9 @@ export function isSupportedDocumentMimeType(value) {
 }
 
 // Validate an already-local document without copying its entire payload into JS memory.
-export async function verifiedDocumentBlob(blob, expectedMimeType, maxBytes) {
+export async function verifiedDocumentBlob(blob, expectedMimeType, maxBytes, signal) {
   if (!blob.size) throw new Error("媒体文件为空");
-  if (blob.size > maxBytes) throw new Error(`媒体文件超过本地容量上限（${maxBytes} bytes）`);
+  if (blob.size > maxBytes) throw new Error(`媒体文件超过本次接收预算（${maxBytes} bytes）`);
   // Document signatures use the same 256-byte prefix as detectDocumentMimeType.
   const prefix = new Uint8Array(await blob.slice(0, 256).arrayBuffer());
   const detected = detectDocumentMimeType(prefix);
@@ -85,7 +96,7 @@ export async function verifiedDocumentBlob(blob, expectedMimeType, maxBytes) {
   const type = verifiedDocumentMimeType(text ? new Uint8Array() : prefix, detected, blob.type, expectedMimeType);
   if (text) {
     const decoder = new TextDecoder("utf-8", { fatal: true });
-    const reader = blob.stream().getReader();
+    const reader = blob.stream().pipeThrough(new TransformStream(), { signal }).getReader();
     let length = 0;
     let controls = 0;
     const inspect = (value) => {
@@ -98,6 +109,7 @@ export async function verifiedDocumentBlob(blob, expectedMimeType, maxBytes) {
     };
     try {
       while (true) {
+        signal?.throwIfAborted();
         const { done, value } = await reader.read();
         if (done) break;
         inspect(decoder.decode(value, { stream: true }));
@@ -106,6 +118,7 @@ export async function verifiedDocumentBlob(blob, expectedMimeType, maxBytes) {
       if (controls > Math.max(1, Math.floor(length * 0.01))) throw new Error("来源没有返回有效文档文件");
     } catch (error) {
       await reader.cancel().catch(() => undefined);
+      signal?.throwIfAborted();
       throw new Error("来源没有返回有效文档文件", { cause: error });
     } finally {
       reader.releaseLock();
@@ -153,33 +166,24 @@ export function assertRemoteMediaUrl(value, options = {}) {
   return url;
 }
 
-async function readBoundedBytes(response, limit, controller) {
+async function readBoundedBlob(response, limit, signal) {
   if (!response?.body?.getReader) throw new Error("媒体响应无法流式读取");
-  const reader = response.body.getReader();
-  const chunks = [];
+  signal?.throwIfAborted();
   let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+  const checked = response.body.pipeThrough(new TransformStream({
+    transform(value, controller) {
+      signal?.throwIfAborted();
       total += value.byteLength;
       if (total > limit) {
-        controller?.abort?.();
-        throw new Error(`媒体文件超过本地容量上限（${limit} bytes）`);
+        throw new Error(`媒体文件超过本次接收预算（${limit} bytes）`);
       }
-      chunks.push(value);
+      controller.enqueue(value);
     }
-  } finally {
-    reader.releaseLock();
-  }
+  }), { signal });
+  const blob = await new Response(checked).blob();
+  signal?.throwIfAborted();
   if (!total) throw new Error("媒体文件为空");
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return blob;
 }
 
 function detectMediaMimeType(bytes) {
@@ -297,9 +301,9 @@ function mediaKind(value) {
 }
 
 function defaultLimit(kind) {
-  if (kind === "image") return PORTABLE_LIBRARY_LIMITS.maxImageBytes;
-  if (["document", "attachment"].includes(kind)) return PORTABLE_LIBRARY_LIMITS.maxFileBytes;
-  return PORTABLE_LIBRARY_LIMITS.maxVideoBytes;
+  if (kind === "image") return LIBRARY_TRANSFER_LIMITS.maxImageBytes;
+  if (["document", "attachment"].includes(kind)) return LIBRARY_TRANSFER_LIMITS.maxFileBytes;
+  return LIBRARY_TRANSFER_LIMITS.maxVideoBytes;
 }
 
 function cleanMimeType(value) {

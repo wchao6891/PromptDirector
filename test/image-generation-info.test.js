@@ -189,12 +189,11 @@ test('sync preserves extraction and remaps per-image prompts when retaining a co
  for(const restored of merged.state.entries) {assert.deepEqual(restored.mediaAssets[0].generationInfo,info);assert.equal(restored.mediaPrompts[0].assetId,restored.mediaAssets[0].id);}
 });
 
-test('oversized compressed metadata produces an explicit extraction result and leaves the full original readable', async () => {
- const {GENERATION_TEXT_BUDGET}=await import('../extension/image-generation-container.js');
- const source='x'.repeat(GENERATION_TEXT_BUDGET+1)+footer;
+test('compressed metadata above the former 16 MiB budget is extracted completely while preserving the original', async () => {
+ const source='x'.repeat(16*1024*1024+1)+footer;
  const blob=png(txt('parameters',source,'zTXt'));
  const before=Buffer.from(await blob.arrayBuffer());const info=await readImageGenerationInfo(blob);
- assert.equal(info.status,'partial');assert.match(info.warnings.join(' '),/预算/u);assert.deepEqual(info.candidates,[]);
+ assert.equal(info.status,'extracted');assert.equal(info.candidates[0].prompt,'x'.repeat(16*1024*1024+1));
  assert.deepEqual(Buffer.from(await blob.arrayBuffer()),before);
 });
 

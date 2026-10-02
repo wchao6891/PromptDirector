@@ -20,14 +20,41 @@ test("bounded media rejects declared and streamed overflow before creating a Blo
   });
   await assert.rejects(
     () => boundedMediaBlobFromResponse(declared, { kind: "image", maxBytes: 12 }),
-    /超过本地容量上限/
+    /超过本次接收预算/
   );
 
   const streamed = new Response(new Uint8Array([...PNG, 1]));
   await assert.rejects(
     () => boundedMediaBlobFromResponse(streamed, { kind: "image", maxBytes: 12 }),
-    /超过本地容量上限/
+    /超过本次接收预算/
   );
+});
+
+for (const mode of ['timeout', 'user_cancel']) {
+  test(`download ${mode} reaches a pending body after headers and cancels its reader`, async () => {
+    const controller = new AbortController();
+    let canceled = false;
+    const response = new Response(new ReadableStream({
+      start(stream) { stream.enqueue(PNG); },
+      cancel() { canceled = true; }
+    }));
+    const operation = fetchBoundedMedia('https://media.example/pending', {
+      kind: 'image', signal: controller.signal, timeoutMs: mode === 'timeout' ? 25 : 1000,
+      fetchImpl: async () => response
+    });
+    if (mode === 'user_cancel') setTimeout(() => controller.abort(), 10);
+    await assert.rejects(operation, { name: 'AbortError' });
+    assert.equal(canceled, true, 'cancellation must stop network/body reads, not only the UI');
+  });
+}
+
+test('unknown-length overflow cancels the source rather than leaving a downloading stream', async () => {
+  let canceled = false;
+  const response = new Response(new ReadableStream({
+    start(stream) { stream.enqueue(new Uint8Array(64)); }, cancel() { canceled = true; }
+  }));
+  await assert.rejects(boundedMediaBlobFromResponse(response, { kind: 'image', maxBytes: 32 }), /接收预算/);
+  assert.equal(canceled, true);
 });
 
 test("bounded media trusts file signatures instead of a spoofed content type", async () => {

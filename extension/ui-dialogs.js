@@ -1,3 +1,4 @@
+import { createUiIcon } from "./ui-icons.js";
 import { t, translateUiMessage } from "./i18n.js";
 import { setTaskFeedbackState } from "./task-feedback.js";
 
@@ -7,13 +8,15 @@ export async function showAppDialog(options = {}) {
   document.getElementById(DIALOG_ID)?.remove();
   const dialog = document.createElement("dialog");
   dialog.id = DIALOG_ID;
-  dialog.className = `app-dialog${clean(options.dialogClass) ? ` ${clean(options.dialogClass)}` : ""}`;
+  dialog.className = `app-dialog ui-dialog${clean(options.dialogClass) ? ` ${clean(options.dialogClass)}` : ""}`;
   dialog.setAttribute("aria-labelledby", `${DIALOG_ID}-title`);
   const form = document.createElement("form");
   form.method = "dialog";
   form.className = "app-dialog-form";
   const header = document.createElement("header");
+  header.className = "ui-dialog-header";
   const heading = document.createElement("div");
+  heading.className = "ui-dialog-heading";
   const title = document.createElement("h2");
   title.id = `${DIALOG_ID}-title`;
   title.textContent = uiText(options.title) || t("确认操作");
@@ -28,7 +31,7 @@ export async function showAppDialog(options = {}) {
   close.className = "icon-button app-dialog-close";
   close.setAttribute("aria-label", t("关闭"));
   close.title = t("关闭");
-  close.textContent = "×";
+  close.append(createUiIcon("x"));
   header.append(heading, close);
   const body = document.createElement("div");
   body.className = `app-dialog-body${clean(options.bodyClass) ? ` ${clean(options.bodyClass)}` : ""}`;
@@ -54,6 +57,7 @@ export async function showAppDialog(options = {}) {
     return status;
   };
   const footer = document.createElement("footer");
+  footer.className = "ui-dialog-footer";
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "button-secondary";

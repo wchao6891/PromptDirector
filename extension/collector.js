@@ -1,4 +1,5 @@
 import { setTaskFeedbackState } from "./task-feedback.js";
+import { anchorCollectorFeedback } from './collector-feedback.js';
 import { getLibraryStorage } from "./library-storage.js";
 const libraryStorage = getLibraryStorage();
 import { addDiscoveredVideos } from "./video-discovery.js";
@@ -66,6 +67,8 @@ const elements = Object.fromEntries([
   "clipboard-permission-dialog", "clipboard-permission-form", "clipboard-permission-status", "clipboard-permission-cancel", "clipboard-permission-confirm",
   "target-banner", "target-label", "visual-help", "visual-list", "visual-section"
 ].map((id) => [camel(id), document.getElementById(id)]));
+
+const placeCollectorFeedback = anchorCollectorFeedback(elements.feedback, [elements.pageCaptureActions, elements.collectorFooter]);
 
 let draft = null;
 let targetEntry = null;
@@ -745,6 +748,7 @@ function render() {
     createFragmentCard(fragment, index, view.canReorderFragments)));
   elements.visualList.replaceChildren(...draft.visuals.map((visual, index) =>
     createVisualCard(visual, index, view)));
+  placeCollectorFeedback();
 }
 
 async function refreshPageCapturePermissionState() {
@@ -1054,8 +1058,10 @@ async function includePageCaptureSupplement(candidate, item) {
   pageCaptureSupplementRequest = request;
   render();
   try {
-    if (item.partial) {
-      const response = await chrome.runtime.sendMessage({ type: "READ_PAGE_CAPTURE_SUPPLEMENT", supplement: item });
+    // A preview cannot prove that all of a reply's lazily mounted attachments
+    // or long text have arrived. Read the explicitly selected post afresh.
+    {
+      const response = await chrome.runtime.sendMessage({ type: "READ_PAGE_CAPTURE_SUPPLEMENT", supplement: item, sourceTabId: pageCaptureBatch.tabId, sourceUrl: pageCaptureBatch.sourceUrl });
       if (pageCaptureSupplementRequest !== request || pageCaptureBatch?.id !== request.batchId) return;
       if (!response?.ok) throw new Error(response?.message || t("未能取得评论全文，当前草稿已保留"));
       item = response.supplement;
@@ -1073,24 +1079,27 @@ async function includePageCaptureSupplement(candidate, item) {
 function applyPageCaptureSupplement(candidate, item) {
   const paragraph = document.createElement("p");
   paragraph.textContent = item.text;
-  const block = { id: `added:${candidate.id}:${item.id}`, kind: "section", text: item.text, html: paragraph.outerHTML, sourceOrder: candidate.textBlocks.length };
+  const block = { id: item.id, kind: "section", text: item.text, html: paragraph.outerHTML };
+  const selected = pageCaptureBatch.selections.find(value => value.candidateId === candidate.id);
+  const result = appendCaptureCandidate(candidate, {
+    id: item.id, textBlocks: item.text ? [block] : [], media: item.media || [],
+    articleDocument: { version: 1, blocks: [
+      { id: item.id + ":source", kind: "link", sourceUrl: item.sourceUrl, label: t("作者补充") },
+      ...(item.text ? [{ ...block, kind: "paragraph" }] : []),
+      ...(item.media || []).map(media => ({ id: `media:${media.id}`, kind: media.kind, assetId: media.id,
+        sourceUrl: media.url, ...(media.posterUrl ? { posterUrl: media.posterUrl } : {}) }))] }
+  }, selected, { includeExistingMedia: true });
   const revised = {
-    ...candidate,
-    textBlocks: [...candidate.textBlocks, block],
-    contentText: [candidate.contentText, item.text].filter(Boolean).join("\n\n"),
-    articleDocument: { version: 1, blocks: [...(candidate.articleDocument?.blocks || []),
-      { id: block.id + ":source", kind: "link", sourceUrl: item.sourceUrl, label: t("作者补充") },
-      { ...block, kind: "paragraph" }] },
+    ...result.candidate,
     supplements: candidate.supplements.filter(value => value.id !== item.id),
     completeness: item.partial ? "partial" : candidate.completeness,
     sourceFacts: { ...candidate.sourceFacts, status: item.partial ? "partial" : candidate.sourceFacts.status }
   };
-  const selected = pageCaptureBatch.selections.find(value => value.candidateId === candidate.id);
   pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selected) });
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
     candidates: pageCaptureBatch.candidates.map(value => value.id === candidate.id ? revised : value),
     selections: pageCaptureBatch.selections.map(selection => selection.candidateId === candidate.id
-      ? { ...selection, includeText: true, selectedTextBlockIds: [...(selection.selectedTextBlockIds || (selection.includeText ? candidate.textBlocks.map(value => value.id) : [])), block.id] }
+      ? { ...result.selection, includeText: result.selection.includeText || Boolean(item.text) }
       : selection)
   });
   render();
@@ -1900,6 +1909,7 @@ function showFeedback(message, error = false, pending = false) {
   const value = translateUiMessage(message || "");
   elements.feedback.textContent = value;
   setTaskFeedbackState(elements.feedback, { error, pending: Boolean(value) && pending });
+  placeCollectorFeedback();
   if (value && !pending) {
     feedbackTimer = window.setTimeout(() => {
       elements.feedback.textContent = "";

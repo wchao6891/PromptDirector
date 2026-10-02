@@ -1438,3 +1438,15 @@ test('public selection rejects recovery-only content while healthy cases remain 
   assert.throws(() => selectLibraryPackage({ entries: [healthy, recovery] }, ['broken']), { code: 'case_files_unavailable' });
   assert.equal(selectLibraryPackage({ entries: [healthy, recovery] }, ['healthy']).entries[0].text, 'current');
 });
+
+test('backup retains complete unfinished tool work and import requires target review before replay', () => {
+  const checkpoint = { protocol: 'chat_completions', body: { model: 'm', messages: [{ role: 'tool', content: '已经完成的工具结果' }] },
+    retainedSkillVersionIds: [], callIds: ['write-once'], requestCount: 1, usageKnown: false };
+  const original = createComposerSession({ id: 'work', title: '未完成任务', messages: [{ id: 'user', role: 'user', content: '完整用户要求' }], toolContinuations: { user: checkpoint } });
+  const backup = JSON.parse(JSON.stringify({ ...packageData([], createDefaultFacetCatalog()), composerSessions: [original] }));
+  assert.equal(backup.composerSessions[0].toolContinuations.user.body.messages[0].content, '已经完成的工具结果');
+  const parsed = parseLibraryPackage(backup, new Map());
+  assert.equal(parsed.composerSessions[0].toolContinuations.user.needsTargetReview, true);
+  assert.deepEqual(parsed.composerSessions[0].toolContinuations.user.callIds, ['write-once']);
+  assert.equal(original.toolContinuations.user.needsTargetReview, undefined);
+});

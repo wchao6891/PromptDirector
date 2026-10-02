@@ -10,7 +10,7 @@ import {
   normalizeLocalRelativePath,
   prepareLocalMedia
 } from "../extension/local-media.js";
-import { PORTABLE_LIBRARY_LIMITS, formatBytes } from "../extension/resource-limits.js";
+import { formatBytes } from "../extension/resource-limits.js";
 
 test("local media detection keeps only supported formats and safe relative paths", () => {
   assert.deepEqual(detectLocalMediaFile(new File(["image"], "frame.gif", { type: "image/gif" })), {
@@ -108,9 +108,9 @@ test("GIF preparation retains the original and creates one first-frame poster", 
   assert.equal(prepared.poster.blob, posterBlob);
 });
 
-test("local image preparation rejects files above the portable image limit before decoding", async () => {
+test("local image preparation honors an explicit destination limit before decoding", async () => {
   const oversized = new File(
-    [new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxImageBytes + 1)],
+    [new Uint8Array(5)],
     "oversized.png",
     { type: "image/png" }
   );
@@ -118,6 +118,7 @@ test("local image preparation rejects files above the portable image limit befor
 
   await assert.rejects(
     () => prepareLocalMedia(oversized, "asset:oversized", {
+      limits: { maxImageBytes: 4 },
       estimateStorage: async () => ({ quota: oversized.size * 2, usage: 0 }),
       readImageDimensions: async () => {
         dimensionReads += 1;
@@ -128,8 +129,8 @@ test("local image preparation rejects files above the portable image limit befor
       assert.equal(error.code, "too_large");
       assert.equal(error.forceAllowed, true);
       assert.equal(error.details.actualBytes, oversized.size);
-      assert.equal(error.details.maxBytes, PORTABLE_LIBRARY_LIMITS.maxImageBytes);
-      assert.ok(error.message.includes(formatBytes(PORTABLE_LIBRARY_LIMITS.maxImageBytes)));
+      assert.equal(error.details.maxBytes, 4);
+      assert.ok(error.message.includes(formatBytes(4)));
       return true;
     }
   );

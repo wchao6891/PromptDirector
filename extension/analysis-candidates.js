@@ -118,7 +118,7 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
     profileFingerprint: String(metadata.profileFingerprint ?? "").trim(),
     catalogRevision: Math.max(0, Number(metadata.catalogRevision) || 0),
     analyzedAt: String(metadata.analyzedAt ?? "").trim() || new Date().toISOString(),
-    providerType: metadata.providerType === "compatible" ? "compatible" : "openai",
+    providerType: metadata.providerType === "external" ? "external" : metadata.providerType === "compatible" ? "compatible" : "openai",
     model: String(metadata.model ?? "").trim(),
     ...(metadata.usage && typeof metadata.usage === "object" ? { usage: structuredClone(metadata.usage) } : {}),
     cacheHit: metadata.cacheHit === true,
@@ -127,6 +127,7 @@ export function applyVisionAnalysis(state = {}, entryId, result = {}, metadata =
       outputCorrectionRequests: Math.max(0, Number(metadata.attempts?.outputCorrectionRequests) || 0)
     },
     ...(String(metadata.batchJobId ?? "").trim() ? { batchJobId: String(metadata.batchJobId).trim() } : {}),
+    ...(metadata.inputEvidence ? { inputEvidence: structuredClone(metadata.inputEvidence) } : {}),
     userEdited: false
   };
 

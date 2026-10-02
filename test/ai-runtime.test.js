@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   AI_RUNTIME_PROTOCOL_VERSION,
   aiConfigurationFromStorage,
+  aiConfigurationNeedsStorageUpdate,
   normalizeAiPreferences,
   projectAiRuntime,
   requireAiRuntimeProtocolVersion,
@@ -90,6 +91,22 @@ const storedConfiguration = {
     textInstructionsByLocale: { "zh-CN": "文字规则", en: "Text rules" }
   }
 };
+
+test("storage key reordering does not trigger AI preparation or redundant writes", () => {
+  const configuration = aiConfigurationFromStorage(storedConfiguration);
+  const stored = {
+    aiProviderRegistry: configuration.registry,
+    aiPreferences: configuration.preferences,
+    aiTaskAssignments: Object.fromEntries(Object.entries(configuration.assignments).reverse()
+      .map(([task, assignment]) => [task, Object.fromEntries(Object.entries(assignment).reverse())]))
+  };
+  assert.equal(aiConfigurationNeedsStorageUpdate(stored), false);
+  stored.aiTaskAssignments.creativePlanning.model = "changed-model";
+  assert.equal(aiConfigurationNeedsStorageUpdate(stored), false);
+  assert.equal(aiConfigurationFromStorage(stored).assignments.creativePlanning.model, "changed-model");
+  delete stored.aiTaskAssignments.creativePlanning;
+  assert.equal(aiConfigurationNeedsStorageUpdate(stored), true);
+});
 
 test("one canonical v4 configuration preserves independent text task assignments", () => {
   const configuration = aiConfigurationFromStorage(storedConfiguration);

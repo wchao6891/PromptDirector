@@ -1,4 +1,6 @@
 import { assetFormatForExtension, assetFormatForFile } from "./asset-formats.js";
+import { readImageDimensions } from './image-metadata.js';
+import { assertImageDimensions } from './resource-limits.js';
 
 // A portable package resource: no browser-local IDs or executable instructions.
 export const SKILL_COVER_BASENAME = "assets/cover";
@@ -38,7 +40,11 @@ export async function validateSkillCover(blob, name = "", options = {}) {
   };
   if (!valid[format.id]) throw new Error("封面图片内容与格式不符");
   const typed = blob.slice(0, blob.size, format.mimeTypes[0]);
-  if (typeof options.decode === "function") await options.decode(typed);
+  if (typeof options.decode === "function") {
+    const dimensions = await readImageDimensions(typed);
+    assertImageDimensions(dimensions.width, dimensions.height, { budget: options.budget });
+    await options.decode(typed);
+  }
   return { blob: typed, path: `${SKILL_COVER_BASENAME}.${format.extensions[0]}`, mimeType: format.mimeTypes[0] };
 }
 

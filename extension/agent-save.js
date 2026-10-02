@@ -52,13 +52,22 @@ export async function saveAgentMaterial(input, requestId, deps) {
     const record = await transfers.get(id);
     if (record.purpose) throw agentError('invalid_transfer_purpose', 'Skill包文件不能作为案例媒体入库。');
     if (record.state !== "ready") throw agentError("transfer_not_ready", "附件尚未准备好，或已经用于另一次入库。");
+    if (record.reused) {
+      const blob = await deps.readBlob(record.assetId);
+      if (!blob || blob.size !== record.byteSize || await sha256Blob(blob) !== record.sha256
+        || record.prepared.poster && !await deps.readBlob(record.prepared.poster.id)) {
+        throw agentError('integrity_failed', '复用的原件已改变或不可用，未保存资料；请重新传入本机文件。');
+      }
+    }
     records.push(record);
   }
   let text = String(input.text || "");
+  let bodyMimeType = "text/plain";
   if (input.bodyTransferId) {
     const body = records.find(record => record.id === input.bodyTransferId);
     if (!body || body.prepared.asset.kind !== "document") throw agentError("invalid_body", "正文文件必须是本次附件中的文档。");
     text = body.prepared.contentText;
+    bodyMimeType = body.prepared.asset.extractedTextFormat === "markdown" ? "text/markdown" : body.prepared.asset.mimeType;
   }
   const mediaAssets = records.flatMap(record => [record.prepared.asset, ...(record.prepared.poster ? [record.prepared.poster] : [])]);
   if (!text.trim() && !mediaAssets.length) throw agentError("empty_material", "没有可保存的正文或附件。");
@@ -68,7 +77,7 @@ export async function saveAgentMaterial(input, requestId, deps) {
   }
   const base = buildEntry({ title: input.title, text, url: sourceUrl, allowEmptyText: mediaAssets.length > 0 });
   const blocks = [
-    ...(text ? [{ id: "body", kind: "paragraph", text, sourceOrder: 0 }] : []),
+    ...(text ? [{ id: "body", kind: "paragraph", text, sourceOrder: 0, ...(bodyMimeType ? { mimeType: bodyMimeType } : {}) }] : []),
     ...mediaAssets.filter(asset => asset.usage !== "poster" && asset.kind !== "audio").map((asset, index) => ({
       id: `media:${asset.id}`, kind: asset.kind, assetId: asset.id, label: asset.sourceTitle, sourceOrder: index + 1
     }))
@@ -102,7 +111,7 @@ export async function saveAgentMaterial(input, requestId, deps) {
   // Retrying after a lost acknowledgement cannot create another case.
   await commit({ entries, organizerState,
     [receiptKey]: { fingerprint, result },
-    ...Object.fromEntries(records.map(record => [transfers.key(record.id), { ...record, state: "committed", entryId: entry.id }])) });
+    ...Object.fromEntries(records.map(record => [transfers.key(record.id), { ...record, prepared: null, chunks: 0, state: "committed", entryId: entry.id }])) });
   try { await notify(entries.length); } catch { warnings.push("案例已保存，但界面通知未送达。"); result.results[0].status = 'partial'; }
   return result;
 }

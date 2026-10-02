@@ -550,13 +550,8 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--ui-danger) 38%, var(--ui-border));
 }
 
-.app-dialog { width: min(520px, calc(100vw - 28px)); max-height: min(760px, calc(100dvh - 28px)); overflow: hidden; border: 1px solid var(--ui-border-strong); border-radius: var(--ui-container-radius); padding: 0; color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow); }
-.app-dialog::backdrop { background: rgba(7, 9, 11, .72); backdrop-filter: blur(3px); }
+.app-dialog { width: min(520px, calc(100vw - 28px)); max-height: min(760px, calc(100dvh - 28px)); overflow: hidden; }
 .app-dialog-form { display: grid; max-height: min(760px, calc(100dvh - 28px)); grid-template-rows: auto minmax(0, 1fr) auto; }
-.app-dialog-form > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--ui-border); padding: 16px; background: var(--ui-page); }
-.app-dialog-form > header h2 { margin: 0; font-size: var(--ui-section-title-size); line-height: 1.3; }
-.app-dialog-form > header p { margin: 5px 0 0; color: var(--ui-muted); font-size: var(--ui-meta-size); line-height: 1.5; }
-.app-dialog-close { font-size: 22px; font-weight: 400; }
 .app-dialog-body { display: grid; min-height: 0; overflow: auto; gap: 14px; padding: 18px 16px; }
 .app-dialog-field { display: grid; gap: 6px; color: var(--ui-muted); font-size: var(--ui-meta-size); font-weight: 750; }
 .app-dialog-field textarea { min-height: 132px; resize: vertical; color: var(--ui-text); font-weight: 400; line-height: 1.6; }
@@ -566,7 +561,6 @@ textarea:focus-visible {
 .app-dialog-check input { width: 16px; min-height: 16px; margin-top: 2px; }
 .app-dialog-status { margin: 0; }
 .app-dialog-status.error { color: var(--ui-danger); }
-.app-dialog-form > footer { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--ui-border); padding: 12px 16px; background: var(--ui-page); }
 .button-danger { border-color: color-mix(in srgb, var(--ui-danger) 52%, transparent); color: #fff; background: var(--ui-danger); }
 .button-danger:hover:not(:disabled) { border-color: var(--ui-danger); color: #fff; background: color-mix(in srgb, var(--ui-danger) 88%, #000); }
 
@@ -626,8 +620,8 @@ input, textarea, [contenteditable]:not([contenteditable="false"]) {
   user-select: text;
 }
 
-/* Ordinary surfaces scroll without tracks. Opt in only where dragging the
-   scrollbar helps navigate an editor, zoomed document or wide table. */
+/* Compact surfaces scroll without tracks. Reading and library surfaces opt in
+   where dragging helps navigate long content; editors and wide tables also opt in. */
 :where(*) { scrollbar-width: none; scrollbar-gutter: auto; }
 :where(*)::-webkit-scrollbar { display: none; }
 :where(.ui-scrollbar, textarea:not([readonly]):not([disabled]), [contenteditable]:not([contenteditable="false"])) {
@@ -643,3 +637,34 @@ input, textarea, [contenteditable]:not([contenteditable="false"]) {
   background: var(--ui-border-strong);
   border-radius: var(--ui-control-radius);
 }
+
+/* Shared icon menus: solid primary actions, lightweight rows, separate danger group. */
+:root .ui-action-menu { border-top: 2px solid var(--ui-accent); }
+.ui-action-menu > button {
+  justify-content: flex-start;
+  gap: 10px;
+  font-weight: 500;
+  text-align: left;
+}
+.ui-action-menu > button.button-secondary { background: transparent; border-color: transparent; }
+.ui-action-menu > button .ui-icon { flex: none; width: 15px; height: 15px; color: var(--accent-ink); }
+.ui-action-menu > button.button-primary { color: var(--ui-accent-contrast); background: var(--ui-accent); border-color: var(--ui-accent); }
+.ui-action-menu > button.button-primary .ui-icon { color: inherit; }
+.ui-action-menu > button.button-secondary:hover:not(:disabled) { color: var(--accent-ink); background: var(--ui-selected-surface); }
+.ui-action-menu > button.button-primary:hover:not(:disabled) { background: var(--ui-accent-hover); }
+.ui-action-menu > button.quiet-danger, .ui-action-menu > button.quiet-danger .ui-icon { color: var(--ui-danger); }
+.ui-action-menu > button.quiet-danger:hover:not(:disabled) { color: var(--ui-danger); background: color-mix(in srgb, var(--ui-danger) 10%, transparent); }
+.ui-action-menu > button:not(.quiet-danger) + button.quiet-danger { border-top-color: var(--ui-border); border-radius: 0; padding-top: 12px; min-height: 42px; }
+
+/* Shared business-dialog shell. Pages own dimensions and content layout only. */
+.ui-dialog { border: 1px solid var(--ui-border); border-top: 2px solid var(--ui-accent); border-radius: var(--ui-container-radius); padding: 0; color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow); }
+.ui-dialog::backdrop { background: rgba(7, 9, 11, .72); }
+.ui-dialog-header { display: flex; min-height: 64px; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--ui-border); padding: 13px 16px; background: var(--ui-surface); }
+.ui-dialog-heading { min-width: 0; }
+.ui-dialog-heading::before { content: "PROMPTDIRECTOR"; display: block; margin-bottom: 3px; color: var(--accent-ink); font-size: 10px; font-weight: 850; line-height: 1.5; letter-spacing: .08em; }
+.ui-dialog-heading > h2 { margin: 0; font-size: var(--ui-title-size); line-height: 1.4; overflow-wrap: anywhere; }
+.ui-dialog-heading > p { margin: 5px 0 0; color: var(--ui-muted); font-size: var(--ui-meta-size); line-height: 1.5; }
+.ui-dialog-header > .icon-button { flex: none; width: var(--ui-icon-size); min-height: var(--ui-control-height); padding: 8px; }
+.ui-dialog-body { display: grid; gap: 14px; padding: 18px 16px; }
+.ui-dialog-body > p { margin: 0; }
+.ui-dialog-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--ui-border); padding: 12px 16px; background: var(--ui-surface); }

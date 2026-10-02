@@ -6,6 +6,90 @@ const chat = (message, extra = {}) => new Response(JSON.stringify({ choices: [{ 
 const call = (id, args) => ({ id, type: 'function', function: { name: 'search_cases', arguments: JSON.stringify(args) } });
 const body = () => ({ model: 'fixture-model', messages: [{ role: 'user', content: '查询案例' }] });
 const sse = events => new Response(new ReadableStream({ start(controller) { const text = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''); const bytes = new TextEncoder().encode(text); for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i+7)); controller.close(); } }), { headers: { 'content-type': 'text/event-stream' } });
+
+test('varying tool parameters cannot evade a finite default work budget or keep charging forever', async () => {
+  let requests = 0;
+  await assert.rejects(runComposerToolLoop({ body: body(), protocol: 'chat_completions',
+    request: async () => chat({ role: 'assistant', tool_calls: [call(`call-${++requests}`, { query: String(requests) })] }),
+    runtime: { specs: [spec], execute: async () => ({ data: {} }) }
+  }), error => error.code === 'RESOURCE_BUDGET_REACHED' && error.checkpoint.requestCount === requests);
+  assert.ok(requests > 10 && requests < 1000, 'work budget is generous but finite, independent of a user input quota');
+});
+
+test('resuming a budget checkpoint supplies prior results without executing already completed writes', async () => {
+  let checkpoint, writes = 0, requests = 0;
+  const runtime = { specs: [spec], execute: async () => { writes++; return { data: { saved: true, caseId: 'already-saved' } }; },
+    saveContinuation: async value => { checkpoint = structuredClone(value); } };
+  await assert.rejects(runComposerToolLoop({ body: body(), protocol: 'chat_completions', budget: { maxRequests: 1 }, runtime,
+    request: async () => { requests++; return chat({ role: 'assistant', tool_calls: [call('write-once', { query: '保存成果' })] }); }
+  }), /工作|预算/);
+  const result = await runComposerToolLoop({ body: body(), protocol: 'chat_completions', continuation: checkpoint, runtime,
+    request: async value => {
+      requests++;
+      assert.equal(value.messages.at(-1).tool_call_id, 'write-once');
+      assert.equal(JSON.parse(value.messages.at(-1).content).caseId, 'already-saved');
+      return chat({ role: 'assistant', content: '成果已保存' });
+    } });
+  assert.equal(writes, 1); assert.equal(requests, 2); assert.equal(result.requestCount, 2);
+});
+
+test('budget reached midway through a batch preserves pending calls and does not repeat the first write', async () => {
+  let checkpoint; const executed = [];
+  const runtime = { specs: [spec], execute: async (_name, args) => { executed.push(args.query); return { data: args }; },
+    saveContinuation: async value => { checkpoint = structuredClone(value); } };
+  await assert.rejects(runComposerToolLoop({ body: body(), protocol: 'chat_completions', budget: { maxToolCalls: 1 }, runtime,
+    request: async () => chat({ role: 'assistant', tool_calls: [call('one', { query: 'one' }), call('two', { query: 'two' })] })
+  }), /预算/);
+  assert.deepEqual(checkpoint.pendingCalls.map(item => item.id), ['two']);
+  await runComposerToolLoop({ body: body(), protocol: 'chat_completions', continuation: checkpoint, runtime,
+    request: async () => chat({ role: 'assistant', content: 'done' }) });
+  assert.deepEqual(executed, ['one', 'two']);
+});
+
+test('whole-turn deadline cancels a pending response body after headers and retains completed work', async () => {
+  let canceled = false;
+  await assert.rejects(runComposerToolLoop({ body: body(), protocol: 'chat_completions', budget: { maxDurationMs: 20 },
+    request: async () => new Response(new ReadableStream({ cancel() { canceled = true; } }), { headers: { 'content-type': 'application/json' } }),
+    runtime: { specs: [spec], execute: () => assert.fail('incomplete response executes nothing') }
+  }), error => error.code === 'RESOURCE_BUDGET_REACHED' && Boolean(error.checkpoint));
+  assert.equal(canceled, true);
+});
+
+test('a large tool batch checks memory after every completed action, preserves its receipt and leaves later writes pending', async () => {
+  let checkpoint;
+  const writes = [];
+  const runtime = { specs: [spec], budget: { workingBytes: 10000 },
+    saveContinuation: async value => { checkpoint = value; },
+    execute: async (_name, _args, { callId }) => { writes.push(callId); return { data: { fullText: '完整结果'.repeat(3000) } }; } };
+  await assert.rejects(runComposerToolLoop({ body: body(), protocol: 'chat_completions',
+    runtime, request: async () => chat({ role: 'assistant', tool_calls: [call('first', { query: 'one' }), call('second', { query: 'two' })] })
+  }), { code: 'RESOURCE_BUDGET_REACHED' });
+  assert.deepEqual(writes, ['first'], 'later actions cannot keep accumulating results before the memory check');
+  assert.deepEqual(checkpoint.callIds, ['first']);
+  assert.equal(checkpoint.pendingCalls[0].id, 'second');
+  assert.equal(checkpoint.uncertainCallId, '');
+  runtime.budget.workingBytes = 1000000;
+  await runComposerToolLoop({ body: body(), protocol: 'chat_completions', runtime,
+    continuation: checkpoint, request: async () => chat({ role: 'assistant', content: '完成' }) });
+  assert.deepEqual(writes, ['first', 'second'], 'a subsequent authorized larger operation never repeats the first write');
+});
+
+test('a Skill version read is protected before a later tool can prune automatic history in the same work batch', async () => {
+  const protectedVersions = new Set();
+  let requests = 0;
+  await runComposerToolLoop({ body: body(), protocol: 'chat_completions',
+    request: async () => ++requests === 1
+      ? chat({ role: 'assistant', tool_calls: [call('read', { query: 'read-old-method' }), call('save', { query: 'save-next-method' })] })
+      : chat({ role: 'assistant', content: '完整完成' }),
+    runtime: { specs: [spec], retainSkillVersions: async ids => ids.forEach(id => protectedVersions.add(id)),
+      execute: async (_name, { query }) => {
+        if (query === 'read-old-method') return { data: { skillId: 'method', versionId: 'old-used-version' } };
+        assert.ok(protectedVersions.has('old-used-version'), 'running work must not wait until the entire model turn finishes to protect its source files');
+        return { data: { saved: true } };
+      } }
+  });
+  assert.ok(protectedVersions.has('old-used-version'));
+});
 test('ordinary response makes one request and executes zero tools; missing usage stays unknown', async () => {
   let requests = 0;
   const result = await runComposerToolLoop({ body: body(), protocol: 'chat_completions', maxCharacters: 750000,

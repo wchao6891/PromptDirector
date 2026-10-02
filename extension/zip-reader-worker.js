@@ -1,8 +1,8 @@
 import { openZipBlob } from "./zip.js";
 
-self.onmessage = async ({ data: { archive, names, limits } }) => {
+self.onmessage = async ({ data: { archive, names, limits, budget } }) => {
   try {
-    const reader = await openZipBlob(archive, limits);
+    const reader = await openZipBlob(archive, limits, { budget });
     let lastReport = -Infinity;
     const report = progress => {
       // Ten updates per second keep progress legible without flooding the UI.
@@ -11,9 +11,9 @@ self.onmessage = async ({ data: { archive, names, limits } }) => {
       lastReport = now;
       self.postMessage({ type: "progress", progress });
     };
-    const files = await reader.read(names, { onReadProgress: report, onProgress: report });
+    const files = await reader.read(names, { budget, onReadProgress: report, onProgress: report });
     self.postMessage({ type: "complete", files });
   } catch (error) {
-    self.postMessage({ type: "error", message: error?.message || "案例包读取失败" });
+    self.postMessage({ type: "error", message: error?.message || "案例包读取失败", code: error?.code });
   }
 };

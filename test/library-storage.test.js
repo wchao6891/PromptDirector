@@ -103,3 +103,18 @@ test('single-file metadata reads or transforms that fail cannot persist a partia
   await assert.rejects(run.storage.update('entries', () => null), /无效/);
   assert.equal(run.calls.length, 0); assert.deepEqual(run.data.entries, ['keep']);
 });
+
+test('removing history or sessions invalidates their summaries without touching cases or other sources', async () => {
+  for (const source of ['facetUndo', 'trashState', 'analysisBatchUndo', 'analysisRebuildStaging']) {
+    const run = fixture({ entries: [{ id: 'kept', text: '完整正文' }], [source]: { retained: true },
+      libraryViewSummary: { version: 1, facetUndoCount: 10 }, composerSessionSummaries: [{ id: 'kept-session' }] });
+    await run.storage.remove(source);
+    assert.equal(Object.hasOwn(run.data, source), false);
+    assert.equal(Object.hasOwn(run.data, 'libraryViewSummary'), false);
+    assert.equal(run.data.entries[0].text, '完整正文');
+    assert.equal(run.data.composerSessionSummaries[0].id, 'kept-session');
+  }
+  const run = fixture({ composerSessions: [{ id: 'old' }], composerSessionSummaries: [{ id: 'old' }], unrelated: true });
+  await run.storage.remove(['composerSessions']);
+  assert.deepEqual(run.data, { unrelated: true });
+});

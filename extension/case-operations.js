@@ -1,15 +1,18 @@
+import { removeCaseTags } from './case-tags.js';
+import { appendFacetUndo } from './facet-history.js';
 import { validateCaseOperation } from './case-operation-specs.js';
 import { sha256Blob } from './blob-digest.js';
 import { updateEntryText, markEntryTextChanged } from './analysis-revision.js';
 import { updateArticleText, ARTICLE_TEXT_KINDS } from './article-edit.js';
 import { articleDocumentText } from './article-document.js';
-import { setEntryMediaPrompt, addTimeNote, removeTimeNote, setCaseCover } from './media.js';
+import { setEntryMediaPrompt, addTimeNote, removeTimeNote, setCaseCover, visualSetAnalysesForAssets } from './media.js';
 import { createCompoundCase, updateCompoundCase, splitCompoundCase } from './compound-cases.js';
 import { uniqueNames } from './facets.js';
 import { moveEntriesBetweenCollections } from './organizer.js';
 import { planCaseCopies, assertCompoundProjectScope } from './library-folder-ownership.js';
 import { agentError } from './agent-protocol.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
+import { caseAnalysisCoverage } from './analysis-coverage.js';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -149,11 +152,12 @@ function retainedIds(entry, removed) {
   for (const note of entry.timeNotes || []) if (ids.has(note.assetId) && note.frameAssetId) ids.add(note.frameAssetId);
   return ids;
 }
-function mediaSubset(entry, ids) {
+function mediaSubset(entry, ids, retainGroupHistory = false) {
   const result = { ...entry, mediaAssets: (entry.mediaAssets || []).filter(a => ids.has(a.id)),
     mediaPrompts: (entry.mediaPrompts || []).filter(p => ids.has(p.assetId)),
     timeNotes: (entry.timeNotes || []).filter(n => ids.has(n.assetId)),
     videoAnalyses: (entry.videoAnalyses || []).filter(a => ids.has(a.assetId)),
+    visualSetAnalyses: visualSetAnalysesForAssets(entry, ids, retainGroupHistory),
     facetAssignments: (entry.facetAssignments || []).filter(a => !a.visualId || ids.has(a.visualId)) };
   if (!ids.has(result.primaryMediaId)) result.primaryMediaId = result.mediaAssets.find(a => a.usage !== 'poster')?.id || '';
   if (result.coverVisualId && !ids.has(result.coverVisualId)) delete result.coverVisualId;
@@ -189,6 +193,13 @@ function assertRemaining(entry) {
 export async function planCaseOperation(state, operation, input, { now = new Date().toISOString(), idFactory = () => crypto.randomUUID() } = {}) {
   validateCaseOperation(operation, input);
   const compound = state.compoundCases?.find(item => item.id === input.caseId);
+  if (operation === 'organize_case' && input.action === 'remove_tags') {
+    const current = await operationCase(state, input.caseId);
+    if (current.revision !== input.expectedRevision) fail('case_conflict', '案例已变化，请重新读取后修改');
+    const result = removeCaseTags(state, [input.caseId], input, now);
+    return { update: result.updatedCount ? { entries: result.state.entries, compoundCases: result.state.compoundCases } : {},
+      caseIds: [input.caseId], tagUndo: result.updatedCount > 0, updatedCount: result.updatedCount };
+  }
   if (compound) {
     if (await compoundRevision(state, compound) !== input.expectedRevision) fail('case_conflict', '组合或成员资料已变化，请重新读取后修改');
     if (operation === 'organize_case' && input.action === 'split_compound') {
@@ -243,16 +254,17 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
     if (organization(state, target.id).compounds.length) fail('compound_member', '目标案例属于组合，请先处理组合关系');
     const ids = selectMedia(current, input.assetIds);
     if (target.mediaAssets?.some(a => ids.has(a.id))) fail('asset_conflict', '目标已有这些媒体，请先核对已有内容');
-    const remaining = mediaSubset(current, retainedIds(current, ids));
+    const remaining = mediaSubset(current, retainedIds(current, ids), true);
     assertRemaining(remaining);
     const selected = mediaSubset(current, ids);
-    for (const field of ['timeNotes', 'videoAnalyses']) {
+    for (const field of ['timeNotes', 'videoAnalyses', 'visualSetAnalyses']) {
       const existingIds = new Set((target[field] || []).map(item => item.id).filter(Boolean));
       if (selected[field].some(item => item.id && existingIds.has(item.id))) fail('annotation_conflict', '目标有相同编号的标注，请先核对，未转移媒体');
     }
     const updated = { ...target, mediaAssets: [...(target.mediaAssets || []), ...selected.mediaAssets],
       mediaPrompts: [...(target.mediaPrompts || []), ...selected.mediaPrompts], timeNotes: [...(target.timeNotes || []), ...selected.timeNotes],
       videoAnalyses: [...(target.videoAnalyses || []), ...selected.videoAnalyses],
+      visualSetAnalyses: [...(target.visualSetAnalyses || []), ...selected.visualSetAnalyses],
       facetAssignments: [...(target.facetAssignments || []), ...selected.facetAssignments.filter(a => a.visualId)], libraryUpdatedAt: now };
     if (!updated.primaryMediaId) updated.primaryMediaId = selected.primaryMediaId;
     if (target.articleDocument || selected.articleDocument) updated.articleDocument = appendMediaDocument(
@@ -276,7 +288,7 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
       savedAt: current.savedAt, libraryAddedAt: now, libraryUpdatedAt: now, schemaVersion: current.schemaVersion,
       mediaAssets: selected.mediaAssets, primaryMediaId: selected.primaryMediaId, mediaPrompts: selected.mediaPrompts,
       timeNotes: selected.timeNotes, videoAnalyses: selected.videoAnalyses,
-      customLabels: [], facetAssignments: selected.facetAssignments.filter(a => a.visualId), analysisCandidates: [], analysisBreakdown: [], visualSetAnalyses: [],
+      customLabels: [], facetAssignments: selected.facetAssignments.filter(a => a.visualId), analysisCandidates: [], analysisBreakdown: [], visualSetAnalyses: selected.visualSetAnalyses,
       sourcePages: group.sourceUrl ? [{ url: httpUrl(group.sourceUrl), title: group.title.trim() }] : [] }, group);
     const document = { version: 1, blocks: selectedBlocks.length
       ? current.articleDocument.blocks.filter(b => group.textBlockIds.includes(b.id) || ids.has(b.assetId))
@@ -284,7 +296,7 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
     fresh.articleDocument = appendMediaDocument(document, fresh.mediaAssets, selectedBlocks.length ? null : selected.articleDocument);
     newEntries.push(fresh);
   }
-  let remaining = mediaSubset(current, retainedIds(current, removed));
+  let remaining = mediaSubset(current, retainedIds(current, removed), true);
   if (textIds.size) {
     remaining.articleDocument = { ...remaining.articleDocument, blocks: remaining.articleDocument.blocks.filter(b => !textIds.has(b.id)) };
     remaining = markEntryTextChanged(remaining, articleDocumentText(remaining.articleDocument));
@@ -315,7 +327,7 @@ export function createCaseOperations({ loadState, loadReadState = loadState, sto
         media: entry.mediaAssets || [], document: { text: entry.text || '', articleDocument: entry.articleDocument || null },
         annotations: { customLabels: entry.customLabels || [], classification: entry.classification, facetAssignments: entry.facetAssignments || [],
           mediaPrompts: entry.mediaPrompts || [], timeNotes: entry.timeNotes || [], videoAnalyses: entry.videoAnalyses || [], visualSetAnalyses: entry.visualSetAnalyses || [] },
-        organization: organization(state, entry.id)
+        organization: organization(state, entry.id), analysis_coverage: caseAnalysisCoverage(entry)
       };
       if (!Object.hasOwn(parts, part)) fail('compound_member', '请读取概览并指定组合中的成员');
       const text = JSON.stringify(parts[part]), offset = input.offset || 0, length = input.length || 12000;
@@ -334,10 +346,12 @@ export function createCaseOperations({ loadState, loadReadState = loadState, sto
       const state = await loadState();
       const plan = await planCaseOperation(state, operation, input);
       const after = { ...state, ...plan.update };
+      const history = plan.tagUndo ? { facetUndo: appendFacetUndo((await storage.get('facetUndo')).facetUndo, state, after) } : {};
       const result = { ok: true, requestId: input.requestId, operation,
+        ...(plan.updatedCount !== undefined ? { canUndoFacetUpdate: Boolean(history.facetUndo?.steps.length), updatedCount: plan.updatedCount } : {}),
         cases: await Promise.all(plan.caseIds.map(id => operationCase(after, id))) };
       // Commit metadata and acknowledgement together. No media bytes or backup copies.
-      await commit({ ...plan.update, [key]: { fingerprint, result } });
+      await commit({ ...plan.update, ...history, [key]: { fingerprint, result } });
       return result;
     })
   };

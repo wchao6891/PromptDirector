@@ -140,7 +140,7 @@ def main():
           const changed={...s,entries:s.entries.map(entry=>entry.id==='first'?{...entry,customLabels:['本批分析'],analysisPending:false,analyzedAt:'2026-10-01T00:00:00.000Z'}:entry)};
           const sealed=api.sealAnalysisBatchUndo(baseline,changed,['first']);
           job.status='completed';job.items=job.items.map(item=>({...item,status:'succeeded'}));job.resultCatalogRevision=s.facetCatalog.revision;
-          await chrome.storage.local.set({entries:changed.entries,batchJob:job,analysisBatchUndo:sealed});
+          await (await import('./library-storage.js')).getLibraryStorage().set({entries:changed.entries,batchJob:job,analysisBatchUndo:sealed});
           return {before:s.entries.map(entry=>entry.id),later:s.entries.find(entry=>entry.id==='later')};
         }""")
         task_page=run.open_page('library.html')

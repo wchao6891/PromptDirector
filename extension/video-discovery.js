@@ -43,6 +43,9 @@ export function installVideoDiscovery(chromeApi) {
 }
 
 export function addDiscoveredVideos(batch, resources) {
+  // X threads play several posts at once, including fragmented MP4 init data.
+  // Only the selected post's own DOM and scoped metadata prove ownership.
+  if (batch?.adapter === 'x') return batch;
   if (batch?.candidates?.length !== 1) return batch;
   const candidate = batch.candidates[0];
   const media = [...(candidate.media || [])];

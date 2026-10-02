@@ -125,11 +125,7 @@ body { min-width: 320px; }
 .case-save-action { color: var(--ui-accent-contrast); background: var(--ui-accent); }
 .case-save-action.is-saved, .case-detail-actions .is-success { color: var(--ui-text); border-color: var(--ui-accent); background: var(--ui-accent-subtle); }
 
-.pack-save-dialog { width: min(420px, calc(100vw - 28px)); border: 1px solid var(--ui-border-strong); border-radius: var(--curated-radius); padding: 20px; color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow); }
-.pack-save-dialog::backdrop { background: rgba(4,6,9,.76); }
-.pack-save-dialog h2 { overflow: hidden; margin: 0; font-size: 18px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.pack-save-meta { margin: 8px 0 18px; color: var(--ui-muted); font-size: var(--ui-meta-size); }
-.pack-save-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.pack-save-dialog { width: min(420px, calc(100vw - 28px)); }
 
 
 @media (max-width: 1050px) {

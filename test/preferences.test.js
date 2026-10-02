@@ -19,6 +19,9 @@ test("UI preferences accept only supported locale theme and motion values", () =
     detailMode: "fullscreen",
     detailSidebarWidth: 760,
     galleryView: "waterfall",
+    galleryZoom: 50,
+    gallerySort: "added-desc",
+    galleryHiddenColumns: [],
     includeSubprojects: false,
     detailPanelRatio: null
   });
@@ -32,6 +35,9 @@ test("UI preferences accept only supported locale theme and motion values", () =
     detailMode: "fullscreen",
     detailSidebarWidth: 760,
     galleryView: "waterfall",
+    galleryZoom: 50,
+    gallerySort: "added-desc",
+    galleryHiddenColumns: [],
     includeSubprojects: false,
     detailPanelRatio: null
   });

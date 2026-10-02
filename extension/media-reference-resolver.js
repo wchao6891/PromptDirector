@@ -1,4 +1,4 @@
-import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { operationBudget, resourceBudgetError } from "./resource-policy.js";
 
 const PROVIDERS = Object.freeze({
   youtube: { label: "YouTube", origins: ["https://www.youtube.com/*", "https://youtu.be/*", "https://i.ytimg.com/*"] },
@@ -131,15 +131,18 @@ export function mediaReferenceProviderLabel(provider) {
 }
 
 async function fetchMetadata(url, provider, context) {
+  const budget = operationBudget(context.budget);
+  const timeout = AbortSignal.timeout(budget.maxDurationMs);
+  const signal = context.signal ? AbortSignal.any([context.signal, timeout]) : timeout;
   if (provider === "youtube" || provider === "vimeo" || provider === "x") {
     const endpoint = provider === "youtube"
       ? `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`
       : provider === "vimeo"
         ? `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(url)}`
         : `https://publish.twitter.com/oembed?omit_script=true&dnt=true&url=${encodeURIComponent(url)}`;
-    const response = await context.fetch(endpoint, fetchOptions());
+    const response = await context.fetch(endpoint, { ...fetchOptions(), signal });
     if (!response.ok) throw new Error(`元数据服务返回 HTTP ${response.status}`);
-    const payload = await response.json();
+    const payload = JSON.parse(await readMetadataText(response, budget.maxTextBytes, signal));
     return {
       title: payload?.title,
       author: payload?.author_name,
@@ -147,13 +150,27 @@ async function fetchMetadata(url, provider, context) {
       durationMs: secondsToMilliseconds(payload?.duration)
     };
   }
-  const response = await context.fetch(url, fetchOptions());
+  const response = await context.fetch(url, { ...fetchOptions(), signal });
   if (!response.ok) throw new Error(`来源页返回 HTTP ${response.status}`);
-  const declaredSize = Number(response.headers?.get?.("content-length")) || 0;
-  if (declaredSize > PORTABLE_LIBRARY_LIMITS.maxFileBytes) throw new Error("来源页过大，已停止解析");
-  const html = await response.text();
-  if (new TextEncoder().encode(html).byteLength > PORTABLE_LIBRARY_LIMITS.maxFileBytes) throw new Error("来源页过大，已停止解析");
+  const html = await readMetadataText(response, budget.maxTextBytes, signal);
   return { ...parseOpenGraphMetadata(html), finalUrl: response.url || url };
+}
+
+async function readMetadataText(response, maxBytes, signal) {
+  if (Number(response.headers?.get?.('content-length')) > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw resourceBudgetError('来源元信息超过本次文字处理预算；来源链接保留');
+  }
+  signal.throwIfAborted();
+  let bytes = 0;
+  const stream = response.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
+    bytes += chunk.byteLength;
+    if (bytes > maxBytes) throw resourceBudgetError('来源元信息超过本次文字处理预算；来源链接保留');
+    controller.enqueue(chunk);
+  } }), { signal });
+  const text = await new Response(stream).text();
+  signal.throwIfAborted();
+  return text;
 }
 
 export function parseOpenGraphMetadata(source) {
