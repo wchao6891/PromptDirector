@@ -49,7 +49,10 @@ test("page-session chunks are one-time bounded state and can be explicitly disca
   }
 });
 
-test('a stalled page-session download is cancelled without leaving temporary media or buffered copies', async () => {
+test('a stalled page-session download is cancelled without leaving temporary media or buffered copies', async t => {
+  // Keep the mock transport alive until AbortSignal.timeout fires on Node 22.
+  const transport = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(transport));
   const injected = (0, eval)(`(${preparePageSessionMedia.toString()})`);
   const originalFetch = globalThis.fetch;
   let cancelled = false;

@@ -156,7 +156,10 @@ test('oversized source metadata cancels its stream and keeps the saveable link w
   }
 });
 
-test('a stalled metadata body respects the operation deadline and retains the original source URL', async () => {
+test('a stalled metadata body respects the operation deadline and retains the original source URL', async t => {
+  // A real transport keeps the event loop alive; the inert mock stream does not.
+  const transport = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(transport));
   let cancelled = false;
   const result = await resolveMediaReference('https://www.bilibili.com/video/BV1abc/', {
     budget: { maxDurationMs: 40 }, fetch: async () => new Response(new ReadableStream({ cancel() { cancelled = true; } }))

@@ -29,7 +29,7 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
   assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-project-target"[\s\S]*id="selection-new-project"/);
   assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-trash"[\s\S]*id="selection-label-menu"[\s\S]*id="selection-more-menu"/);
   const more = bar.slice(bar.indexOf('id="selection-more-menu"'), bar.indexOf('id="selection-clear"'));
-  assert.match(more, /id="share-export" class="button-secondary"[\s\S]*id="selection-combine"[\s\S]*id="selection-analyze"/);
+  assert.match(more, /id="share-export" class="button-primary"[\s\S]*id="selection-combine"[\s\S]*id="selection-analyze"/);
   assert.doesNotMatch(more, /id="selection-trash"|id="selection-project-menu"/);
   assert.doesNotMatch(css, /\.selection-action-label\s*\{[^}]*clip:/);
   assert.match(css, /\.gallery-heading\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--library-topbar-height\)/);
