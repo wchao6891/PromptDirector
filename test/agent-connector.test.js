@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentTasks } from '../extension/agent-tasks.js';
+import { createAgentTasks as createTasks } from '../extension/agent-tasks.js';
 import { createAgentTransfers } from '../extension/agent-transfers.js';
 import { createAgentLibrary } from '../extension/agent-library.js';
 import { saveAgentMaterial } from '../extension/agent-save.js';
@@ -16,6 +16,7 @@ function storage(initial = {}) {
     async set(value) { Object.assign(data, structuredClone(value)); }, async remove(key) { delete data[key]; } };
 }
 const turn = () => new Promise(resolve => setImmediate(resolve));
+const createAgentTasks = options => createTasks({ getLibraryId: async () => 'test-library', ...options });
 
 test('retrying a write request does not run it twice and cannot change its meaning', async () => {
   const store = storage(); let count = 0; let finish;
@@ -40,7 +41,7 @@ test('persisted requests tolerate reordered object keys but retain array and val
 });
 
 test('worker restart reports interruption instead of claiming an unsaved result', async () => {
-  const tasks = createAgentTasks({ storage: storage({ 'agentTask:x': { id: 'x', state: 'running' } }), execute() { throw new Error('must not execute'); } });
+  const tasks = createAgentTasks({ allowLegacyTasks: true, storage: storage({ 'agentTask:x': { id: 'x', state: 'running' } }), execute() { throw new Error('must not execute'); } });
   assert.equal((await tasks.inspect('x')).state, 'interrupted');
 });
 
@@ -79,7 +80,7 @@ test('library projections search current cases and expose original prompts witho
 });
 
 test('creation saves sources and project with receipt in one commit, and lost acknowledgement cannot duplicate', async () => {
-  const state = { entries: [{ id: 'source', title: '参考', url: 'https://example.org/' }], organizerState: { collections: [{ id: 'p', name: '项目' }] } };
+  const state = { entries: [{ id: 'source', title: '参考', url: 'https://example.org/' }], organizerState: { collections: [{ id: 'p', name: '项目', entryIds: [] }] } };
   let commits = 0;
   const deps = { loadState: async () => state, transfers: { get: async () => assert.fail(), key: id => id }, buildEntry,
     classify: () => ({}), place: (_, entries, ids, placement) => ({ collections: state.organizerState.collections, placement, ids }),
@@ -101,6 +102,26 @@ function event() {
   const listeners = new Set();
   return { addListener: f => listeners.add(f), removeListener: f => listeners.delete(f), emit: (...args) => Promise.all([...listeners].map(f => f(...args))) };
 }
+
+test('MCP bodyFile carries Markdown format through save, source text and package roundtrip', async () => {
+  const text = '# 方法\n\n| 步骤 | 目标 |\n| --- | --- |\n| 白模 | 空间 |\n\n```js\n    keep();\n```';
+  const state = { entries: [], organizerState: { collections: [] } };
+  const record = { id: 'md', assetId: 'doc', state: 'ready', prepared: { contentText: text,
+    asset: { id: 'doc', kind: 'document', mimeType: 'text/markdown', storageMode: 'managed' } } };
+  const deps = { loadState: async () => state, transfers: { get: async () => record, key: id => id }, buildEntry,
+    classify: () => ({}), place: value => value, commit: async update => Object.assign(state, update), notify: async () => {}, schemaVersion: 1 };
+  await saveAgentMaterial({ title: '方法', kind: 'creation', transferIds: ['md'], bodyTransferId: 'md' }, 'markdown-body', deps);
+  const entry = state.entries[0];
+  assert.equal(entry.text, text);
+  assert.equal(entry.articleDocument.blocks[0].mimeType, 'text/markdown');
+  const selected = selectLibraryPackage({ ...state, taxonomy: createDefaultTaxonomy() }, [entry.id]);
+  selected.entries[0].mediaAssets[0].assetPath = 'documents/method.md';
+  const restored = parseLibraryPackage({ ...selected, format: 'prompt-case-library', version: 3 }, new Map([
+    ['documents/method.md', new Blob([text], { type: 'text/markdown' })]
+  ]));
+  assert.equal(restored.entries[0].articleDocument.blocks[0].mimeType, 'text/markdown');
+  assert.equal(restored.entries[0].text, text);
+});
 test('disabling during permission lookup cannot reconnect the library', async () => {
   const local = storage({ agentConnection: { enabled: true, instanceId: crypto.randomUUID() } });
   let release; let lookups = 0; let connects = 0;
@@ -179,4 +200,27 @@ test('large generation prompt conflicts are paged through task receipts without 
   do {const part=await tasks.inspect('large-conflict',{conflictToken:'token',conflictPart:'embeddedText',offset,length:49152});text+=part.content;offset=part.nextOffset;} while(offset!==null);
   assert.equal(text,large+'new');
   await assert.rejects(tasks.inspect('large-conflict',{conflictToken:'missing',conflictPart:'embeddedText'}),{code:'invalid_input'});
+});
+
+test('waiting on a submitted save returns its persisted terminal receipt without submitting it twice', async () => {
+  let release, executions = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const tasks = createAgentTasks({ storage: storage(), getLibraryId: async () => 'library', execute: async () => { executions++; await gate; return { ok: true, results: [{ status: 'saved', entryId: 'new' }] }; } });
+  await tasks.submit('save_material', {}, 'wait-save');
+  const pending = await tasks.inspect('wait-save', { waitMs: 1 });
+  assert.equal(pending.state, 'running');
+  const waiting = tasks.inspect('wait-save', { waitMs: 1000 }); release();
+  const completed = await waiting;
+  assert.equal(completed.state, 'completed'); assert.equal(completed.result.results[0].entryId, 'new');
+  const replay = await tasks.submit('save_material', {}, 'wait-save');
+  assert.equal(replay.state, 'completed'); assert.equal(replay.replayed, true);
+  assert.equal(executions, 1);
+});
+
+test('a failed save remains failed when waiting, and worker restart cannot invent completion', async () => {
+  const store = storage();
+  const tasks = createAgentTasks({ storage: store, getLibraryId: async () => 'library', execute: async () => { throw Error('storage unavailable'); } });
+  await tasks.submit('save_material', {}, 'failed-wait');
+  const receipt = await tasks.inspect('failed-wait', { waitMs: 1000 });
+  assert.equal(receipt.state, 'failed'); assert.match(receipt.error.message, /storage unavailable/);
 });

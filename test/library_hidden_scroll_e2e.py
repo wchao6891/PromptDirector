@@ -1,4 +1,4 @@
-"""Hidden scrollbar tracks must preserve pointer and keyboard reading of long content."""
+"""Long content exposes thin tracks; compact surfaces retain scrolling without tracks."""
 from pathlib import Path
 import tempfile
 from e2e_support import extension_session,base_entry
@@ -8,7 +8,7 @@ with extension_session('pd-hidden-scroll-',viewport={'width':1440,'height':900})
     entry=base_entry('scroll-case','长提示词案例','\n'.join(f'第{i}行提示词，完整保留内容。' for i in range(220)),'content:prompt:image')
     s.seed_storage(setup,{'entries':[entry]+[base_entry(f'case-{i}',f'案例 {i}','测试正文','content:prompt:image',i+1) for i in range(80)],'organizerState':{'version':7,'collections':[dict(id=f'p{i}',name=f'项目 {i}',entryIds=[],order=i) for i in range(70)]},'uiPreferences':{'locale':'zh-CN','motion':'reduced'}})
     page=s.open_page('library.html',wait_until='networkidle')
-    assert page.evaluate('getComputedStyle(document.documentElement).scrollbarWidth') == 'none'
+    assert page.evaluate('getComputedStyle(document.documentElement).scrollbarWidth') == 'thin'
     page.locator('#case-list').hover()
     page.mouse.wheel(0, 600)
     page.wait_for_function('()=>window.scrollY > 0')
@@ -30,12 +30,13 @@ with extension_session('pd-hidden-scroll-',viewport={'width':1440,'height':900})
     assert body.evaluate('e=>getComputedStyle(e).scrollbarWidth')=='none'
     body.hover(); page.mouse.wheel(0,550)
     page.wait_for_function("()=>document.querySelector('#sidebar-projects-body').scrollTop>0")
+    page.locator('#search-input').fill('长提示词案例')
     page.locator('.case-card[data-entry-id="scroll-case"]').click()
     expect(page.locator('#detail-drawer')).to_have_attribute('aria-hidden','false')
     page.get_by_role('button',name='展开全文',exact=True).first.click()
     page.evaluate("""()=>{const region=[...document.querySelectorAll('#detail-drawer, #detail-drawer *')].find(e=>e.clientHeight>0&&e.scrollHeight>e.clientHeight&&['auto','scroll'].includes(getComputedStyle(e).overflowY));if(!region)throw Error('No overflowing detail region');region.dataset.scrollProbe='true'}""")
     prompt=page.locator('[data-scroll-probe]')
-    assert prompt.evaluate('e=>getComputedStyle(e).scrollbarWidth')=='none'
+    assert prompt.evaluate('e=>getComputedStyle(e).scrollbarWidth')=='thin'
     prompt.hover();page.mouse.wheel(0,500)
     page.wait_for_function("()=>document.querySelector('[data-scroll-probe]').scrollTop>0")
     # Native keyboard scrolling remains available when the region is focused.
@@ -67,4 +68,4 @@ with extension_session('pd-hidden-scroll-',viewport={'width':1440,'height':900})
         assert other.evaluate('getComputedStyle(document.documentElement).scrollbarWidth')=='none',url
         other.close()
     assert not s.page_errors,s.page_errors
-    print('PASS: library, settings, sidebar, details and shared pages hide tracks; wheel/PageDown and editor/wide-content exceptions remain usable')
+    print('PASS: gallery and long details expose thin tracks; settings/sidebar stay compact; wheel/PageDown and editor/wide-content scrolling remain usable')

@@ -7,10 +7,7 @@ const JPEG_START_OF_FRAME = new Set([
 export async function readImageDimensions(blob) {
   if (!(blob instanceof Blob) || !blob.size) throw invalidDimensions();
   if (blob.type === "image/avif") {
-    if (typeof createImageBitmap !== "function") throw new Error("当前环境无法校验 AVIF 图片");
-    const bitmap = await createImageBitmap(blob);
-    try { return dimensions(bitmap.width, bitmap.height); }
-    finally { bitmap.close(); }
+    return avifDimensions(blob);
   }
   const bytes = new Uint8Array(await blob.slice(0, HEADER_SCAN_BYTES).arrayBuffer());
   try {
@@ -22,6 +19,77 @@ export async function readImageDimensions(blob) {
     throw invalidDimensions();
   }
   throw new Error("无法识别支持的图片格式");
+}
+
+// AVIF stores dimensions in ISOBMFF image properties. Inspect box headers and
+// ispe values without decoding untrusted pixels (or reading the mdat payload).
+async function avifDimensions(blob) {
+  let scanned = 0, primaryId = null;
+  const properties = [], associations = new Map();
+  async function payload(start, end) {
+    scanned += end - start;
+    if (scanned > HEADER_SCAN_BYTES) throw new Error('AVIF 元信息超过本次检查预算；原件保留');
+    return new Uint8Array(await blob.slice(start, end).arrayBuffer());
+  }
+  async function boxes(start, end, inProperties = false) {
+    let at = start;
+    while (at < end) {
+      const bytes = await payload(at, Math.min(at + 16, end));
+      if (bytes.length < 8) throw invalidDimensions();
+      const view = new DataView(bytes.buffer);
+      const kind = text(bytes, 4, 4);
+      let size = view.getUint32(0), header = 8;
+      if (size === 1) {
+        if (bytes.length < 16) throw invalidDimensions();
+        size = Number(view.getBigUint64(8)); header = 16;
+      } else if (size === 0) size = end - at;
+      if (!Number.isSafeInteger(size) || size < header || at + size > end) throw invalidDimensions();
+      const body = at + header, stop = at + size;
+      if (inProperties) {
+        let dimension = null;
+        if (kind === 'ispe') {
+          if (stop - body < 12) throw invalidDimensions();
+          const property = new DataView((await payload(body, body + 12)).buffer);
+          dimension = dimensions(property.getUint32(4), property.getUint32(8));
+        }
+        properties.push(dimension);
+      } else if (kind === 'pitm') {
+        const item = await payload(body, stop), data = new DataView(item.buffer);
+        if (item.length < (item[0] === 0 ? 6 : 8)) throw invalidDimensions();
+        primaryId = item[0] === 0 ? data.getUint16(4) : data.getUint32(4);
+      } else if (kind === 'ipma') {
+        const item = await payload(body, stop), data = new DataView(item.buffer);
+        if (item.length < 8) throw invalidDimensions();
+        const wide = Boolean(item[3] & 1), version = item[0], count = data.getUint32(4);
+        let cursor = 8;
+        for (let i = 0; i < count; i++) {
+          const id = version === 0 ? data.getUint16(cursor) : data.getUint32(cursor);
+          cursor += version === 0 ? 2 : 4;
+          const length = data.getUint8(cursor++), indexes = [];
+          for (let j = 0; j < length; j++) {
+            indexes.push(wide ? data.getUint16(cursor) & 0x7fff : data.getUint8(cursor) & 0x7f);
+            cursor += wide ? 2 : 1;
+          }
+          associations.set(id, indexes);
+        }
+        if (cursor !== item.length) throw invalidDimensions();
+      } else if (['meta', 'iprp', 'ipco'].includes(kind)) {
+        const child = body + (kind === 'meta' ? 4 : 0);
+        if (child > stop) throw invalidDimensions();
+        await boxes(child, stop, kind === 'ipco');
+      }
+      at = stop;
+    }
+  }
+  try {
+    await boxes(0, blob.size);
+    const candidates = (associations.get(primaryId) || []).map(index => properties[index - 1]).filter(Boolean);
+    if (!candidates.length) throw invalidDimensions();
+    return candidates.reduce((largest, value) => value.width * value.height > largest.width * largest.height ? value : largest);
+  } catch (error) {
+    if (error.message.includes('预算')) throw error;
+    throw invalidDimensions();
+  }
 }
 
 function gifDimensions(bytes) {

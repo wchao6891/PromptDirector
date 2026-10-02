@@ -1,9 +1,12 @@
 import { applyComposerConversation } from './composer-conversation.js';
 import { runComposerToolLoop } from "./composer-tool-loop.js";
+import { getAiModelCapability } from './ai-model-capabilities.js';
 import { readEventStream } from "./event-stream.js";
 import {
   analysisTaxonomyPayload,
+  ANALYSIS_DETAIL_MAX_LENGTH,
   DETAIL_ORGANIZATION_OUTPUT_TOKENS,
+  detailOrganizationRequestChunk,
   validateAnalysisTagResponse,
   validateDetailOrganizationResponse
 } from "./tag-taxonomy.js";
@@ -11,12 +14,9 @@ import { parseStructuredObject } from "./structured-output.js";
 import { inspectAnalysisResponse, fetchAnalysisJson } from "./analysis-response.js";
 import { ANALYSIS_RETRY_POLICY, createAnalysisRequestBudget, consumeAnalysisRequest, analysisRequestCounts } from "./analysis-retry-policy.js";
 import {
-  COMPOSER_INPUT_MAX_CHARACTERS,
   normalizeComposerAiProfile,
   normalizePlannerResult,
   plannerRequestPayload,
-  assertComposerInputBudget,
-  assertComposerRequestBudget,
   validateGeneratedPrompt
 } from "./composer.js";
 import {
@@ -157,7 +157,7 @@ export async function analyzeTextDetailedWithDeepSeek(entry, catalogValue, setti
   const systemMessages = [
     { role: "system", content: analysisSystemInstruction(outputLocale) },
     { role: "system", content: analysisTaxonomyPrompt(catalogValue, outputLocale) },
-    { role: "system", content: settings.analysisInstructionsByLocale[outputLocale].slice(0, 1200) }
+    { role: "system", content: settings.analysisInstructionsByLocale[outputLocale] }
   ];
   const userMessage = { role: "user", content: analysisEntryInput(entry, input.text) };
   let usage = normalizeUsage();
@@ -296,6 +296,10 @@ export async function analysisProfileFingerprint(settingsValue = {}, outputLocal
 
 export async function organizeDetailTagsWithDeepSeek(chunk, settingsValue, fetchImpl = fetch) {
   const settings = requireAiSettings(settingsValue, "整理三级标签");
+  // Library identity stays local. The model only returns a sequence number
+  // from this request; validated numbers are resolved without label matching.
+  const originalIds = new Map(chunk.d.map(([id], index) => [String(index + 1), id]));
+  const requestChunk = detailOrganizationRequestChunk(chunk);
   const result = await requestDeepSeek(structuredRequestBody({
     model: settings.analysisModel,
     thinking: { type: "disabled" },
@@ -304,15 +308,16 @@ export async function organizeDetailTagsWithDeepSeek(chunk, settingsValue, fetch
     messages: [
       {
         role: "system",
-        content: "整理同一固定二级分组内的三级标签。统一明显同义、大小写、空格、标点和 Unicode 写法；不要跨组改变含义。只返回需要改名或合并的映射，不返回未变化项、理由或解释。严格 JSON：{\"m\":[{\"id\":\"旧标签ID\",\"n\":\"规范名称\"}]}"
+        content: `整理同一固定二级分组内的三级标签。输入 g 为[一级维度名,二级分组名]，d 每行为[标签编号,当前名称,使用案例数]。标签编号是本批从1开始的序号。统一明显同义、大小写、空格、标点和 Unicode 写法；不要跨组改变含义。只返回需要改名或合并的映射，不返回未变化项、理由或解释。id 必须从本次 d 的标签编号逐字复制，不得编造、改写或使用标签名称；每个编号最多返回一次。多个标签合并时，分别返回各自的原编号，n 使用相同的规范名称。n 必须为字符串，不得为空，不得超过 ${ANALYSIS_DETAIL_MAX_LENGTH} 个字符；不得添加其他字段。无需整理时返回 {"m":[]}。严格 JSON：{"m":[{"id":"1","n":"规范名称"}]}`
       },
-      { role: "user", content: JSON.stringify(chunk) }
+      { role: "user", content: JSON.stringify(requestChunk) }
     ]
   }, settings), settings, { fetchImpl, timeoutMessage: "AI 整理超时，正式标签库没有改变" });
   if (result.finishReason === "length") throw new DeepSeekApiError("AI 整理输出被截断，正式标签库没有改变", 422);
   const parsed = parseJsonObject(result.content, "AI 整理结果格式无效，正式标签库没有改变");
   return {
-    mappings: validateDetailOrganizationResponse(parsed, chunk),
+    mappings: validateDetailOrganizationResponse(parsed, requestChunk)
+      .map(({ id, n }) => ({ id: originalIds.get(id), n })),
     usage: result.usage,
     model: result.model || settings.analysisModel
   };
@@ -322,7 +327,6 @@ export async function planComposerTurn(input, settingsValue, options = {}) {
   const settings = requireAiSettings(settingsValue, "生成");
   const providerLabel = aiProvider(settings).label;
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const body = withComposerProfile(structuredRequestBody({
     model: profile.model,
@@ -337,7 +341,6 @@ export async function planComposerTurn(input, settingsValue, options = {}) {
       { role: "user", content: JSON.stringify(request) }
     ]
   }, settings), profile);
-  assertComposerRequestBudget(body.messages);
   const result = await requestDeepSeek(body, settings, {
     fetchImpl: options.fetchImpl ?? fetch,
     signal: options.signal,
@@ -365,7 +368,6 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
   const settings = requireAiSettings(settingsValue, "生成");
   const provider = aiProvider(settings);
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const instruction = String(input.instruction ?? "").trim()
     || [...request.messages].reverse().find((item) => item.role === "user")?.content
@@ -387,7 +389,6 @@ export async function streamComposedPrompt(input, settingsValue, options = {}) {
     ]
   }, profile);
   applyComposerConversation(body, executionRequest);
-  assertComposerRequestBudget(body.messages);
   const requestController = new AbortController();
   const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : DEFAULT_COMPOSER_STREAM_TIMEOUT_MS;
   let timedOut = false;
@@ -423,7 +424,6 @@ export async function executeAgentTurn(input, settingsValue, options = {}) {
 
   const settings = requireAiSettings(settingsValue, "对话");
   const profile = normalizeComposerAiProfile(input.session?.aiProfile);
-  assertComposerInputBudget(input.session, input.userMessage, input.composerSettings);
   const request = plannerRequestPayload(input.session, input.userMessage, input.composerSettings);
   const instruction = String(input.instruction ?? "").trim()
     || [...request.messages].reverse().find((item) => item.role === "user")?.content
@@ -511,7 +511,6 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
     ]
   }, profile);
   applyComposerConversation(body, executionRequest);
-  assertComposerRequestBudget(body.messages);
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs === null
     ? null
@@ -537,9 +536,10 @@ async function streamAgentText({ settings, profile, systemInstruction, execution
 async function readComposerResponse(body, settings, options, signal) {
   const provider = aiProvider(settings);
   if (options.toolRuntime?.specs.length) {
-    return runComposerToolLoop({ body, protocol: "chat_completions", runtime: options.toolRuntime,
-      signal, onDelta: options.onDelta, maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS,
-      request: nextBody => fetchDeepSeekStream(nextBody, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart) });
+    return runComposerToolLoop({ body, protocol: "chat_completions", runtime: { ...options.toolRuntime,
+      contextLength: getAiModelCapability(normalizeAiSettings(settings).activeProvider, body.model)?.contextLength },
+      signal, onDelta: options.onDelta,
+      request: (nextBody, context) => fetchDeepSeekStream(nextBody, settings, options.fetchImpl ?? fetch, context.signal, options.onRequestStart) });
   }
   const response = await fetchDeepSeekStream(body, settings, options.fetchImpl ?? fetch, signal, options.onRequestStart);
   return readDeepSeekSse(response, options.onDelta, provider.label, provider.apiKey, signal);

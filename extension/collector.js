@@ -1,3 +1,7 @@
+import { setTaskFeedbackState } from "./task-feedback.js";
+import { anchorCollectorFeedback } from './collector-feedback.js';
+import { getLibraryStorage } from "./library-storage.js";
+const libraryStorage = getLibraryStorage();
 import { addDiscoveredVideos } from "./video-discovery.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems, savedPageCaptureCandidateIds, persistedPageCaptureCandidates } from "./capture-additions.js";
@@ -64,6 +68,8 @@ const elements = Object.fromEntries([
   "target-banner", "target-label", "visual-help", "visual-list", "visual-section"
 ].map((id) => [camel(id), document.getElementById(id)]));
 
+const placeCollectorFeedback = anchorCollectorFeedback(elements.feedback, [elements.pageCaptureActions, elements.collectorFooter]);
+
 let draft = null;
 let targetEntry = null;
 let contentTypes = [];
@@ -120,8 +126,8 @@ const customLabelEditor = createTagEditor({
 });
 elements.customLabels.replaceChildren(customLabelEditor.element);
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !(changes.captureDraft || changes.activeCreativeResult || changes.composerSessions)) return;
+libraryStorage.subscribe((changes) => {
+  if (!(changes.captureDraft || changes.activeCreativeResult || changes.composerSessions)) return;
   refresh().catch(() => undefined);
 });
 
@@ -544,7 +550,7 @@ async function confirmClipboardPermissionEnable(event) {
 }
 
 async function extractClipboardContent() {
-  showFeedback("正在读取你明确授权的当前剪贴板内容");
+  showFeedback("正在读取你明确授权的当前剪贴板内容", false, true);
   let clipboardContent;
   try {
     clipboardContent = await readClipboardContentAfterFocus();
@@ -638,6 +644,7 @@ function render() {
   elements.collectorFooter.hidden = Boolean(smartVisualSession || pageCaptureBatch || regionCaptureState) || !view.showFooter;
   if (regionCaptureState) {
     elements.regionCaptureTitle.textContent = t(regionCaptureMessage(regionCaptureState.phase));
+    setTaskFeedbackState(elements.regionCaptureTitle, { pending: ["requesting-permission", "capturing"].includes(regionCaptureState.phase) });
     elements.regionCaptureHelp.textContent = regionCaptureState.phase === "selecting"
       ? t("请切回网页拖动选择画面；按 Esc 或在这里取消。")
       : t("请保持当前网页与侧边栏打开，完成后会自动回到待保存内容。");
@@ -741,6 +748,7 @@ function render() {
     createFragmentCard(fragment, index, view.canReorderFragments)));
   elements.visualList.replaceChildren(...draft.visuals.map((visual, index) =>
     createVisualCard(visual, index, view)));
+  placeCollectorFeedback();
 }
 
 async function refreshPageCapturePermissionState() {
@@ -777,6 +785,7 @@ function renderPageCapture() {
   elements.pageCaptureHelp.textContent = pageCaptureSupplementRequest ? t("正在读取评论全文…") : scanning ? t("正在扫描…")
     : pageCaptureBatch.status === "saving" ? t("正在保存…")
     : pageCaptureBatch.error || (!pageCaptureBatch.candidates.length ? t("未识别到内容，可重新扫描或返回选择其他采集方式") : "");
+  setTaskFeedbackState(elements.pageCaptureHelp, { pending: scanning || pageCaptureBatch.status === "saving" || Boolean(pageCaptureSupplementRequest), error: Boolean(pageCaptureBatch.error) });
   elements.pageCaptureHelp.hidden = !elements.pageCaptureHelp.textContent;
   const selectedMediaCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
   const saveBlocked = busy || !selectedCount || (listMode && !["multiple", "combined"].includes(pageCaptureBatch.saveMode));
@@ -1049,8 +1058,10 @@ async function includePageCaptureSupplement(candidate, item) {
   pageCaptureSupplementRequest = request;
   render();
   try {
-    if (item.partial) {
-      const response = await chrome.runtime.sendMessage({ type: "READ_PAGE_CAPTURE_SUPPLEMENT", supplement: item });
+    // A preview cannot prove that all of a reply's lazily mounted attachments
+    // or long text have arrived. Read the explicitly selected post afresh.
+    {
+      const response = await chrome.runtime.sendMessage({ type: "READ_PAGE_CAPTURE_SUPPLEMENT", supplement: item, sourceTabId: pageCaptureBatch.tabId, sourceUrl: pageCaptureBatch.sourceUrl });
       if (pageCaptureSupplementRequest !== request || pageCaptureBatch?.id !== request.batchId) return;
       if (!response?.ok) throw new Error(response?.message || t("未能取得评论全文，当前草稿已保留"));
       item = response.supplement;
@@ -1068,24 +1079,27 @@ async function includePageCaptureSupplement(candidate, item) {
 function applyPageCaptureSupplement(candidate, item) {
   const paragraph = document.createElement("p");
   paragraph.textContent = item.text;
-  const block = { id: `added:${candidate.id}:${item.id}`, kind: "section", text: item.text, html: paragraph.outerHTML, sourceOrder: candidate.textBlocks.length };
+  const block = { id: item.id, kind: "section", text: item.text, html: paragraph.outerHTML };
+  const selected = pageCaptureBatch.selections.find(value => value.candidateId === candidate.id);
+  const result = appendCaptureCandidate(candidate, {
+    id: item.id, textBlocks: item.text ? [block] : [], media: item.media || [],
+    articleDocument: { version: 1, blocks: [
+      { id: item.id + ":source", kind: "link", sourceUrl: item.sourceUrl, label: t("作者补充") },
+      ...(item.text ? [{ ...block, kind: "paragraph" }] : []),
+      ...(item.media || []).map(media => ({ id: `media:${media.id}`, kind: media.kind, assetId: media.id,
+        sourceUrl: media.url, ...(media.posterUrl ? { posterUrl: media.posterUrl } : {}) }))] }
+  }, selected, { includeExistingMedia: true });
   const revised = {
-    ...candidate,
-    textBlocks: [...candidate.textBlocks, block],
-    contentText: [candidate.contentText, item.text].filter(Boolean).join("\n\n"),
-    articleDocument: { version: 1, blocks: [...(candidate.articleDocument?.blocks || []),
-      { id: block.id + ":source", kind: "link", sourceUrl: item.sourceUrl, label: t("作者补充") },
-      { ...block, kind: "paragraph" }] },
+    ...result.candidate,
     supplements: candidate.supplements.filter(value => value.id !== item.id),
     completeness: item.partial ? "partial" : candidate.completeness,
     sourceFacts: { ...candidate.sourceFacts, status: item.partial ? "partial" : candidate.sourceFacts.status }
   };
-  const selected = pageCaptureBatch.selections.find(value => value.candidateId === candidate.id);
   pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selected) });
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
     candidates: pageCaptureBatch.candidates.map(value => value.id === candidate.id ? revised : value),
     selections: pageCaptureBatch.selections.map(selection => selection.candidateId === candidate.id
-      ? { ...selection, includeText: true, selectedTextBlockIds: [...(selection.selectedTextBlockIds || (selection.includeText ? candidate.textBlocks.map(value => value.id) : [])), block.id] }
+      ? { ...result.selection, includeText: result.selection.includeText || Boolean(item.text) }
       : selection)
   });
   render();
@@ -1446,7 +1460,7 @@ async function captureFromActivePage(type, button, commitCreative = false) {
         type,
         commitCreative,
         chromeApi: chrome,
-        onStatus: showFeedback
+        onStatus: message => showFeedback(message, false, true)
       });
       if (type === "CAPTURE_ACTIVE_TAB_TO_DRAFT") regionCaptureState = null;
       smartVisualFallback = response.fallbackAction === "capture-region";
@@ -1489,7 +1503,7 @@ async function beginSmartVisualSelection(button, commitCreative = false) {
       const response = await runCaptureTransaction({
         type: "START_SMART_VISUAL_SELECTION",
         chromeApi: chrome,
-        onStatus: showFeedback
+        onStatus: message => showFeedback(message, false, true)
       });
       smartVisualFallback = response.fallbackAction === "capture-region";
       if (!response.captured?.session) {
@@ -1806,6 +1820,7 @@ async function commitDraft(duplicateAction = "", button) {
     button.setAttribute("aria-busy", "true");
   }
   render();
+  showFeedback(t("正在保存案例…"), false, true);
   try {
     const metadata = captureMetadataForCommit();
     const response = await sendWithGenerationPromptConfirmation({
@@ -1888,16 +1903,17 @@ async function withButton(button, task) {
   }
 }
 
-function showFeedback(message, error = false) {
+function showFeedback(message, error = false, pending = false) {
   if (feedbackTimer) window.clearTimeout(feedbackTimer);
   feedbackTimer = 0;
   const value = translateUiMessage(message || "");
   elements.feedback.textContent = value;
-  elements.feedback.classList.toggle("error", error);
-  if (value) {
+  setTaskFeedbackState(elements.feedback, { error, pending: Boolean(value) && pending });
+  placeCollectorFeedback();
+  if (value && !pending) {
     feedbackTimer = window.setTimeout(() => {
       elements.feedback.textContent = "";
-      elements.feedback.classList.remove("error");
+      setTaskFeedbackState(elements.feedback);
       feedbackTimer = 0;
     }, error ? ERROR_FEEDBACK_DURATION_MS : FEEDBACK_DURATION_MS);
   }

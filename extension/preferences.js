@@ -1,3 +1,5 @@
+import { normalizeCaseSortMode } from "./library-view.js";
+
 export const DEFAULT_UI_PREFERENCES = Object.freeze({
   locale: "system",
   theme: "dark",
@@ -8,9 +10,33 @@ export const DEFAULT_UI_PREFERENCES = Object.freeze({
   detailMode: "fullscreen",
   detailSidebarWidth: 760,
   galleryView: "waterfall",
+  galleryZoom: 50,
+  gallerySort: "added-desc",
+  galleryHiddenColumns: [],
   includeSubprojects: false,
   detailPanelRatio: null
 });
+
+// Waterfall defaults to the existing 270px cards; list defaults to compact 48px thumbnails.
+export const GALLERY_SIZE_LIMITS = Object.freeze({ waterfall: { min: 140, max: 480, default: 270 }, list: { min: 32, max: 80, default: 48 } });
+export const LIST_OPTIONAL_COLUMNS = ["type", "count", "tags", "source", "size", "added"];
+// Shared slider position: the midpoint preserves the established default sizes.
+export function gallerySizesForZoom(zoom = 50) {
+  const value = Math.max(0, Math.min(100, Number.isFinite(zoom) ? zoom : 50));
+  return Object.fromEntries(Object.entries(GALLERY_SIZE_LIMITS).map(([view, limit]) => [view,
+    Math.round(value <= 50 ? limit.min + (limit.default - limit.min) * value / 50
+      : limit.default + (limit.max - limit.default) * (value - 50) / 50)]));
+}
+function normalizeGalleryZoom(value) {
+  if (typeof value.galleryZoom === "number" && Number.isFinite(value.galleryZoom)) return Math.max(0, Math.min(100, Math.round(value.galleryZoom)));
+  // Migrate the previously saved active-view size once; normalized writes drop gallerySize.
+  const view = value.galleryView === "list" ? "list" : "waterfall";
+  const size = value.gallerySize?.[view], limit = GALLERY_SIZE_LIMITS[view];
+  if (typeof size !== "number" || !Number.isFinite(size)) return 50;
+  return Math.max(0, Math.min(100, Math.round(size <= limit.default
+    ? (size - limit.min) / (limit.default - limit.min) * 50
+    : 50 + (size - limit.default) / (limit.max - limit.default) * 50)));
+}
 
 export const SIDEBAR_WIDTH_LIMITS = Object.freeze({ min: 216, max: 420, default: 244 });
 export const DETAIL_SIDEBAR_WIDTH_LIMITS = Object.freeze({ min: 520, max: 1200, default: 760 });
@@ -36,6 +62,9 @@ export function normalizeUiPreferences(value = {}) {
     sidebarWidth: normalizeSidebarWidth(value.sidebarWidth),
     sidebarLayout: normalizeSidebarLayout(value.sidebarLayout),
     galleryView: ["waterfall", "list"].includes(value.galleryView) ? value.galleryView : "waterfall",
+    galleryZoom: normalizeGalleryZoom(value),
+    gallerySort: normalizeCaseSortMode(value.gallerySort),
+    galleryHiddenColumns: [...new Set(Array.isArray(value.galleryHiddenColumns) ? value.galleryHiddenColumns : [])].filter(key => LIST_OPTIONAL_COLUMNS.includes(key)),
     includeSubprojects: value.includeSubprojects === true,
     detailMode: value.detailMode === "sidebar" ? "sidebar" : "fullscreen",
     detailSidebarWidth: normalizeDetailSidebarWidth(value.detailSidebarWidth),

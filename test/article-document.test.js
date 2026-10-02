@@ -3,11 +3,33 @@ import assert from "node:assert/strict";
 
 import {
   articleDocumentText,
+  articleBlockIsMarkdown,
   finalizeArticleDocumentAssets,
   normalizeArticleDocument,
   removeArticleDocumentAsset,
   remapArticleDocumentAssets
 } from "../extension/article-document.js";
+
+test("Markdown body retains code indentation and hard breaks instead of paragraph cleanup", () => {
+  const text = "# 方法\n\n段落  \n换行\n\n```js\n  const x = 1;\n    run(x);\n```";
+  const document = normalizeArticleDocument({ blocks: [{ id: "body", kind: "paragraph", mimeType: "text/markdown", text }] });
+  assert.equal(document.blocks[0].text, text);
+  assert.equal(articleDocumentText(document), text);
+  assert.equal(articleBlockIsMarkdown(document.blocks[0]), true);
+});
+
+test("existing Agent Markdown bodies are recognized without treating arbitrary prose as Markdown", () => {
+  const block = { id: "body", kind: "paragraph", text: "## 标题" };
+  const entry = { agentProvenance: { kind: "creation" }, primaryMediaId: "md", mediaAssets: [
+    { id: "md", kind: "document", mimeType: "text/markdown" }
+  ], articleDocument: { blocks: [block, { id: "file", kind: "document", assetId: "md" }] } };
+  assert.equal(articleBlockIsMarkdown(block, entry), true);
+  assert.equal(articleBlockIsMarkdown(block), false);
+  assert.equal(articleBlockIsMarkdown({ ...block, mimeType: "text/plain" }, entry), false);
+  assert.equal(articleBlockIsMarkdown(block, { ...entry, agentProvenance: undefined }), false);
+  assert.equal(articleBlockIsMarkdown(block, { ...entry, primaryMediaId: "other" }), false);
+  assert.equal(articleBlockIsMarkdown(block, { ...entry, articleDocument: { blocks: [block, { kind: "paragraph", text: "other" }] } }), false);
+});
 
 test("article documents preserve readable block order while discarding invalid blocks", () => {
   const document = normalizeArticleDocument({

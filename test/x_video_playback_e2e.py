@@ -51,8 +51,9 @@ def main():
             batch=collector.evaluate("async()=>{const r=await chrome.runtime.sendMessage({type:'START_PAGE_CAPTURE',mode:'loaded'});if(!r.ok)throw Error(r.message);return r.batch;}")
             candidate=batch['candidates'][0]
             assert candidate['media'][0]['url']==CDN+'/work.mp4',batch
-            assert len(loads)==2,loads
-            assert collector.evaluate('async()=> (await chrome.scripting.getRegisteredContentScripts()).length')==0
+            # Initial visit, observer reload and scoped metadata discovery stay on the same root.
+            assert loads == [WORK] * 3, loads
+            assert collector.evaluate("async()=> (await chrome.scripting.getRegisteredContentScripts()).filter(s=>s.id.startsWith('capture-x-video-')).length")==0
             batch['selections']=[{'candidateId':candidate['id'],'includeText':True,'selectedMediaIds':[candidate['media'][0]['id']],'mediaDecision':'confirmed'}]
             result=collector.evaluate("async batch=>chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch})",batch)
             assert result['ok'],result

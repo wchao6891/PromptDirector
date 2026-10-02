@@ -7,6 +7,10 @@ from e2e_support import extension_session, base_entry, wait_for_async_condition
 OUT = Path(tempfile.gettempdir()) / 'promptdirector-modular-layout'
 OUT.mkdir(exist_ok=True)
 
+def set_scope(page, checked):
+    page.locator('#include-subprojects').set_checked(checked)
+
+
 def main():
     with extension_session('pd-modular-', viewport={'width':1440,'height':900}) as session:
         setup = session.open_page('collector.html')
@@ -79,15 +83,13 @@ def main():
         for width in [1440,900,390]:
             page.set_viewport_size({'width':width,'height':900})
             for view in ['waterfall','list']:
-                if width<=1100: page.locator('#toolbar-more > summary').click()
                 page.locator(f'[data-gallery-view="{view}"]').click()
                 page.screenshot(path=str(OUT/f'{width}-{view}-scope.png'))
-                page.locator('#include-subprojects').check()
-                page.locator('#include-subprojects').uncheck()
-                if width<=1100: page.locator('#toolbar-more > summary').click()
+                if not page.locator('#sidebar-projects-body').is_visible():page.locator('[data-sidebar-module="projects"] .sidebar-module-toggle').click()
+                set_scope(page, True)
+                set_scope(page, False)
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), width
                 before=page.locator('#case-list').bounding_box()
-                if width<=1100: page.locator('#toolbar-more > summary').click()
                 page.locator('#select-cases').click()
                 expect(page.locator('#share-cancel')).to_be_visible()
                 expect(page.locator('#search-input')).to_be_visible()

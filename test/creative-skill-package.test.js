@@ -164,3 +164,11 @@ function crc32(bytes) {
   }
   return (checksum ^ 0xffffffff) >>> 0;
 }
+
+// Agent Skills name field permits 1–64 characters: agentskills.io/specification.
+test("a valid 64-character portable Skill name is accepted in full", () => {
+  const name = "a".repeat(64);
+  const parsed = parseSkillMarkdown(`---\nname: ${name}\ndescription: Full name\n---\nMethod`);
+  assert.equal(parsed.name, name);
+  assert.throws(() => parseSkillMarkdown(`---\nname: ${name}a\ndescription: Invalid name\n---\nMethod`), /name/);
+});

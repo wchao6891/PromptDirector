@@ -7,6 +7,7 @@ import {
   applyPageCaptureSelections,
   combinePageCaptureCandidates,
   collectPageCaptureSnapshot,
+  readPageCaptureInjectionResult,
   detectPageCaptureAdapter,
   mergePageCaptureRegionEdit,
   normalizePageCaptureBatch,
@@ -22,6 +23,13 @@ import {
   pageCaptureStructureMatches,
   resolvePageCaptureImage
 } from "../extension/page-capture.js";
+
+test('Chrome injection failures retain their actual cause instead of masquerading as an empty page', () => {
+  assert.throws(() => readPageCaptureInjectionResult({ result: { captureError: { message: '采集页面已改变；当前草稿已保留', code: 'PAGE_CAPTURE_FAILED' } } }), /采集页面已改变/u);
+  assert.throws(() => readPageCaptureInjectionResult({ result: null }), /未返回结果.*草稿已保留/u);
+  assert.throws(() => readPageCaptureInjectionResult({ error: { message: 'site failure' } }), /site failure/u);
+  assert.deepEqual(readPageCaptureInjectionResult({ result: { candidates: [] } }), { candidates: [] });
+});
 
 test("only media proven inside the article is proposed by default", () => {
   const candidate = normalizePageCaptureCandidate({
@@ -400,7 +408,7 @@ test("responsive URLs for one image merge without changing the first selection i
   assert.deepEqual(candidate.media[0].variants.map((item) => item.width), [2048, 320]);
 });
 
-test("the generic collector ranks an explicit full-image attribute above the visible thumbnail", async () => {
+test("the generic collector preserves original resolution and every selectable media object", async () => {
   const injected = (0, eval)(`(${collectPageCaptureSnapshot.toString()})`);
   const original = {
     window: globalThis.window,
@@ -464,6 +472,50 @@ test("the generic collector ranks an explicit full-image attribute above the vis
     const result = await injected({ adapters: PAGE_CAPTURE_ADAPTERS, maxCandidates: 10, maxMedia: 10 });
     assert.equal(result.candidates[0].media[0].url, "https://cdn.example.com/work.jpg?width=2400");
     assert.equal(result.candidates[0].media[0].sourceKind, "site-original");
+
+    const images = Array.from({ length: 205 }, (_, index) => {
+      const src = `https://cdn.example.com/original-${index}.png`;
+      return Object.assign(new Element(), image, {
+        nodeType: 1,
+        tagName: "IMG",
+        parentElement: body,
+        alt: `Original ${index}`,
+        src,
+        currentSrc: src,
+        getAttribute: name => name === "src" ? src : ""
+      });
+    });
+    Object.assign(body, {
+      nodeType: 1,
+      tagName: "BODY",
+      children: images,
+      closest: () => null,
+      setAttribute: () => undefined,
+      querySelectorAll: selector => selector.includes("img") ? images : []
+    });
+    globalThis.document.images = images;
+    const complete = await injected({ adapters: PAGE_CAPTURE_ADAPTERS });
+    assert.equal(complete.candidates[0].media.length, images.length,
+      "an omitted work budget must preserve every original in the selected work");
+    assert.equal(complete.candidates[0].media.at(-1).url, images.at(-1).src);
+    assert.equal(complete.candidates[0].region.contentTargets.length, images.length,
+      "objects after target 200 must remain available for manual selection");
+    assert.deepEqual(complete.candidates[0].region.contentTargets.flatMap(target => target.mediaIds),
+      complete.candidates[0].media.map(item => item.id));
+
+    const dataUrl = "data:image/webp;base64,AAAA";
+    const canvas = Object.assign(new Canvas(), {
+      width: 800, height: 600, toDataURL: () => dataUrl,
+      getAttribute: () => "", closest: () => null, matches: () => false,
+      getBoundingClientRect: () => ({ x: 0, y: 0, width: 800, height: 600, top: 0, bottom: 600 })
+    });
+    body.children = [canvas];
+    body.querySelectorAll = selector => selector === "img,video,iframe,canvas" ? [canvas] : [];
+    globalThis.document.images = [];
+    const pixels = await injected({ adapters: PAGE_CAPTURE_ADAPTERS });
+    assert.equal(pixels.candidates[0].media.length, 1,
+      "a selected canvas must not disappear when the caller omits an inline transfer budget");
+    assert.equal(pixels.candidates[0].media[0].dataUrl, dataUrl);
   } finally {
     Object.assign(globalThis, original);
   }

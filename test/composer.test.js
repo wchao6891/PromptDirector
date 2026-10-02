@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  COMPOSER_INPUT_MAX_CHARACTERS,
   COMPOSER_METHOD_VERSION,
   DEFAULT_AGENT_INSTRUCTION,
   DEFAULT_COMPOSER_AI_PROFILE,
@@ -659,7 +658,7 @@ test("light review changes only the execution instruction and never requires a r
   assert.match(systemPrompts[1], /不要额外进行生产审核改写/);
 });
 
-test("composer reports exact characters and blocks oversized requests before fetch", async () => {
+test("composer preserves full user input beyond the former character quota and reports provider errors", async () => {
   const session = createComposerSession();
   const settings = normalizeComposerSettings();
   const usage = composerInputUsage(session, "生成海报", settings);
@@ -668,10 +667,10 @@ test("composer reports exact characters and blocks oversized requests before fet
   let fetched = false;
   await assert.rejects(() => planComposerTurn({
     session,
-    userMessage: "x".repeat(COMPOSER_INPUT_MAX_CHARACTERS),
+    userMessage: "x".repeat(775_001),
     composerSettings: settings
-  }, aiSettings, { fetchImpl: async () => { fetched = true; return jsonResponse({}); } }), /超过/);
-  assert.equal(fetched, false);
+  }, aiSettings, { fetchImpl: async (_url, options) => { fetched = true; assert.ok(options.body.includes("x".repeat(775_001))); return new Response("Actual provider rejection", {status:413}); } }), /413/);
+  assert.equal(fetched, true);
 });
 
 test("planning can be stopped before DeepSeek returns", async () => {

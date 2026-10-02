@@ -8,6 +8,7 @@ import { normalizeCompoundCases } from "./compound-cases.js";
 import { isFixedTagTree, migrateLegacyFacetState } from "./tag-taxonomy.js";
 import { normalizeTrashState } from "./trash.js";
 import { needsFolderOwnershipMigration, planFolderOwnership } from "./library-folder-ownership.js";
+import { facetAssignmentIdentity } from './facet-assignments.js';
 
 const LEGACY_CONTENT_IDS = new Set([
   "content:tutorial:image", "content:tutorial:video", "content:tutorial:general"
@@ -109,10 +110,11 @@ export function needsMigration(stored = {}) {
   return needsFolderOwnershipMigration(stored) || stored.schemaVersion !== SCHEMA_VERSION || !stored.taxonomy || !stored.facetCatalog ||
     !stored.organizerState || stored.organizerState.version !== ORGANIZER_VERSION || !stored.trashState || !Array.isArray(stored.compoundCases) ||
     !isFixedTagTree(stored.facetCatalog) ||
-    (stored.entries ?? []).some((entry) => entry.schemaVersion !== SCHEMA_VERSION);
+    (stored.entries ?? []).some((entry) => !entry.vaultReadStatus?.readOnly && entry.schemaVersion !== SCHEMA_VERSION);
 }
 
 function migrateEntry(entry, rules, taxonomy, resetRequired, legacyNodes, legacyFacetNodes) {
+  if (entry.vaultReadStatus?.readOnly) return structuredClone(entry);
   const currentClassification = collapseClassification(entry.classification, taxonomy);
   const classification = migratedClassification(entry, currentClassification, rules, taxonomy);
   const labels = separateImportedMetadata(entry);
@@ -130,7 +132,7 @@ function migrateEntry(entry, rules, taxonomy, resetRequired, legacyNodes, legacy
       metadataLabels: labels.metadataLabels,
       analysisMeta: normalizeAnalysisMeta(entry.analysisMeta),
       visionAnalysis: normalizeVisionAnalysis(entry.visionAnalysis),
-      curatedOrigin: normalizeCuratedOrigin(entry.curatedOrigin)
+      ...(entry.curatedOrigin ? { curatedOrigin: normalizeCuratedOrigin(entry.curatedOrigin) || null } : {})
     });
   }
   const legacyFacetCandidates = uniqueNames([
@@ -263,7 +265,7 @@ function normalizeAssignments(values) {
   const byNode = new Map();
   for (const item of Array.isArray(values) ? values : []) {
     if (!item?.facetId || !item?.nodeId) continue;
-    byNode.set(String(item.nodeId), {
+    byNode.set(facetAssignmentIdentity(item), {
       facetId: String(item.facetId), nodeId: String(item.nodeId),
       status: item.status === "suggested" ? "suggested" : "confirmed",
       source: ["manual", "structure", "deepseek_text", "local_image_review", "vision_model", "migration"].includes(item.source) ? item.source : "migration",

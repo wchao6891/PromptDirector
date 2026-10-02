@@ -19,7 +19,8 @@ test("ordinary product pages use the shared branded dialog instead of browser pr
   assert.match(dialogs, /export async function showAppDialog/);
   assert.match(dialogs, /export async function confirmAppAction/);
   assert.match(dialogs, /export async function promptAppText/);
-  assert.match(foundation, /\.app-dialog::backdrop/);
+  assert.match(foundation, /\.ui-dialog::backdrop/);
+  assert.match(dialogs, /ui-dialog/);
   assert.match(foundation, /\.app-dialog-status\.error/);
 });
 

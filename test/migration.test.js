@@ -298,3 +298,12 @@ test("automatic pending image cases recover when current local evidence is decis
   assert.equal(result.entries.find((entry) => entry.id === "still-ambiguous").classification.status, "needs_review");
   assert.deepEqual(result.compoundCases[0].memberEntryIds, ["damaged-image", "confirmed-image"]);
 });
+
+test('handwritten minimal cases acquire application defaults without inventing undefined curated metadata', () => {
+  const source = { id: 'handmade', title: '手工案例', text: '\uFEFF完整正文\r\n', mediaAssets: [], custom: { keep: 'unknown' } };
+  const result = migrateLibraryState({ schemaVersion: SCHEMA_VERSION, entries: [source] }).state.entries[0];
+  assert.equal(Object.hasOwn(result, 'curatedOrigin'), false);
+  assert.equal(result.text, source.text);
+  assert.deepEqual(result.custom, source.custom);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
+});

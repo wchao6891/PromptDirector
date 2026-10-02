@@ -46,6 +46,7 @@ def main():
         assert next(c for c in moved['organizerState']['collections'] if c['id']=='q')['entryIds'] == [q_id]
         # A case can leave a project by dropping onto Unassigned, without deletion.
         library.locator('.project-row[data-collection-id="r"] .project-filter').click()
+        expect(library.locator('#case-list .case-card')).to_have_count(1)
         library.locator('.case-card[data-entry-id="a"]').drag_to(library.locator('#workspace-unassigned'))
         wait_for_async_condition(library, """async () => {
           const s=await chrome.runtime.sendMessage({type:'GET_STATE'});
@@ -102,7 +103,7 @@ def main():
         assert blob_size > 0
         undo_check = library.evaluate("""async () => {
           const {saveMediaBlob,getMediaBlob} = await import('./media-store.js');
-          const {createScreenshotSaveUndo} = await import('./save-history.js');
+          const {createScreenshotSaveUndo,captureScreenshotMetadata} = await import('./save-history.js');
           const stored=await chrome.storage.local.get('entries');
           const entry={...structuredClone(stored.entries[0]),id:'legacy-shot',screenshotUpdatedAt:'2026-09-23T00:00:00.000Z',
             mediaAssets:[{id:'legacy-shot',kind:'image',storageMode:'managed',mimeType:'image/png'}],primaryMediaId:'legacy-shot'};
@@ -110,7 +111,7 @@ def main():
           await saveMediaBlob('legacy-shot',new Blob(['new-image'],{type:'image/png'}));
           await saveMediaBlob('backup:legacy-shot',new Blob(['old-image'],{type:'image/png'}));
           await chrome.storage.local.set({entries:[...stored.entries,entry,copy],lastSaveUndo:createScreenshotSaveUndo(
-            entry.id,{hasScreenshot:true},entry.screenshotUpdatedAt,true,'backup:legacy-shot')});
+            entry.id,{hasScreenshot:true},entry.screenshotUpdatedAt,true,'backup:legacy-shot',captureScreenshotMetadata(entry))});
           const response=await chrome.runtime.sendMessage({type:'UNDO_LAST'});
           if(!response.ok) throw new Error(response.message);
           const id=response.entry.primaryMediaId;

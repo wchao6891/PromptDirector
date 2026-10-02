@@ -1,3 +1,4 @@
+import { skillFileOwners } from './skill-files.js';
 import { removeEntryMedia } from "./media.js";
 
 const AI_ASSIGNMENT_SOURCES = new Set(["deepseek_text", "local_image_review", "vision_model"]);
@@ -103,19 +104,14 @@ export function salvageMissingLibraryAssets(stateValue = {}, missingAssetIdsValu
   });
 
   if (state.creativeSkills && typeof state.creativeSkills === "object") {
-    state.creativeSkills.items = (Array.isArray(state.creativeSkills.items) ? state.creativeSkills.items : []).map((skill) => ({
-      ...skill,
-      packageFiles: (Array.isArray(skill?.packageFiles) ? skill.packageFiles : []).filter((file) => {
+    for (const skill of state.creativeSkills.items ?? []) for (const owner of skillFileOwners(skill)) {
+      owner.packageFiles = (owner.packageFiles ?? []).filter(file => {
         const assetId = clean(file?.assetId);
-        annotate(assetId, {
-          ownerType: "creative_skill",
-          ownerId: clean(skill?.id),
-          ownerTitle: clean(skill?.name || skill?.callName),
-          sourceTitle: clean(file?.path)
-        });
+        annotate(assetId, { ownerType: "creative_skill", ownerId: clean(skill.id),
+          ownerTitle: clean(skill.name || skill.callName), sourceTitle: clean(file.path) });
         return !missing.has(assetId);
-      })
-    }));
+      });
+    }
   }
 
   state.composerSessions = (Array.isArray(state.composerSessions) ? state.composerSessions : []).map((session) => ({

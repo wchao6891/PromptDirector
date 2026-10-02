@@ -189,7 +189,8 @@ def main() -> None:
         expect(offline.locator("#feedback")).to_have_text("提示词已复制")
         offline.locator(".case-detail:visible button[data-media-index='1']").click()
         expect(offline.locator(".case-detail:visible .detail-media-panel[data-media-index='1']")).to_be_visible()
-        expect(offline.locator(".case-detail:visible .related-section")).to_be_visible()
+        # A mixed image/video/document case must not recommend an image-only case.
+        expect(offline.locator(".case-detail:visible .related-section")).to_have_count(0)
         offline.locator("#detail-close").click()
         expect(offline.locator("#detail-view")).to_be_hidden()
         offline.set_viewport_size({"width": 390, "height": 844})
@@ -243,6 +244,7 @@ def main() -> None:
                 assert payload.testzip() is None
         library.locator("#share-dialog-close").click()
 
+        library.locator("#share-cancel").click()
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="general"]').click()
         expect(library.locator("#create-folder-backup")).to_be_visible()

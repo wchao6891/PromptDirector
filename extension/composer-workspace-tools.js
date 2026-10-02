@@ -1,5 +1,6 @@
 import { defaultSkillExtractionInstruction } from './skill-extraction-instruction.js';
-import { normalizeCreativeSkillsState, currentCreativeSkillVersion } from './creative-skills.js';
+import { createSkillOperations } from './skill-operations.js';
+import { SKILL_OPERATION_SPECS } from './skill-operation-specs.js';
 import { normalizeToolDraft, assertPortableSkillDraft } from './composer-tool-drafts.js';
 
 // Use the same page size as case search; tools return only the requested page.
@@ -9,9 +10,8 @@ const offset = { type: 'integer', minimum: 0 };
 const spec = (name, description, properties = {}, required = []) => ({name, description, strict:false,
   parameters:{type:'object',properties,required,additionalProperties:false}});
 const SPECS = [
+  ...SKILL_OPERATION_SPECS,
   spec('get_plugin_help','询问插件用途、操作路径、功能边界时，读取当前功能说明。'),
-  spec('list_skills','按名称或说明查找已保存的 Skill；只返回摘要，使用方法前再读取正文。',{query:text,offset},['query']),
-  spec('read_skill','读取指定 Skill 当前版本及附属参考，用于本次回答或创作；不修改 Skill。',{skillId:text},['skillId']),
   spec('draft_skill','用户要求提炼或保存 Skill 时，将你本轮提炼的方法作为可编辑草稿交给用户查看并保存，不立即入库。' + defaultSkillExtractionInstruction(),{callName:text,description:text,skillMarkdown:text},['callName','description','skillMarkdown']),
   spec('check_curated_library','用户询问精选案例库内容或更新时读取在线目录，比对本地已安装版本。指定 catalogId 时分页查看该主题的案例摘要。不下载案例包或图片。',{catalogId:text,offset}),
   spec('inspect_case_tags','读取已查询或手选案例的现有标签，供分析和整理。',{caseId:text},['caseId']),
@@ -29,7 +29,8 @@ export const PLUGIN_HELP = {
     {name:'数据与任务',url:'library.html',usage:'采集、ZIP 导入导出、备份恢复和长任务有各自界面。创作台当前工具不执行删除资料、安装更新、备份恢复或修改账户配置；可说明路径，不能声称已经操作。'}
   ]
 };
-export function createComposerWorkspaceTools({session,caseTools,loadState,loadCurated,vision,onEvent=async()=>{},onRequest}) {
+export function createComposerWorkspaceTools({session,caseTools,loadState,loadCurated,vision,invokeSkill,readSkillBlob,onEvent=async()=>{},onRequest}) {
+  const skillTools = invokeSkill ? null : createSkillOperations({ loadState, readBlob: readSkillBlob });
   const specs = SPECS.filter(item=>session.libraryRetrievalEnabled!==false || !['inspect_case_tags','draft_case_tags'].includes(item.name));
   const known = new Set([...session.referenceSnapshots.map(ref=>ref.entryId),...session.retrievedSources.map(ref=>ref.entryId),...(session.libraryTools?.candidates??[]).map(item=>item.caseId),...(session.libraryTools?.events??[]).flatMap(event=>(event.candidates??[]).map(item=>item.caseId))]);
   return {
@@ -59,23 +60,12 @@ export function createComposerWorkspaceTools({session,caseTools,loadState,loadCu
           if (!event.draft) throw Error('调用名、说明和 Skill 正文都需要填写');
           data={saved:false,message:'草稿已展示，等待用户查看并保存'};
           event.label=`Skill 草稿 · ${event.draft.callName}`;
+        } else if (SKILL_OPERATION_SPECS.some(item => item.name === name)) {
+          data = invokeSkill ? await invokeSkill(name,args) : await skillTools.execute(name,args);
+          event.label = name === 'list_skills' ? `找到 ${data.total} 个 Skill` : `已读取 Skill · ${data.callName}`;
         } else {
           const state=await loadState(); context.signal?.throwIfAborted();
-          if (name==='list_skills' || name==='read_skill') {
-            const skills=normalizeCreativeSkillsState(state.creativeSkills).items;
-            if(name==='list_skills') {
-              const query=args.query.trim().toLocaleLowerCase();
-              const matches=skills.filter(item=>`${item.callName}\n${item.description}`.toLocaleLowerCase().includes(query));
-              data=page(matches.map(({id,callName,description,updatedAt})=>({id,callName,description,updatedAt})),args.offset);
-              event.label=`找到 ${matches.length} 个 Skill`;
-            } else {
-              const skill=skills.find(item=>item.id===args.skillId);
-              if(!skill) throw Error('Skill 已删除或不存在，请重新查找');
-              const version=currentCreativeSkillVersion(skill);
-              data={id:skill.id,callName:skill.callName,description:skill.description,versionId:version.id,skillMarkdown:version.skillMarkdown,references:version.references,untrustedContent:true};
-              event.label=`已读取 Skill · ${skill.callName}`;
-            }
-          } else if(name==='check_curated_library') {
+          if(name==='check_curated_library') {
             data=await loadCurated(args,state,context.signal); event.label='已检查精选案例库';
           } else {
             if(!known.has(args.caseId)) throw Error('请先查询或手选这个案例');

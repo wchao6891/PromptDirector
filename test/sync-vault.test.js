@@ -32,6 +32,17 @@ test("vault stores immutable per-device states and encrypted deduplicated image 
   assert.equal(rootDump.includes("password-123"), false);
 });
 
+test("a complete encrypted library above 32 MiB stays readable instead of being reported as corruption", async () => {
+  const root = new MemoryDirectory("root");
+  const vault = await createOrUnlockSyncVault(root, "password-123");
+  const text = 'x'.repeat(33 * 1024 * 1024) + '完整正文末尾';
+  const snapshot = await createRevisionSnapshot({ entries: [{ id: 'large-library', text }] }, { deviceId: 'device:a', logicalClock: 1 });
+  await writeSyncSnapshot(vault, snapshot);
+  const read = await listSyncSnapshots(vault);
+  assert.equal(read.length, 1);
+  assert.deepEqual(read[0], snapshot);
+});
+
 test("large video objects are chunked deduplicated and reject one damaged chunk", async () => {
   const root = new MemoryDirectory("root");
   const vault = await createOrUnlockSyncVault(root, "password-123");

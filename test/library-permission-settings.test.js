@@ -37,6 +37,6 @@ test("revocation removes the matching optional permission and resets first-use d
   assert.match(revokeFlow, /permissions:\s*\[\.\.\.CLIPBOARD_READ_PERMISSIONS\]/);
   assert.match(revokeFlow, /const\s+removed\s*=\s*await\s+chrome\.permissions\.remove\(request\)/);
   assert.match(revokeFlow, /if\s*\(!removed\)\s*throw\s+new Error/);
-  assert.match(revokeFlow, /chrome\.storage\.local\.remove\(CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY\)/);
+  assert.match(revokeFlow, /libraryStorage\.remove\(CAPTURE_PERMISSION_ONBOARDING_STORAGE_KEY\)/);
   assert.doesNotMatch(revokeFlow, /permissions\.request|navigator\.clipboard|readClipboard/);
 });

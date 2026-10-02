@@ -41,7 +41,7 @@ scroller.addEventListener('scroll',()=>{{
           scan:(await import('./page-capture.js')).collectPageCaptureSnapshot.toString(),
           adapters:(await import('./page-capture-adapter-registry.js')).PAGE_CAPTURE_ADAPTERS,
           limits:(await import('./resource-limits.js')).PAGE_CAPTURE_LIMITS,
-          maxTextCharacters:(await import('./resource-limits.js')).PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes})""")
+          maxTextCharacters:(await import('./resource-policy.js')).operationBudget().maxTextBytes})""")
         page = run.context.new_page()
         page.goto(f"{ORIGIN}/ai-tool/explore")
         opts = {"maxCandidates": functions["limits"]["maxCandidates"], "maxMedia": functions["limits"]["maxMediaPerCandidate"], "maxTextCharacters": functions["maxTextCharacters"]}

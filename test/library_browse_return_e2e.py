@@ -27,17 +27,16 @@ def main() -> None:
             else:
                 library.locator(f'[data-collection-id="{project_id}"] .project-filter').click()
             library.locator("#search-input").fill("雨夜")
-            library.locator('#toolbar-more > summary').click()
-            library.locator("#gallery-sort").select_option("title")
-            library.locator('#toolbar-more > summary').click()
+            library.locator('[data-gallery-view="list"]').click()
+            if library.locator('[role="columnheader"][data-column="title"]').get_attribute('aria-sort') != 'ascending':
+                library.locator('[data-sort-column="title"]').click()
             # Scroll to a case beyond the first batch, not just within the initial viewport.
-            while library.locator("#case-list > .case-card").count() <= 60:
-                previous = library.locator("#case-list > .case-card").count()
+            while int(library.locator("#case-list").get_attribute("data-loaded-count") or 0) <= 60:
+                previous = int(library.locator("#case-list").get_attribute("data-loaded-count") or 0)
                 library.locator("#case-list > .case-card").last.scroll_into_view_if_needed()
-                library.wait_for_function("count => document.querySelectorAll('#case-list > .case-card').length > count", arg=previous)
-            library.locator("#case-list > .case-card").nth(60).scroll_into_view_if_needed()
+                library.wait_for_function("count => Number(document.querySelector('#case-list').dataset.loadedCount) > count", arg=previous)
+            library.locator("#case-list > .case-card").last.scroll_into_view_if_needed()
             library.wait_for_function("scrollY > innerHeight")
-            library.locator('#toolbar-more > summary').click()
             library.locator("#start-compose").click()
             library.wait_for_url("**/composer.html*")
             saved = library.evaluate("JSON.parse(sessionStorage.getItem('promptDirector.libraryReturn'))")
@@ -47,12 +46,11 @@ def main() -> None:
             expect(library.locator("#workspace-unassigned")).to_have_attribute("aria-current", "page" if unassigned else "false")
             expect(library.locator("#library-title")).to_have_text("未归项目" if unassigned else "浏览项目")
             expect(library.locator("#search-input")).to_have_value("雨夜")
-            expect(library.locator("#gallery-sort")).to_have_value("title")
+            expect(library.locator('[role="columnheader"][data-column="title"]')).to_have_attribute("aria-sort","ascending")
             library.wait_for_function("target => Math.abs(scrollY - target) <= 2", arg=saved["scrollY"])
             assert library.locator("#case-list > .case-card").count() > 24
 
         # A project deleted while away must resolve to the library, not a phantom project.
-        library.locator('#toolbar-more > summary').click()
         library.locator("#start-compose").click()
         library.wait_for_url("**/composer.html*")
         await_result = library.evaluate("""async () => {

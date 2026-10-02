@@ -239,7 +239,7 @@ test("startup recovery re-reads and commits interrupted jobs inside the shared w
   const recovery = background.slice(start, end);
 
   assert.match(recovery, /await enqueue\(async \(\) => \{/);
-  assert.match(recovery, /const latest = await chrome\.storage\.local\.get/);
+  assert.match(recovery, /const latest = await libraryStorage\.get/);
   assert.match(recovery, /const active = activeCreativeJob\(creativeJobs\)/);
   assert.match(recovery, /actualStages: active\.actualStages/);
   assert.match(recovery, /await commitLocalChanges\(\{[\s\S]*creativeJobs[\s\S]*composerSessions/);

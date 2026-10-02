@@ -24,6 +24,18 @@ test('duplicate image URLs and text do not override exclusions or grow the draft
   const result=appendCaptureCandidate(base,addition,{...selection,selectedMediaIds:[]});
   assert.equal(result.candidate.media.length,2);assert.equal(result.candidate.textBlocks.length,1);assert.deepEqual(result.selection.selectedMediaIds,[]);
 });
+test('explicit comment addition selects an already discovered video once and gives it the selected reply source',()=>{
+  const base=candidate();base.media.push({id:'discovered-video',kind:'video',placement:'unplaced',url:'https://video.twimg.com/reply.mp4'});
+  const addition={id:'reply',media:[{id:'owned-video',kind:'video',url:'https://video.twimg.com/reply.mp4',originalWorkUrl:'https://x.com/user/status/3',posterUrl:'https://pbs.twimg.com/poster.jpg'}],
+    articleDocument:{blocks:[{id:'own-video-block',kind:'video',assetId:'owned-video'}]}};
+  const result=appendCaptureCandidate(base,addition,selection,{includeExistingMedia:true});
+  assert.equal(result.candidate.media.length,3);assert.deepEqual(result.selection.selectedMediaIds,['one','discovered-video']);
+  assert.equal(result.candidate.media[2].placement,'inline');assert.equal(result.candidate.media[2].originalWorkUrl,addition.media[0].originalWorkUrl);
+  const [saved]=applyPageCaptureSelections(normalizePageCaptureBatch({candidates:[result.candidate],selections:[result.selection]}));
+  assert.equal(saved.media.filter(m=>m.kind==='video').length,1);
+  assert.equal(saved.articleDocument.blocks.filter(b=>b.assetId==='discovered-video').length,1);
+  assert.equal(base.media[2].placement,'unplaced','Undo snapshot remains untouched');
+});
 
 test('text-only save retains local images and excluded fragments in the pending draft', () => {
   const draft = { id: 'draft', fragments: [{ id: 'saved', text: 'keep' }, { id: 'excluded', text: 'later' }], visuals: [{ id: 'image' }] };

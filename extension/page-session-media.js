@@ -5,10 +5,13 @@ export async function preparePageSessionMedia(value = {}) {
   const token = clean(value.token);
   const maxBytes = Number(value.maxBytes);
   const chunkBytes = Number(value.chunkBytes);
+  const timeoutMs = Number(value.timeoutMs);
   if (!token || token.length > 128) throw new Error("页面媒体读取令牌无效");
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || !Number.isSafeInteger(chunkBytes) || chunkBytes <= 0 || chunkBytes > maxBytes) {
     throw new Error("页面媒体读取上限无效");
   }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error("页面媒体读取时间预算无效");
+  const signal = AbortSignal.timeout(timeoutMs);
   let url;
   try { url = new URL(clean(value.url)); } catch { throw new Error("页面媒体地址无效"); }
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("页面媒体只允许无凭据 HTTPS 地址");
@@ -27,69 +30,57 @@ export async function preparePageSessionMedia(value = {}) {
     credentials: "include",
     redirect: "error",
     referrerPolicy: "strict-origin-when-cross-origin",
-    cache: "no-store"
+    cache: "no-store",
+    signal
   });
   if (!response?.ok) throw new Error(`页面媒体读取失败（HTTP ${response?.status || 0}）`);
   const declared = Number(response.headers?.get?.("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) throw new Error(`页面媒体超过读取上限（${maxBytes} bytes）`);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
+  }
   if (!response.body?.getReader) throw new Error("页面媒体无法流式读取");
-
-  const reader = response.body.getReader();
-  const rawChunks = [];
   let totalBytes = 0;
-  try {
-    while (true) {
-      const { done, value: part } = await reader.read();
-      if (done) break;
-      totalBytes += part.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new Error(`页面媒体超过读取上限（${maxBytes} bytes）`);
-      }
-      rawChunks.push(part);
-    }
-  } finally {
-    reader.releaseLock();
-  }
+  const stream = response.body.pipeThrough(new TransformStream({ transform(part, controller) {
+    totalBytes += part.byteLength;
+    if (totalBytes > maxBytes) throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
+    controller.enqueue(part);
+  } }), { signal });
+  const blob = await new Response(stream).blob();
+  signal.throwIfAborted();
   if (!totalBytes) throw new Error("页面媒体为空");
-
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const part of rawChunks) {
-    bytes.set(part, offset);
-    offset += part.byteLength;
-  }
-  const encode = (part) => {
-    let binary = "";
-    for (let start = 0; start < part.length; start += 8192) {
-      binary += String.fromCharCode(...part.subarray(start, Math.min(part.length, start + 8192)));
-    }
-    return globalThis.btoa(binary);
-  };
-  const chunks = [];
-  for (let start = 0; start < bytes.length; start += chunkBytes) chunks.push(encode(bytes.subarray(start, start + chunkBytes)));
+  // Keep one browser-managed Blob. Encode only the requested transport chunk.
   const stateKey = "__PROMPTDIRECTOR_PAGE_SESSION_MEDIA__";
   const state = globalThis[stateKey] instanceof Map ? globalThis[stateKey] : new Map();
   if (!(globalThis[stateKey] instanceof Map)) Object.defineProperty(globalThis, stateKey, { value: state, configurable: true });
-  state.set(token, { chunks });
+  clearTimeout(state.get(token)?.timer);
+  const timer = setTimeout(() => state.delete(token), timeoutMs);
+  state.set(token, { blob, chunkBytes, timer });
   return {
     token,
-    chunkCount: chunks.length,
+    chunkCount: Math.ceil(blob.size / chunkBytes),
     totalBytes,
     contentType: clean(response.headers?.get?.("content-type")).split(";", 1)[0].toLocaleLowerCase("en-US")
   };
 }
 
-export function readPageSessionMediaChunk(value = {}) {
+export async function readPageSessionMediaChunk(value = {}) {
   const token = String(value.token ?? "").trim();
   const index = Number(value.index);
   const state = globalThis.__PROMPTDIRECTOR_PAGE_SESSION_MEDIA__;
   if (!(state instanceof Map) || !Number.isSafeInteger(index) || index < 0) return "";
-  return String(state.get(token)?.chunks?.[index] || "");
+  const record = state.get(token);
+  if (!record || index >= Math.ceil(record.blob.size / record.chunkBytes)) return "";
+  const bytes = new Uint8Array(await record.blob.slice(index * record.chunkBytes, (index + 1) * record.chunkBytes).arrayBuffer());
+  let binary = "";
+  for (let start = 0; start < bytes.length; start += 8192) binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
+  return globalThis.btoa(binary);
 }
 
 export function discardPageSessionMedia(value = {}) {
   const token = String(value.token ?? "").trim();
   const state = globalThis.__PROMPTDIRECTOR_PAGE_SESSION_MEDIA__;
-  return state instanceof Map ? state.delete(token) : false;
+  if (!(state instanceof Map)) return false;
+  clearTimeout(state.get(token)?.timer);
+  return state.delete(token);
 }

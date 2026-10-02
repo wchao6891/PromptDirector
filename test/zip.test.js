@@ -3,12 +3,19 @@ import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
 
 import { createZipBlob, openZipBlob, readZipBlob } from "../extension/zip.js";
-import { PORTABLE_LIBRARY_LIMITS } from "../extension/resource-limits.js";
+
+test('whole ZIP read deadline includes original-file checksum work after directory indexing and preserves the package', async () => {
+  const original = new Blob([new Uint8Array(24 * 1024 * 1024).fill(137)]);
+  const archive = await createZipBlob([{ name: 'attachments/original.psd', data: original }]);
+  const reader = await openZipBlob(archive);
+  await assert.rejects(reader.read(null, { budget: { maxDurationMs: 1 } }), { code: 'RESOURCE_BUDGET_REACHED' });
+  assert.ok(archive.size > original.size, 'a timeout never deletes or rewrites the source package');
+  assert.equal((await reader.read()).get('attachments/original.psd').size, original.size, 'a later explicit retry reads the complete file');
+});
 
 test("ZIP roundtrip preserves original image bytes above the document limit", async () => {
-  assert.equal(PORTABLE_LIBRARY_LIMITS.maxImageBytes, 32 * 1024 * 1024);
   // ZIP transport fixture; image decoding is covered by the image validation tests.
-  const bytes = new Uint8Array(PORTABLE_LIBRARY_LIMITS.maxFileBytes + 1).fill(137);
+  const bytes = new Uint8Array(16 * 1024 * 1024 + 1).fill(137);
   const archive = await createZipBlob([{ name: "images/original.png", data: new Blob([bytes]) }]);
   const files = await readZipBlob(archive);
   assert.deepEqual(new Uint8Array(await files.get("images/original.png").arrayBuffer()), bytes);

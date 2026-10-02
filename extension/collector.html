@@ -25,10 +25,10 @@
         <button id="exit-target" class="quiet compact" type="button" data-i18n="退出">退出</button>
       </section>
 
-      <dialog id="capture-permission-onboarding" class="app-dialog" aria-labelledby="capture-permission-title">
+      <dialog id="capture-permission-onboarding" class="app-dialog ui-dialog" aria-labelledby="capture-permission-title">
         <form id="capture-permission-form" class="app-dialog-form" method="dialog">
-          <header>
-            <div>
+          <header class="ui-dialog-header">
+            <div class="ui-dialog-heading">
               <h2 id="capture-permission-title" data-i18n="一次授权，之后直接采集">一次授权，之后直接采集</h2>
               <p data-i18n="开启网页读取、截图与媒体识别；不会自动保存案例。">开启网页读取、截图与媒体识别；不会自动保存案例。</p>
             </div>
@@ -38,28 +38,28 @@
               <input id="capture-permission-clipboard" type="checkbox" checked />
               <span><strong data-i18n="同时开启剪贴板提取">同时开启剪贴板提取</strong><br /><small data-i18n="仅在你点击“剪贴板”时读取。">仅在你点击“剪贴板”时读取。</small></span>
             </label>
-            <p id="capture-permission-status" class="app-dialog-status" role="status" aria-live="polite"></p>
+            <p id="capture-permission-status" class="app-dialog-status ui-task-feedback" role="status" aria-live="polite"></p>
           </div>
-          <footer>
+          <footer class="ui-dialog-footer">
             <button id="capture-permission-cancel" class="button-secondary" type="button" data-i18n="暂不授权">暂不授权</button>
             <button id="capture-permission-confirm" class="primary" type="submit" data-i18n="授权并继续">授权并继续</button>
           </footer>
         </form>
       </dialog>
 
-      <dialog id="clipboard-permission-dialog" class="app-dialog" aria-labelledby="clipboard-permission-title">
+      <dialog id="clipboard-permission-dialog" class="app-dialog ui-dialog" aria-labelledby="clipboard-permission-title">
         <form id="clipboard-permission-form" class="app-dialog-form" method="dialog">
-          <header>
-            <div>
+          <header class="ui-dialog-header">
+            <div class="ui-dialog-heading">
               <h2 id="clipboard-permission-title" data-i18n="启用剪贴板提取？">启用剪贴板提取？</h2>
               <p data-i18n="你首次授权时取消了剪贴板读取。只有确认此操作后，才会读取当前剪贴板中的文字或图片。">你首次授权时取消了剪贴板读取。只有确认此操作后，才会读取当前剪贴板中的文字或图片。</p>
             </div>
           </header>
           <div class="app-dialog-body">
             <p data-i18n="仅在你点击“剪贴板”时读取；打开侧栏、浏览或点击网页不会触发读取。">仅在你点击“剪贴板”时读取；打开侧栏、浏览或点击网页不会触发读取。</p>
-            <p id="clipboard-permission-status" class="app-dialog-status" role="status" aria-live="polite"></p>
+            <p id="clipboard-permission-status" class="app-dialog-status ui-task-feedback" role="status" aria-live="polite"></p>
           </div>
-          <footer>
+          <footer class="ui-dialog-footer">
             <button id="clipboard-permission-cancel" class="button-secondary" type="button" data-i18n="保持关闭">保持关闭</button>
             <button id="clipboard-permission-confirm" class="primary" type="submit" data-i18n="启用并提取">启用并提取</button>
           </footer>

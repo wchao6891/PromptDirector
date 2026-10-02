@@ -535,3 +535,10 @@ test("folder migration recovery originals survive remote deletion and orphan cle
   assert.equal(fixture.media.has("asset:one"), true);
   assert.equal(fixture.counts().mediaDeletes, 0);
 });
+
+test('readonly recovery records never publish old text or deletion into encrypted sync', async () => {
+  const fixture = await createFixture();
+  fixture.state.entries[0].vaultReadStatus = { readOnly: true, source: 'last-saved-recovery' };
+  await assert.rejects(fixture.controller.start({ vault: fixture.vault, settings: fixture.settings }), { code: 'case_files_unavailable' });
+  assert.equal(fixture.counts().snapshotWrites, 0); assert.equal(fixture.counts().metadataWrites, 0); assert.equal(fixture.counts().objectWrites, 0);
+});

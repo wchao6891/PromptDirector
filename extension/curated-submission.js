@@ -6,7 +6,10 @@ export const CURATED_SUBMISSION_FORMAT = "prompt-director-curated-submission";
 export const CURATED_SUBMISSION_VERSION = 1;
 export const CURATED_SUBMISSION_PART_FORMAT = "prompt-director-curated-submission-part";
 export const CURATED_SUBMISSION_PART_VERSION = 1;
-export const CURATED_SUBMISSION_MAX_FILE_BYTES = 24 * 1024 * 1024;
+// GitHub attachments allow 25 MB for other files. Decimal bytes fit either MB
+// interpretation; this bounds each upload part, never the complete submission.
+// https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files
+export const CURATED_SUBMISSION_MAX_FILE_BYTES = 25 * 1_000_000;
 export const CURATED_SUBMISSION_PART_OVERHEAD_BYTES = 16 * 1024;
 export const CURATED_SUBMISSION_PART_PAYLOAD_BYTES = CURATED_SUBMISSION_MAX_FILE_BYTES - CURATED_SUBMISSION_PART_OVERHEAD_BYTES;
 

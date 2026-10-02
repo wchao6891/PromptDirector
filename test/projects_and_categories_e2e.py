@@ -112,10 +112,10 @@ def main() -> None:
         expect(library.locator("#project-folder-list .project-folder-card", has_text="项目与分类验收")).to_be_visible()
         expect(library.locator("#result-count")).to_have_text("0 个案例 · 1 子项目")
         library.locator("#project-folder-list .project-folder-card", has_text="项目与分类验收").click()
-        expect(library.locator("#manage-case-order")).to_be_visible()
-        library.locator("#gallery-sort").select_option("project-manual")
-        expect(library.locator(".case-reorder-controls:visible")).to_have_count(0)
-        library.locator("#manage-case-order").click()
+        expect(library.locator("#manage-case-order")).to_be_hidden()
+        menu = library.locator(f'.project-row[data-collection-id="{project_id}"] .project-menu')
+        menu.locator('summary').click()
+        menu.get_by_role('button', name='调整案例顺序', exact=True).click()
         expect(library.locator("#manage-case-order")).to_have_attribute("aria-label", "完成案例排序")
         expect(library.locator(".case-reorder-controls")).to_have_count(0)
         source_card = library.locator(f".case-card[data-entry-id='{second_entry['id']}']")
@@ -197,7 +197,7 @@ def main() -> None:
         library.locator("#content-type-name").fill("分镜参考")
         library.locator("#content-type-role").select_option("reference")
         library.get_by_role("button", name="创建一级分类", exact=True).click()
-        expect(library.locator("#manager-feedback")).to_contain_text("内容类型已创建")
+        expect(library.locator('.content-type-card')).to_contain_text(["分镜参考"])
         custom_content_id = library.evaluate(
             "async () => (await chrome.storage.local.get('taxonomy')).taxonomy.nodes.find(item => item.name === '分镜参考').id"
         )
@@ -206,7 +206,7 @@ def main() -> None:
         library.locator("#content-type-name").fill("分镜工作资料")
         library.locator("#content-type-role").select_option("tutorial")
         library.get_by_role("button", name="保存修改", exact=True).click()
-        expect(library.locator("#manager-feedback")).to_contain_text("内容类型已更新")
+        expect(card).to_contain_text("分镜工作资料")
         classified = library.evaluate(
             """async (contentId) => chrome.runtime.sendMessage({
               type: 'CONFIRM_CLASSIFICATION', entryId: 'project-case', pathIds: [contentId], rememberSource: false

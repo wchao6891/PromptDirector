@@ -528,6 +528,10 @@ function parseVideoReconstruction(text, { includeTags, catalog, finishReason }) 
   } catch {
     throw new Error("视频逆推没有返回有效 JSON，本次没有保存");
   }
+  return normalizeVideoReconstructionResult(value, { includeTags, catalog });
+}
+
+export function normalizeVideoReconstructionResult(value, { includeTags = true, catalog } = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("视频逆推返回结构无效，本次没有保存");
   }

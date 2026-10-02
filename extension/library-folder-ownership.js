@@ -1,5 +1,13 @@
 // Planning is side-effect free: callers commit the whole result atomically only
 // after their import/upgrade checks pass. Original media bytes remain shared.
+export function assertCompoundProjectScope(state, memberEntryIds) {
+  const scopes = memberEntryIds.map(id => (state.organizerState?.collections || [])
+    .filter(collection => collection.entryIds.includes(id)).map(collection => collection.id).sort());
+  if (scopes.some(scope => JSON.stringify(scope) !== JSON.stringify(scopes[0]))) {
+    throw Object.assign(new Error('跨项目组合须先明确目标项目并复制或移动成员，不能自动改变原案例归属'), { code: 'compound_project_conflict' });
+  }
+}
+
 export function needsFolderOwnershipMigration(state = {}) {
   const logicalId = new Map();
   for (const compound of state.compoundCases ?? []) {

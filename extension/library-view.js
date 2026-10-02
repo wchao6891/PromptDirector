@@ -11,7 +11,16 @@ export const PROJECT_SORT_MODES = Object.freeze({
   name: "name"
 });
 
-const CASE_SORT_VALUES = new Set(Object.values(CASE_SORT_MODES));
+const CASE_SORT_VALUES = new Set([
+  ...Object.values(CASE_SORT_MODES), "added-asc", "updated-asc", "title-desc",
+  ...["type", "count", "tags", "source", "size"].flatMap(key => [`${key}-asc`, `${key}-desc`])
+]);
+export function normalizeCaseSortMode(value) { return CASE_SORT_VALUES.has(value) ? value : "added-desc"; }
+export function caseSortColumn(mode) { return mode === "title" ? "title" : mode === "project-manual" ? "" : mode.replace(/-(asc|desc)$/, ""); }
+export function nextCaseSortMode(current, column) {
+  const descending = caseSortColumn(current) === column ? !current.endsWith("-desc") : ["added", "updated"].includes(column);
+  return column === "title" && !descending ? "title" : `${column}-${descending ? "desc" : "asc"}`;
+}
 const PROJECT_SORT_VALUES = new Set(Object.values(PROJECT_SORT_MODES));
 
 /**
@@ -52,20 +61,23 @@ export function caseViewProjection(entry = {}) {
 
 export function sortLibraryCases(entriesValue = [], options = {}) {
   const entries = Array.isArray(entriesValue) ? entriesValue : [];
-  const mode = CASE_SORT_VALUES.has(options.mode) ? options.mode : CASE_SORT_MODES.addedDesc;
+  const mode = normalizeCaseSortMode(options.mode);
+  const column = caseSortColumn(mode);
+  const direction = mode.endsWith("-desc") ? -1 : 1;
   const manualRank = projectManualRank(options.projectEntryIds);
-  const projections = new Map(entries.map((entry) => [entry, caseViewProjection(entry)]));
+  const sortValues = new Map(entries.map(entry => {
+    if (column === "title") return [entry, entry?.title];
+    if (!["added", "updated", ""].includes(column)) return [entry, options.columnValues?.(entry)?.[column]];
+    const projection = caseViewProjection(entry);
+    return [entry, mode === CASE_SORT_MODES.projectManual ? rankProjection(projection, manualRank)
+      : timestamp(column === "updated" ? projection.updatedAt : projection.addedAt)];
+  }));
   return stableSort(entries, (left, right) => {
-    if (mode === CASE_SORT_MODES.title) return compareNames(left?.title, right?.title);
-    if (mode === CASE_SORT_MODES.projectManual) {
-      return rankProjection(projections.get(left), manualRank) - rankProjection(projections.get(right), manualRank);
-    }
-    const leftProjection = projections.get(left);
-    const rightProjection = projections.get(right);
-    if (mode === CASE_SORT_MODES.updatedDesc) {
-      return compareIsoDescending(leftProjection.updatedAt, rightProjection.updatedAt);
-    }
-    return compareIsoDescending(leftProjection.addedAt, rightProjection.addedAt);
+    const a = sortValues.get(left), b = sortValues.get(right);
+    if (mode === CASE_SORT_MODES.projectManual) return a - b;
+    const missing = value => value == null || value === "" || (typeof value === "number" && !Number.isFinite(value));
+    if (missing(a) || missing(b)) return Number(missing(a)) - Number(missing(b));
+    return (typeof a === "number" && typeof b === "number" ? a - b : compareNames(a, b)) * direction;
   });
 }
 
@@ -148,8 +160,10 @@ function compareIsoDescending(left, right) {
 }
 
 function compareDates(left, right, direction) {
-  const leftTime = timestamp(left);
-  const rightTime = timestamp(right);
+  return compareTimes(timestamp(left), timestamp(right), direction);
+}
+
+function compareTimes(leftTime, rightTime, direction) {
   if (leftTime === rightTime) return 0;
   if (!Number.isFinite(leftTime)) return 1;
   if (!Number.isFinite(rightTime)) return -1;
@@ -161,10 +175,12 @@ function compareNames(left, right) {
 }
 
 function latestIso(values) {
-  const valid = (Array.isArray(values) ? values : [])
-    .map(validIso)
-    .filter(Boolean);
-  return valid.sort((left, right) => timestamp(right) - timestamp(left))[0] || "";
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const value of Array.isArray(values) ? values : []) {
+    const time = Date.parse(clean(value));
+    if (Number.isFinite(time) && time > latest) latest = time;
+  }
+  return Number.isFinite(latest) ? new Date(latest).toISOString() : "";
 }
 
 function validIso(value) {

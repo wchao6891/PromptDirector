@@ -1,7 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createCaptureWorkspace } from "../extension/capture-workspace.js";
+import { createCaptureWorkspace as createWorkspace } from "../extension/capture-workspace.js";
+
+function createCaptureWorkspace(options) {
+  return createWorkspace({ ...options, storage: options.storage || options.chromeApi.storage.local });
+}
+
+test("capture uses its injected library storage even when browser storage is unavailable", async () => {
+  const stored = {}, chromeApi = fakeChrome(stored), storage = chromeApi.storage.local;
+  Object.defineProperty(chromeApi, 'storage', { get() { throw new Error('browser storage bypass'); } });
+  const workspace = createWorkspace({ chromeApi, storage, captureDraftStorageKey: 'captureDraft',
+    ensureOffscreenDocument: async () => {}, deleteVisual: async () => {} });
+  await workspace.dispatch('add-selection', { fragment: { text: '按活动资料库保存', sourceUrl: 'https://example.com' } });
+  assert.equal(stored.captureDraft.fragments[0].text, '按活动资料库保存');
+});
 
 test("capture workspace persists a selected fragment behind one dispatch interface", async () => {
   const stored = {};

@@ -32,6 +32,20 @@ test("all user-facing case, media, and project deletion routes move metadata to 
   assert.doesNotMatch(projectDeletion, /deleteMediaBlob|deleteScreenshotBlob/);
 });
 
+test("undo of a saved case or import retains recoverable cases and media", () => {
+  const saveUndo = functionBlock("undoLastSave", "deleteEntry").split("const current =")[0];
+  assert.match(saveUndo, /assertCreatedEntryUndoSafe\(removed, undo\)/);
+  assert.match(saveUndo, /moveEntriesToTrash/);
+  assert.match(saveUndo, /\[STORAGE_KEYS\.trashState\]: moved\.trashState/);
+  assert.doesNotMatch(saveUndo, /deleteUnreferencedMedia|screenshotStorageKey\(removed\.id\)/);
+
+  const importUndo = functionBlock("undoImportJobAction", "recoverImportJobs");
+  assert.match(importUndo, /entry\.importBatchId !== undone\.job\.importBatchId/);
+  assert.match(importUndo, /moveEntriesToTrash/);
+  assert.match(importUndo, /\[STORAGE_KEYS\.trashState\]: moved\.trashState/);
+  assert.doesNotMatch(importUndo, /deleteUnreferencedMedia|deleteLocalAssetHandle/);
+});
+
 test("trash restore and irreversible cleanup have separate explicit message contracts", () => {
   for (const type of ["GET_TRASH_ITEMS", "RESTORE_TRASH_ITEMS", "PERMANENT_DELETE_TRASH_ITEMS", "EMPTY_TRASH"]) {
     assert.match(background, new RegExp(`case "${type}"`));

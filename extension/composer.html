@@ -119,7 +119,7 @@
               </div>
             </div>
           </div>
-          <div class="composer-status-line"><p id="composer-feedback" role="status"></p><p id="composer-send-note"></p></div>
+          <div class="composer-status-line"><p id="composer-feedback" class="ui-task-feedback" role="status"></p><p id="composer-send-note"></p></div>
         </footer>
       </main>
 
@@ -157,14 +157,14 @@
         </div>
 
         <footer id="composer-reference-footer" class="composer-reference-footer">
-          <div class="composer-reference-footer-status"><p id="composer-reference-feedback" class="composer-workspace-feedback" role="status" aria-live="polite"></p><div id="composer-selection-strip" class="composer-selection-strip"></div></div>
+          <div class="composer-reference-footer-status"><p id="composer-reference-feedback" class="composer-workspace-feedback ui-task-feedback" role="status" aria-live="polite"></p><div id="composer-selection-strip" class="composer-selection-strip"></div></div>
           <div><button id="composer-reference-clear" class="button-secondary" type="button" data-i18n="清空参考">清空参考</button><button id="composer-reference-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button><button id="composer-reference-apply" type="button" data-i18n="应用参考">应用参考</button></div>
         </footer>
       </section>
     </div>
 
-    <dialog id="composer-assembly-dialog" class="composer-assembly-dialog" aria-labelledby="composer-assembly-title">
-      <header><div><strong id="composer-assembly-title" data-i18n="本次装配">本次装配</strong><p data-i18n="这里显示本轮实际采用的 Agent、任务方法和资料。">这里显示本轮实际采用的 Agent、任务方法和资料。</p></div><button id="composer-assembly-close" class="icon-button" type="button" aria-label="关闭本次装配" data-i18n-aria-label="关闭本次装配" title="关闭本次装配" data-i18n-title="关闭本次装配"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
+    <dialog id="composer-assembly-dialog" class="composer-assembly-dialog ui-dialog" aria-labelledby="composer-assembly-title">
+      <header class="ui-dialog-header"><div class="ui-dialog-heading"><h2 id="composer-assembly-title" data-i18n="本次装配">本次装配</h2><p data-i18n="这里显示本轮实际采用的 Agent、任务方法和资料。">这里显示本轮实际采用的 Agent、任务方法和资料。</p></div><button id="composer-assembly-close" class="icon-button" type="button" aria-label="关闭本次装配" data-i18n-aria-label="关闭本次装配" title="关闭本次装配" data-i18n-title="关闭本次装配"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
       <div id="composer-assembly-content" class="composer-assembly-content"></div>
     </dialog>
     <script type="module" src="composer-page.js"></script>

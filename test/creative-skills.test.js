@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  CREATIVE_SKILL_VERSION_LIMIT,
   createAppliedSkillSnapshot,
   createCreativeSkill,
   createCreativeSkillsState,
@@ -14,9 +13,33 @@ import {
   saveCreativeSkillVersion
 } from "../extension/creative-skills.js";
 import {
+  extractCreativeSkillDraft,
   creativeRunEvidenceCandidates,
   selectedCreativeRunEvidenceSources
 } from "../extension/creative-skill-service.js";
+
+test("official portable names preserve 64 characters and duplicate suffixes without truncating user call names", () => {
+  const portableId = 'a'.repeat(64);
+  const first = createSkill({}, '完整调用名', { portableId });
+  assert.equal(first.skill.portableId, portableId);
+  const second = createSkill(first.state, '独立调用名', { portableId });
+  assert.equal(second.skill.portableId.length, 64);
+  assert.notEqual(second.skill.portableId, portableId);
+  assert.equal(second.skill.callName, '独立调用名');
+  assert.throws(() => createSkill({}, '不要偷偷裁短 ID', { portableId: 'a'.repeat(65) }), /Agent Skills 规范/);
+});
+
+test("Skill extraction retains the complete long heading and the user's complete extraction goal", async () => {
+  const heading = '完整方法名称'.repeat(20);
+  const goal = '用户明确的提炼目标'.repeat(40) + '最后一项要求';
+  const markdown = `# ${heading}\n保留完整方法。`;
+  const draft = await extractCreativeSkillDraft({ goal, sources: [{ prompt: '原始案例' }] }, {
+    ai: { apiKey: 'isolated-fixture', consent: true, composerModel: 'deepseek-v4-flash' }
+  }, { fetchImpl: async () => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: markdown } }] })) });
+  assert.equal(draft.callName, heading);
+  assert.equal(draft.description, goal);
+  assert.equal(draft.markdown, markdown);
+});
 
 function createSkill(state, name = "国风视觉", overrides = {}) {
   return createCreativeSkill(state, {
@@ -41,22 +64,22 @@ test("creative skills keep a unique multilingual call name and stable portable i
   assert.equal(findCreativeSkillsBySlashQuery(renamed.state, "东方")[0].id, first.skill.id);
 });
 
-test("saved versions cap at ten and restoring creates a new current version", () => {
+test("every saved Skill version stays recoverable beyond the former ten-version quota", () => {
   let { state, skill } = createSkill(createCreativeSkillsState(), "诺兰");
   for (let index = 2; index <= 12; index += 1) {
     ({ state, skill } = saveCreativeSkillVersion(state, skill.id, {
       skillMarkdown: `# 诺兰\n\n方法版本 ${index}`
     }, { versionId: `version:${index}`, now: `2026-08-06T${String(index).padStart(2, "0")}:00:00.000Z` }));
   }
-  assert.equal(skill.versions.length, CREATIVE_SKILL_VERSION_LIMIT);
-  assert.equal(skill.versions[0].id, "version:3");
+  assert.equal(skill.versions.length, 12);
+  assert.equal(skill.versions[0].id, "version:诺兰:1");
 
-  const restored = restoreCreativeSkillVersion(state, skill.id, "version:4", {
+  const restored = restoreCreativeSkillVersion(state, skill.id, "version:诺兰:1", {
     versionId: "version:restored", now: "2026-08-07T00:00:00.000Z"
   });
   assert.equal(restored.skill.currentVersionId, "version:restored");
-  assert.match(restored.version.skillMarkdown, /方法版本 4/);
-  assert.equal(restored.skill.versions.length, CREATIVE_SKILL_VERSION_LIMIT);
+  assert.match(restored.version.skillMarkdown, /围绕用户目标/);
+  assert.equal(restored.skill.versions.length, 13);
 });
 
 test("composer snapshots freeze the selected version and preserve user order", () => {
@@ -145,4 +168,10 @@ test("Skill refinement includes only explicitly selected judgments from runs tha
   assert.match(selected[0].analysis, /值得保留：保留主体层级/);
   assert.match(selected[0].analysis, /需要改进：减弱背景/);
   assert.doesNotMatch(JSON.stringify(selected), /visual:judged|run:used|skill:target/);
+});
+
+test("a full human Skill call name is retained independently of its portable identifier", () => {
+  const callName = "用户完整创作方法".repeat(20);
+  const result = createSkill(createCreativeSkillsState(), callName);
+  assert.equal(result.skill.callName, callName);
 });

@@ -1,6 +1,7 @@
 import { ARTICLE_TEXT_KINDS } from "./article-edit.js";
 import { preserveElementPosition } from "./detail-position.js";
 import { renderArticleBlockText } from "./article-text-view.js";
+import { articleBlockIsMarkdown } from "./article-document.js";
 import { createUiIcon } from "./ui-icons.js";
 
 export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, contextParts = [], t }) {
@@ -34,9 +35,11 @@ export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, co
     save.hidden = cancel.hidden = !editing;
     for (const node of textNodes()) {
       const block = blocks.find(item => item.id === node.dataset.articleBlockId);
-      if (block?.kind === "list") renderArticleBlockText(node, block, { editing });
-      node.contentEditable = editing ? "plaintext-only" : "false";
-      if (editing) {
+      if (block?.kind === "list" || articleBlockIsMarkdown(block, entry)) renderArticleBlockText(node, block, { editing, entry });
+      const markdownEditor = node.querySelector(".article-markdown-editor");
+      node.contentEditable = editing && !markdownEditor ? "plaintext-only" : "false";
+      if (markdownEditor) markdownEditor.setAttribute("aria-label", t("编辑正文段落"));
+      if (editing && !markdownEditor) {
         node.setAttribute("role", "textbox");
         node.setAttribute("aria-label", t("编辑正文段落"));
         node.setAttribute("aria-multiline", "true");
@@ -53,7 +56,9 @@ export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, co
     save.disabled = value || reader.dataset.dirty !== "true";
     cancel.disabled = value;
     for (const node of textNodes()) {
-      node.contentEditable = !value && reader.dataset.editing === "true" ? "plaintext-only" : "false";
+      const markdownEditor = node.querySelector(".article-markdown-editor");
+      if (markdownEditor) markdownEditor.disabled = value;
+      node.contentEditable = !markdownEditor && !value && reader.dataset.editing === "true" ? "plaintext-only" : "false";
       if (value) node.setAttribute("aria-readonly", "true");
       else node.removeAttribute("aria-readonly");
     }
@@ -61,7 +66,7 @@ export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, co
   const resetText = () => {
     for (const node of textNodes()) {
       const block = blocks.find(item => item.id === node.dataset.articleBlockId);
-      if (block) renderArticleBlockText(node, block, { editing: reader.dataset.editing === "true" });
+      if (block) renderArticleBlockText(node, block, { editing: reader.dataset.editing === "true", entry });
       else node.remove();
     }
     reader.dataset.dirty = "false";
@@ -83,7 +88,7 @@ export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, co
     setSaving(true);
     const patches = textNodes().flatMap(node => {
       const block = blocks.find(item => item.id === node.dataset.articleBlockId);
-      const text = node.innerText.replace(/\r\n?/gu, "\n");
+      const text = (node.querySelector(".article-markdown-editor")?.value ?? node.innerText).replace(/\r\n?/gu, "\n");
       return ARTICLE_TEXT_KINDS.has(block?.kind) && text !== block.text ? [{ blockId: block.id, text }] : [];
     });
     try {

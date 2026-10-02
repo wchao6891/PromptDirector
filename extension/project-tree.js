@@ -1,4 +1,5 @@
-import { collectionPathLabelsById, collectionSubtreeIds } from "./organizer.js";
+import { createTransientFeedback, FEEDBACK_DURATION_MS, RECOVERY_ACTION_DURATION_MS } from "./transient-feedback.js";
+import { collectionStructureSnapshot, collectionPathLabelsById, collectionSubtreeIds } from "./organizer.js";
 import { attachProjectCombobox } from "./project-combobox.js";
 import { showAppDialog } from "./ui-dialogs.js";
 import { t } from "./i18n.js";
@@ -52,14 +53,32 @@ export function createProjectTreeInteractions({ elements, expanded, getState, un
   const status = elements.projectOrderStatus;
   const undoButton = elements.projectMoveUndo;
   const scroller = list.closest(".sidebar-module-body") || list.closest(".filter-sidebar");
+  const transientFeedback = createTransientFeedback();
+  let undoTimer = 0;
   document.body.append(elements.projectMoveFeedback);
   elements.projectMoveFeedback.querySelector(".project-move-dismiss").addEventListener("click", () => {
-    elements.projectMoveFeedback.hidden = true;
+    dismissUndo();
   });
   let saving = false;
   let undo = null;
   let drag = null;
   let suppressClick = false;
+
+  function dismissUndo() {
+    clearTimeout(undoTimer);
+    undoTimer = 0;
+    undo = null;
+    elements.projectMoveFeedback.hidden = true;
+    transientFeedback.clear(status);
+  }
+
+  function scheduleDismiss() {
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => {
+      if (elements.projectMoveFeedback.matches(":hover, :focus-within")) return scheduleDismiss();
+      dismissUndo();
+    }, RECOVERY_ACTION_DURATION_MS);
+  }
 
   // Keep a bottom-row menu inside the viewport without changing other app menus.
   function positionMenu(menu) {
@@ -99,20 +118,26 @@ export function createProjectTreeInteractions({ elements, expanded, getState, un
     if (saving || unavailable()) throw new Error(t("结束案例选择后可移动项目"));
     const before = getState().collections.find((item) => item.id === id);
     if (!before) throw new Error(t("项目不存在"));
-    const siblings = getState().collections.filter((item) => item.parentId === before.parentId);
+    const siblings = getState().collections.filter((item) => item.parentId === before.parentId).sort((left, right) => left.order - right.order);
     const previous = { id, parentId: before.parentId, index: siblings.findIndex((item) => item.id === id) };
     saving = true;
     undoButton.disabled = true;
     list.setAttribute("aria-busy", "true");
     try {
-      const response = await chrome.runtime.sendMessage({ type: "MOVE_COLLECTION", collectionId: id, parentId, index });
+      const response = await chrome.runtime.sendMessage({ type: "MOVE_COLLECTION", collectionId: id, parentId, index,
+        ...(undoing ? { undoing: true, expectedStructure: undo.expectedStructure } : {}) });
       if (!response?.ok) throw new Error(response?.message || t("项目结构保存失败"));
       onState(response.organizerState);
-      undo = undoing ? null : previous;
+      undo = undoing ? null : { ...previous, expectedStructure: collectionStructureSnapshot(response.organizerState) };
       const paths = collectionPathLabelsById(getState());
-      status.textContent = t(undoing ? "已撤销移动：{project}" : "已移动：{project}", { project: paths.get(id) });
+      transientFeedback.show(status, t(undoing ? "已撤销移动：{project}" : "已移动：{project}", { project: paths.get(id) }), { pending: !undoing });
       undoButton.hidden = !undo;
       elements.projectMoveFeedback.hidden = false;
+      if (undo) scheduleDismiss();
+      else {
+        clearTimeout(undoTimer);
+        undoTimer = setTimeout(dismissUndo, FEEDBACK_DURATION_MS);
+      }
       focus(id);
       return true;
     } finally {

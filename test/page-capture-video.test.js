@@ -21,6 +21,7 @@ test('direct captured video is downloaded and verified as video bytes without cr
     calls += 1;
     assert.equal(new URL(url).search, '?signature=test');
     assert.equal(options.credentials, 'omit');
+    assert.equal(options.cache, 'no-cache', 'Repeat capture validates the remote original instead of forcing another full transfer or trusting stale bytes');
     return new Response(video, {headers: {'content-type': 'video/mp4'}});
   }});
   assert.equal(calls, 1);

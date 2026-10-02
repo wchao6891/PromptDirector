@@ -140,3 +140,31 @@ test('protocol-less video addresses use the same provider rules as full URLs', (
     assert.throws(() => canonicalizeMediaReference(input), /有效/);
   }
 });
+
+test('oversized source metadata cancels its stream and keeps the saveable link without partial invented fields', async () => {
+  for (const url of ['https://www.bilibili.com/video/BV1abc/', 'https://www.youtube.com/watch?v=fixture']) {
+    let cancelled = false;
+    const result = await resolveMediaReference(url, { budget: { maxTextBytes: 64 },
+      fetch: async () => new Response(new ReadableStream({
+        pull(controller) { controller.enqueue(new TextEncoder().encode('x'.repeat(65))); },
+        cancel() { cancelled = true; }
+      })) });
+    assert.equal(result.metadataStatus, 'unavailable');
+    assert.equal(result.canonicalUrl, url);
+    assert.equal(result.title, '');
+    assert.equal(cancelled, true);
+  }
+});
+
+test('a stalled metadata body respects the operation deadline and retains the original source URL', async t => {
+  // A real transport keeps the event loop alive; the inert mock stream does not.
+  const transport = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(transport));
+  let cancelled = false;
+  const result = await resolveMediaReference('https://www.bilibili.com/video/BV1abc/', {
+    budget: { maxDurationMs: 40 }, fetch: async () => new Response(new ReadableStream({ cancel() { cancelled = true; } }))
+  });
+  assert.equal(result.metadataStatus, 'unavailable');
+  assert.equal(result.canonicalUrl, 'https://www.bilibili.com/video/BV1abc/');
+  assert.equal(cancelled, true);
+});

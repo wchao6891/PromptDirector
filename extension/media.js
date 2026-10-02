@@ -93,6 +93,7 @@ export function normalizeMediaAsset(value = {}) {
     ...(assetPath ? { assetPath } : {}),
     ...(relativePath ? { relativePath } : {}),
     ...(clean(value.posterAssetId) ? { posterAssetId: clean(value.posterAssetId) } : {}),
+    ...(Array.isArray(value.processingWarnings) ? { processingWarnings: [...new Set(value.processingWarnings.map(clean).filter(Boolean))] } : {}),
     ...(kind === "document" && Array.isArray(value.extractionWarnings) ? { extractionWarnings: [...new Set(value.extractionWarnings.map(clean).filter(Boolean))] } : {}),
     ...(kind === "document" ? { extractedTextFormat: normalizeExtractedTextFormat(value.extractedTextFormat, format) } : {}),
     ...(usage === "poster" && clean(value.derivedFromAssetId) ? { derivedFromAssetId: clean(value.derivedFromAssetId) } : {}),
@@ -277,6 +278,7 @@ export function removeEntryMedia(entryValue, assetId) {
   entry.timeNotes = entry.timeNotes.filter((item) => item.assetId !== id);
   entry.mediaPrompts = entry.mediaPrompts.filter((item) => !removedIds.has(item.assetId));
   entry.videoAnalyses = entry.videoAnalyses.filter((item) => !removedIds.has(item.assetId));
+  entry.visualSetAnalyses = visualSetAnalysesForAssets(entry, new Set(entry.mediaAssets.map(asset => asset.id)), true);
   for (const removedId of removedIds) entry.articleDocument = removeArticleDocumentAsset(entry.articleDocument, removedId);
   if (!entry.articleDocument) delete entry.articleDocument;
   if (entry.primaryMediaId === id) entry.primaryMediaId = entry.mediaAssets.find((item) => item.usage !== "poster")?.id || "";
@@ -420,6 +422,30 @@ export function mediaDescriptions(entryValue = {}) {
     .filter(Boolean);
 }
 
+// Keep cross-image reports as history when only part of their input remains.
+// A complete group follows its media; a partial group is never attributed to a subset.
+export function visualSetAnalysesForAssets(entry, ids, retainHistory = false) {
+  return (entry.visualSetAnalyses ?? []).flatMap(analysis => {
+    const inputs = analysis.imageRoles?.map(role => role.assetId) ?? [];
+    if (inputs.length && inputs.every(id => ids.has(id))) return [analysis];
+    if (!retainHistory) return [];
+    return [inputs.length ? { ...analysis, invalidated: true } : analysis];
+  });
+}
+
+export function remapMediaAnalysisAssets(entry, assetIdMap) {
+  const remap = id => assetIdMap[id] ?? id;
+  const evidence = value => value ? { ...value, ...(Array.isArray(value.assets) ? { assets: value.assets.map(asset => ({ ...asset, assetId: remap(asset.assetId) })) } : {}) } : undefined;
+  const record = value => ({ ...value, ...(value.inputEvidence ? { inputEvidence: evidence(value.inputEvidence) } : {}) });
+  return {
+    ...entry,
+    mediaAssets: entry.mediaAssets.map(asset => ({ ...asset, ...(asset.visionAnalysis ? { visionAnalysis: record(asset.visionAnalysis) } : {}) })),
+    videoAnalyses: (entry.videoAnalyses ?? []).map(analysis => ({ ...record(analysis), assetId: remap(analysis.assetId) })),
+    visualSetAnalyses: (entry.visualSetAnalyses ?? []).map(analysis => ({ ...record(analysis),
+      ...(analysis.imageRoles ? { imageRoles: analysis.imageRoles.map(role => ({ ...role, assetId: remap(role.assetId) })) } : {}) }))
+  };
+}
+
 export function mediaKindFromFile(file) {
   return assetKindFromFileMetadata(file);
 }
@@ -481,11 +507,19 @@ function normalizeVersionedAnalyses(values, kind) {
       model: clean(value.model),
       provider: clean(value.provider),
       usage: structuredClone(value.usage || {}),
-      cost: Number.isFinite(Number(value.cost)) && Number(value.cost) >= 0 ? Number(value.cost) : null,
+      cost: value.cost != null && Number.isFinite(Number(value.cost)) && Number(value.cost) >= 0 ? Number(value.cost) : null,
       routing: value.routing && typeof value.routing === "object" && !Array.isArray(value.routing)
         ? structuredClone(value.routing)
         : null,
-      createdAt: validIso(value.createdAt) || new Date().toISOString()
+      createdAt: validIso(value.createdAt) || new Date().toISOString(),
+      ...(kind === "visual-set" && Array.isArray(value.imageRoles) ? {
+        imageRoles: value.imageRoles.map(item => ({ assetId: clean(item.assetId), role: cleanMultiline(item.role) })),
+        sharedVisualSystem: cleanStrings(value.sharedVisualSystem), differences: cleanStrings(value.differences),
+        continuity: cleanStrings(value.continuity), compositionRules: cleanStrings(value.compositionRules),
+        reusablePrompt: cleanMultiline(value.reusablePrompt)
+      } : {}),
+      ...(value.invalidated === true ? { invalidated: true } : {}),
+      ...(value.inputEvidence ? { inputEvidence: structuredClone(value.inputEvidence) } : {})
     }];
   });
 }
@@ -530,7 +564,8 @@ function normalizeVideoAnalyses(values) {
       ...(clean(value.analysisScope) ? { analysisScope: clean(value.analysisScope) } : {}),
       ...(clean(value.finishReason) ? { finishReason: clean(value.finishReason) } : {}),
       ...(typeof value.userEdited === "boolean" ? { userEdited: value.userEdited } : {}),
-      ...(validIso(value.editedAt) ? { editedAt: validIso(value.editedAt) } : {})
+      ...(validIso(value.editedAt) ? { editedAt: validIso(value.editedAt) } : {}),
+      ...(value.inputEvidence ? { inputEvidence: structuredClone(value.inputEvidence) } : {})
     }];
   });
 }
@@ -702,6 +737,10 @@ function validIso(value) {
 
 function cleanMultiline(value) {
   return String(value ?? "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
+}
+
+function cleanStrings(values) {
+  return (Array.isArray(values) ? values : []).map(cleanMultiline).filter(Boolean);
 }
 
 function clean(value) {

@@ -14,6 +14,7 @@ import {
   replaceCollectionEntries,
   renameCollection,
   isEntryVisibleInLibrary,
+  createLibraryVisibilityReader,
   collectionEntryIds,
   collectionPathLabel,
   collectionSelectorLabel,
@@ -262,6 +263,29 @@ test("project-only cases leave the main library unless another visible project a
   assert.equal(isEntryVisibleInLibrary(state, "shared"), true);
   assert.equal(isEntryVisibleInLibrary(state, "unassigned"), true);
   assert.equal(state.collections[0].visibility, COLLECTION_VISIBILITY.projectOnly);
+});
+
+test("browsing a whole library checks project visibility once while preserving shared and unassigned cases", () => {
+  let reads = 0;
+  const collections = [
+    { id: "private", name: "项目内", visibility: "project-only", entryIds: ["hidden", "shared", "hidden"] },
+    { id: "public", name: "图库内", parentId: "private", entryIds: ["shared", "visible"] }
+  ];
+  const state = { get collections() { reads += 1; return collections; } };
+  const visible = createLibraryVisibilityReader(state);
+  for (let i = 0; i < 5_000; i += 1) {
+    assert.equal(visible("hidden"), false);
+    assert.equal(visible("shared"), true);
+    assert.equal(visible("visible"), true);
+    assert.equal(visible(`unassigned-${i}`), true);
+  }
+  assert.equal(visible(""), false);
+  assert.equal(visible(null), false);
+  assert.equal(reads, 1, "Every case must use the same project snapshot rather than re-read all memberships");
+  assert.deepEqual(collections[0].entryIds, ["hidden", "shared", "hidden"], "Opening does not rewrite project relations");
+  collections[0].visibility = "library";
+  assert.equal(visible("hidden"), false, "The current render keeps its consistent snapshot");
+  assert.equal(createLibraryVisibilityReader(state)("hidden"), true, "The next render reflects project changes");
 });
 
 test("organizer upgrade permanently discards legacy project methods", () => {

@@ -1,3 +1,5 @@
+import { skillPackageFiles } from './skill-files.js';
+
 export function libraryStoredAssets(stateValue = {}, options = {}) {
   const state = stateValue && typeof stateValue === "object" ? stateValue : {};
   const assets = durableAssets(state);
@@ -79,9 +81,7 @@ function creativeRunAssets(runs) {
 }
 
 function creativeSkillAssets(skills) {
-  return (Array.isArray(skills) ? skills : []).flatMap((skill) =>
-    Array.isArray(skill?.packageFiles) ? skill.packageFiles : []
-  );
+  return (Array.isArray(skills) ? skills : []).flatMap(skillPackageFiles);
 }
 
 function temporarySessionAssets(sessions) {

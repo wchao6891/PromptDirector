@@ -30,14 +30,17 @@ def main():
           const estimate = navigator.storage.estimate.bind(navigator.storage);
           window.planGates = [];
           window.capacityGates = [];
+          window.capacityCheckArmed = false;
           chrome.runtime.sendMessage = async (...args) => {
             if (args[0]?.type === 'GET_FOLDER_BACKUP_STATE') {
               await new Promise(resolve => planGates.push(resolve));
+              window.capacityCheckArmed = true;
             }
             return send(...args);
           };
           navigator.storage.estimate = async () => {
-            if (!window.planGates.length) return estimate();
+            if (!window.capacityCheckArmed) return estimate();
+            window.capacityCheckArmed = false;
             return new Promise((resolve, reject) => capacityGates.push({resolve, reject}));
           };
         }""")

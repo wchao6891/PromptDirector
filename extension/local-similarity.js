@@ -1,250 +1,177 @@
 import { normalizeFacetCatalog } from "./facets.js";
+import { caseOriginalPromptText, detailPromptSources } from "./prompt-sources.js";
 
-const SHARED_PARENT_SCORE = 0.7;
-const NEAR_TERM_SCORE = 0.5;
-const NEAR_TERM_THRESHOLD = 0.5;
-const GENERIC_FILENAME_TERMS = new Set([
-  "copy", "export", "final", "image", "img", "screenshot", "untitled",
-  "副本", "导出", "最终", "截图", "未命名"
-]);
+const VISUAL_FACETS = new Set(["subject", "scene", "action", "style", "camera", "light", "mood"]);
+const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
 export function createSimilarityIndex(entries = [], catalogValue, options = {}) {
   const catalog = normalizeFacetCatalog(catalogValue);
-  const nodeById = new Map(catalog.nodes.filter((node) => node.status === "active").map((node) => [node.id, node]));
-  const facetById = new Map(catalog.facets.filter((facet) => facet.status === "active").map((facet) => [facet.id, facet]));
-  const nodeProfileById = new Map([...nodeById.values()].map((node) => [node.id, {
-    node,
-    facet: facetById.get(node.facetId),
-    depth: node.parentId ? 1 : 0,
-    terms: nodeTerms(node)
-  }]));
-  const labByColor = new Map();
+  const facets = new Set(catalog.facets.filter(item => item.status === "active").map(item => item.id));
+  const nodes = new Map(catalog.nodes.filter(node => node.status === "active" && node.parentId
+    && facets.has(node.facetId) && VISUAL_FACETS.has(node.facetId)).map(node => [node.id, node]));
   const profiles = new Map();
-  const visualForEntry = options.visualForEntry ?? ((entry) => entry.discoveryVisualId);
-  const colorsForEntry = options.colorsForEntry ?? ((entry) => entry.discoveryColors);
-  const mediaForEntry = options.mediaForEntry ?? ((entry) => entry.mediaAssets ?? []);
-  const contentTypesForEntry = options.contentTypesForEntry ?? ((entry) => entry.contentTypeIds ?? [entry.classification?.pathIds?.[0]].filter(Boolean));
-  const projectIdsForEntry = options.projectIdsForEntry ?? (() => []);
+  const domains = new Map();
+  const labByColor = new Map();
+  const tokenCache = new Map();
+  function cachedWords(value) {
+    const text = String(value ?? "");
+    const terms = tokenCache.get(text) ?? options.previousIndex?.tokenCache?.get(text) ?? words(text);
+    tokenCache.set(text, terms);
+    return terms;
+  }
+  const visualForEntry = options.visualForEntry ?? (entry => entry.discoveryVisualId);
+  const colorsForEntry = options.colorsForEntry ?? (entry => entry.discoveryColors);
+  const mediaForEntry = options.mediaForEntry ?? (entry => entry.mediaAssets ?? []);
+  const contentTypesForEntry = options.contentTypesForEntry ?? (entry => entry.contentTypeIds ?? entry.classification?.pathIds ?? []);
+  const promptForEntry = options.promptForEntry ?? (entry => {
+    const original = caseOriginalPromptText(entry);
+    if (original) return original;
+    return [...new Set((mediaForEntry(entry) ?? [])
+      .filter(asset => asset && asset.usage !== "poster" && ["image", "video"].includes(asset.kind))
+      .map(asset => detailPromptSources(entry, asset).ai.trim()).filter(Boolean))].join("\n\n");
+  });
 
   for (const entry of entries) {
-    const assignments = (entry.facetAssignments ?? []).flatMap((assignment) => {
-      if (assignment.status !== "confirmed") return [];
-      const profile = nodeProfileById.get(assignment.nodeId);
-      if (!profile) return [];
-      return [{
-        ...profile,
-        importance: boundedNumber(assignment.importance, 1)
-      }];
-    });
-    const colors = (colorsForEntry(entry) ?? []).map(normalizeHex).filter(Boolean);
-    const media = (mediaForEntry(entry) ?? []).filter((asset) => asset && asset.usage !== "poster");
-    profiles.set(entry.id, {
-      entry,
+    const members = entry.memberEntries?.length ? entry.memberEntries : [entry];
+    const media = (mediaForEntry(entry) ?? []).filter(asset => asset && asset.usage !== "poster");
+    const kinds = new Set(media.map(asset => asset.kind));
+    const domain = kinds.has("image") || kinds.has("video")
+      ? [...kinds].filter(kind => kind !== "attachment").sort().join("+") : "";
+    const tagTerms = new Set();
+    for (const member of members) for (const assignment of member.facetAssignments ?? []) {
+      const node = nodes.get(assignment.nodeId);
+      if (!node || assignment.status !== "confirmed" || (assignment.importance != null && !(Number(assignment.importance) > 0))) continue;
+      // Existing dimension identities preserve context; no special word lists or guessed synonyms.
+      for (const term of cachedWords([node.name, ...(node.aliases ?? [])].join(" "))) tagTerms.add(`${node.facetId}:${term}`);
+    }
+    const colors = [...new Set((colorsForEntry(entry) ?? []).map(normalizeHex).filter(Boolean))];
+    const profile = {
+      entry, domain, video: kinds.has("video"),
       visualId: String(visualForEntry(entry) ?? "").trim(),
-      assignments,
-      colors,
-      labs: colors.map((color) => cachedLab(color, labByColor)).filter(Boolean),
-      customLabels: labeledTerms(entry.customLabels),
-      contentTypeIds: cleanSet(contentTypesForEntry(entry)),
-      projectIds: cleanSet(projectIdsForEntry(entry)),
-      mediaKinds: cleanSet(media.map((asset) => asset.kind)),
-      fileFormats: cleanSet(media.flatMap((asset) => [asset.sourceFormat, asset.mimeType])),
-      fileNameTokens: new Set(media.flatMap((asset) => fileNameTerms(asset.sourceTitle)))
-    });
+      labs: colors.map(color => cachedLab(color, labByColor)),
+      contentTypeIds: new Set(contentTypesForEntry(entry)),
+      // Read members directly: the compound display string prepends titles, which are not prompts.
+      prompt: { terms: cachedWords(members.map(promptForEntry).join("\n")) },
+      tags: { terms: tagTerms }
+    };
+    profiles.set(entry.id, profile);
+    if (!domain) continue;
+    if (!domains.has(domain)) domains.set(domain, []);
+    domains.get(domain).push(profile);
   }
-  return { profiles };
+  for (const values of domains.values()) for (const field of ["prompt", "tags"]) {
+    const frequency = new Map();
+    const documents = values.filter(value => value[field].terms.size);
+    for (const profile of documents) for (const term of profile[field].terms) frequency.set(term, (frequency.get(term) ?? 0) + 1);
+    for (const profile of values) {
+      // Binary term presence prevents repeated boilerplate and duplicated members gaining weight.
+      // Smoothed IDF remains defined in small/homogeneous libraries; all statistics are local.
+      const weighted = [...profile[field].terms].map(term => [term, Math.log1p(documents.length / frequency.get(term))]);
+      const norm = Math.sqrt(weighted.reduce((sum, [, weight]) => sum + weight * weight, 0));
+      profile[field] = new Map(weighted.map(([term, weight]) => [term, weight / norm]));
+    }
+  }
+  return { profiles, domains, tokenCache };
 }
 
 export function rankSimilarEntries(index, entryId, limit = Number.POSITIVE_INFINITY) {
   const current = index?.profiles?.get(entryId);
-  if (!current) return [];
-  return [...index.profiles.values()].flatMap((candidate) => {
-    if (candidate.entry.id === entryId) return [];
-    const content = contentSimilarity(current.assignments, candidate.assignments);
-    const palette = paletteSimilarityFromLabs(current.labs, candidate.labs);
-    const sharedFacetNames = exactFacetNames(current.assignments, candidate.assignments);
-    const sharedLabels = intersectLabeledTerms(current.customLabels, candidate.customLabels);
-    const signals = {
-      exactFacet: sharedFacetNames.length > 0,
-      customLabel: sharedLabels.length > 0,
-      semanticFacet: content.score > 0,
-      contentType: intersects(current.contentTypeIds, candidate.contentTypeIds),
-      project: intersects(current.projectIds, candidate.projectIds),
-      mediaKind: intersects(current.mediaKinds, candidate.mediaKinds),
-      fileFormat: intersects(current.fileFormats, candidate.fileFormats),
-      fileName: jaccard(current.fileNameTokens, candidate.fileNameTokens) > 0,
-      palette: current.labs.length > 0 && candidate.labs.length > 0 && palette > 0
-    };
-    const evidenceBreadth = Object.values(signals).filter(Boolean).length;
-    if (!evidenceBreadth) return [];
-    const strong = signals.exactFacet || signals.customLabel;
-    const organizationalCount = Number(signals.contentType) + Number(signals.project);
-    const weakCount = Number(signals.mediaKind) + Number(signals.fileFormat) + Number(signals.fileName) + Number(signals.palette);
-    const tier = strong ? 4
-      : signals.semanticFacet ? 3
-        : organizationalCount >= 2 || (organizationalCount >= 1 && weakCount >= 1) ? 2 : 1;
-    const reason = strongestReason({
-      signals,
-      sharedFacetNames,
-      sharedLabels,
-      matchedFacetNames: content.matchedFacetNames,
-      sharedFormats: intersection(current.fileFormats, candidate.fileFormats)
+  if (!current?.domain) return [];
+  const ranked = [];
+  const primaryDistribution = [];
+  for (const candidate of index.domains.get(current.domain)) {
+    if (candidate.entry.id === entryId) continue;
+    const colorAvailable = current.labs.length > 0 && candidate.labs.length > 0;
+    const palette = colorAvailable ? paletteSimilarityFromLabs(current.labs, candidate.labs) : 0;
+    const prompt = cosine(current.prompt, candidate.prompt);
+    const tags = cosine(current.tags, candidate.tags);
+    if (current.video ? current.prompt.size && candidate.prompt.size : colorAvailable) {
+      primaryDistribution.push(current.video ? prompt : palette);
+    }
+    // Tags never gate admission. With missing primary evidence, use the other available source,
+    // clearly below results with the requested primary source; never invent pixels or prompts.
+    const primaryAvailable = current.video ? prompt > 0 : colorAvailable;
+    if (!primaryAvailable && !(current.video ? colorAvailable : prompt > 0)) continue;
+    const primary = primaryAvailable ? (current.video ? prompt : palette) : (current.video ? palette : prompt);
+    const secondary = primaryAvailable ? (current.video ? palette : prompt) : 0;
+    ranked.push({
+      entry: candidate.entry, visualId: candidate.visualId,
+      primary, secondary, fallback: !primaryAvailable,
+      score: primary, promptSimilarity: prompt, paletteSimilarity: palette, tagSimilarity: tags,
+      sameContentType: [...current.contentTypeIds].some(id => candidate.contentTypeIds.has(id)),
+      reason: primaryAvailable
+        ? current.video ? (colorAvailable ? "提示词与封面色彩参考" : "提示词参考") : (prompt > 0 ? "色彩与提示词参考" : "色彩参考")
+        : current.video ? "缺少可匹配的提示词，参考封面色彩" : "缺少色卡，参考提示词"
     });
-    return [{
-      entry: candidate.entry,
-      visualId: candidate.visualId,
-      score: tier,
-      tier,
-      evidenceBreadth,
-      reason,
-      paletteSimilarity: palette,
-      contentSimilarity: content.score,
-      matchedFacetNames: content.matchedFacetNames,
-      signals
-    }];
-  }).toSorted((left, right) => right.tier - left.tier
-    || right.evidenceBreadth - left.evidenceBreadth
-    || right.contentSimilarity - left.contentSimilarity
-    || right.paletteSimilarity - left.paletteSimilarity
-    || String(right.entry.savedAt || "").localeCompare(String(left.entry.savedAt || ""))
-    || left.entry.id.localeCompare(right.entry.id))
+  }
+  // Otsu's one-dimensional variance split uses this query's score distribution.
+  // It forms near/far groups without a fixed threshold, candidate count or blended score weights.
+  for (const fallback of [false, true]) {
+    const group = ranked.filter(item => item.fallback === fallback);
+    const boundary = similarityBoundary(fallback ? group.map(item => item.primary) : primaryDistribution);
+    for (const item of group) item.near = item.primary >= boundary;
+  }
+  return ranked.sort((a, b) => Number(a.fallback) - Number(b.fallback)
+    || Number(b.near) - Number(a.near)
+    || b.secondary - a.secondary
+    || b.primary - a.primary
+    || b.tagSimilarity - a.tagSimilarity
+    || Number(b.sameContentType) - Number(a.sameContentType)
+    || a.entry.id.localeCompare(b.entry.id))
     .slice(0, Math.max(0, Math.floor(Number(limit) || 0)));
 }
 
-function exactFacetNames(left, right) {
-  const rightIds = new Set(right.map((assignment) => assignment.node.id));
-  return [...new Set(left.filter((assignment) => rightIds.has(assignment.node.id))
-    .map((assignment) => assignment.facet?.name || assignment.node.name).filter(Boolean))].sort();
+function similarityBoundary(values) {
+  const sorted = values.toSorted((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const total = sorted.reduce((sum, value) => sum + value, 0);
+  let prefix = 0;
+  let bestVariance = 0;
+  let boundary = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    prefix += sorted[i - 1];
+    if (sorted[i - 1] === sorted[i]) continue;
+    const difference = prefix / i - (total - prefix) / (sorted.length - i);
+    const variance = i * (sorted.length - i) * difference * difference;
+    if (variance > bestVariance) {
+      bestVariance = variance;
+      boundary = sorted[i];
+    }
+  }
+  return boundary;
 }
 
-function strongestReason({ signals, sharedFacetNames, sharedLabels, matchedFacetNames, sharedFormats }) {
-  if (signals.customLabel) return `相同标签：${sharedLabels[0]}`;
-  if (signals.exactFacet) return `相同${sharedFacetNames[0]}`;
-  if (signals.semanticFacet) return `相近${matchedFacetNames[0] || "视觉属性"}`;
-  if (signals.contentType) return "相同内容类型";
-  if (signals.project) return "同一项目";
-  if (signals.fileName) return "文件名相近";
-  if (signals.fileFormat) return `相同文件类型${sharedFormats[0] ? `：${formatLabel(sharedFormats[0])}` : ""}`;
-  if (signals.mediaKind) return "相同媒体类型";
-  return "色彩相近";
+function words(value) {
+  const text = String(value ?? "").normalize("NFKC").toLowerCase().replace(/https?:\/\/\S+/gu, " ");
+  return new Set([...segmenter.segment(text)].filter(part => part.isWordLike).map(part => part.segment));
+}
+
+function cosine(left, right) {
+  if (left.size > right.size) return cosine(right, left);
+  let score = 0;
+  for (const [term, weight] of left) score += weight * (right.get(term) ?? 0);
+  return Math.min(1, score);
 }
 
 export function paletteSimilarity(leftColors = [], rightColors = []) {
-  const left = leftColors.map(normalizeHex).filter(Boolean).map(hexToLab);
-  const right = rightColors.map(normalizeHex).filter(Boolean).map(hexToLab);
-  return paletteSimilarityFromLabs(left, right);
-}
-
-function contentSimilarity(left, right) {
-  if (!left.length || !right.length) return { score: 0, matchedFacetNames: [] };
-  const leftResult = directionalContentSimilarity(left, right);
-  const rightResult = directionalContentSimilarity(right, left);
-  const denominator = leftResult.weight + rightResult.weight;
-  const score = denominator ? (leftResult.total + rightResult.total) / denominator : 0;
-  const matchedFacetNames = [...new Set([...leftResult.facets, ...rightResult.facets])].sort();
-  return { score, matchedFacetNames };
-}
-
-function directionalContentSimilarity(source, candidates) {
-  let total = 0;
-  let weight = 0;
-  const facets = [];
-  for (const assignment of source) {
-    const best = candidates.reduce((current, candidate) => {
-      const score = assignmentSimilarity(assignment, candidate);
-      return score > current.score ? { score, facetName: assignment.facet?.name || "" } : current;
-    }, { score: 0, facetName: "" });
-    weight += assignment.importance;
-    total += best.score * assignment.importance;
-    if (best.score > 0 && best.facetName) facets.push(best.facetName);
-  }
-  return { total, weight, facets };
-}
-
-function assignmentSimilarity(left, right) {
-  if (left.node.facetId !== right.node.facetId) return 0;
-  if (left.node.id === right.node.id) return 1;
-  if (left.node.parentId && left.node.parentId === right.node.parentId) return SHARED_PARENT_SCORE;
-  if (left.depth !== right.depth) return 0;
-  return termsSimilarity(left.terms, right.terms) >= NEAR_TERM_THRESHOLD ? NEAR_TERM_SCORE : 0;
-}
-
-function termsSimilarity(left, right) {
-  let best = 0;
-  for (const leftTerm of left) {
-    for (const rightTerm of right) {
-      if (leftTerm === rightTerm) return 1;
-      if (leftTerm.length >= 3 && rightTerm.length >= 3 && (leftTerm.includes(rightTerm) || rightTerm.includes(leftTerm))) {
-        best = Math.max(best, Math.min(leftTerm.length, rightTerm.length) / Math.max(leftTerm.length, rightTerm.length));
-      }
-      best = Math.max(best, jaccard(characterBigrams(leftTerm), characterBigrams(rightTerm)));
-    }
-  }
-  return best;
-}
-
-function nodeTerms(node) {
-  return [...new Set([node.name, ...(node.aliases ?? []), ...(node.patterns ?? [])].map(canonical).filter(Boolean))];
-}
-
-function characterBigrams(value) {
-  if (value.length < 2) return new Set([value]);
-  return new Set(Array.from({ length: value.length - 1 }, (_, index) => value.slice(index, index + 2)));
-}
-
-function jaccard(left, right) {
-  if (!left.size || !right.size) return 0;
-  const overlap = [...left].filter((value) => right.has(value)).length;
-  return overlap / (left.size + right.size - overlap);
-}
-
-function intersects(left, right) {
-  return [...left].some((value) => right.has(value));
-}
-
-function intersection(left, right) {
-  return [...left].filter((value) => right.has(value));
-}
-
-function cleanSet(values = []) {
-  return new Set((Array.isArray(values) ? values : []).map(canonical).filter(Boolean));
-}
-
-function labeledTerms(values = []) {
-  const result = new Map();
-  for (const value of Array.isArray(values) ? values : []) {
-    const label = String(value ?? "").trim();
-    const key = canonical(label);
-    if (key && !result.has(key)) result.set(key, label);
-  }
-  return result;
-}
-
-function intersectLabeledTerms(left, right) {
-  return [...left].flatMap(([key, label]) => right.has(key) ? [label] : []);
-}
-
-function fileNameTerms(value) {
-  const name = String(value ?? "").normalize("NFKC").toLocaleLowerCase("zh-CN")
-    .replace(/\.[\p{L}\p{N}]{1,12}$/u, "")
-    .replace(/[([\{][^\])\}]*[\])\}]/gu, " ")
-    .replace(/\b(?:\d+|[a-f0-9]{8,})\b/gu, " ");
-  return name.split(/[^\p{L}\p{N}]+/gu)
-    .map((term) => term.trim())
-    .filter((term) => term.length >= 2 && !GENERIC_FILENAME_TERMS.has(term));
-}
-
-function formatLabel(value) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) return "";
-  return normalized.includes("/") ? normalized.split("/").at(-1).toLocaleUpperCase("en-US") : normalized.toLocaleUpperCase("en-US");
+  return paletteSimilarityFromLabs(leftColors.map(normalizeHex).filter(Boolean).map(hexToLab), rightColors.map(normalizeHex).filter(Boolean).map(hexToLab));
 }
 
 function paletteSimilarityFromLabs(left, right) {
   if (!left.length || !right.length) return 0;
-  const distance = (source, target) => source.reduce((sum, color) => sum + Math.min(...target.map((other) => deltaE76(color, other))), 0) / source.length;
-  const symmetricDistance = (distance(left, right) + distance(right, left)) / 2;
-  return Math.max(0, Math.min(1, 1 - symmetricDistance / 100));
+  const distance = (source, target) => {
+    let total = 0;
+    let weights = 0;
+    for (const [i, color] of source.entries()) {
+      // Existing palette order is prevalence order. Reciprocal rank uses that information
+      // without claiming the discarded pixel proportions are still available.
+      const weight = 1 / (i + 1);
+      total += weight * Math.min(...target.map(other => deltaE76(color, other)));
+      weights += weight;
+    }
+    return total / weights;
+  };
+  return 1 / (1 + (distance(left, right) + distance(right, left)) / 2);
 }
 
 function cachedLab(color, cache) {
@@ -280,13 +207,4 @@ function srgbToLinear(value) {
 function normalizeHex(value) {
   const match = String(value ?? "").trim().match(/^#?([0-9a-f]{6})$/i);
   return match ? `#${match[1].toUpperCase()}` : "";
-}
-
-function canonical(value) {
-  return String(value ?? "").normalize("NFKC").toLocaleLowerCase("zh-CN").replace(/[\s\p{P}\p{S}]+/gu, "");
-}
-
-function boundedNumber(value, fallback) {
-  const number = Number(value);
-  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : fallback;
 }

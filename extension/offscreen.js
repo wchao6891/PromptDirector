@@ -1,3 +1,5 @@
+import { skillPackageFiles } from './skill-files.js';
+import { createBlobDigestCache } from './blob-digest.js';
 import { prepareAgentFile } from "./agent-file-preparation.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { deleteMediaBlob, getMediaBlob, saveMediaBlob } from "./media-store.js";
@@ -454,6 +456,7 @@ export async function createArchiveUrl({
   const locale = localeValue === "en" ? "en" : "zh-CN";
 
   for (const entry of Array.isArray(entries) ? entries : []) {
+    assertCaseFilesReadable(entry);
     const normalized = normalizeEntryMedia(entry);
     const mediaAssets = [];
     for (const asset of normalized.mediaAssets) {
@@ -503,14 +506,19 @@ export async function createArchiveUrl({
     }
   }
 
+  const archivedSkillPaths = new Set();
+  const archivedSkillBlobs = new Map(), skillDigest = createBlobDigestCache();
   const resolvedCreativeSkills = structuredClone(creativeSkills ?? { version: 1, items: [] });
   if (!sharing) {
     for (const skill of resolvedCreativeSkills.items ?? []) {
-      for (const file of skill.packageFiles ?? []) {
-        const blob = await getMediaBlob(file.assetId);
+      for (const file of skillPackageFiles(skill)) {
+        const blob = archivedSkillBlobs.get(file.assetId) ?? await getMediaBlob(file.assetId);
         if (!blob) throw new Error(`外部 Skill 原包文件缺失：${file.path}`);
+        archivedSkillBlobs.set(file.assetId, blob);
+        if (file.sha256 && await skillDigest(blob) !== file.sha256) throw new Error(`Skill文件与保存时摘要不一致：${file.path}`);
         const archivePath = skillArchivePath(skill.portableId, file.assetId, file.path);
-        files.push({ name: archivePath, data: blob });
+        if (!archivedSkillPaths.has(archivePath)) files.push({ name: archivePath, data: blob });
+        archivedSkillPaths.add(archivePath);
         file.archivePath = archivePath;
         file.byteSize = blob.size;
         file.mimeType = blob.type || file.mimeType || "application/octet-stream";
@@ -755,3 +763,4 @@ function loadImage(dataUrl) {
     image.src = dataUrl;
   });
 }
+import { assertCaseFilesReadable } from './case-file-status.js';

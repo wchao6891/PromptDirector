@@ -1,58 +1,67 @@
 import { readImageGenerationInfo } from "./image-generation-info.js";
-import { buildSearchIndex, searchIndexedEntries } from "./search-index.js";
+import { createSearchIndexCache } from "./search-index.js";
 import { materializeLogicalCases, normalizeCompoundCases } from "./compound-cases.js";
 import { entryMediaAssets } from "./media.js";
-import { collectionEntryIds } from "./organizer.js";
+import { filterCaseSearchEntries, searchCaseResult } from "./case-search.js";
 import { caseTextPart } from "./composer-library-tools.js";
-import { AGENT_CHUNK_BYTES, agentError, bytesToBase64, requireInteger } from "./agent-protocol.js";
+import { AGENT_CHUNK_BYTES, agentDownloadChunkBytes, agentError, bytesToBase64, requireInteger } from "./agent-protocol.js";
+import { detailPromptSources } from "./prompt-sources.js";
 import { sha256Blob } from "./blob-digest.js";
+import { resolveCaseMediaId } from './media-identity-aliases.js';
+import { assertCaseFilesReadable, caseFilesUnavailable } from './case-file-status.js';
 
 // Explicit projections: never return GET_STATE or model runtime credentials.
 export function createAgentLibrary({ loadState, readBlob, readDerived, readDerivedMetadata, libraryUrl }) {
+  const searchCache = createSearchIndexCache();
   async function load() {
     const state = await loadState();
     return { ...state, entries: materializeLogicalCases(state.entries, normalizeCompoundCases(state.compoundCases, state.entries)) };
   }
   async function documents(entries) {
     const docs = new Map();
-    for (const entry of entries) for (const asset of entryMediaAssets(entry)) {
+    for (const entry of entries.filter(entry => !caseFilesUnavailable(entry))) for (const asset of entryMediaAssets(entry)) {
       if (asset.kind === "document") docs.set(asset.id, (await readDerived(asset.id))?.searchText || "");
     }
     return docs;
   }
   function summary(entry) {
     return { caseId: entry.id, title: entry.title, sourceUrl: entry.url || "", savedAt: entry.savedAt,
+      ...(caseFilesUnavailable(entry) ? { availability: 'recovery-only', readOnly: true } : {}),
       tags: entry.customLabels || [], openUrl: `${libraryUrl}?case=${encodeURIComponent(entry.id)}`,
       media: entryMediaAssets(entry).map(asset => ({
         assetId: asset.id, kind: asset.kind, mimeType: asset.mimeType, name: asset.sourceTitle || "",
-        byteSize: asset.byteSize, storageMode: asset.storageMode, usage: asset.usage || "",
+        byteSize: asset.byteSize, ...(asset.durationMs ? { durationMs: asset.durationMs } : {}), storageMode: asset.storageMode, usage: asset.usage || "",
         sourceUrl: asset.sourceUrl || ""
       })) };
   }
   function find(state, id) {
     const entry = state.entries.find(item => item.id === id);
     if (!entry) throw agentError("case_not_found", "案例不存在或已删除，请重新搜索。");
+    assertCaseFilesReadable(entry);
     return entry;
   }
   return {
-    async search({ query = "", project = "", offset = 0, limit = 24 }) {
+    async search(input = {}) {
+      const { query = "", offset = 0, limit = 24 } = input;
       requireInteger(offset); requireInteger(limit, { min: 1, max: 100 });
       const state = await load();
-      const docs = await documents(state.entries);
-      const index = buildSearchIndex(state.entries, state.facetCatalog, docs, await readDerivedMetadata());
-      const ids = searchIndexedEntries(index, query);
-      const projects = (state.organizerState?.collections || []).map(item => ({ id: item.id, name: item.name }));
-      const matches = project ? projects.filter(item => item.id === project || item.name === project) : [];
-      if (project && matches.length !== 1) throw agentError("ambiguous_project", "项目不存在或同名，请用搜索结果中的项目编号。");
-      const memberIds = project ? new Set(collectionEntryIds(state.organizerState, matches[0].id, { subtree: true })) : null;
-      const entries = state.entries.filter(entry => ids.has(entry.id) && (!memberIds || memberIds.has(entry.id) || entry.memberEntryIds?.some(id => memberIds.has(id))));
-      const cases = entries.slice(offset, offset + limit).map(entry => ({ ...summary(entry), excerpt: String(entry.text || "").slice(0, 240), excerptOnly: true }));
-      return { cases, total: entries.length, offset, nextOffset: offset + cases.length < entries.length ? offset + cases.length : null,
+      const { minDurationMs, maxDurationMs, hasOriginalPrompt, ...indexScope } = input;
+      filterCaseSearchEntries([], state.organizerState, input);
+      const scoped = filterCaseSearchEntries(state.entries, state.organizerState, indexScope);
+      const docs = await documents(scoped);
+      const { index, resultVersion } = searchCache.build(scoped, state.facetCatalog, docs, await readDerivedMetadata(), new Set(state.entries.map(e => e.id)));
+      // Coverage must include unknown-duration candidates; structural project/type
+      // scoping happens below, while index reads already skip unrelated projects.
+      const { matches: entries, revision, durationCoverage } = await searchCaseResult(state.entries, index, state.organizerState, input, resultVersion);
+      const projects = (state.organizerState?.collections || []).map(item => ({ id: item.id, name: item.name, parentId: item.parentId || null }));
+      const cases = input.countOnly === true ? [] : entries.slice(offset, offset + limit).map(entry => ({ ...summary(entry), excerpt: caseFilesUnavailable(entry) ? '' : String(entry.text || "").slice(0, 240), excerptOnly: true }));
+      return { cases, query, revision, ...(durationCoverage ? { durationCoverage } : {}), total: entries.length, offset, nextOffset: !input.countOnly && offset + cases.length < entries.length ? offset + cases.length : null,
         projects, basis: "本地文字、标签和媒体元数据；未进行视觉识别。" };
     },
     async read({ caseId, assetId, part = "body", offset = 0, length = 12000 }) {
       requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
       const entry = find(await load(), caseId);
+      assetId = resolveCaseMediaId(entry, assetId);
       const docs = part === "document" ? await documents([entry]) : new Map();
       const byEntry = new Map([[entry.id, entryMediaAssets(entry).map(asset => docs.get(asset.id) || "").filter(Boolean).join("\n")]]);
       const asset = part === "generation_info" ? entryMediaAssets(entry).find(item => item.id === assetId && item.kind === "image" && item.usage !== "poster") : null;
@@ -62,7 +71,18 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
         const original = await readBlob(asset.id);
         if (original) generationInfo = await readImageGenerationInfo(original);
       }
+      let assetOriginal;
+      if (part === "original_prompt" && assetId) {
+        const sources = entry.memberEntries?.length ? entry.memberEntries : [entry];
+        const matching = sources.flatMap(source => entryMediaAssets(source)
+          .filter(item => item.id === assetId && item.usage !== "poster")
+          .map(asset => detailPromptSources(source, asset).original));
+        if (!matching.length) throw agentError("asset_not_in_case", "请指定该案例中的原始素材。");
+        if (new Set(matching).size > 1) throw agentError("ambiguous_asset_prompt", "组合成员对同一素材保存了不同原词，请用 read_case_details 读取各成员的媒体提示词关系。");
+        assetOriginal = matching[0];
+      }
       const text = part === "generation_info" ? JSON.stringify(generationInfo)
+        : assetOriginal !== undefined ? assetOriginal
         : part === "media_prompts" ? JSON.stringify(entry.mediaPrompts || [])
         : caseTextPart(entry, part, byEntry);
       return { ...summary(entry), part, content: text.slice(offset, offset + length), offset, totalCharacters: text.length,
@@ -74,6 +94,7 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
     async media({ caseId, assetId, offset = 0, expectedHash }) {
       requireInteger(offset);
       const entry = find(await load(), caseId);
+      assetId = resolveCaseMediaId(entry, assetId);
       const asset = entryMediaAssets(entry).find(item => item.id === assetId);
       if (!asset) throw agentError("asset_not_in_case", "该媒体不属于指定案例。");
       const blob = await readBlob(assetId);
@@ -83,7 +104,7 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
       // and rejects any concurrent content change; avoid rehashing GBs per chunk.
       const hash = offset === 0 || !expectedHash ? await sha256Blob(blob) : expectedHash;
       if (offset > blob.size) throw agentError("invalid_input", "读取位置超出原件大小。");
-      const bytes = new Uint8Array(await blob.slice(offset, offset + AGENT_CHUNK_BYTES).arrayBuffer());
+      const bytes = new Uint8Array(await blob.slice(offset, offset + agentDownloadChunkBytes()).arrayBuffer());
       return { assetId, mimeType: blob.type || asset.mimeType, name: asset.sourceTitle || assetId,
         byteSize: blob.size, sha256: hash, offset, data: bytesToBase64(bytes),
         nextOffset: offset + bytes.length < blob.size ? offset + bytes.length : null };

@@ -18,7 +18,7 @@ function harness(beforeCommit = () => {}) {
   const applied = [];
   const blobs = new Map([1, 2].map((number) => [`image-${number}`, { fingerprint: `original-${number}` }]));
   const scope = {
-    chrome: { storage: { local: { get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map((key) => [key, structuredClone(stored[key])])) } } },
+    libraryStorage: { get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map((key) => [key, structuredClone(stored[key])])) },
     STORAGE_KEYS: {composerSessions: "composerSessions", entries: "entries", facetCatalog: "facetCatalog", visionAnalysisUndo: "visionAnalysisUndo"},
     normalizeComposerSessions, createComposerSession, unreadReferenceImageAssets,
     loadAiConfiguration: async () => ({}), VISION_ANALYSIS_VERSION: 2,

@@ -1,3 +1,4 @@
+import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { libraryStoredAssets } from "./library-asset-inventory.js";
 import { mediaIdentity, sameMediaIdentity, sharedLibraryMediaFiles } from "./library-shared-media.js";
 import { normalizeFacetCatalog, uniqueNames } from "./facets.js";
@@ -16,7 +17,7 @@ import { normalizeCreativeExperimentSettings, normalizeCreativeRuns } from "./cr
 import { mergeCreativeSkillsState, normalizeCreativeSkillsState } from "./creative-skills.js";
 import { formatBytes, libraryTransferLimits, portableAssetByteLimit } from "./resource-limits.js";
 import { normalizeEntryVisuals } from "./visuals.js";
-import { normalizeEntryMedia, removeEntryMedia } from "./media.js";
+import { normalizeEntryMedia, removeEntryMedia, remapMediaAnalysisAssets } from "./media.js";
 import { expandLogicalCaseIds, normalizeCompoundCases, removeEntriesFromCompoundCases } from "./compound-cases.js";
 import { prepareLibraryPackageDraft } from "./library-package-migrations.js";
 import { remapArticleDocumentAssets } from "./article-document.js";
@@ -357,6 +358,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
   data.organizerState = normalizeOrganizerState(data.organizerState, [...ids]);
   data.composerSettings = normalizeComposerSettings(data.composerSettings);
   data.composerSessions = normalizeComposerSessions(data.composerSessions);
+  for (const session of data.composerSessions) for (const checkpoint of Object.values(session.toolContinuations || {})) checkpoint.needsTargetReview = true;
   for (const session of data.composerSessions) {
     for (const reference of session.referenceSnapshots) {
       if (reference.sourceType !== "temporary") continue;
@@ -461,9 +463,9 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
     const retainedVisualIds = new Set(retainedOutputs.map((output) => output.visual.id));
     run.events = run.events.filter((event) => retainedVisualIds.has(event.visualId));
   }
-  for (const skill of data.creativeSkills.items) {
+  for (const skill of data.creativeSkills.items) for (const owner of skillFileOwners(skill)) {
     const retainedFiles = [];
-    for (const file of skill.packageFiles) {
+    for (const file of owner.packageFiles ?? []) {
       const path = clean(file.archivePath);
       if (!/^skills\/[A-Za-z0-9._/-]+$/i.test(path) || path.includes("..")) {
         if (!salvageInvalidMedia) throw new Error(`外部 Skill 原包路径无效：${file.path}`);
@@ -493,10 +495,16 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         importDiagnostics.push(privateResourceDiagnostic("skill_file_dropped", file, path, "byte_size_mismatch"));
         continue;
       }
+      if (!claimMedia({ id: file.assetId, kind: 'skill-file' }, blob)) {
+        if (!salvageInvalidMedia) throw new Error(`Skill版本包含冲突的文件编号：${file.path}`);
+        importStats.droppedSkillFiles += 1;
+        importDiagnostics.push(privateResourceDiagnostic('skill_file_dropped', file, path, 'duplicate_asset_id'));
+        continue;
+      }
       skillAssets.set(file.assetId, blob);
       retainedFiles.push(file);
     }
-    skill.packageFiles = retainedFiles;
+    owner.packageFiles = retainedFiles;
   }
   return {
     ...data,
@@ -515,6 +523,7 @@ export function selectLibraryPackage(state = {}, entryIds = []) {
   const compounds = normalizeCompoundCases(state.compoundCases, state.entries);
   const selectedIds = new Set(expandLogicalCaseIds([...requestedIds], compounds));
   const entries = (state.entries ?? []).filter((entry) => selectedIds.has(entry.id));
+  entries.forEach(assertCaseFilesReadable);
   if (!entries.length) throw new Error("请先选择要分享的案例");
   const catalog = normalizeFacetCatalog(state.facetCatalog);
   const usedNodeIds = new Set(entries.flatMap((entry) =>
@@ -846,10 +855,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       ...prompt,
       assetId: visualIdMap[prompt.assetId] ?? prompt.assetId
     }));
-    entry.videoAnalyses = (entry.videoAnalyses ?? []).map((analysis) => ({
-      ...analysis,
-      ...(analysis.assetId ? { assetId: visualIdMap[analysis.assetId] ?? analysis.assetId } : {})
-    }));
+    Object.assign(entry, remapMediaAnalysisAssets(entry, visualIdMap));
     entry.facetAssignments = (entry.facetAssignments ?? []).map((item) => {
       const facetId = facetIds.get(item.facetId);
       const nodeId = nodeIds.get(item.nodeId);
@@ -1093,6 +1099,7 @@ function mergeCreativeRuns(
 function remapAppliedSkillReferences(value, skillIdMap = {}, skillVersionIdMap = {}) {
   return {
     ...value,
+    toolSkillVersionIds: (value?.toolSkillVersionIds || []).map(id => skillVersionIdMap[id] ?? id),
     appliedSkills: (Array.isArray(value?.appliedSkills) ? value.appliedSkills : []).map((skill) => ({
       ...skill,
       skillId: skillIdMap[skill.skillId] ?? skill.skillId,
@@ -1299,10 +1306,7 @@ function remapTrashedEntrySnapshot(entryValue, targetEntryId, usedVisualIds, pre
     ...prompt,
     assetId: visualIdMap[prompt.assetId] ?? prompt.assetId
   }));
-  entry.videoAnalyses = (entry.videoAnalyses ?? []).map((analysis) => ({
-    ...analysis,
-    ...(analysis.assetId ? { assetId: visualIdMap[analysis.assetId] ?? analysis.assetId } : {})
-  }));
+  Object.assign(entry, remapMediaAnalysisAssets(entry, visualIdMap));
   entry.facetAssignments = (entry.facetAssignments ?? []).map((assignment) => ({
     ...assignment,
     ...(assignment.visualId ? { visualId: visualIdMap[assignment.visualId] ?? assignment.visualId } : {})
@@ -1322,7 +1326,7 @@ function packageImagePlaceholders(value) {
       : [])
   );
   const skillFiles = normalizeCreativeSkillsState(value?.creativeSkills).items.flatMap((skill) =>
-    skill.packageFiles.flatMap((file) => file.archivePath
+    skillPackageFiles(skill).flatMap((file) => file.archivePath
       ? [[file.archivePath, new Blob(["placeholder"], { type: file.mimeType || "application/octet-stream" })]]
       : [])
   );
@@ -1658,3 +1662,4 @@ function clean(value) {
 function canonical(value) {
   return clean(value).toLocaleLowerCase("zh-CN").replace(/[\s._·—–-]+/g, "");
 }
+import { assertCaseFilesReadable } from './case-file-status.js';

@@ -1,8 +1,10 @@
+import { getLibraryStorage } from "./library-storage.js";
+
 // Data and its completed receipt are one storage commit. Read that receipt locally
 // when a worker reply is lost; never infer failure from a disconnected channel.
 export async function applyLibraryImportWithReceipt(message, {
   send = request => chrome.runtime.sendMessage(request),
-  readReceipts = () => chrome.storage.local.get("libraryImportTransactions")
+  readReceipts = () => getLibraryStorage().get("libraryImportTransactions")
 } = {}) {
   const completedResult = async () => {
     const stored = await readReceipts();

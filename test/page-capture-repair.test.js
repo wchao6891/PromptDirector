@@ -2,6 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { planPageCaptureRepair, mergePageCaptureRepair } from '../extension/page-capture-repair.js';
 
+test('edited X post identity comes from its status URL, never the shared history suffix or stale facts', async () => {
+  const { samePageCaptureSource } = await import('../extension/page-capture-repair.js');
+  const old = { url: 'https://x.com/first/status/101/history', sourceFacts: { provider: 'x', itemId: 'history' } };
+  const next = { canonicalUrl: 'https://x.com/second/status/202/history', sourceFacts: { provider: 'x', itemId: 'history' } };
+  assert.equal(samePageCaptureSource(old, next), false);
+  assert.equal(samePageCaptureSource(old, { ...next, canonicalUrl: 'https://twitter.com/first/status/101' }), true);
+  assert.equal(samePageCaptureSource({ ...old, sourceFacts: { provider: 'x', itemId: '202' } }, next), false);
+  assert.equal(samePageCaptureSource({ ...old, url: 'https://x.com/first' }, next), false);
+  assert.equal(samePageCaptureSource({ ...old, url: 'https://example.com/first/status/202' }, next), false);
+});
+
+test('other capture providers retain their scoped work identity and exact URL matching', async () => {
+  const { samePageCaptureSource } = await import('../extension/page-capture-repair.js');
+  const entry = { url: 'https://example.com/old', sourceFacts: { provider: 'example', itemId: 'work' } };
+  assert.equal(samePageCaptureSource(entry, { canonicalUrl: 'https://example.com/new', sourceFacts: { provider: 'example', itemId: 'work' } }), true);
+  assert.equal(samePageCaptureSource(entry, { canonicalUrl: entry.url, sourceFacts: {} }), true);
+  assert.equal(samePageCaptureSource({ url: '' }, { canonicalUrl: '', sourceFacts: {} }), false);
+});
+
 const candidate = { pageType:'video', canonicalUrl:'https://example.com/publication/one', sourceFacts:{pageType:'video',extractionMethod:'structured'},media:[{id:'captured-video',kind:'video',url:'https://cdn.example.com/one.mp4'}] };
 const reference = {id:'old',kind:'video',storageMode:'reference',sourceUrl:candidate.canonicalUrl,reference:{url:candidate.canonicalUrl}};
 

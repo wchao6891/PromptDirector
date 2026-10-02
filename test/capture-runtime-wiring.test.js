@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 test("the collector live-refreshes on draft storage changes", async () => {
   const source = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
-  assert.match(source, /chrome\.storage\.onChanged\.addListener/);
+  assert.match(source, /libraryStorage\.subscribe/);
   assert.match(source, /changes\.captureDraft/);
 });
 

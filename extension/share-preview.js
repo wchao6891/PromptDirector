@@ -425,7 +425,7 @@ function relatedEntriesById(entries, facetCatalog) {
     return {
       ...entry,
       discoveryVisualId: visual?.id || "",
-      discoveryColors: entryPalette(entry)?.colors ?? []
+      discoveryColors: visual?.palette?.colors ?? []
     };
   });
   const index = createSimilarityIndex(prepared, facetCatalog);

@@ -4,10 +4,11 @@ import { normalizeAppliedSkillSnapshots } from "./creative-skills.js";
 import { currentVideoReconstruction, entryMediaAssets } from "./media.js";
 import { TEMP_REFERENCE_SOURCE_TYPES } from "./temp-references.js";
 import { normalizeLocalRelativePath } from "./local-media.js";
-import { detailPromptSources } from "./prompt-sources.js";
+import { detailPromptSources, sharedOriginalPrompt } from "./prompt-sources.js";
 import { composerAssetAnalysisText, composerSourceText, formatReferenceTime } from "./composer-source-text.js";
 import { AI_PROVIDER_PRESETS } from "./ai-provider-presets.js";
 import { createComposerActiveTurn } from "./composer-active-turn.js";
+import { operationBudget } from './resource-policy.js';
 import {
   COMPOSER_AGENT_VERSION,
   AGENT_ROUTES,
@@ -35,8 +36,6 @@ export const COMPOSER_SERVICE_IDS = Object.freeze([
 ]);
 export const DEFAULT_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "deepseek", model: "deepseek-flash", thinking: false });
 export const UNASSIGNED_COMPOSER_AI_PROFILE = Object.freeze({ serviceId: "unassigned", model: "", thinking: false });
-export const COMPOSER_INPUT_MAX_CHARACTERS = 750_000;
-const COMPOSER_REQUEST_MAX_CHARACTERS = 775_000;
 export { DEFAULT_AGENT_INSTRUCTION, DEFAULT_TASK_METHODS, normalizePlannerResult };
 
 export function normalizeComposerSettings(value = {}) {
@@ -163,7 +162,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
         alias: locale === "en" ? `@Reference${snapshots.length + 1}` : `@参考${snapshots.length + 1}`,
         title: String(entry.title ?? "").trim(), referenceKind: "reference",
         referenceText: composerSourceText(entry, options.documentTextByEntryId),
-        originalText: String(entry.text ?? "").trim(), scope: "case", imageRefs: [], assets: []
+        originalText: sharedOriginalPrompt(entry), scope: "case", imageRefs: [], assets: []
       });
       continue;
     }
@@ -196,13 +195,10 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
       });
       continue;
     }
-    const mediaPrompts = new Map((entry.mediaPrompts ?? []).filter(item => item.source !== "ai-suggestion").map((item) => [item.assetId, String(item.text ?? "").trim()]));
-    const selectedPrompts = selectedAssets.map((asset) => mediaPrompts.get(asset.id)).filter(Boolean);
-    const originalPrompt = selectedAssets.length === 1 && selectedPrompts[0]
-      ? selectedPrompts[0]
-      : selectedPrompts.length === selectedAssets.length && selectedPrompts.length
-        ? selectedPrompts.map((text, index) => `[图片${index + 1}独立提示词]\n${text}`).join("\n\n")
-        : String(entry.text ?? "").trim();
+    const selectedPrompts = selectedAssets.map(asset => detailPromptSources(entry, asset).original);
+    const distinctPrompts = [...new Set(selectedPrompts.filter(Boolean))];
+    const originalPrompt = distinctPrompts.length === 1 && selectedPrompts.every(Boolean) ? distinctPrompts[0]
+      : selectedPrompts.map((text, index) => text ? `[图片${index + 1}独立提示词]\n${text}` : '').filter(Boolean).join('\n\n');
     const visualFacts = imageVisualFacts(entry, selection.assetIds);
     const referenceKind = originalPrompt && visualFacts.length ? "prompt_vision"
         : visualFacts.length || contentRole === CONTENT_ROLES.imageCase ? "vision"
@@ -212,7 +208,7 @@ export function createReferenceSnapshots(entries, entryIds, locale = "zh-CN", ta
       : referenceKind === "vision"
         ? visualFacts.map((fact, index) => `[图片${index + 1}可见事实]\n${fact}`).join("\n\n")
         : originalPrompt;
-    const referenceText = [...new Set([baseText, options.documentTextByEntryId?.get?.(entry.id)]
+    const referenceText = [...new Set([baseText, originalPrompt ? '' : entry.text, options.documentTextByEntryId?.get?.(entry.id)]
       .map(value => String(value ?? "").trim()).filter(Boolean))].join("\n\n");
     snapshots.push({
       referenceId: referenceSnapshotId(entry.id, selectedAssets.length === 1 ? selectedAssets[0].id : ""),
@@ -457,6 +453,9 @@ export function createComposerSession(input = {}) {
     referenceSnapshots: snapshots,
     appliedSkills: normalizeAppliedSkillSnapshots(input.appliedSkills),
     messages: normalizeMessages(input.messages),
+    toolContinuations: Object.fromEntries(Object.entries(input.toolContinuations || {}).filter(([id, value]) => id && value?.body && ['chat_completions', 'responses'].includes(value.protocol))
+      .map(([id, value]) => [id, structuredClone(value)])),
+    toolSkillVersionIds: uniqueStrings(input.toolSkillVersionIds),
     currentInstruction: String(input.currentInstruction ?? "").trim(),
     retrievedSources: normalizeRetrievedSources(input.retrievedSources),
     retrievalSnapshot: normalizeRetrievalSnapshot(input.retrievalSnapshot),
@@ -541,6 +540,7 @@ function normalizeComposerAssemblySnapshot(value) {
     userMessageId,
     createdAt: validIso(value.createdAt) || new Date().toISOString(),
     status,
+    ...(value.auxiliaryCompacted === true ? { auxiliaryCompacted: true } : {}),
     serviceId: String(value.serviceId ?? "").trim(),
     serviceLabel: String(value.serviceLabel ?? "").trim(),
     model: String(value.model ?? "").trim(),
@@ -621,7 +621,25 @@ function normalizeComposerAssemblySnapshots(values, latestValue) {
   }
   const latest = normalizeComposerAssemblySnapshot(latestValue);
   if (latest) snapshots.set(latest.id, latest);
-  return [...snapshots.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-50);
+  const ordered = [...snapshots.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  compactComposerAssemblyAuxiliaries(ordered, new Set([ordered.at(-1)]));
+  return ordered;
+}
+
+function compactComposerAssemblyAuxiliaries(snapshots, protectedSnapshots) {
+  const budget = operationBudget();
+  let bytes = 0, count = 0;
+  for (const snapshot of [...snapshots].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    // User requests, source evidence and actual task/fee receipts remain. Only
+    // repeated automatic assembly text from completed older turns is compacted.
+    if (protectedSnapshots.has(snapshot) || snapshot.status !== 'completed' || snapshot.auxiliaryCompacted) continue;
+    const cost = (snapshot.agentInstruction.length + snapshot.taskMethod.length + snapshot.skills.reduce((sum, skill) => sum + skill.instructions.length, 0)) * 2;
+    if (count >= budget.maxAutomaticHistoryItems || bytes + cost > budget.maxAutomaticHistoryBytes) {
+      snapshot.agentInstruction = ''; snapshot.taskMethod = '';
+      snapshot.skills = snapshot.skills.map(skill => skill.skillId && skill.version ? { ...skill, instructions: '' } : skill);
+      snapshot.auxiliaryCompacted = true;
+    } else { bytes += cost; count++; }
+  }
 }
 
 function normalizeRetrievalSnapshot(value) {
@@ -661,7 +679,7 @@ export function normalizeGenerationParameters(value = {}, targetType = "image") 
 
 export function normalizeComposerSessions(values = []) {
   const seen = new Set();
-  return (Array.isArray(values) ? values : []).flatMap((value) => {
+  const sessions = (Array.isArray(values) ? values : []).flatMap((value) => {
     try {
       const session = createComposerSession(value);
       if (seen.has(session.id) || !isMeaningfulComposerSession(session)) return [];
@@ -671,6 +689,9 @@ export function normalizeComposerSessions(values = []) {
       return [];
     }
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  compactComposerAssemblyAuxiliaries(sessions.flatMap(session => session.assemblySnapshots),
+    new Set(sessions.map(session => session.assemblySnapshots.at(-1))));
+  return sessions;
 }
 
 export function isMeaningfulComposerSession(sessionValue = {}) {
@@ -758,28 +779,7 @@ export function plannerRequestPayload(sessionValue, userMessage, settingsValue) 
 export function composerInputUsage(sessionValue, userMessage, settingsValue) {
   const payload = plannerRequestPayload(sessionValue, userMessage, settingsValue);
   const characters = JSON.stringify(payload).length;
-  return {
-    characters,
-    maxCharacters: COMPOSER_INPUT_MAX_CHARACTERS,
-    overLimit: characters > COMPOSER_INPUT_MAX_CHARACTERS
-  };
-}
-
-export function assertComposerInputBudget(sessionValue, userMessage, settingsValue) {
-  const usage = composerInputUsage(sessionValue, userMessage, settingsValue);
-  if (usage.overLimit) {
-    throw new Error(`创作输入内容超过 ${usage.maxCharacters.toLocaleString("en-US")} 字符上限；请减少所选案例或清理过长历史后重试`);
-  }
-  return usage;
-}
-
-export function assertComposerRequestBudget(messages) {
-  const characters = (Array.isArray(messages) ? messages : [])
-    .reduce((sum, item) => sum + String(item?.content ?? "").length, 0);
-  if (characters > COMPOSER_REQUEST_MAX_CHARACTERS) {
-    throw new Error("创作请求内容超过服务安全边界；请缩短对话历史或减少本轮参考后重试");
-  }
-  return { characters, maxCharacters: COMPOSER_REQUEST_MAX_CHARACTERS };
+  return { characters };
 }
 
 export function resolveOutputLocale(value, latestText = "", messages = []) {
@@ -1045,7 +1045,7 @@ function normalizeComposerFailure(value) {
   if (!value || typeof value !== "object") return null;
   const userMessageId = String(value.userMessageId ?? "").trim();
   const phase = ["saving", "planning", "streaming"].includes(value.phase) ? value.phase : "";
-  const kind = ["storage", "network", "timeout", "rate_limit", "service", "response", "unknown", "stopped"].includes(value.kind)
+  const kind = ["storage", "network", "timeout", "rate_limit", "service", "response", "unknown", "stopped", "budget"].includes(value.kind)
     ? value.kind
     : "unknown";
   const message = String(value.message ?? "").trim();

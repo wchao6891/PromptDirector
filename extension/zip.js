@@ -1,4 +1,5 @@
 import { formatBytes, libraryTransferLimits, portableAssetByteLimit } from "./resource-limits.js";
+import { operationBudget, stagingByteBudget, resourceBudgetError } from "./resource-policy.js";
 import { assetFormatForExtension } from "./asset-formats.js";
 
 import { ZIP32_MAX, ZIP16_MAX, zipSafeInteger, zip64Extra, resolveZip64Extra, readZip64Directory, makeZipEndRecords } from "./zip64.js";
@@ -41,11 +42,11 @@ export async function createZipBlob(files, options = {}) {
 }
 
 export async function readZipBlob(archive, limitsValue = {}, options = {}) {
-  const reader = await openZipBlob(archive, limitsValue);
+  const reader = await openZipBlob(archive, limitsValue, options);
   return reader.read(null, options);
 }
 
-export async function openZipBlob(archive, limitsValue = {}) {
+export async function openZipBlob(archive, limitsValue = {}, options = {}) {
   const limits = libraryTransferLimits(limitsValue);
   if (!(archive instanceof Blob) || archive.size < 22) throw invalidZip();
   if (archive.size > limits.maxArchiveBytes) {
@@ -79,39 +80,74 @@ export async function openZipBlob(archive, limitsValue = {}) {
   }
   if (fileCount > limits.maxFileCount) throw new Error(`ZIP 文件数量超过 ${limits.maxFileCount} 个上限`);
   if (zipSafeInteger(directoryOffset + directorySize) !== directoryEnd || fileCount > directorySize / 46) throw invalidZip();
-  const directoryBytes = await readBlobBytes(archive, directoryOffset, directoryEnd);
-  const view = dataView(directoryBytes);
+  const budget = operationBudget(options.budget);
+  let indexBytes = 0;
+  const started = Date.now();
 
   const records = [];
   const names = new Set();
   let declaredBytes = 0;
   let cursor = 0;
+  // Read the directory once in order. Repeated Blob slices traverse composite
+  // archives from the beginning, making large ZIP64 indexes quadratic.
+  const directory = archive.slice(directoryOffset, directoryEnd).stream().getReader();
+  let pending = new Uint8Array();
+  let pendingOffset = 0;
+  const readDirectory = async (length) => {
+    const bytes = new Uint8Array(length);
+    let written = 0;
+    while (written < length) {
+      options.signal?.throwIfAborted();
+      if (Date.now() - started > budget.maxDurationMs) throw resourceBudgetError('ZIP 索引达到本次时间预算；原始压缩包保留');
+      if (pendingOffset === pending.length) {
+        const next = await directory.read();
+        if (next.done) throw invalidZip();
+        pending = next.value;
+        pendingOffset = 0;
+      }
+      const count = Math.min(length - written, pending.length - pendingOffset);
+      bytes.set(pending.subarray(pendingOffset, pendingOffset + count), written);
+      pendingOffset += count;
+      written += count;
+    }
+    return bytes;
+  };
+  try {
   for (let index = 0; index < fileCount; index += 1) {
-    if (cursor + 46 > directoryBytes.byteLength || view.getUint32(cursor, true) !== 0x02014b50) throw invalidZip();
-    const flags = view.getUint16(cursor + 8, true);
-    const method = view.getUint16(cursor + 10, true);
-    const checksum = view.getUint32(cursor + 16, true);
-    let compressedSize = view.getUint32(cursor + 20, true);
-    let size = view.getUint32(cursor + 24, true);
-    const nameLength = view.getUint16(cursor + 28, true);
-    const extraLength = view.getUint16(cursor + 30, true);
-    const entryCommentLength = view.getUint16(cursor + 32, true);
-    let localOffset = view.getUint32(cursor + 42, true);
+    options.signal?.throwIfAborted();
+    if (Date.now() - started > budget.maxDurationMs) throw resourceBudgetError('ZIP 索引达到本次时间预算；原始压缩包保留');
+    if (cursor + 46 > directorySize) throw invalidZip();
+    const header = await readDirectory(46);
+    const view = dataView(header);
+    if (view.getUint32(0, true) !== 0x02014b50) throw invalidZip();
+    const flags = view.getUint16(8, true);
+    const method = view.getUint16(10, true);
+    const checksum = view.getUint32(16, true);
+    let compressedSize = view.getUint32(20, true);
+    let size = view.getUint32(24, true);
+    const nameLength = view.getUint16(28, true);
+    const extraLength = view.getUint16(30, true);
+    const entryCommentLength = view.getUint16(32, true);
+    let localOffset = view.getUint32(42, true);
     if (flags & 0x0001) throw new Error("不支持加密 ZIP");
     if (![STORE_METHOD, DEFLATE_METHOD].includes(method)) throw new Error("ZIP 使用了浏览器不支持的压缩方式");
     const nameEnd = cursor + 46 + nameLength;
-    if (nameEnd + extraLength + entryCommentLength > directoryBytes.byteLength) throw invalidZip();
-    let disk = view.getUint16(cursor + 34, true);
+    if (nameEnd + extraLength + entryCommentLength > directorySize) throw invalidZip();
+    const metadata = await readDirectory(nameLength + extraLength);
+    await readDirectory(entryCommentLength);
+    indexBytes += nameLength * 2 + 128;
+    if (indexBytes > budget.workingBytes) throw resourceBudgetError('ZIP 索引达到本次内存预算；原始压缩包保留');
+    let disk = view.getUint16(34, true);
     ({ size, compressedSize, localOffset, disk } = resolveZip64Extra(
-      directoryBytes.subarray(nameEnd, nameEnd + extraLength), { size, compressedSize, localOffset, disk }
+      metadata.subarray(nameLength), { size, compressedSize, localOffset, disk }
     ));
     if (disk) throw new Error("暂不支持分卷 ZIP");
     if (method === STORE_METHOD && compressedSize !== size) throw invalidZip();
-    if (!(flags & UTF8_FLAG) && directoryBytes.subarray(cursor + 46, nameEnd).some((byte) => byte > 0x7f)) {
+    if (!(flags & UTF8_FLAG) && metadata.subarray(0, nameLength).some((byte) => byte > 0x7f)) {
       throw new Error("ZIP 文件名不是可安全识别的 UTF-8 或 ASCII 编码");
     }
     const decodedName = new TextDecoder("utf-8", { fatal: true })
-      .decode(directoryBytes.subarray(cursor + 46, nameEnd));
+      .decode(metadata.subarray(0, nameLength));
     const directoryEntry = decodedName.endsWith("/");
     if (directoryEntry && !safeDirectoryPath(decodedName)) throw new Error("ZIP 内包含不安全的目录路径");
     if (directoryEntry && (size !== 0 || compressedSize !== 0)) throw invalidZip();
@@ -133,12 +169,35 @@ export async function openZipBlob(archive, limitsValue = {}) {
     names.add(name);
     records.push({ name, flags, method, checksum, compressedSize, size, localOffset });
     cursor = nameEnd + extraLength + entryCommentLength;
+    if ((index + 1) % 256 === 0) await yieldToMain();
   }
-  if (cursor !== directoryBytes.byteLength) throw invalidZip();
+  if (cursor !== directorySize) throw invalidZip();
+  } finally {
+    await directory.cancel().catch(() => undefined);
+    directory.releaseLock();
+  }
   return {
     names: Object.freeze([...names]),
     expandedBytes: declaredBytes,
     async read(selectedNames = null, options = {}) {
+      const callerSignal = options.signal;
+      const deadline = new AbortController();
+      const abort = () => deadline.abort(callerSignal.reason);
+      if (callerSignal?.aborted) abort();
+      callerSignal?.addEventListener('abort', abort, { once: true });
+      const started = Date.now();
+      const maxDurationMs = operationBudget(options.budget).maxDurationMs;
+      const expire = () => deadline.abort(resourceBudgetError('ZIP 解包校验达到本次时间预算；原始压缩包保留'));
+      const timer = setTimeout(expire, maxDurationMs);
+      const checkDeadline = () => {
+        // Blob reads may resolve only microtasks, delaying the timer while CRC
+        // work runs. Check wall time at chunk boundaries as well.
+        if (Date.now() - started >= maxDurationMs && !deadline.signal.aborted) expire();
+        deadline.signal.throwIfAborted();
+      };
+      options = { ...options, signal: deadline.signal };
+      try {
+      checkDeadline();
       const requested = selectedNames == null
         ? null
         : new Set((Array.isArray(selectedNames) ? selectedNames : [...selectedNames]).map(normalizeArchivePath));
@@ -152,17 +211,24 @@ export async function openZipBlob(archive, limitsValue = {}) {
       const files = new Map();
       let extractedBytes = 0;
       const totalBytes = targets.reduce((sum, record) => sum + record.size, 0);
+      const inflatedBytes = targets.filter(record => record.method === DEFLATE_METHOD).reduce((sum, record) => sum + record.size, 0);
+      const expandedBudget = Number.isSafeInteger(options.maxExpandedBytes) && options.maxExpandedBytes >= 0
+        ? options.maxExpandedBytes : await stagingByteBudget(options);
+      if (inflatedBytes > expandedBudget) throw resourceBudgetError('ZIP 解压需要的临时空间超过本次预算；原始压缩包保留', { requiredBytes: inflatedBytes, availableBytes: expandedBudget });
       for (let index = 0; index < targets.length; index += 1) {
-        options.signal?.throwIfAborted();
+        checkDeadline();
         const record = targets[index];
         const { dataOffset, dataEnd } = await resolveLocalRecord(archive, record, directoryOffset);
         const compressed = archive.slice(dataOffset, dataEnd);
         let data;
         let actualChecksum;
-        const onBytes = bytes => options.onReadProgress?.({
+        const onBytes = bytes => {
+          checkDeadline();
+          options.onReadProgress?.({
           completed: index, total: targets.length, name: record.name,
           extractedBytes: extractedBytes + bytes, totalBytes
-        });
+          });
+        };
         if (record.method === STORE_METHOD) {
           data = compressed.slice(0, compressed.size, mimeTypeForPath(record.name));
           actualChecksum = await crc32Blob(data, options.signal, onBytes);
@@ -179,7 +245,14 @@ export async function openZipBlob(archive, limitsValue = {}) {
         onProgress({ completed: index + 1, total: targets.length, name: record.name, extractedBytes });
         if ((index + 1) % 8 === 0 && index + 1 < targets.length) await yieldToMain();
       }
+      checkDeadline();
       return files;
+      } catch (error) {
+        if (deadline.signal.aborted) throw deadline.signal.reason;
+        throw error;
+      } finally {
+        clearTimeout(timer); callerSignal?.removeEventListener('abort', abort);
+      }
     }
   };
 }

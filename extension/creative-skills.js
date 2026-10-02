@@ -1,5 +1,9 @@
+import { skillFileOwners, skillPackageFiles } from './skill-files.js';
+import { operationBudget } from './resource-policy.js';
+
 export const CREATIVE_SKILLS_VERSION = 1;
-export const CREATIVE_SKILL_VERSION_LIMIT = 10;
+// Agent Skills specification: https://agentskills.io/specification#name-field
+const PORTABLE_NAME_MAX_CHARACTERS = 64;
 
 export function createCreativeSkillsState() {
   return { version: CREATIVE_SKILLS_VERSION, items: [] };
@@ -18,13 +22,15 @@ export function normalizeCreativeSkillsState(value = {}) {
 }
 
 export function createCreativeSkill(stateValue, input = {}, options = {}) {
-  const state = structuredClone(normalizeCreativeSkillsState(stateValue));
+  const state = normalizeCreativeSkillsState(stateValue);
   const callName = cleanCallName(input.callName);
   assertUniqueCallName(state, callName);
   const now = cleanText(options.now) || new Date().toISOString();
   const id = cleanText(options.id) || `skill:${crypto.randomUUID()}`;
   const versionId = cleanText(options.versionId) || `skill-version:${crypto.randomUUID()}`;
-  const portableId = uniquePortableId(state, cleanPortableId(input.portableId) || fallbackPortableId(callName, id));
+  const requestedPortableId = cleanPortableId(input.portableId);
+  if (requestedPortableId.length > PORTABLE_NAME_MAX_CHARACTERS) throw new Error("Agent Skills 规范要求英文可移植 ID 不超过 64 个字符；调用名和正文保留完整");
+  const portableId = uniquePortableId(state, requestedPortableId || fallbackPortableId(callName, id));
   const version = normalizeCreativeSkillVersion({
     id: versionId,
     createdAt: now,
@@ -54,33 +60,90 @@ export function createCreativeSkill(stateValue, input = {}, options = {}) {
 }
 
 export function saveCreativeSkillVersion(stateValue, skillId, input = {}, options = {}) {
-  const state = structuredClone(normalizeCreativeSkillsState(stateValue));
+  const state = normalizeCreativeSkillsState(stateValue);
   const skill = requireCreativeSkill(state, skillId);
   const callName = cleanCallName(input.callName ?? skill.callName);
   assertUniqueCallName(state, callName, skill.id);
   const now = cleanText(options.now) || new Date().toISOString();
   const current = currentCreativeSkillVersion(skill);
+  const nextContent = {
+    skillMarkdown: normalizeMarkdown(input.skillMarkdown),
+    references: normalizeReferences(input.references ?? current.references),
+    provenanceMarkdown: normalizeMarkdown(input.provenanceMarkdown ?? current.provenanceMarkdown)
+  };
+  const unchanged = callName === skill.callName && cleanText(input.description ?? skill.description) === skill.description
+    && JSON.stringify(nextContent) === JSON.stringify({ skillMarkdown: current.skillMarkdown, references: current.references, provenanceMarkdown: current.provenanceMarkdown })
+    && (!Object.hasOwn(input, 'packageFiles') || JSON.stringify(normalizePackageFiles(input.packageFiles)) === JSON.stringify(skill.packageFiles))
+    && (!Object.hasOwn(input, 'runtimeDependencies') || JSON.stringify(normalizeStringList(input.runtimeDependencies)) === JSON.stringify(skill.runtimeDependencies))
+    && (!Object.hasOwn(input, 'textModeConfirmed') || (input.textModeConfirmed === true) === skill.textModeConfirmed);
   if (input.coverOnly === true) {
     if (callName !== skill.callName || cleanText(input.description ?? skill.description) !== skill.description ||
         normalizeMarkdown(input.skillMarkdown) !== current.skillMarkdown) throw new Error("Skill 内容已变化，请重新保存");
     return { state, skill, version: current };
   }
+  if (unchanged) return { state, skill, version: current, unchanged: true };
+  // Capture only the version whose files are actually known now. Older legacy
+  // text versions have no file snapshot and must not inherit today's scripts.
+  const previous = skill.versions.find(item => item.id === skill.currentVersionId);
+  previous.packageFiles = normalizePackageFiles(skill.packageFiles);
+  previous.description = skill.description;
+  previous.runtimeDependencies = [...skill.runtimeDependencies];
+  previous.textModeConfirmed = skill.textModeConfirmed;
   const version = normalizeCreativeSkillVersion({
     id: cleanText(options.versionId) || `skill-version:${crypto.randomUUID()}`,
     createdAt: now,
     reason: input.reason || "improved",
     skillMarkdown: input.skillMarkdown,
-    references: input.references,
-    provenanceMarkdown: input.provenanceMarkdown,
+    references: input.references ?? current.references,
+    provenanceMarkdown: input.provenanceMarkdown ?? current.provenanceMarkdown,
     source: input.source || "generated"
   });
   if (!version) throw new Error("Skill 正文不能为空");
   skill.callName = callName;
   skill.description = cleanText(input.description ?? skill.description);
+  if (Object.hasOwn(input, 'packageFiles')) skill.packageFiles = normalizePackageFiles(input.packageFiles);
+  if (Object.hasOwn(input, 'runtimeDependencies')) skill.runtimeDependencies = normalizeStringList(input.runtimeDependencies);
+  if (Object.hasOwn(input, 'textModeConfirmed')) skill.textModeConfirmed = input.textModeConfirmed === true;
   skill.currentVersionId = version.id;
-  skill.versions = [...skill.versions, version].slice(-CREATIVE_SKILL_VERSION_LIMIT);
+  skill.versions = [...skill.versions, version];
+  retainCreativeSkillVersions(state, options);
   skill.updatedAt = now;
   return { state, skill, version };
+}
+
+export function protectedSkillVersionIds(stored = {}) {
+  const ids = new Set();
+  for (const task of [...(stored.composerSessions || []), ...(stored.creativeRuns || []), ...(stored.creativeJobs?.items || []).flatMap(job => [job, job.request?.session].filter(Boolean))]) {
+    for (const id of task.toolSkillVersionIds || []) ids.add(id);
+    for (const checkpoint of Object.values(task.toolContinuations || {})) for (const id of checkpoint.retainedSkillVersionIds || []) ids.add(id);
+    for (const skill of task.appliedSkills || []) if (skill.versionId) ids.add(skill.versionId);
+    for (const snapshot of task.assemblySnapshots || []) for (const skill of snapshot.skills || []) if (skill.version) ids.add(skill.version);
+  }
+  return [...ids];
+}
+
+function retainCreativeSkillVersions(state, options) {
+  const protectedIds = new Set([...state.items.map(skill => skill.currentVersionId), ...(options.protectedVersionIds || [])]);
+  const budget = operationBudget(options.budget);
+  const retained = new Set(protectedIds);
+  const encoder = new TextEncoder();
+  let bytes = 0, count = 0;
+  const versions = state.items.flatMap(skill => skill.versions);
+  const currentFiles = new Set(state.items.flatMap(skill => skill.packageFiles || []).map(file => file.assetId));
+  for (const version of versions) if (protectedIds.has(version.id)) {
+    for (const file of version.packageFiles || []) currentFiles.add(file.assetId);
+  }
+  const countedFiles = new Set(currentFiles);
+  for (const version of [...versions].reverse().sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    if (protectedIds.has(version.id)) continue;
+    // History-only originals also consume space. Shared current files do not.
+    const cost = encoder.encode(JSON.stringify(version)).length + (version.packageFiles || [])
+      .reduce((sum, file) => sum + (countedFiles.has(file.assetId) ? 0 : file.byteSize), 0);
+    if (count >= budget.maxAutomaticHistoryItems || bytes + cost > budget.maxAutomaticHistoryBytes) break;
+    retained.add(version.id); bytes += cost; count++;
+    for (const file of version.packageFiles || []) countedFiles.add(file.assetId);
+  }
+  for (const skill of state.items) skill.versions = skill.versions.filter(version => retained.has(version.id));
 }
 
 export function restoreCreativeSkillVersion(stateValue, skillId, versionId, options = {}) {
@@ -90,11 +153,14 @@ export function restoreCreativeSkillVersion(stateValue, skillId, versionId, opti
   if (!source) throw new Error("没有找到需要恢复的 Skill 版本");
   return saveCreativeSkillVersion(state, skill.id, {
     callName: skill.callName,
-    description: skill.description,
+    description: source.description ?? skill.description,
     skillMarkdown: source.skillMarkdown,
     references: source.references,
     provenanceMarkdown: source.provenanceMarkdown,
     source: source.source,
+    ...(Array.isArray(source.packageFiles) ? { packageFiles: source.packageFiles } : {}),
+    ...(Array.isArray(source.runtimeDependencies) ? { runtimeDependencies: source.runtimeDependencies } : {}),
+    ...(typeof source.textModeConfirmed === 'boolean' ? { textModeConfirmed: source.textModeConfirmed } : {}),
     reason: "restored"
   }, options);
 }
@@ -175,7 +241,8 @@ export function findCreativeSkillsBySlashQuery(stateValue, query) {
 }
 
 export function skillPackageAssetIds(skillValue) {
-  return normalizeCreativeSkill(skillValue)?.packageFiles.map((item) => item.assetId) ?? [];
+  const skill = normalizeCreativeSkill(skillValue);
+  return skill ? [...new Set(skillPackageFiles(skill).map(item => item.assetId))] : [];
 }
 
 export function mergeCreativeSkillsState(currentValue, importedValue, options = {}) {
@@ -183,10 +250,11 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
   const imported = normalizeCreativeSkillsState(importedValue);
   const usedSkillIds = new Set(state.items.map((item) => item.id));
   const usedVersionIds = new Set(state.items.flatMap((item) => item.versions.map((version) => version.id)));
-  const usedAssetIds = new Set(state.items.flatMap((item) => item.packageFiles.map((file) => file.assetId)));
+  const usedAssetIds = new Set(state.items.flatMap(skillPackageAssetIds));
   const skillIdMap = {};
   const skillVersionIdMap = { ...(options.skillVersionIdMap ?? {}) };
   const packageAssetIdMap = { ...(options.packageAssetIdMap ?? {}) };
+  const remapped = new Map();
   let importedSkillCount = 0;
   let skippedSkillCount = 0;
 
@@ -221,14 +289,20 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
     });
     const currentVersionIndex = source.versions.findIndex((version) => version.id === source.currentVersionId);
     skill.currentVersionId = skill.versions[Math.max(0, currentVersionIndex)]?.id ?? skill.versions.at(-1)?.id;
-    skill.packageFiles = skill.packageFiles.map((file) => {
+    for (const owner of skillFileOwners(skill)) owner.packageFiles = (owner.packageFiles ?? []).map((file) => {
+      if (remapped.has(file.assetId)) {
+        const { archivePath, syncObjectId, syncContentType, ...rest } = file;
+        return { ...rest, assetId: remapped.get(file.assetId) };
+      }
       const preferredAssetId = cleanText(options.packageAssetIdMap?.[file.assetId]);
       let assetId = preferredAssetId && !usedAssetIds.has(preferredAssetId) ? preferredAssetId : file.assetId;
       if (usedAssetIds.has(assetId)) assetId = uniqueEntityId("skill-file", usedAssetIds);
       usedAssetIds.add(assetId);
       packageAssetIdMap[file.assetId] = assetId;
       const { archivePath: _archivePath, syncObjectId: _syncObjectId, syncContentType: _syncContentType, ...rest } = file;
-      return { ...rest, assetId };
+      const mapped = { ...rest, assetId };
+      remapped.set(file.assetId, assetId);
+      return mapped;
     });
     state.items.push(skill);
     importedSkillCount += 1;
@@ -242,8 +316,7 @@ function normalizeCreativeSkill(value) {
   const portableId = cleanPortableId(value?.portableId);
   if (!id || !callName || !portableId) return null;
   const versions = (Array.isArray(value?.versions) ? value.versions : [])
-    .map(normalizeCreativeSkillVersion).filter(Boolean)
-    .slice(-CREATIVE_SKILL_VERSION_LIMIT);
+    .map(normalizeCreativeSkillVersion).filter(Boolean);
   if (!versions.length) return null;
   const currentVersionId = versions.some((item) => item.id === value?.currentVersionId)
     ? value.currentVersionId : versions.at(-1).id;
@@ -274,7 +347,11 @@ function normalizeCreativeSkillVersion(value) {
     source: normalizeSource(value?.source),
     skillMarkdown,
     references: normalizeReferences(value?.references),
-    provenanceMarkdown: normalizeMarkdown(value?.provenanceMarkdown)
+    provenanceMarkdown: normalizeMarkdown(value?.provenanceMarkdown),
+    ...(Array.isArray(value?.packageFiles) ? { packageFiles: normalizePackageFiles(value.packageFiles) } : {}),
+    ...(typeof value?.description === 'string' ? { description: cleanText(value.description) } : {}),
+    ...(Array.isArray(value?.runtimeDependencies) ? { runtimeDependencies: normalizeStringList(value.runtimeDependencies) } : {}),
+    ...(typeof value?.textModeConfirmed === 'boolean' ? { textModeConfirmed: value.textModeConfirmed } : {})
   };
 }
 
@@ -307,6 +384,7 @@ function normalizePackageFiles(values) {
       assetId,
       byteSize,
       mimeType: cleanText(value?.mimeType) || "application/octet-stream",
+      ...(/^[a-f0-9]{64}$/u.test(value?.sha256 ?? '') ? { sha256: value.sha256 } : {}),
       ...(archivePath ? { archivePath } : {}),
       ...(syncObjectId ? {
         syncObjectId,
@@ -353,8 +431,9 @@ function uniquePortableId(state, requested) {
   const used = new Set(state.items.map((item) => item.portableId));
   if (!used.has(requested)) return requested;
   let suffix = 2;
-  while (used.has(`${requested}-${suffix}`)) suffix += 1;
-  return `${requested}-${suffix}`;
+  const candidate = () => `${requested.slice(0, PORTABLE_NAME_MAX_CHARACTERS - String(suffix).length - 1).replace(/-+$/g, "")}-${suffix}`;
+  while (used.has(candidate())) suffix += 1;
+  return candidate();
 }
 
 function uniqueCallName(state, requested) {
@@ -388,7 +467,7 @@ function stableHash(value) {
 }
 
 function cleanCallName(value, required = true) {
-  const name = cleanText(value).replace(/^\/+/, "").slice(0, 80);
+  const name = cleanText(value).replace(/^\/+/, "");
   if (required && !name) throw new Error("Skill 调用名不能为空");
   if (/[\/\\]/.test(name)) throw new Error("Skill 调用名不能包含斜杠");
   return name;
@@ -400,7 +479,7 @@ function canonicalCallName(value) {
 
 function cleanPortableId(value) {
   return String(value ?? "").trim().toLocaleLowerCase("en-US")
-    .replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
+    .replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 function normalizeReferencePath(value) {

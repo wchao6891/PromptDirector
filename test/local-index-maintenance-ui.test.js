@@ -8,13 +8,15 @@ const [html, source, background] = await Promise.all([
   readFile(new URL("../extension/background.js", import.meta.url), "utf8")
 ]);
 
-test("local index maintenance groups its original controls with the title and has no decorative progress bar", () => {
+test("local index maintenance keeps its controls and uses real job counters in the shared progress bar", () => {
   const card = html.slice(html.indexOf('<div class="batch-card local-index-card">'), html.indexOf('id="legacy-candidates"'));
   assert.match(card, /资料索引自动补全/);
   assert.match(card, /class="task-heading"><div class="task-copy"><h3[^>]*>资料索引自动补全<\/h3><div id="reanalyze-preview"/);
   assert.match(card, /id="preview-reanalyze"[^>]*>检查缺失项/);
   assert.match(card, /id="apply-reanalyze"[^>]*hidden[^>]*>开始补全/);
-  assert.doesNotMatch(card, /<progress|maintenance-progress/);
+  assert.match(card, /<progress id="maintenance-progress-bar" class="ui-task-progress"[^>]*hidden/);
+  assert.match(source, /setTaskProgress\(elements\.maintenanceProgressBar, \{ completed: maintenanceJob\?\.processed, total: maintenanceJob\?\.total/);
+  assert.doesNotMatch(card, /task-stage|task-details-panel/);
 });
 
 test("local index maintenance exposes checked, running, complete, and failed text states", () => {

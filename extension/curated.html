@@ -63,13 +63,12 @@
         <div id="case-detail-content" class="case-detail-content"></div>
       </aside>
     </dialog>
-    <dialog id="pack-save-dialog" class="pack-save-dialog" aria-label="保存整包" data-i18n-aria-label="保存整包">
-      <h2></h2>
-      <p class="pack-save-meta"></p>
-      <div class="pack-save-actions">
+    <dialog id="pack-save-dialog" class="pack-save-dialog ui-dialog" aria-label="保存整包" data-i18n-aria-label="保存整包">
+      <header class="ui-dialog-header"><div class="ui-dialog-heading"><h2></h2><p class="pack-save-meta"></p></div><button class="pack-save-close icon-button" type="button" aria-label="关闭" title="关闭" data-i18n-aria-label="关闭" data-i18n-title="关闭"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
+      <footer class="pack-save-actions ui-dialog-footer">
         <button class="pack-save-cancel button-secondary" type="button" data-i18n="取消">取消</button>
         <button class="pack-save-confirm" type="button" data-i18n="保存整包">保存整包</button>
-      </div>
+      </footer>
     </dialog>
     <div id="curated-toast" class="curated-toast" role="status" hidden></div>
     <script type="module" src="curated-page.js"></script>

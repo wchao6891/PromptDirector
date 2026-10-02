@@ -1,5 +1,21 @@
-// Keep the stored block text intact while giving lists their reading structure.
-export function renderArticleBlockText(node, block, { editing = false } = {}) {
+import { articleBlockIsMarkdown } from "./article-document.js";
+import { renderMarkdownDocument } from "./markdown-renderer.js";
+
+// Reading markup must never become the source saved by the editor.
+export function renderArticleBlockText(node, block, { editing = false, entry } = {}) {
+  const markdown = articleBlockIsMarkdown(block, entry);
+  node.classList.toggle("markdown-reader", markdown && !editing);
+  if (markdown && editing) {
+    const editor = node.ownerDocument.createElement("textarea");
+    editor.className = "prompt-editor article-markdown-editor";
+    editor.value = block.text;
+    node.replaceChildren(editor);
+    return;
+  }
+  if (markdown && !editing) {
+    node.replaceChildren(...renderMarkdownDocument(block.text).childNodes);
+    return;
+  }
   if (block.kind !== "list" || editing) {
     node.textContent = block.text;
     return;

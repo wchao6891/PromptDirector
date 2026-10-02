@@ -1,4 +1,5 @@
 import { createFixedFacetCatalog } from "./tag-taxonomy.js";
+import { facetAssignmentIdentity } from './facet-assignments.js';
 
 export const FACET_CATALOG_VERSION = 3;
 
@@ -158,11 +159,6 @@ export function applyFacetChange(state = {}, preview = {}) {
   }
   next.facetCatalog.revision += 1;
   return { state: next, undo };
-}
-
-export function undoFacetChange(_state, undo) {
-  if (!undo?.facetCatalog || !Array.isArray(undo.entries)) throw new Error("没有可撤回的词库更新");
-  return structuredClone(undo);
 }
 
 export function restoreArchivedFacets(catalog, facetIds = []) {
@@ -354,9 +350,10 @@ function mergeNodes(state, sourceId, targetId) {
 function dedupeEntryAssignments(assignments) {
   const byId = new Map();
   for (const item of assignments) {
-    const previous = byId.get(item.nodeId);
+    const key = facetAssignmentIdentity(item);
+    const previous = byId.get(key);
     if (!previous || item.source === "manual" || (item.status === "confirmed" && previous.status !== "confirmed")) {
-      byId.set(item.nodeId, item);
+      byId.set(key, item);
     }
   }
   return [...byId.values()];

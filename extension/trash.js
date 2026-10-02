@@ -5,6 +5,8 @@ import {
   removeEntriesFromOrganizer
 } from "./organizer.js";
 import { normalizeEntryMedia, removeEntryMedia } from "./media.js";
+import { facetAssignmentIdentity } from './facet-assignments.js';
+import { sameUndoState } from './undo-state.js';
 import { normalizeCompoundCases, removeEntriesFromCompoundCases } from "./compound-cases.js";
 
 export const TRASH_VERSION = 1;
@@ -453,7 +455,7 @@ function restoreMediaItem(item, entries) {
     timeNotes: mergeRelated(entry.timeNotes, item.relationships?.timeNotes, "id"),
     mediaPrompts: mergeRelated(entry.mediaPrompts, item.relationships?.mediaPrompts, "assetId"),
     videoAnalyses: mergeRelated(entry.videoAnalyses, item.relationships?.videoAnalyses, "id"),
-    facetAssignments: mergeRelated(entry.facetAssignments, item.relationships?.facetAssignments, "nodeId"),
+    facetAssignments: mergeRelated(entry.facetAssignments, item.relationships?.facetAssignments, facetAssignmentIdentity),
     primaryMediaId: clean(item.relationships?.primaryMediaId) || entry.primaryMediaId,
     coverVisualId: entry.coverVisualId || clean(item.relationships?.coverVisualId)
   };
@@ -491,9 +493,10 @@ function unresolvedIssue(reason, details = {}) {
 
 function mergeRelated(currentValue, restoredValue, key) {
   const current = Array.isArray(currentValue) ? currentValue : [];
-  const seen = new Set(current.map((item) => clean(item?.[key])).filter(Boolean));
+  const identity = typeof key === 'function' ? key : item => clean(item?.[key]);
+  const seen = new Set(current.map(identity).filter(Boolean));
   return [...current, ...(Array.isArray(restoredValue) ? restoredValue : []).filter((item) => {
-    const id = clean(item?.[key]);
+    const id = identity(item);
     if (!id || seen.has(id)) return false;
     seen.add(id);
     return true;
@@ -506,7 +509,7 @@ function safeIndex(value) {
 }
 
 function jsonEqual(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return sameUndoState(left, right);
 }
 
 function normalizeTrashItem(value = {}) {

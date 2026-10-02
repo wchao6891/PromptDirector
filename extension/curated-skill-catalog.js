@@ -1,5 +1,5 @@
 import { parseSkillArchive } from "./creative-skill-package.js";
-import { PORTABLE_LIBRARY_LIMITS } from "./resource-limits.js";
+import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { sha256Hex } from "./sync-crypto.js";
 import { isSkillCoverPath, normalizeSkillCoverMetadata, validateSkillCover } from "./skill-cover.js";
 import { CURATED_SKILL_CATALOG_URL } from "./curated-config.js";
@@ -35,7 +35,7 @@ export function normalizeCuratedSkillCatalog(value) {
 
 export async function verifyCuratedSkillPackageBlob(blob, expectedSha256, expectedBytes = 0) {
   if (!(blob instanceof Blob) || blob.size < 22) throw new Error("精选 Skill 包为空或无效");
-  if (blob.size > PORTABLE_LIBRARY_LIMITS.maxArchiveBytes) throw new Error("精选 Skill 包超过安全大小上限");
+  if (blob.size > LIBRARY_TRANSFER_LIMITS.maxArchiveBytes) throw new Error("精选 Skill 包超过安全大小上限");
   if (Number(expectedBytes) > 0 && blob.size !== Number(expectedBytes)) throw new Error("精选 Skill 包大小与目录不一致");
   const expected = String(expectedSha256 ?? "").toLocaleLowerCase("en-US");
   if (!/^[a-f0-9]{64}$/.test(expected) || await sha256Hex(blob) !== expected) throw new Error("精选 Skill 包校验失败");
@@ -59,7 +59,7 @@ export async function validateCuratedSkillPackage(itemValue, archive) {
 export async function fetchCuratedSkillCover(item, fetcher = fetch) {
   const cover = normalizeSkillCoverMetadata(item.cover);
   if (!cover) return null;
-  if (cover.byteSize > PORTABLE_LIBRARY_LIMITS.maxFileBytes) throw new Error("精选 Skill 封面超过包文件大小限制");
+  if (cover.byteSize > LIBRARY_TRANSFER_LIMITS.maxFileBytes) throw new Error("精选 Skill 封面超过包文件大小限制");
   const url = new URL(cover.path, CURATED_SKILL_CATALOG_URL).href;
   const response = await fetcher(url);
   if (!response.ok || (response.url && response.url !== url)) throw new Error("精选 Skill 封面下载失败");

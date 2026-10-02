@@ -73,8 +73,8 @@ test("vision batch dialog only revives running or paused jobs and otherwise show
   assert.match(renderVisionBatchDialog, /elements\.visionBatchResume\.hidden = !activeJob \|\| activeJob\.status !== "paused"/);
   assert.match(renderVisionBatchDialog, /elements\.visionBatchCancel\.hidden = !active/);
   assert.match(renderVisionBatchDialog, /elements\.visionBatchProgress\.hidden = !job/);
-  assert.match(renderVisionBatchDialog, /elements\.visionBatchProgressBar\.max = Math\.max\(1, requestCount \|\| job\?\.requestCount \|\| 1\)/);
-  assert.match(renderVisionBatchDialog, /elements\.visionBatchProgressBar\.value = Math\.min\(processedCount, elements\.visionBatchProgressBar\.max\)/);
+  assert.match(renderVisionBatchDialog, /setTaskProgress\(elements\.visionBatchProgressBar, \{ completed: processedCount, total: requestCount \|\| job\?\.requestCount/);
+  assert.match(renderVisionBatchDialog, /Math\.min\([\s\S]*requestCount,[\s\S]*counts\.succeeded[\s\S]*counts\.failed/);
   assert.match(previewSelectedVisionBatch, /visionBatchJob\.kind !== "vision" \|\| visionBatchJob\.providerType !== visionSettings\.activeProvider/);
   assert.match(previewSelectedVisionBatch, /if \(providerChanged \|\| visionBatchJob\.model !== currentModel\)/);
   assert.match(previewSelectedVisionBatch, /chrome\.runtime\.sendMessage\(\{ type: "CANCEL_VISION_BATCH", jobId: visionBatchJob\.id \}\)/);

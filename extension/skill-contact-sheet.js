@@ -1,4 +1,6 @@
 import { entryMediaAssets } from "./media.js";
+import { readImageDimensions } from './image-metadata.js';
+import { assertImageDimensions } from './resource-limits.js';
 
 export const CONTACT_SHEET_MAX_IMAGES = 9;
 export const CONTACT_SHEET_COLUMNS = 3;
@@ -63,6 +65,8 @@ export async function renderContactSheetBatch(batch, loadBlob, options = {}) {
   for (const [index, item] of batch.items.entries()) {
     const blob = await loadBlob(item.visualId);
     if (!(blob instanceof Blob) || !blob.type.startsWith("image/")) throw new Error(`案例 ${item.caseNumber} 的第 ${item.imageNumber} 张内容图读取失败`);
+    const dimensions = await readImageDimensions(blob);
+    assertImageDimensions(dimensions.width, dimensions.height, { budget: options.budget });
     const bitmap = await createImageBitmap(blob);
     try {
       const x = (index % CONTACT_SHEET_COLUMNS) * cellSize;

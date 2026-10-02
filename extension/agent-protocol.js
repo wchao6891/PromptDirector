@@ -1,7 +1,15 @@
 // Native Messaging permits 1 MiB from the host to Chrome. Chunk size is a
 // transport boundary, not an asset/file limit; base64 and envelope fit below it.
+import { operationBudget } from './resource-policy.js';
+
 export const AGENT_PROTOCOL_VERSION = 1;
 export const AGENT_CHUNK_BYTES = 192 * 1024;
+// Chrome -> native host permits 64 MiB, unlike the 1 MiB reverse direction.
+// Reserve the envelope and serialization copies, plus parallel tool working
+// sets. This controls a response chunk, never the size of the original file.
+export function agentDownloadChunkBytes(budget) {
+  return Math.max(1, Math.floor(Math.min(64 * 1024 * 1024 / 4, operationBudget(budget).workingBytes / 32)));
+}
 export const AGENT_HOST = "com.promptdirector.connector";
 export const AGENT_SETTINGS_KEY = "agentConnection";
 export const AGENT_JOB_PREFIX = "agentTask:";
@@ -33,9 +41,17 @@ export function requireInteger(value, { min = 0, max = Number.MAX_SAFE_INTEGER }
 }
 
 export function bytesToBase64(bytes) {
-  let text = "";
-  for (const byte of bytes) text += String.fromCharCode(byte);
-  return btoa(text);
+  if (typeof bytes.toBase64 === 'function') return bytes.toBase64();
+  // Older supported Chrome versions lack toBase64. Encode aligned groups so
+  // fallback strings stay small even when the download response is large.
+  const groupBytes = AGENT_CHUNK_BYTES / 8; // 24 KiB, divisible by three.
+  const parts = [];
+  for (let offset = 0; offset < bytes.length; offset += groupBytes) {
+    let text = '';
+    for (const byte of bytes.subarray(offset, offset + groupBytes)) text += String.fromCharCode(byte);
+    parts.push(btoa(text));
+  }
+  return parts.join('');
 }
 
 export function base64ToBytes(value) {

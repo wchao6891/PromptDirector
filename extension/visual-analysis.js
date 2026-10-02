@@ -1,4 +1,5 @@
 import { analysisTaxonomyPayload, validateAnalysisTagResponse } from "./tag-taxonomy.js";
+import { createVisualModelResponseSchema } from "./visual-result-schema.js";
 
 export const VISUAL_ANALYSIS_VERSION = 2;
 export const VISUAL_SET_SUMMARY_VERSION = 1;
@@ -187,7 +188,7 @@ export function compileVisualAnalysisInstruction({ catalog, customInstruction = 
     "Analyze only the attached image in one single visual-analysis call.",
     locale === "en" ? "Complete the full analysis in this single call; no second visual audit is allowed." : "必须在这一次单次分析中完成全部拆解与自检，不进行第二次视觉复审。",
     language,
-    String(customInstruction ?? "").trim().slice(0, 1200),
+    String(customInstruction ?? "").trim(),
     measured,
     "只输出 reconstructionPrompt 和 tags。",
     reconstructionChecklist,
@@ -547,31 +548,6 @@ function normalizeBbox(value) {
   const height = boundedNumber(value.height, 0, 1000, "边界框高度");
   if (x + width > 1000 || y + height > 1000) throw new Error("视觉分析边界框超出画面");
   return { x, y, width, height, source: measurementSource(value.source) };
-}
-
-function createVisualModelResponseSchema() {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: ["reconstructionPrompt", "tags"],
-    properties: {
-      reconstructionPrompt: { type: "string", minLength: 1 },
-      tags: {
-        type: "array",
-        minItems: 1,
-        maxItems: 6,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["g", "t"],
-          properties: {
-            g: { type: "string" },
-            t: { type: ["string", "null"] }
-          }
-        }
-      }
-    }
-  };
 }
 
 function fixedTagGroupIds(catalog) {

@@ -1,7 +1,6 @@
 import { defaultSkillExtractionInstruction } from './skill-extraction-instruction.js';
 export { defaultSkillExtractionInstruction } from './skill-extraction-instruction.js';
 import {
-  COMPOSER_INPUT_MAX_CHARACTERS,
   createComposerSession,
   normalizeComposerSettings,
   referenceSourcePartsForAsset
@@ -54,7 +53,9 @@ export function buildSkillExtractionRequest(input = {}) {
   ].join("\n\n");
 }
 
-export const SKILL_EXTRACTION_BATCH_TARGET_CHARACTERS = Math.floor(COMPOSER_INPUT_MAX_CHARACTERS * 0.45);
+// Existing extraction batch target only: every fragment is processed and then
+// synthesized. This is never an input quota or a reason to discard source text.
+export const SKILL_EXTRACTION_BATCH_TARGET_CHARACTERS = 337_500;
 
 export function skillExtractionWorkload(input = {}) {
   const sources = normalizeSkillSources(input.sources);
@@ -239,8 +240,8 @@ function normalizeSourceSelections(values) {
 function skillDraftMetadata(markdown, goalValue) {
   const heading = String(markdown ?? "").match(/^#\s+(.+)$/mu)?.[1]?.trim() || "";
   return {
-    callName: heading.slice(0, 80),
-    description: clean(goalValue).slice(0, 240)
+    callName: heading,
+    description: clean(goalValue)
   };
 }
 
@@ -296,7 +297,8 @@ function normalizeSkillSources(values) {
 }
 
 function partitionSkillSources(values, maxCharactersValue) {
-  const maxCharacters = Math.max(10_000, Math.min(COMPOSER_INPUT_MAX_CHARACTERS, Math.floor(Number(maxCharactersValue) || SKILL_EXTRACTION_BATCH_TARGET_CHARACTERS)));
+  const requested = Number(maxCharactersValue);
+  const maxCharacters = Number.isSafeInteger(requested) && requested > 0 ? requested : SKILL_EXTRACTION_BATCH_TARGET_CHARACTERS;
   const fragments = values.flatMap((source) => splitSkillSource(source, maxCharacters));
   const batches = [];
   let current = [];

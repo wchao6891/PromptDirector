@@ -1,6 +1,7 @@
 import { parseLibraryPackage } from "./library-package.js";
 import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { createZipBlob, readZipBlob } from "./zip.js";
+import { sharedLibraryMediaFiles } from './library-shared-media.js';
 
 export async function createVerifiedLibraryZip(files, expectedLibraryJson) {
   const archive = await createZipBlob(files);
@@ -23,8 +24,10 @@ async function verifyRoundtrip(archive, expectedLibraryJson) {
   const libraryFile = extracted.get("library.json");
   if (!(libraryFile instanceof Blob)) throw new Error("导出的 ZIP 缺少 library.json");
   if (libraryFile.size > limits.maxLibraryJsonBytes) throw new Error("导出的 library.json 超过安全上限");
-  const expected = parseLibraryPackage(JSON.parse(String(expectedLibraryJson ?? "")), extracted, limits);
-  const actual = parseLibraryPackage(JSON.parse(await libraryFile.text()), extracted, limits);
+  const expectedData = JSON.parse(String(expectedLibraryJson ?? ''));
+  const actualData = JSON.parse(await libraryFile.text());
+  const expected = parseLibraryPackage(expectedData, await sharedLibraryMediaFiles(expectedData, extracted), limits);
+  const actual = parseLibraryPackage(actualData, await sharedLibraryMediaFiles(actualData, extracted), limits);
   if (stableJson(packageSemantics(actual)) !== stableJson(packageSemantics(expected))) {
     throw new Error("导出自检失败：ZIP 内容与生成前不一致");
   }

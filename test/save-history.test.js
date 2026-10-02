@@ -6,15 +6,23 @@ import {
   createEntrySaveUndo,
   createScreenshotSaveUndo,
   normalizeLastSaveUndo,
+  assertCreatedEntryUndoSafe,
   restoreScreenshotSaveEntry
 } from "../extension/save-history.js";
 
 test("entry save undo targets the exact created entry", () => {
-  assert.deepEqual(createEntrySaveUndo("entry:new"), {
-    version: 1,
+  const entry = { id: "entry:new", title: "刚保存", text: "原词" };
+  const undo = createEntrySaveUndo(entry);
+  assert.deepEqual(undo, {
+    version: 3,
     type: "delete_created_entry",
-    entryId: "entry:new"
+    entryId: "entry:new",
+    entryFingerprint: undo.entryFingerprint
   });
+  assert.match(undo.entryFingerprint, /^[a-f0-9]{64}$/);
+  assert.doesNotThrow(() => assertCreatedEntryUndoSafe(entry, undo));
+  assert.throws(() => assertCreatedEntryUndoSafe({ ...entry, text: "后来编辑" }, undo), /被修改/);
+  assert.equal(normalizeLastSaveUndo({ version: 1, type: "delete_created_entry", entryId: entry.id }), null);
   assert.equal(normalizeLastSaveUndo({ type: "delete_created_entry", entryId: "" }), null);
 });
 
@@ -38,12 +46,6 @@ test("screenshot save undo restores prior metadata and vision data without rever
     ]
   };
   const appliedAt = "2026-07-21T00:00:00.000Z";
-  const undo = createScreenshotSaveUndo(
-    previous.id,
-    captureScreenshotMetadata(previous),
-    appliedAt,
-    true
-  );
   const current = {
     ...previous,
     title: "用户后来改过的标题",
@@ -61,14 +63,24 @@ test("screenshot save undo restores prior metadata and vision data without rever
     ]
   };
 
-  const restored = restoreScreenshotSaveEntry(current, undo);
-  assert.equal(restored.title, "用户后来改过的标题");
+  const undo = createScreenshotSaveUndo(
+    previous.id,
+    captureScreenshotMetadata(previous),
+    appliedAt,
+    true,
+    undefined,
+    captureScreenshotMetadata(current)
+  );
+  const later = { ...current, title: "用户更新的标题", facetAssignments: [...current.facetAssignments, { source: "manual", nodeId: "another-manual" }] };
+  const restored = restoreScreenshotSaveEntry(later, undo);
+  assert.equal(restored.title, "用户更新的标题");
   assert.equal(restored.screenshotWidth, 800);
   assert.equal(restored.screenshotUpdatedAt, "2026-07-20T00:00:00.000Z");
   assert.equal(restored.visionAnalysis.description, "旧画面");
   assert.deepEqual(restored.facetAssignments.map((item) => item.nodeId), [
     "manual",
     "manual-later",
+    "another-manual",
     "vision-old"
   ]);
 });
@@ -78,7 +90,9 @@ test("screenshot save undo refuses to overwrite a newer screenshot", () => {
     "entry:existing",
     captureScreenshotMetadata({ id: "entry:existing", hasScreenshot: false }),
     "2026-07-21T00:00:00.000Z",
-    false
+    false,
+    undefined,
+    captureScreenshotMetadata({ id: "entry:existing", screenshotUpdatedAt: "2026-07-21T00:00:00.000Z" })
   );
   assert.throws(
     () => restoreScreenshotSaveEntry({
@@ -101,4 +115,12 @@ test("screenshot save undo rejects backup IDs that could target unrelated images
     ),
     /备份编号无效/
   );
+});
+
+test("screenshot undo refuses later vision edits even when the screenshot timestamp is unchanged", () => {
+  const applied = { id: "shot", hasScreenshot: true, screenshotUpdatedAt: "saved-at", visionAnalysis: { description: "保存时分析" } };
+  const undo = createScreenshotSaveUndo(applied.id, captureScreenshotMetadata({ hasScreenshot: false }), applied.screenshotUpdatedAt, false, undefined, captureScreenshotMetadata(applied));
+  assert.throws(() => restoreScreenshotSaveEntry({ ...applied, visionAnalysis: { description: "用户后来修改" } }, undo), /保护新编辑/);
+  assert.throws(() => restoreScreenshotSaveEntry({ ...applied, palette: { colors: ["#ffffff"] } }, undo), /保护新编辑/);
+  assert.equal(normalizeLastSaveUndo({ ...undo, version: 1, appliedMetadata: undefined }), null);
 });

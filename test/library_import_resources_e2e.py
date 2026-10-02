@@ -17,6 +17,10 @@ def main():
           const files=await readZipResources(archive,null,{}, {onProgress:value=>progress.push(value)});
           if(!progress.length) throw Error('Missing worker progress');
           const expected=await sha256Blob(blob);
+          let deadlineStopped=false;
+          try { await readZipResources(archive,null,{}, {budget:{maxDurationMs:1}}); }
+          catch(error){deadlineStopped=error.code==='RESOURCE_BUDGET_REACHED';}
+          if(!deadlineStopped) throw Error('Whole worker deadline did not stop decoding');
           const items=[...files].map(([name,blob])=>({assetId:name,blob}));
           const originalPut=IDBObjectStore.prototype.put;
           let inserted=0;

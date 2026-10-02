@@ -6,7 +6,6 @@ import {
 } from "./analysis-tasks.js";
 
 const ANALYSIS_TASK_REGISTRY_VERSION = 1;
-const MAX_PERSISTED_ANALYSIS_TASKS = 50;
 
 export function createOrJoinAnalysisTask(value, requestValue = {}, options = {}) {
   const state = normalizeAnalysisTaskRegistry(value);
@@ -65,7 +64,6 @@ export function createOrJoinAnalysisTask(value, requestValue = {}, options = {})
     clientRequestIds: [request.clientRequestId]
   });
   state.items.push(task);
-  state.items = state.items.slice(-MAX_PERSISTED_ANALYSIS_TASKS);
   return { state, task: structuredClone(task), created: true };
 }
 
@@ -87,7 +85,6 @@ export function replaceAnalysisTask(value, taskValue) {
   const index = state.items.findIndex((item) => item.id === task.id);
   if (index < 0) state.items.push(task);
   else state.items[index] = task;
-  state.items = state.items.slice(-MAX_PERSISTED_ANALYSIS_TASKS);
   return state;
 }
 
@@ -116,7 +113,7 @@ export function normalizeAnalysisTaskRegistry(value) {
     seen.add(task.id);
     items.push(task);
   }
-  return { version: ANALYSIS_TASK_REGISTRY_VERSION, items: items.slice(-MAX_PERSISTED_ANALYSIS_TASKS) };
+  return { version: ANALYSIS_TASK_REGISTRY_VERSION, items };
 }
 
 function normalizeRegistryTask(value) {

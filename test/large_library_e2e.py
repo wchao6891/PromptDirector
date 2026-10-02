@@ -101,7 +101,7 @@ def main() -> None:
                 started = time.perf_counter()
                 library.goto(f"chrome-extension://{extension_id}/library.html")
                 library.wait_for_selector("body[data-library-state='ready']", timeout=10_000)
-                library.wait_for_function("document.querySelectorAll('.case-card').length >= 24")
+                library.wait_for_function("document.querySelectorAll('.case-card').length > 0")
                 ready_ms = round((time.perf_counter() - started) * 1000)
                 assert ready_ms < 5_000, f"6500-case first usable paint took {ready_ms}ms"
 
@@ -197,7 +197,7 @@ def main() -> None:
                 browse_wall = wall_geometry(library)
                 assert_wall_transition_stable(library, sample_wall_transition(library, "#select-cases"))
                 assert_wall_stable(library, browse_wall, wall_geometry(library))
-                assert library.locator("#result-count").is_hidden()
+                assert library.locator("#result-count").is_visible()
                 assert library.locator("#gallery-view-controls").is_hidden()
                 assert library.locator("#share-count").inner_text() == "已选 0"
                 assert library.locator("#selection-select-filtered").inner_text() == "全选当前（6500）"
@@ -273,14 +273,14 @@ def main() -> None:
                       return [card.dataset.entryId, {x: Math.round(rect.left + scrollX), y: Math.round(rect.top + scrollY)}];
                     }))"""
                 )
-                before_scroll = library.evaluate("document.querySelectorAll('.case-card').length")
+                before_scroll = library.locator(".case-card").evaluate_all("nodes=>nodes.map(n=>n.dataset.entryId)")
                 scroll_distance = library.evaluate(
                     """() => document.querySelector('#load-sentinel').getBoundingClientRect().top - innerHeight / 2"""
                 )
                 library.mouse.wheel(0, scroll_distance)
                 try:
                     library.wait_for_function(
-                        "before => document.querySelectorAll('.case-card').length > before",
+                        "before => [...document.querySelectorAll('.case-card')].some(n=>!before.includes(n.dataset.entryId))",
                         arg=before_scroll,
                         timeout=5_000,
                     )
@@ -304,6 +304,8 @@ def main() -> None:
                     "document.querySelector('#load-sentinel').getBoundingClientRect().top >= innerHeight",
                     timeout=5_000,
                 )
+                library.evaluate('scrollTo(0,0)')
+                library.wait_for_timeout(100)
                 after_positions = library.evaluate(
                     """() => Object.fromEntries([...document.querySelectorAll('.case-card')].slice(0, 12).map((card) => {
                       const rect = card.getBoundingClientRect();

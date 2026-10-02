@@ -19,8 +19,9 @@ import {
 } from "../extension/taxonomy.js";
 import {
   applyFacetChange, createDefaultFacetCatalog, createEmptyFacetCatalog, createFacet, createFacetNode,
-  normalizeFacetCatalog, previewFacetChange, undoFacetChange
+  normalizeFacetCatalog, previewFacetChange
 } from "../extension/facets.js";
+import { appendFacetUndo, undoFacetHistory } from "../extension/facet-history.js";
 
 test("new libraries include first-class image, video, and document material types", () => {
   const taxonomy = createDefaultTaxonomy();
@@ -261,10 +262,24 @@ test("facet rename and merge update historical assignments and remain undoable",
   }));
   assert.equal(merged.state.entries[0].facetAssignments[0].nodeId, "tag:hyperreal");
   assert.ok(merged.state.facetCatalog.nodes.find((item) => item.id === "tag:hyperreal").aliases.includes("自定义3D"));
-  assert.equal(undoFacetChange(merged.state, merged.undo).entries[0].facetAssignments[0].nodeId, "tag:three_d");
+  const history = appendFacetUndo(null, renamed.state, merged.state);
+  assert.equal(undoFacetHistory(merged.state, history).state.entries[0].facetAssignments[0].nodeId, "tag:three_d");
   assert.equal(normalizeFacetCatalog(merged.state.facetCatalog).nodes.find(
     (item) => item.id === "tag:three_d"
   ).status, "archived");
+});
+
+test('merging vocabulary labels retains each media scope instead of collapsing the case', () => {
+  let catalog = createFacet(createEmptyFacetCatalog(), { id: 'facet', name: '自定义' });
+  catalog = createFacetNode(catalog, { id: 'from', facetId: 'facet', name: '来源标签' });
+  catalog = createFacetNode(catalog, { id: 'to', facetId: 'facet', name: '目标标签' });
+  const state = { facetCatalog: catalog, entries: [{ id: 'case', facetAssignments: [
+    { facetId: 'facet', nodeId: 'from', source: 'vision_model', visualId: 'a' },
+    { facetId: 'facet', nodeId: 'to', source: 'vision_model', visualId: 'b' },
+    { facetId: 'facet', nodeId: 'to', source: 'manual' }
+  ] }] };
+  const merged = applyFacetChange(state, previewFacetChange(state, { type: 'merge', sourceNodeId: 'from', targetNodeId: 'to' })).state;
+  assert.deepEqual(merged.entries[0].facetAssignments.map(a => [a.nodeId, a.visualId || '']), [['to', 'a'], ['to', 'b'], ['to', '']]);
 });
 
 test("a parent group with children cannot be moved under another group", () => {

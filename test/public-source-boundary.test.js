@@ -5,12 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-async function checkMarkdown(content) {
+async function checkMarkdown(content, privateDirectory) {
   const root = await mkdtemp(join(tmpdir(), "public-source-boundary-"));
   try {
     await mkdir(join(root, "tools"));
     await copyFile(new URL("../tools/validate-public-source.mjs", import.meta.url), join(root, "tools", "validate-public-source.mjs"));
     await writeFile(join(root, "README.md"), content);
+    if (privateDirectory) {
+      await mkdir(join(root, privateDirectory));
+      await writeFile(join(root, privateDirectory, 'LEARNINGS.md'), 'Private feedback without any machine path');
+    }
     return spawnSync(process.execPath, [join(root, "tools", "validate-public-source.mjs")], { encoding: "utf8" });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -36,4 +40,10 @@ test("public documentation rejects local home and temporary workspace paths", as
 test("public documentation accepts portable instructions and repository links", async () => {
   const result = await checkMarkdown("See [guide](docs/guide.md). Write local output to <local-temp>/capture.png.");
   assert.equal(result.status, 0, result.stderr);
+});
+
+test('public source rejects private learning records even without local paths or credentials', async () => {
+  const result = await checkMarkdown('Public README', '.learnings');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /公开源码树包含内部工作目录：\.learnings/);
 });

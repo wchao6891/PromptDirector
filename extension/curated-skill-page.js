@@ -1,3 +1,5 @@
+import { normalizeCreativeSkillsState } from './creative-skills.js';
+import { getLibraryStorage } from './library-storage.js';
 import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
 import { isSkillCoverPath } from "./skill-cover.js";
 import { sha256Hex } from "./sync-crypto.js";
@@ -45,7 +47,7 @@ async function start() {
   try {
     const [response, local] = await Promise.all([
       fetch(CURATED_SKILL_CATALOG_URL, { credentials: "omit", cache: "no-store" }),
-      chrome.runtime.sendMessage({ type: "GET_STATE" })
+      getLibraryStorage().get('creativeSkills').then(stored => ({ ok: true, creativeSkills: normalizeCreativeSkillsState(stored.creativeSkills) }))
     ]);
     if (!response.ok) {
       const error = new Error("catalog-request-failed");
@@ -167,6 +169,8 @@ async function loadParsed(item) {
 async function install(item, parsed, button) {
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
+  button.classList.add("is-progressing");
+  button.dataset.progressMode = "unknown";
   button.textContent = t("正在校验…");
   try {
     const verified = parsed ?? await loadParsed(item);
@@ -191,6 +195,9 @@ async function install(item, parsed, button) {
     button.removeAttribute("aria-busy");
     button.textContent = installLabel(item);
     showToast(error.message || t("精选 Skill 保存失败"));
+  } finally {
+    button.classList.remove("is-progressing");
+    button.removeAttribute("aria-busy");
   }
 }
 

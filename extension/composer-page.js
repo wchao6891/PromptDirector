@@ -1,4 +1,8 @@
+import { createLibraryViewReader } from './library-view-state.js';
+import { setTaskFeedbackState } from "./task-feedback.js";
+import { getLibraryStorage } from './library-storage.js';
 import { createSourceVideoPreview, bindSourceVideoCover } from "./source-video-preview.js";
+import { installWorkspaceReader, withWorkspaceMedia } from "./workspace-context.js";
 import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
@@ -8,7 +12,6 @@ import {
   appendComposerMessage,
   appendDiagnosticEvent,
   clearComposerFailure,
-  COMPOSER_INPUT_MAX_CHARACTERS,
   composerInputUsage,
   composerProfileForTaskAssignment,
   completeComposerAssemblySnapshot,
@@ -180,6 +183,13 @@ const imageObserver = new IntersectionObserver((items) => {
 }, { rootMargin: "240px" });
 
 bindEvents();
+void installWorkspaceReader({ chromeApi: chrome, readContext: () => {
+  if (!composerInitializationComplete || !composerSession) throw new Error("创作台尚未就绪，请稍后重读。");
+  return { surface: "composer", sessionId: composerSession.id,
+    instruction: elements.composerInstruction.value,
+    pendingReferenceSelection: !elements.composerReferenceWorkspace.hidden && workspaceMode === "references",
+    references: withWorkspaceMedia(composerSession.referenceSnapshots, entries) };
+} });
 try {
   await initializeComposer();
   composerInitializationComplete = true;
@@ -308,8 +318,7 @@ function bindEvents() {
     releaseReferenceVideos();
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   });
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") return;
+  getLibraryStorage().subscribe((changes) => {
     if (changes.aiProviderRegistry || changes.aiTaskAssignments || changes.aiPreferences) safely(refreshComposerServiceSettings)();
     if (changes.creativeRuns || changes.creativeJobs || changes.composerSessions || changes.entries || changes.compoundCases || changes.creativeExperimentSettings || changes.creativeSkills) {
       if (!composerInitializationComplete) creativeStateRefreshPending = true;
@@ -320,7 +329,7 @@ function bindEvents() {
 
 async function refreshCreativeResultState() {
   const revision = ++creativeStateRefreshRevision;
-  const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  const response = await readWorkspaceLibraryState();
   if (!response?.ok || revision !== creativeStateRefreshRevision) return;
   const nextPhysicalEntries = response.entries ?? physicalEntries;
   const nextCompoundCases = normalizeCompoundCases(response.compoundCases ?? compoundCases, nextPhysicalEntries);
@@ -383,7 +392,7 @@ async function syncCreativeJobState(expectedRevision = null) {
 }
 
 async function initializeComposer() {
-  const response = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  const response = await readWorkspaceLibraryState();
   if (!response?.ok) throw new Error(response?.message || "无法读取创作资料");
   ({ ai: composerAiSettings, vision: composerVisionSettings } = await privateComposerServiceSettings());
   physicalEntries = response.entries ?? [];
@@ -993,8 +1002,10 @@ function createMessage(message, version, streaming, session) {
     const label = routeLabels[message.route] || t("创作助手");
     content.append(rawTextEl("small", "composer-message-label", label));
   }
-  const messageClass = streaming ? " composer-streaming-caret" : message.type === "status" ? " composer-status-dots" : "";
-  content.append(renderFinalAssistantText(message, streaming, messageClass));
+  const messageClass = streaming ? " composer-streaming-caret" : "";
+  const messageText = renderFinalAssistantText(message, streaming, messageClass);
+  if (message.type === "status") setTaskFeedbackState(messageText, { pending: true });
+  content.append(messageText);
   if (message.type === "question" && message.options?.length) {
     if (message.recommendedAnswer) content.append(rawTextEl("p", "composer-question-recommendation", `${t("推荐")}：${message.recommendedAnswer}`));
     const options = el("div", "composer-question-options");
@@ -1390,6 +1401,7 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
   let pendingImageIds = preparedImages.map(image => image.visualId);
   const toolRuntime = createLocalComposerLibraryTools({
     session: operation.session,
+    userMessageId: operation.userMessageId,
     vision: operation.session.imageReferenceMode !== "text_only",
     onEvent: async event => {
       operation.controller.signal.throwIfAborted();
@@ -3414,6 +3426,9 @@ async function savePromptVersion(sessionId, version, button) {
 }
 
 function renderSendState() {
+  for (const element of composerFeedbackElements()) {
+    setTaskFeedbackState(element, { pending: Boolean(element.textContent) && Boolean(activeOperation), error: element.classList.contains("error") });
+  }
   const ready = composerInitializationComplete && Boolean(composerSession);
   elements.composerInstruction.disabled = !ready;
   elements.composerAction.disabled = !ready;
@@ -3427,8 +3442,7 @@ function renderSendState() {
   const toolState = composerSession.libraryTools;
   const requestLabel = toolState.requestCount ? `本轮已请求 ${toolState.requestCount} 次 · ${toolState.usage && toolState.usageRequestCount === toolState.requestCount ? `输入 ${toolState.usage.promptTokens} / 输出 ${toolState.usage.completionTokens} tokens` : "用量未知"}` : "按任务执行";
   const retrievalLabel = !libraryRetrievalEnabled ? " · 案例库：关闭" : composerLibraryToolService(composerSession, composerAiSettings, composerVisionSettings).nativeTools ? " · 案例库：按需" : " · 案例库：手动选择";
-  elements.composerSendNote.textContent = `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} / ${usage.maxCharacters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel} · 本轮已附 ${toolState.imageIds.length} 张图片`;
-  elements.composerSendNote.classList.toggle("error", usage.overLimit);
+  elements.composerSendNote.textContent = `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel} · 本轮已附 ${toolState.imageIds.length} 张图片`;
   const currentRun = activeOperation?.kind === "compose" && activeOperation.sessionId === composerSession.id;
   if (currentRun) {
     elements.composerAction.dataset.state = activeOperation.phase === "stopping" ? "stopping" : "stop";
@@ -3437,7 +3451,7 @@ function renderSendState() {
     setUiIcon(elements.composerAction, activeOperation.phase === "stopping" ? "ellipsis" : "square");
   } else {
     elements.composerAction.dataset.state = "send";
-    elements.composerAction.disabled = usage.overLimit || Boolean(activeOperation);
+    elements.composerAction.disabled = Boolean(activeOperation);
     elements.composerAction.setAttribute("aria-label", t("发送"));
     setUiIcon(elements.composerAction, "send");
   }
@@ -3618,14 +3632,14 @@ function composerFeedback(message, error = false) {
   for (const element of composerFeedbackElements()) {
     if (element !== target) {
       element.textContent = "";
-      element.classList.remove("error");
+      setTaskFeedbackState(element);
     }
   }
   target.textContent = translateUiMessage(String(message ?? ""));
-  target.classList.toggle("error", error);
+  setTaskFeedbackState(target, { error, pending: Boolean(message) && Boolean(activeOperation) });
   if (message && !error && !activeOperation) feedbackTimer = setTimeout(() => {
     target.textContent = "";
-    target.classList.remove("error");
+    setTaskFeedbackState(target);
   }, 5000);
 }
 
@@ -3643,7 +3657,7 @@ function clearComposerFeedback() {
   feedbackTimer = 0;
   for (const element of composerFeedbackElements()) {
     element.textContent = "";
-    element.classList.remove("error");
+    setTaskFeedbackState(element);
   }
 }
 
@@ -3801,4 +3815,14 @@ function rawTextEl(tag, className, text) {
 
 function textEl(tag, className, text) {
   return rawTextEl(tag, className, t(text));
+}
+
+async function readWorkspaceLibraryState() {
+  const reader = createLibraryViewReader({
+    storage: getLibraryStorage(),
+    prepare: ({ summaryOnly, creativeSummary } = {}) => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
+    uiLanguage: chrome.i18n.getUILanguage(),
+    includeCreativeState: true
+  });
+  return reader();
 }

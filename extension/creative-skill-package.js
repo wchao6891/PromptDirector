@@ -1,6 +1,7 @@
-import { PORTABLE_LIBRARY_LIMITS, portableLibraryLimits } from "./resource-limits.js";
+import { LIBRARY_TRANSFER_LIMITS, portableLibraryLimits } from "./resource-limits.js";
 import { createZipBlob, readZipBlob } from "./zip.js";
 import { isSkillCoverPath, validateSkillCover } from "./skill-cover.js";
+import { operationBudget, resourceBudgetError } from './resource-policy.js';
 
 const encoder = new TextEncoder();
 const markdownType = "text/markdown";
@@ -11,6 +12,7 @@ export function buildSkillMarkdown(input = {}) {
   const body = stripFrontmatter(input.body ?? input.skillMarkdown);
   if (!name) throw new Error("Skill 缺少有效的英文可移植 ID");
   if (!description) throw new Error("Skill 说明不能为空");
+  assertSkillFrontmatterText(description, 'description', 1024);
   if (!body) throw new Error("Skill 正文不能为空");
   return [
     "---",
@@ -33,8 +35,18 @@ export function parseSkillMarkdown(value) {
   const body = normalizeMarkdown(match[2]);
   if (!name) throw new Error("SKILL.md 的 name 必须是英文小写字母、数字或连字符");
   if (!description) throw new Error("SKILL.md 缺少 description");
+  assertSkillFrontmatterText(description, 'description', 1024);
+  if (metadata.compatibility !== undefined) assertSkillFrontmatterText(metadata.compatibility, 'compatibility', 500);
   if (!body) throw new Error("SKILL.md 正文不能为空");
   return { name, description, body, markdown, dependencies: detectSkillDependencies(body) };
+}
+
+// These are Agent Skills format constraints, not a limit on user descriptions
+// in the library or on the full skill body. https://agentskills.io/specification
+function assertSkillFrontmatterText(value, field, maximum) {
+  if (typeof value !== 'string') throw new Error(`Agent Skills 的 ${field} 字段必须是文字`);
+  let count = 0;
+  for (const _character of value) if (++count > maximum) throw new Error(`Agent Skills 规范要求 ${field} 不超过 ${maximum} 个字符；完整说明可放入正文，输入没有被裁切`);
 }
 
 export function buildProvenanceMarkdown(input = {}) {
@@ -162,6 +174,9 @@ export async function parseSkillFiles(filesValue, limitsValue = {}) {
   const skillPath = root ? `${root}/SKILL.md` : "SKILL.md";
   const skillBlob = normalized.get(skillPath);
   if (!skillBlob) throw new Error("Skill 包根目录缺少 SKILL.md");
+  const textBytes = [...normalized].filter(([path]) => path === skillPath || normalizeReferencePath(root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path))
+    .reduce((sum, [, blob]) => sum + blob.size, 0);
+  if (textBytes > operationBudget(limitsValue.budget).maxTextBytes) throw resourceBudgetError('Skill 正文与引用超过本次文本处理预算；原始包保留，请分批整理');
   const parsed = parseSkillMarkdown(await readMarkdown(skillBlob, skillPath));
   const coverPaths = [...normalized.keys()].filter(path => isSkillCoverPath(path, root ? `${root}/` : ""));
   if (coverPaths.length > 1) throw new Error("每个 Skill 只能包含一张封面");
@@ -209,7 +224,7 @@ export function skillPackageLimits(value = {}) {
   return {
     maxArchiveBytes: shared.maxArchiveBytes,
     maxFileCount: shared.maxFileCount,
-    maxFileBytes: shared.maxFileBytes || PORTABLE_LIBRARY_LIMITS.maxFileBytes
+    maxFileBytes: shared.maxFileBytes || LIBRARY_TRANSFER_LIMITS.maxFileBytes
   };
 }
 
@@ -221,7 +236,8 @@ function skillRoot(pathsValue) {
 }
 
 async function readMarkdown(blob, path) {
-  if (blob.size > PORTABLE_LIBRARY_LIMITS.maxFileBytes) throw new Error(`Markdown 文件过大：${path}`);
+  if (blob.size > operationBudget().maxTextBytes) throw resourceBudgetError(`Markdown 超过本次文本处理预算；原件保留：${path}`);
+  if (blob.size > LIBRARY_TRANSFER_LIMITS.maxFileBytes) throw new Error(`Markdown 文件过大：${path}`);
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let text;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
@@ -243,7 +259,7 @@ function parseFrontmatter(value) {
       while (index + 1 < lines.length && /^\s+/.test(lines[index + 1])) chunks.push(lines[++index].trim());
       raw = raw.startsWith(">") ? chunks.join(" ") : chunks.join("\n");
     }
-    if (key === "name" || key === "description") result[key] = yamlScalar(raw);
+    if (["name", "description", "compatibility"].includes(key)) result[key] = yamlScalar(raw);
   }
   return result;
 }
@@ -271,7 +287,7 @@ function stripFrontmatter(value) {
 
 function normalizePortableId(value) {
   const source = String(value ?? "").trim().toLocaleLowerCase("en-US");
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source) || source.length > 63) return "";
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source) || source.length > 64) return "";
   return source;
 }
 

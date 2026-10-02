@@ -39,7 +39,7 @@ body:not([data-skill-view="list"]) .skills-main { padding-top: 20px; }
 .skill-empty { max-width: 520px; margin: 12vh auto; text-align: center; }
 .skill-empty strong { font-size: 24px; }
 .skill-empty p { color: var(--muted, #697069); }
-.skill-feedback { min-height: 20px; color: var(--muted, #697069); }
+.skill-feedback { min-height: 20px; }
 .skill-feedback.error { color: var(--danger, #b43a3a); }
 .skill-workspace-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin-bottom: 14px; }
 .skill-workspace-header h1 { font-size: clamp(25px, 2.4vw, 32px); }
@@ -116,8 +116,6 @@ body:not([data-skill-view="list"]) .skills-main { padding-top: 20px; }
 .skill-run-heading > div { display: flex; flex-wrap: wrap; gap: 7px 12px; align-items: baseline; }
 .skill-run-heading span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .skill-run-heading strong.error { color: var(--danger); }
-.skill-run-track { height: 3px; overflow: hidden; border-radius: 2px; background: var(--line); }
-.skill-run-track span { display: block; width: 0; height: 100%; background: var(--accent-emphasis); transition: width 180ms ease; }
 .skill-run-stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin: 0; padding: 0; list-style: none; }
 .skill-run-stages li { border: 1px solid var(--skill-line); border-radius: var(--ui-control-radius); padding: 6px 7px; color: var(--muted); font-size: 10px; text-align: center; }
 .skill-run-stages li[data-state="active"] { color: var(--ink); border-color: var(--selection-edge); background: var(--subtle-card); }
@@ -138,17 +136,9 @@ body:not([data-skill-view="list"]) .skills-main { padding-top: 20px; }
 .skill-version-item:first-child { border-top: 0; }
 .skill-version-item p { margin: 3px 0 0; color: var(--muted, #697069); font-size: 12px; }
 .danger-button { color: var(--danger, #b43a3a); }
-.skill-import-dialog { width: min(520px, calc(100vw - 28px)); border: 1px solid var(--skill-line); border-radius: 6px; background: var(--card); color: inherit; }
-.skill-import-dialog::backdrop { background: rgba(0,0,0,.5); }
-.skill-import-dialog header { display: flex; justify-content: space-between; gap: 16px; }
-.skill-import-dialog h2 { margin: 3px 0 0; }
+.skill-import-dialog { width: min(520px, calc(100vw - 28px)); }
 .skill-import-dialog p { color: var(--muted, #697069); line-height: 1.6; }
-.skill-submission-dialog { width: min(900px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); border: 1px solid var(--ui-border-strong); border-radius: var(--ui-container-radius); padding: 24px; color: var(--ui-text); background: var(--ui-surface); }
-.skill-submission-dialog::backdrop { background: rgba(0,0,0,.72); }
-.skill-submission-dialog header { display: flex; justify-content: space-between; align-items: start; }
-.skill-submission-dialog header small { color: var(--ui-muted); }
-.skill-submission-dialog h2 { margin: 4px 0 0; }
-.skill-submission-dialog > p { color: var(--ui-muted); }
+.skill-submission-dialog { width: min(900px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
 .skill-submission-fields { display: grid; gap: 14px; }
 .skill-submission-fields label:not(.skill-submission-rights) { display: grid; gap: 6px; }
 .skill-submission-summary textarea { min-height: 90px; resize: vertical; }

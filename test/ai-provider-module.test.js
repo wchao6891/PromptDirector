@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { AI_MODEL_CAPABILITIES, getAiModelCapability } from "../extension/ai-model-capabilities.js";
 import { createAiProviderModule } from "../extension/ai-provider-module.js";
-import { PORTABLE_LIBRARY_LIMITS } from "../extension/resource-limits.js";
+import { LIBRARY_TRANSFER_LIMITS } from "../extension/resource-limits.js";
 
 const MP4 = Uint8Array.from([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]);
 
@@ -539,7 +539,7 @@ test("cross-origin video downloads omit provider credentials while same-origin d
 
 test("video downloads reject oversized declarations and spoofed non-video bodies", async () => {
   const responses = [
-    videoResponse({ "content-length": String(PORTABLE_LIBRARY_LIMITS.maxVideoBytes + 1) }),
+    videoResponse({ "content-length": String(LIBRARY_TRANSFER_LIMITS.maxVideoBytes + 1) }),
     new Response("<html>not a video</html>", { headers: { "content-type": "video/mp4" } })
   ];
   const module = createAiProviderModule({ fetchImpl: async () => responses.shift() });
@@ -557,7 +557,7 @@ test("video downloads reject oversized declarations and spoofed non-video bodies
     downloadUrl: "https://openrouter.ai/api/v1/videos/bounded/content"
   };
 
-  await assert.rejects(() => module.download(job), /超过本地容量上限/);
+  await assert.rejects(() => module.download(job), /超过本次接收预算/);
   await assert.rejects(() => module.download(job), /有效视频文件/);
 });
 

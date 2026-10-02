@@ -1,5 +1,6 @@
 import { collectPageCaptureSitePayload, normalizePageCaptureSitePayload } from './page-capture-site-adapters.js';
-import { PAGE_CAPTURE_LIMITS, PORTABLE_LIBRARY_LIMITS } from './resource-limits.js';
+import { PAGE_CAPTURE_LIMITS, LIBRARY_TRANSFER_LIMITS } from './resource-limits.js';
+import { operationBudget } from './resource-policy.js';
 
 // Read each work, not the board's metadata. Keep the candidate/media identities
 // so selections and manually chosen media remain attached to the same work.
@@ -22,7 +23,7 @@ export async function enrichPinterestCandidates(snapshot, { cache = new Map(), c
         const html = await fetchHtml(url);
         const payload = collectPageCaptureSitePayload({ pinterestUrl: url, pinterestHtml: html,
           maxCandidates: 1, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate,
-          maxTextCharacters: PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes });
+          maxTextCharacters: LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes });
         detail = normalizePageCaptureSitePayload(payload, url);
         if (!detail?.sourceFacts?.itemId || !payload?.pin?.entityId) throw new Error('作品详情元信息尚未取得');
         if (!payload.pin.title && !detail.contentText) detail = { ...detail, title: candidate.title };
@@ -42,6 +43,7 @@ export async function enrichPinterestCandidates(snapshot, { cache = new Map(), c
 }
 
 export async function readPinterestHtml(url) {
+  const textBudget = operationBudget().maxTextBytes;
   const response = await fetch(url, { credentials: 'omit', redirect: 'error',
     referrerPolicy: 'no-referrer', signal: AbortSignal.timeout(PAGE_CAPTURE_LIMITS.navigationTimeoutMs) });
   if (!response.ok) throw new Error(`作品详情读取失败（HTTP ${response.status}）`);
@@ -54,7 +56,7 @@ export async function readPinterestHtml(url) {
       const {done, value} = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > PORTABLE_LIBRARY_LIMITS.maxLibraryJsonBytes) throw new Error('作品详情超出读取上限');
+      if (size > textBudget) throw new Error('作品详情超过本次文字处理预算；来源保留');
       html += decoder.decode(value, {stream:true});
     }
     return html + decoder.decode();

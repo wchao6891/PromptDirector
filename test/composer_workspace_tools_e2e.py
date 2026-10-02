@@ -15,12 +15,12 @@ def main():
             'apiKey':'isolated-fixture','consent':True,'models':{'creativePlanning':'deepseek-flash'}}},assignments={'creativePlanning':{'providerId':'deepseek','model':'deepseek-flash'}})})
         run.context.add_init_script("""(() => {
           if (!location.pathname.endsWith('/composer.html') || new URL(location.href).searchParams.has('session')) return;
-          const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+          const get = chrome.storage.local.get.bind(chrome.storage.local);
           const ready = new Promise(resolve => { window.__releaseComposerReady = resolve; });
           let held = false;
-          chrome.runtime.sendMessage = (...args) => {
-            const result = send(...args);
-            if (args[0]?.type === 'GET_STATE' && !held) {
+          chrome.storage.local.get = (...args) => {
+            const result = get(...args);
+            if (Array.isArray(args[0]) && args[0].includes('entries') && !held) {
               held = true;
               return result.then(async response => { await ready; return response; });
             }
@@ -94,7 +94,8 @@ def main():
         page.reload();expect(page.get_by_role('link',name='在 Skill 中心查看')).to_be_visible()
         mode='read';send('使用用户改名的布光 Skill 讨论下一步',3)
         read=json.loads([m for m in requests[-1]['messages'] if m['role']=='tool'][-1]['content'])
-        assert '用户确认' in read['skillMarkdown']
+        assert read['part']=='body' and read['nextOffset'] is None, read
+        assert read['content']=='# 用户确认\n保留环境层次，不生搬硬套案例。', read
         mode='tags';send('找到人像案例，建议合适的标签',3)
         page.locator('.composer-tool-draft').last.get_by_role('button',name='查看并保存').click()
         dialog=page.get_by_role('dialog',name='查看并保存标签')

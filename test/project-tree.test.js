@@ -61,3 +61,17 @@ test("folded view can be restored after reload and invalid saved view cannot bre
   saveProjectExpansion(new Set(["a"]), storage);
   assert.deepEqual([...readProjectExpansion(storage)], ["a"]);
 });
+
+test("project move undo refuses a stale structure while allowing later case membership edits", async () => {
+  const { collectionStructureSnapshot, assertCollectionStructureCurrent } = await import("../extension/organizer.js");
+  const original = fixture();
+  const moved = moveCollection(original, "a", "c", 1);
+  const expected = collectionStructureSnapshot(moved);
+  const later = structuredClone(moved);
+  later.collections.find(item => item.id === "a").entryIds.push("new-case");
+  assert.doesNotThrow(() => assertCollectionStructureCurrent(later, expected));
+  const restored = moveCollection(later, "a", null, 0);
+  assert.ok(restored.collections.find(item => item.id === "a").entryIds.includes("new-case"));
+  assert.throws(() => assertCollectionStructureCurrent(moveCollection(later, "a", null, 1), expected), /保护新调整/);
+  assert.throws(() => assertCollectionStructureCurrent(later, undefined), /没有撤销/);
+});

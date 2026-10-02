@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
 const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
+const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
 const js = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
 const tagEditor = await readFile(new URL("../extension/tag-editor.js", import.meta.url), "utf8");
 
@@ -69,7 +70,7 @@ test("local import layout keeps summary, options, progress, and mobile stacking 
   const dropTargetCard = rule(css, ".library-drop-target > div");
   const summary = rule(css, ".import-summary");
   const options = rule(css, ".import-options");
-  const progress = rule(css, ".import-job-panel progress");
+  const progress = rule(foundation, ".ui-task-progress");
   const labelEditor = rule(css, ".import-label-editor");
   const dropZone = rule(css, ".import-drop-zone");
   const folderLink = rule(css, ".import-drop-zone .import-folder-link");
