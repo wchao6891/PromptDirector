@@ -41,14 +41,22 @@ test("release verification rehearses an installed-profile upgrade with the final
 test("GitHub runs source contracts and packaged Chromium journeys before main can advance", async () => {
   const workflow = await readFile(new URL("../.github/workflows/release-safety.yml", import.meta.url), "utf8");
   assert.match(workflow, /pull_request:/);
-  assert.match(workflow, /push:[\s\S]*branches:[\s\S]*main/);
+  assert.doesNotMatch(workflow, /^  push:/m, 'protected PR evidence is not rerun unchanged after merge');
+  assert.match(workflow, /workflow_dispatch:/, 'a full release can be explicitly verified');
   assert.match(workflow, /fetch-depth:\s*0/);
   assert.match(workflow, /npm run verify:source/);
-  assert.match(workflow, /npm run test:local-extension/);
+  assert.match(workflow, /ci-release\.py browser/, 'shards load the single packaged runtime');
   assert.match(workflow, /npm run package:release/);
   assert.match(workflow, /npm run package/);
   assert.match(workflow, /npm run test:upgrade/);
-  assert.match(workflow, /PROMPTDIRECTOR_PACKAGE_VERSION="\$\(node -p 'require\("\.\/package\.json"\)\.version'\)"/);
-  assert.match(workflow, /unzip -t "dist\/PromptDirector-\$\{PROMPTDIRECTOR_PACKAGE_VERSION\}\.zip"/);
-  assert.match(workflow, /unzip -t "dist\/store\/PromptDirector-\$\{PROMPTDIRECTOR_PACKAGE_VERSION\}-Chrome-Web-Store\.zip"/);
+  assert.match(workflow, /ci-release\.py seal/, 'all ZIP channels have checksums and CRC verified before sharing');
+  assert.match(workflow, /ci-release\.py gate/);
+  assert.match(workflow, /if: always\(\)/);
+});
+
+test('CI planning and package evidence reject unsafe reductions and missing results', async () => {
+  const { execFileSync } = await import('node:child_process');
+  execFileSync(process.platform === 'win32' ? 'python' : 'python3',
+    ['-m', 'unittest', 'discover', '-s', 'test', '-p', 'ci_release_test.py'],
+    { cwd: new URL('..', import.meta.url), stdio: 'pipe' });
 });

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
@@ -196,12 +197,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run PromptDirector browser regression scripts")
     parser.add_argument("--group", choices=["all", "case-management"], default="all")
     parser.add_argument("--script", choices=SCRIPTS, help="Run one registered browser regression script")
-    return parser.parse_args()
+    parser.add_argument("--scripts", nargs='+', choices=SCRIPTS, help="Run the planned CI scenarios")
+    parser.add_argument("--report", type=Path, help="Save every scenario result, including failures")
+    args = parser.parse_args()
+    if args.scripts and (args.script or args.group != 'all' or len(args.scripts) != len(set(args.scripts))):
+        parser.error('Explicit CI scenarios must be unique and cannot be combined with a group or single script')
+    return args
 
 
 def main() -> None:
     args = parse_args()
-    scripts = [args.script] if args.script else CASE_MANAGEMENT_SCRIPTS if args.group == "case-management" else SCRIPTS
+    scripts = args.scripts or ([args.script] if args.script else CASE_MANAGEMENT_SCRIPTS if args.group == "case-management" else SCRIPTS)
     results: list[Result] = []
     for script in scripts:
         started = time.monotonic()
@@ -224,6 +230,9 @@ def main() -> None:
         state = "通过" if result.returncode == 0 else "失败"
         print(f"- {state} {result.script}: {result.duration:.1f}s")
     failed = [result for result in results if result.returncode]
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps([asdict(result) for result in results], ensure_ascii=False, indent=2), encoding='utf-8')
     if failed:
         raise SystemExit(1)
 

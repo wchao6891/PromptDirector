@@ -2,9 +2,6 @@ name: Release safety
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -14,86 +11,46 @@ concurrency:
   group: release-safety-${{ github.ref }}
   cancel-in-progress: true
 
+# Four independent runners divide the existing suite without sharing profiles,
+# ports or media memory. This is processing concurrency, not a product quota.
+env:
+  CI_BROWSER_SHARDS: 4
+  PYTHONUTF8: "1"
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
+  plan:
+    name: Plan checks from the actual change
+    runs-on: ubuntu-latest
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
+      tier: ${{ steps.plan.outputs.tier }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      package: ${{ steps.plan.outputs.package }}
+      browser: ${{ steps.plan.outputs.browser }}
+      upgrade: ${{ steps.plan.outputs.upgrade }}
+      connector: ${{ steps.plan.outputs.connector }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          CI_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            python3 tools/ci-release.py plan --full --shards "$CI_BROWSER_SHARDS"
+          else
+            python3 tools/ci-release.py plan --base "$CI_BASE" --shards "$CI_BROWSER_SHARDS"
+          fi
+
   source-contracts:
     name: Source and compatibility contracts
+    needs: plan
     runs-on: ubuntu-latest
-    steps:
-      - name: Check out complete release history
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Use Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm ci --prefix connector --ignore-scripts
-      - run: npm run verify:source
-
-  browser-package:
-    name: Chromium journeys and packaged upgrade
-    needs: source-contracts
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out complete release history
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Use Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-      - name: Use Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - run: npm ci
-      - name: Install the pinned Chromium test runtime
-        run: |
-          python -m pip install playwright==1.58.0
-          # Playwright supplies Chromium; the runner's unrelated Chrome APT mirror
-          # can publish inconsistent indexes and is not needed for OS dependencies.
-          sudo python - <<'PYTHON'
-          from pathlib import Path
-          for source in Path('/etc/apt/sources.list.d').iterdir():
-              if source.suffix in ('.list', '.sources') and 'dl.google.com/linux/chrome' in source.read_text():
-                  source.rename(source.with_suffix(source.suffix + '.disabled'))
-          PYTHON
-          python -m playwright install --with-deps chromium
-      - run: npm run test:local-extension
-      - run: npm run package:release
-      - run: node tools/prepare-public-release.mjs
-      - run: npm run package:connector
-      - run: npm run test:upgrade
-      - name: Verify extension and connector archives
-        run: |
-          PROMPTDIRECTOR_PACKAGE_VERSION="$(node -p 'require("./package.json").version')"
-          unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}.zip"
-          unzip -t "dist/store/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-Chrome-Web-Store.zip"
-          unzip -t "dist/PromptDirector-${PROMPTDIRECTOR_PACKAGE_VERSION}-Agent-Connector.zip"
-      - name: Preserve the exact tested packages
-        uses: actions/upload-artifact@v7
-        with:
-          name: promptdirector-tested-packages-${{ github.sha }}
-          path: |
-            dist/PromptDirector-*.zip
-            dist/store/*.zip
-            dist/github/**
-          if-no-files-found: error
-          retention-days: 14
-
-  windows-portability:
-    name: Windows packaged data and project interactions
-    needs: source-contracts
-    runs-on: windows-latest
-    env:
-      PYTHONUTF8: "1"
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v6
         with:
@@ -102,18 +59,105 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-python@v6
+      - run: python3 -m unittest discover -s test -p 'ci_release_test.py'
+      - if: needs.plan.outputs.tier == 'light'
+        run: node tools/validate-public-source.mjs
+      - if: needs.plan.outputs.tier != 'light'
+        run: npm ci
+      - if: needs.plan.outputs.tier != 'light'
+        run: npm ci --prefix connector --ignore-scripts
+      - if: needs.plan.outputs.tier != 'light'
+        run: npm run verify:source
+
+  package:
+    name: Build one package bundle
+    needs: [plan, source-contracts]
+    if: needs.plan.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          python-version: "3.12"
+          node-version: 22
+          cache: npm
       - run: npm ci
-      - run: python -m pip install playwright==1.58.0
-      - run: python -m playwright install chromium
+      - run: npm run package
+      - run: npm run package:release
+      - run: node tools/prepare-public-release.mjs
+      - run: npm run package:connector
+      - run: python3 tools/ci-release.py seal
+      - uses: actions/upload-artifact@v7
+        with:
+          name: promptdirector-packages-${{ github.sha }}
+          path: dist/**
+          if-no-files-found: error
+          retention-days: 14
+
+  browser-shards:
+    name: Packaged Chromium shard ${{ matrix.shard }}
+    needs: [plan, package]
+    if: needs.plan.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.plan }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-browser
+      - uses: actions/download-artifact@v8
+        with:
+          name: promptdirector-packages-${{ github.sha }}
+          path: dist
+      - run: python3 tools/ci-release.py browser --shard "${{ matrix.shard }}" --evidence "dist/ci-browser/${{ matrix.shard }}"
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: promptdirector-browser-evidence-${{ github.sha }}-${{ matrix.shard }}
+          path: dist/ci-browser/${{ matrix.shard }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-upgrade:
+    name: Linux packaged upgrade
+    needs: [plan, package]
+    if: needs.plan.outputs.upgrade == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-browser
+      - uses: actions/download-artifact@v8
+        with:
+          name: promptdirector-packages-${{ github.sha }}
+          path: dist
+      - run: python3 tools/ci-release.py verify
+      - run: npm run test:upgrade
+      - run: python3 tools/ci-release.py verify
+
+  windows-portability:
+    name: Windows packaged data and project interactions
+    needs: [plan, package]
+    if: needs.plan.outputs.upgrade == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-browser
+      - uses: actions/download-artifact@v8
+        with:
+          name: promptdirector-packages-${{ github.sha }}
+          path: dist
+      - run: python tools/ci-release.py verify
       - name: Guard import deduplication growth and replacement semantics
         run: node --test test/library-import-dedup.test.js
-      - run: npm run package
-      - name: Check the Windows installation package
+      - name: Check the same installation package on Windows
         run: |
-          python - <<'PY'
+          python - <<'PYTHON'
           import json, os, pathlib, subprocess, sys, zipfile
           version = json.loads(pathlib.Path('extension/manifest.json').read_text())['version']
           destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'PromptDirector'
@@ -122,11 +166,14 @@ jobs:
           env = {**os.environ, 'PROMPTDIRECTOR_E2E_EXTENSION_DIR': str(destination), 'PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK': '1'}
           for script in ['project_tree_e2e.py', 'library_import_resources_e2e.py', 'library_import_ui_e2e.py', 'library_import_preview_e2e.py', 'library_import_interruption_e2e.py', 'image_generation_info_e2e.py', 'skill_cover_e2e.py']:
               subprocess.run([sys.executable, f'test/{script}'], env=env, check=True)
-          PY
+          PYTHON
       - run: npm run test:upgrade
+      - run: python tools/ci-release.py verify
 
   connector-platforms:
     name: Native connector (${{ matrix.os }})
+    needs: [plan, source-contracts]
+    if: needs.plan.outputs.connector == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -137,6 +184,43 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: connector/package-lock.json
       - run: npm ci --prefix connector --ignore-scripts
       - run: node --test connector/test/*.test.mjs
-        shell: bash
+
+  browser-package:
+    # Keep the existing required check; an always-run gate rejects failures,
+    # cancellations, missing shards and packages with a different source/digest.
+    name: Chromium journeys and packaged upgrade
+    needs: [plan, source-contracts, package, browser-shards, linux-upgrade, windows-portability, connector-platforms]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.plan }}
+      CI_NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@v6
+      - if: needs.package.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          name: promptdirector-packages-${{ github.sha }}
+          path: dist
+      - if: needs.browser-shards.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: promptdirector-browser-evidence-${{ github.sha }}-*
+          path: dist/ci-browser
+      - run: python3 tools/ci-release.py gate
+      - if: needs.plan.outputs.tier == 'full'
+        uses: actions/upload-artifact@v7
+        with:
+          name: promptdirector-tested-packages-${{ github.sha }}
+          path: |
+            dist/PromptDirector-*.zip
+            dist/store/*.zip
+            dist/github/**
+            dist/ci-package.json
+            dist/ci-validation.json
+          if-no-files-found: error
+          retention-days: 14
