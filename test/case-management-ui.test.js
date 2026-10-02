@@ -77,11 +77,13 @@ test("recycle bin is a first-class workspace action with restore and explicit pe
   assert.match(source, /type: "RESTORE_TRASH_ITEMS"/);
   assert.match(source, /type: "PERMANENT_DELETE_TRASH_ITEMS"/);
   assert.match(source, /type: "EMPTY_TRASH"/);
-  assert.match(source, /itemIds: relatedTrashGroupIds\(item\)/);
+  assert.match(source, /restoreTrashItems\(relatedTrashGroupIds\(item\), button\)/);
   assert.match(html, /id="trash-restore-all"[^>]*>全部恢复/);
   assert.doesNotMatch(html, /id="trash-refresh"/);
   const restoreAll = source.slice(source.indexOf("async function restoreAllTrashItems"), source.indexOf("function relatedTrashGroupIds"));
-  assert.match(restoreAll, /itemIds: trashItems\.map\(\(item\) => item\.id\)/);
+  assert.match(restoreAll, /restoreTrashItems\(trashItems\.map\(\(item\) => item\.id\), elements\.trashRestoreAll\)/);
+  assert.match(restoreAll, /type: "RESTORE_TRASH_ITEMS", itemIds/);
+  assert.match(restoreAll, /trashRestorePending = true/);
   assert.match(restoreAll, /response\.unresolved/);
   const restoreGroup = source.slice(source.indexOf("function relatedTrashGroupIds"), source.indexOf("async function permanentlyDeleteTrashItem"));
   assert.match(restoreGroup, /item\.kind === "collection"/);
