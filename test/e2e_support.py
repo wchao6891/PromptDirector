@@ -94,6 +94,7 @@ def extension_session(
     viewport: dict | None = None,
     accept_downloads: bool = True,
     extension_dir: Path = EXTENSION_DIR,
+    preserve_http_cache: bool = False,
 ) -> Iterator[ExtensionTestSession]:
     with tempfile.TemporaryDirectory(prefix=profile_prefix) as profile:
         with sync_playwright() as playwright:
@@ -103,6 +104,7 @@ def extension_session(
                 viewport=viewport or {"width": 1280, "height": 900},
                 accept_downloads=accept_downloads,
                 extension_dir=extension_dir,
+                preserve_http_cache=preserve_http_cache,
             )
             page_errors: list[str] = []
             context.on("page", lambda page: record_page_errors(page, page_errors))
@@ -121,7 +123,10 @@ def launch_context(
     viewport: dict,
     accept_downloads: bool,
     extension_dir: Path = EXTENSION_DIR,
+    preserve_http_cache: bool = False,
 ) -> BrowserContext:
+    network_blocked = os.environ.get("PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK") == "1"
+    cache_safe_args = ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"] if network_blocked and preserve_http_cache else []
     context = playwright.chromium.launch_persistent_context(
         profile_dir,
         headless=True,
@@ -133,6 +138,7 @@ def launch_context(
         args=[
             f"--disable-extensions-except={extension_dir}",
             f"--load-extension={extension_dir}",
+            *cache_safe_args,
         ],
     )
     worker = wait_for_extension_worker(context)
@@ -145,7 +151,9 @@ def launch_context(
         assert not bootstrap_errors, f"扩展首次初始化出现运行时错误：{bootstrap_errors}"
     finally:
         bootstrap.close()
-    if os.environ.get("PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK") == "1":
+    # Playwright routing disables native HTTP cache. Cache tests block external
+    # DNS at launch instead, retaining actual conditional requests to loopback.
+    if network_blocked and not preserve_http_cache:
         context.route("https://**/*", lambda route: route.abort("blockedbyclient"))
     return context
 
@@ -241,3 +249,18 @@ def base_entry(entry_id: str, title: str, text: str, content_id: str, saved_minu
         "mediaAssets": [],
         "timeNotes": [],
     }
+
+
+def scroll_to_case(page, entry_id: str) -> None:
+    """Reach an original via real scrolling, including virtual/unmounted cards."""
+    total = page.evaluate("async () => (await chrome.storage.local.get('entries')).entries.length")
+    page.evaluate('scrollTo(0,0)')
+    selector = f'.case-card[data-entry-id="{entry_id}"]'
+    for _ in range(total * 2):
+        page.wait_for_timeout(50)
+        card = page.locator(selector)
+        if card.count():
+            card.scroll_into_view_if_needed()
+            return
+        page.evaluate('scrollBy(0,innerHeight/2)')
+    raise AssertionError(f'Case {entry_id} was not reachable through the gallery')

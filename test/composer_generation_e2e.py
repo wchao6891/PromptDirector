@@ -89,7 +89,8 @@ def completed_session(page) -> dict:
         """async () => {
           const sessionId = new URL(location.href).searchParams.get('session');
           const response = await chrome.runtime.sendMessage({type: 'GET_COMPOSER_SESSION', sessionId});
-          return response?.ok === true && response.session?.activeTurn == null;
+          return response?.ok === true && response.session?.activeTurn == null
+            && response.session.messages?.at(-1)?.role === 'assistant';
         }""",
         timeout=10_000,
     )
@@ -718,16 +719,16 @@ def main() -> None:
         CreativeServiceHandler.release_image.clear()
         composer.evaluate(
             """() => {
-              const nativeSendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
+              const nativeGet = chrome.storage.local.get.bind(chrome.storage.local);
               let releaseStaleRefresh;
               let delayed = false;
               window.__promptDirectorStaleRefreshCaptured = false;
               window.__promptDirectorReleaseStaleRefresh = () => releaseStaleRefresh?.();
-              chrome.runtime.sendMessage = async (...args) => {
-                const response = await nativeSendMessage(...args);
-                const message = args[0];
+              chrome.storage.local.get = async (...args) => {
+                const response = await nativeGet(...args);
+                const keys = args[0];
                 const hasActiveJob = response?.creativeJobs?.items?.some(item => ['queued', 'running'].includes(item.status));
-                if (message?.type === 'GET_STATE' && hasActiveJob && !delayed) {
+                if (Array.isArray(keys) && keys.includes('creativeJobs') && hasActiveJob && !delayed) {
                   delayed = true;
                   window.__promptDirectorStaleRefreshCaptured = true;
                   await new Promise(resolve => { releaseStaleRefresh = resolve; });

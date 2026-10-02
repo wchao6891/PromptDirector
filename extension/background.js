@@ -1,4 +1,5 @@
 import { applyCompletedImageResult, applyCompletedVideoResult } from './media-analysis-results.js';
+import { handleComposerLibraryHost } from './composer-library-host.js';
 import { createOriginalFileDragHost } from './original-file-drag.js';
 import {createExternalAnalysisBatches} from './external-analysis-batches.js';
 import {ANALYSIS_BATCH_SPECS, ANALYSIS_RESULT_FIELDS} from './analysis-batch-specs.js';
@@ -1160,6 +1161,11 @@ async function handleMessage(message, interaction = {}) {
       return failVideoAnalysisAction(message);
     case "SAVE_COMPOSER_TOOL_DRAFT":
       return enqueue(async () => saveComposerToolDraftAction(message));
+    case "COMPOSER_LIBRARY_HOST":
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
+        throw new Error("创作台资料工具只能从插件工作空间调用");
+      }
+      return handleComposerLibraryHost(message, libraryStorage);
     case "CREATE_CREATIVE_SKILL":
       return enqueue(async () => createCreativeSkillAction(message));
     case "SAVE_CREATIVE_SKILL_VERSION":

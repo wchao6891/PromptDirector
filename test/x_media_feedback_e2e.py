@@ -18,7 +18,10 @@ def scan():
         source = run.context.new_page()
         text = 'Complete production prompt. ' * 800
         media = f'<a href="{MAIN}/photo/1"><img loading="lazy" src="https://pbs.twimg.com/media/pending?format=jpg&amp;name=large" style="width:600px"></a>'
-        run.context.route('https://x.com/**', lambda r:r.fulfill(body=post(MAIN,text,media), content_type='text/html'))
+        # An already mounted foreign reply marks the end of the author's chain;
+        # this check measures owned text/photo extraction, not thread pagination.
+        end = '<article><div data-testid=User-Name><a href="/other">Other</a></div><div data-testid=tweetText>Unrelated reply</div><a href="https://x.com/other/status/125"><time>Today</time></a></article>'
+        run.context.route('https://x.com/**', lambda r:r.fulfill(body=post(MAIN,text,media)+end, content_type='text/html'))
         run.context.route('https://pbs.twimg.com/**', lambda r:r.abort())
         source.goto(MAIN)
         source.evaluate('()=>{window.readabilityCalls=0;window.Readability=class {parse(){window.readabilityCalls++;return {textContent:"Unrelated page text"}}}}')
@@ -87,4 +90,7 @@ def hover():
         print({'hover_keeps_preview':True})
 
 if __name__=='__main__':
-    {'scan':scan,'supplement':supplement,'hover':hover}[sys.argv[1]]()
+    modes = {'scan':scan,'supplement':supplement,'hover':hover}
+    if len(sys.argv) > 1: modes[sys.argv[1]]()
+    else:
+        for mode in modes.values(): mode()

@@ -152,7 +152,7 @@ def main() -> None:
         )
         first_card_top = library.locator("#case-list > .case-card").first.evaluate("node => node.getBoundingClientRect().top")
         library.locator("#select-cases").click()
-        expect(library.locator("#result-count")).to_be_hidden()
+        expect(library.locator("#result-count")).to_be_visible()
         expect(library.locator("#gallery-view-controls")).to_be_hidden()
         expect(library.locator(".project-row.project-draggable")).to_have_count(0)
         expect(library.locator("#share-count")).to_have_text("已选 0")

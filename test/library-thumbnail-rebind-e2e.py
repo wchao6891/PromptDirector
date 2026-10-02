@@ -44,10 +44,19 @@ def load_all_batches(page) -> None:
 
 
 def scroll_through_gallery(page) -> None:
-    images = page.locator(".case-card img[data-visual-id]")
-    for index in range(images.count()):
-        images.nth(index).scroll_into_view_if_needed()
-        page.wait_for_timeout(40)
+    # Visit every original after unmount/remount; DOM indexes cannot identify
+    # virtual cards once scrolling releases previous rows.
+    page.evaluate('scrollTo(0,0)')
+    seen = set()
+    for _ in range(ENTRY_COUNT):
+        page.wait_for_timeout(60)
+        page.wait_for_function("""()=>[...document.querySelectorAll('.case-card img[data-visual-id]')]
+          .filter(img=>{const r=img.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight})
+          .every(img=>img.complete&&img.naturalWidth>0)""")
+        seen.update(page.locator('.case-card img[data-visual-id]').evaluate_all("nodes=>nodes.filter(img=>{const r=img.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight}).map(img=>img.dataset.visualId)"))
+        if len(seen) == ENTRY_COUNT: return
+        page.evaluate('scrollBy(0,innerHeight/2)')
+    assert len(seen) == ENTRY_COUNT, f'Only {len(seen)} originals decoded after virtual scrolling'
 
 
 def main() -> None:

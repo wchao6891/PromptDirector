@@ -64,13 +64,52 @@ export function createLocalComposerLibraryTools(options) {
   let progress;
   const taskProgress = () => progress ||= createComposerToolProgress({ storage: getLibraryStorage(), sessionId: options.session.id,
     userMessageId: options.userMessageId || options.session.activeTurn?.userMessageId || options.session.messages?.findLast(item => item.role === 'user')?.id });
-  return { ...withComposerCaseOperations({ ...options, tools: workspace,
-    invoke: (operation, input) => chrome.runtime.sendMessage({ type: 'CASE_OPERATION', operation, input }) }),
+  const tools = withComposerCaseOperations({ ...options, tools: workspace,
+    invoke: (operation, input) => chrome.runtime.sendMessage({ type: 'CASE_OPERATION', operation, input }) });
+  // Offscreen documents expose runtime messaging, but no chrome.storage API.
+  // Execute library work and persist continuations in the worker's shared host.
+  if (!globalThis.chrome?.storage?.local) {
+    const invoke = async (operation, input, signal) => {
+      signal?.throwIfAborted();
+      const response = await chrome.runtime.sendMessage({ type: 'COMPOSER_LIBRARY_HOST', operation, input,
+        sessionId: options.session.id, userMessageId: options.userMessageId || options.session.activeTurn?.userMessageId
+          || options.session.messages?.findLast(item => item.role === 'user')?.id,
+        vision: options.vision });
+      if (!response?.ok) throw new Error(response?.message || '无法执行创作台资料工具');
+      for (const event of response.events || []) await options.onEvent?.(event);
+      signal?.throwIfAborted();
+      return response.data;
+    };
+    return { ...tools, budget: options.budget,
+      execute: (name, args, context = {}) => invoke('execute', { name, args, callId: context.callId }, context.signal),
+      loadContinuation: input => invoke('loadContinuation', input),
+      saveContinuation: input => invoke('saveContinuation', input),
+      retainSkillVersions: input => invoke('retainSkillVersions', input),
+      clearContinuation: () => invoke('clearContinuation') };
+  }
+  return { ...tools,
     budget: options.budget,
     loadContinuation: input => taskProgress().loadContinuation(input),
     saveContinuation: checkpoint => taskProgress().saveContinuation(checkpoint),
     retainSkillVersions: ids => taskProgress().retainSkillVersions(ids),
     clearContinuation: () => taskProgress().clearContinuation() };
+}
+
+export async function handleComposerLibraryHost(message, storage = getLibraryStorage()) {
+  const operations = ['execute', 'loadContinuation', 'saveContinuation', 'retainSkillVersions', 'clearContinuation'];
+  if (!operations.includes(message.operation)) throw new Error('未知创作台资料工具动作');
+  const { composerSessions } = await storage.get('composerSessions');
+  const session = composerSessions?.find(item => item.id === message.sessionId);
+  if (!session || !session.messages?.some(item => item.id === message.userMessageId && item.role === 'user')) {
+    throw new Error('创作对话或用户要求已不存在，未执行工具动作');
+  }
+  const events = [];
+  const tools = createLocalComposerLibraryTools({ session, userMessageId: message.userMessageId,
+    vision: message.vision, onEvent: event => { events.push(event); } });
+  const data = message.operation === 'execute'
+    ? await tools.execute(message.input.name, message.input.args, { callId: message.input.callId })
+    : await tools[message.operation](message.input);
+  return { ok: true, data, events };
 }
 
 async function readWorkspaceLibraryState() {

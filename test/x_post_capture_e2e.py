@@ -99,7 +99,7 @@ def main() -> None:
         expect(library.locator(".detail-visual-gallery")).to_be_visible(timeout=8000)
         expect(library.locator(".original-prompt-panel")).to_contain_text("practical lighting breakdown")
         expect(library.locator(".captured-post-view, .article-document-reader")).to_have_count(0)
-        expect(library.locator("#detail-content")).to_have_class("detail-content has-primary-media")
+        expect(library.locator("#detail-content")).to_have_class(__import__('re').compile(r'^detail-content\b.*\bhas-primary-media\b'))
         before = setup.evaluate("async()=>{const s=await chrome.runtime.sendMessage({type:'GET_STATE'});return s.entries[0]}")
 
         def classify(category):

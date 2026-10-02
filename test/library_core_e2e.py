@@ -95,7 +95,7 @@ def main() -> None:
         library.evaluate(
             """async () => {
               const {facetCatalog} = await chrome.storage.local.get('facetCatalog');
-              await chrome.storage.local.set({
+              await (await import('./library-storage.js')).getLibraryStorage().set({
                 batchJob: {
                 version: 2, kind: 'text_tags', mode: 'rebuild', id: 'e2e-recoverable', status: 'completed',
                 createdAt: '2026-08-03T00:00:00.000Z', updatedAt: '2026-08-03T00:00:00.000Z',

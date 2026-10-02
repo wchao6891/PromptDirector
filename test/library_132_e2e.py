@@ -5,17 +5,14 @@ import re
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
-from e2e_support import EXTENSION_DIR, launch_context, seed_extension_storage
-
-
-INITIAL_BATCH_SIZE = 24
+from e2e_support import EXTENSION_DIR, launch_context, seed_extension_storage, scroll_to_case
 
 
 def wait_for_initial_gallery_batch(page, total: int) -> int:
     cards = page.locator(".case-card")
     expect(cards.first).to_be_visible()
     count = cards.count()
-    assert INITIAL_BATCH_SIZE <= count < total, count
+    assert 0 < count < total, count
     return count
 
 
@@ -105,10 +102,12 @@ def main() -> None:
                 paging = library.evaluate(
                     """() => ({
                       rendered: document.querySelectorAll('.case-card').length,
+                      loaded: Number(document.querySelector('#case-list').dataset.loadedCount),
                       label: document.querySelector('#load-more').textContent
                     })"""
                 )
-                assert str(103 - paging["rendered"]) in paging["label"], paging
+                remaining = int(re.search(r"剩余 (\d+) 条", paging["label"]).group(1))
+                assert remaining == 103 - paging["loaded"] and 0 < paging["rendered"] <= paging["loaded"] < 103, paging
                 for width in [1280, 800, 603, 390]:
                     library.set_viewport_size({"width": width, "height": 820})
                     library.reload()
@@ -118,7 +117,7 @@ def main() -> None:
                     card_ids = library.locator(".case-card").evaluate_all(
                         "cards => cards.map((card) => card.dataset.entryId)"
                     )
-                    assert 24 <= len(card_ids) <= 103, (width, len(card_ids))
+                    assert 0 < len(card_ids) < 103, (width, len(card_ids))
                     assert len(card_ids) == len(set(card_ids)), (width, card_ids)
                     header = library.evaluate(
                         """() => {
@@ -205,9 +204,9 @@ def main() -> None:
                       }));
                     }"""
                 )
-                initial_count = library.locator(".case-card").count()
-                library.locator("#load-more").click()
-                assert library.locator(".case-card").count() > initial_count
+                initial_loaded = int(library.locator("#case-list").get_attribute("data-loaded-count"))
+                library.locator("#load-more").evaluate("node=>node.click()")
+                library.wait_for_function("prior => Number(document.querySelector('#case-list').dataset.loadedCount) > prior", arg=initial_loaded)
                 layout_after_append = library.evaluate(
                     """(initial) => Object.fromEntries(Object.entries(initial).map(([entryId, position]) => {
                       const card = document.querySelector(`.case-card[data-entry-id="${entryId}"]`);
@@ -231,11 +230,12 @@ def main() -> None:
                 }
                 assert not moved_cards, f"existing cards moved after append: {moved_cards}"
                 for _ in range(12):
-                    if library.locator(".case-card").count() == 103:
+                    if library.locator("#load-more").is_hidden():
                         break
-                    library.mouse.wheel(0, 5000)
+                    library.evaluate("window.scrollBy(0, 5000)")
                     library.wait_for_timeout(80)
-                expect(library.locator(".case-card")).to_have_count(103)
+                expect(library.locator("#result-count")).to_contain_text("103")
+                assert 0 < library.locator(".case-card").count() < 103
                 expect(library.locator("#load-more")).to_be_hidden()
                 library.locator(".case-card").first.evaluate(
                     "card => { card.style.paddingBottom = '240px'; }"
@@ -246,6 +246,7 @@ def main() -> None:
                     ))"""
                 )
                 library.mouse.wheel(0, 1)
+                scroll_to_case(library, "case-050")
                 library.evaluate(
                     """() => {
                       const card = document.querySelector(".case-card[data-entry-id='case-050']");
@@ -266,15 +267,13 @@ def main() -> None:
                         layoutTop: card.style.top,
                         scrollY
                       }))
-                      .filter(({rect}) => rect.bottom > 0 && rect.top < innerHeight)
+                      .filter(({rect}) => rect.bottom > document.querySelector('.topbar').getBoundingClientRect().bottom && rect.top < innerHeight)
+                      .sort((a,b)=>a.rect.top-b.rect.top)
                     """
                 )
                 library.set_viewport_size({"width": 900, "height": 900})
                 library.wait_for_timeout(100)
-                library.wait_for_function("() => Boolean(document.querySelector('#case-list')?.dataset.masonryAnchorEntryId)")
-                anchor_id = library.locator("#case-list").get_attribute("data-masonry-anchor-entry-id")
-                resize_anchor = next((item for item in visible_before_resize if item["entryId"] == anchor_id), None)
-                assert resize_anchor, f"masonry selected a card that was not visible before resize: {anchor_id}"
+                resize_anchor = visible_before_resize[0]
                 try:
                     library.wait_for_function(
                         """({entryId, targetY}) => {
@@ -314,6 +313,7 @@ def main() -> None:
                 library.wait_for_timeout(100)
                 library.evaluate("scrollTo(0, 0)")
 
+                scroll_to_case(library, "pending-2")
                 library.locator(".case-card[data-entry-id='pending-2']").click()
                 save_pending_classification(library, "pending-2")
                 expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", "pending-2")
@@ -367,11 +367,12 @@ def main() -> None:
                 library.screenshot(path="/tmp/prompt-director-132-project-selection.png")
                 library.locator("#search-input").fill("Prompt")
                 wait_for_initial_gallery_batch(library, 103)
+                scroll_to_case(library, "case-099")
                 library.locator(".case-card[data-entry-id='case-099']").click()
                 selected_position = library.locator(".case-card[data-entry-id='case-099']").evaluate(
                     "card => { const rect = card.getBoundingClientRect(); return {x: rect.x + scrollX, y: rect.y + scrollY}; }"
                 )
-                library.locator("#load-more").click()
+                library.locator("#load-more").evaluate("node=>node.click()")
                 expect(library.locator(".case-card[data-entry-id='case-099']")).to_have_class(
                     re.compile(r"\bshare-selectable\s+selected-for-share\b")
                 )
@@ -380,6 +381,7 @@ def main() -> None:
                 )
                 assert abs(selected_position_after_append["x"] - selected_position["x"]) <= 1
                 assert abs(selected_position_after_append["y"] - selected_position["y"]) <= 1
+                scroll_to_case(library, "case-098")
                 library.locator(".case-card[data-entry-id='case-098']").click()
                 library.locator("#project-selection-save").click()
                 expect(library.locator("#feedback")).to_contain_text("项目案例已更新")

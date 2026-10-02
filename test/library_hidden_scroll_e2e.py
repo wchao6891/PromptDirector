@@ -30,6 +30,7 @@ with extension_session('pd-hidden-scroll-',viewport={'width':1440,'height':900})
     assert body.evaluate('e=>getComputedStyle(e).scrollbarWidth')=='none'
     body.hover(); page.mouse.wheel(0,550)
     page.wait_for_function("()=>document.querySelector('#sidebar-projects-body').scrollTop>0")
+    page.locator('#search-input').fill('长提示词案例')
     page.locator('.case-card[data-entry-id="scroll-case"]').click()
     expect(page.locator('#detail-drawer')).to_have_attribute('aria-hidden','false')
     page.get_by_role('button',name='展开全文',exact=True).first.click()

@@ -169,7 +169,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(skills.locator("#skill-goal")).to_have_value("只提炼我喜欢的构图、色彩和人物光线")
         skills.locator("#skill-show-draft").click()
         expect(skills.locator("#skill-generation-status")).to_contain_text("草稿已生成")
-        expect(skills.locator("#skill-run-progress")).to_have_attribute("style", re.compile("100%"))
+        expect(skills.locator("#skill-run-progress")).to_have_attribute("value", "1")
         expect(skills.locator("#skill-run-log")).to_contain_text("文字提炼完成")
         assert len(requests) == 1
         sent = json.dumps(requests[0], ensure_ascii=False)

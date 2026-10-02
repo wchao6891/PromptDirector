@@ -92,7 +92,7 @@ window.pdWindowStats = () => ({loaded: renderedCount, cards: elements.caseList.c
             page.evaluate('document.dispatchEvent(new DragEvent("dragend",{bubbles:true}))')
             page.evaluate('scrollBy(0,2)')
             page.wait_for_function('() => document.querySelector(`[data-entry-id="${pdDragSource}"]`) === null')
-            screenshots = Path(os.environ.get('PD_RESOURCE_SCREENSHOT_DIR', '/private/tmp/pd-resource-window'))
+            screenshots = Path(os.environ.get('PD_RESOURCE_SCREENSHOT_DIR', str(Path(tempfile.gettempdir()) / 'pd-resource-window')))
             screenshots.mkdir(parents=True, exist_ok=True)
             for mode in ['list', 'waterfall']:
                 page.locator(f'[data-gallery-view="{mode}"]').click()

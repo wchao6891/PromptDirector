@@ -480,6 +480,7 @@ const referenceSelectionWriter = createSelectionWriter({
   }
 });
 let trashItems = [];
+let trashRestorePending = false;
 let shareDialogContext = null;
 let shareLocalAssetRecords = [];
 let submissionDownloadIds = [];
@@ -1258,7 +1259,8 @@ async function refreshLibrary() {
   settings = response.settings ?? {};
   organizerState = response.organizerState ?? { collections: [] };
   importJobsState = response.importJobs ?? { items: [] };
-  trashItems = Array.isArray(response.trashState?.items) ? response.trashState.items : [];
+  // Gallery projections carry the count; absence of snapshots does not mean an empty trash.
+  if (Array.isArray(response.trashState?.items)) trashItems = response.trashState.items;
   elements.trashCount.hidden = response.trashCount === 0;
   elements.trashCount.textContent = String(response.trashCount ?? trashItems.length);
   aiSettings = response.aiSettings ?? aiSettings;
@@ -2630,7 +2632,7 @@ async function enterSelectMode({ entryId } = {}) {
   selectionProjectTargetTouched = false;
   elements.selectionProjectTarget.value = "";
   selectedCaseIds.clear();
-  savedSelection.caseIds.forEach(id => selectedCaseIds.add(id));
+  if (!entryId) savedSelection.caseIds.forEach(id => selectedCaseIds.add(id));
   if (entryId) selectedCaseIds.add(entryId);
   updateSelectionBar();
   if (entryId) {
@@ -11321,15 +11323,15 @@ async function loadTrashItems() {
   } catch (error) {
     showTrashFeedback(error.message || "无法读取回收站", true);
   } finally {
-    elements.trashRestoreAll.disabled = trashItems.length === 0;
+    elements.trashRestoreAll.disabled = trashRestorePending || trashItems.length === 0;
   }
 }
 
 function renderTrashItems() {
   elements.trashCount.hidden = trashItems.length === 0;
   elements.trashCount.textContent = String(trashItems.length);
-  elements.trashEmpty.disabled = trashItems.length === 0;
-  elements.trashRestoreAll.disabled = trashItems.length === 0;
+  elements.trashEmpty.disabled = trashRestorePending || trashItems.length === 0;
+  elements.trashRestoreAll.disabled = trashRestorePending || trashItems.length === 0;
   if (!trashItems.length) {
     elements.trashList.replaceChildren(textEl("strong", "trash-empty-title", "回收站为空"));
     return;
@@ -11364,6 +11366,7 @@ function renderTrashItems() {
     const actions = el("div", "trash-item-actions");
     const restore = el("button", "icon-button button-secondary");
     restore.type = "button";
+    restore.disabled = trashRestorePending;
     restore.setAttribute("aria-label", `恢复：${preview.title}`);
     restore.title = t("恢复");
     restore.append(createUiIcon("refresh-cw"));
@@ -11441,33 +11444,31 @@ async function hydrateTrashCover(image, assetId) {
 }
 
 async function restoreTrashItem(item, button) {
-  const response = await performTrashAction(button, {
-    type: "RESTORE_TRASH_ITEMS",
-    itemIds: relatedTrashGroupIds(item)
-  });
-  if (!response?.ok) return;
-  const unresolved = Array.isArray(response.unresolved) ? response.unresolved : [];
-  if (unresolved.length) {
-    showTrashFeedback(unresolved[0].reason || "当前关系已变化，暂时无法安全恢复", true);
-  } else {
-    showTrashFeedback(response.message || "已恢复");
-  }
-  await refreshLibrary();
-  await loadTrashItems();
+  await restoreTrashItems(relatedTrashGroupIds(item), button);
 }
 
 async function restoreAllTrashItems() {
   if (!trashItems.length) return;
-  const response = await performTrashAction(elements.trashRestoreAll, {
-    type: "RESTORE_TRASH_ITEMS",
-    itemIds: trashItems.map((item) => item.id)
-  });
-  if (!response?.ok) return;
-  const unresolved = Array.isArray(response.unresolved) ? response.unresolved : [];
-  const reasons = [...new Set(unresolved.map((item) => item.reason).filter(Boolean))];
-  showTrashFeedback([response.message || "恢复完成", ...reasons].join("；"), unresolved.length > 0);
-  await refreshLibrary();
-  await loadTrashItems();
+  await restoreTrashItems(trashItems.map((item) => item.id), elements.trashRestoreAll);
+}
+
+async function restoreTrashItems(itemIds, button) {
+  if (trashRestorePending) return;
+  trashRestorePending = true;
+  elements.trashRestoreAll.disabled = true;
+  elements.trashEmpty.disabled = true;
+  try {
+    const response = await performTrashAction(button, { type: "RESTORE_TRASH_ITEMS", itemIds });
+    if (!response?.ok) return;
+    const unresolved = Array.isArray(response.unresolved) ? response.unresolved : [];
+    const reasons = [...new Set(unresolved.map((item) => item.reason).filter(Boolean))];
+    showTrashFeedback([response.message || "恢复完成", ...reasons].join("；"), unresolved.length > 0);
+    await refreshLibrary();
+    await loadTrashItems();
+  } finally {
+    trashRestorePending = false;
+    renderTrashItems();
+  }
 }
 
 function relatedTrashGroupIds(startItem) {

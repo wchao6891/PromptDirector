@@ -202,6 +202,10 @@ def main() -> None:
         library.get_by_role("button", name="全部恢复", exact=True).click()
         expect(library.locator(".trash-empty-title")).to_have_text("回收站为空")
         expect(library.get_by_role("button", name="全部恢复", exact=True)).to_be_disabled()
+        restored = library.evaluate("async()=> (await chrome.runtime.sendMessage({type:'GET_STATE'})).entries[0]")
+        assert len(restored["mediaAssets"]) == 15, restored
+        assert any(prompt["assetId"] == "multi-image-15" and prompt["source"] == "manual"
+                   for prompt in restored["mediaPrompts"]), restored
         expect(library.locator("#trash-dialog")).not_to_contain_text("RECYCLE BIN")
 
         print({

@@ -136,7 +136,7 @@ def cache():
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
     threading.Thread(target=server.serve_forever,daemon=True).start()
     try:
-        with extension_session('pd-capture-cache-') as run:
+        with extension_session('pd-capture-cache-', preserve_http_cache=True) as run:
             page=run.open_page('collector.html')
             url=f'http://127.0.0.1:{server.server_port}/movie.mp4'
             def download():
@@ -244,4 +244,8 @@ def live():
             replies=response['batch']['candidates'][0]['supplements']
             print({'live_root_loaded_author_replies':len(replies),'includes_nested_video_comment':any(r['sourceUrl']==video for r in replies),'urls':[r['sourceUrl'] for r in replies]},flush=True)
 
-if __name__=='__main__': {'hydrated':hydrated,'background':background,'thread':thread,'cache':cache,'feedback':feedback,'live':live}[sys.argv[1]]()
+if __name__=='__main__':
+    modes = {'hydrated':hydrated,'background':background,'thread':thread,'cache':cache,'feedback':feedback,'live':live}
+    if len(sys.argv) > 1: modes[sys.argv[1]]()
+    else:
+        for name in ('hydrated','background','thread','cache','feedback'): modes[name]()
