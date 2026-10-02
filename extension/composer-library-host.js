@@ -19,10 +19,11 @@ const searchCache = createSearchIndexCache();
 
 // This loader runs only after an actual native tool call. Files and credentials never enter search results.
 export function createLocalComposerLibraryTools(options) {
+  const sendMessage = options.sendMessage ?? (message => chrome.runtime.sendMessage(message));
   const caseTools = createComposerLibraryTools({
     ...options,
     loadLibrary: async ({ name, args, signal }) => {
-      const state = await readWorkspaceLibraryState();
+      const state = await readWorkspaceLibraryState(sendMessage);
       if (!state?.ok) throw new Error(state?.message || '无法读取案例库');
       const entries = materializeLogicalCases(state.entries, normalizeCompoundCases(state.compoundCases, state.entries));
       signal?.throwIfAborted();
@@ -53,11 +54,11 @@ export function createLocalComposerLibraryTools(options) {
     }
   });
   const workspace = createComposerWorkspaceTools({ ...options, caseTools, invokeSkill: async (operation,input) => {
-    const response = await chrome.runtime.sendMessage({type:'SKILL_OPERATION',operation,input});
+    const response = await sendMessage({type:'SKILL_OPERATION',operation,input});
     if (!response?.ok) throw new Error(response?.message || '无法读取Skill');
     return response.data;
   }, loadState: async () => {
-    const state = await readWorkspaceLibraryState();
+    const state = await readWorkspaceLibraryState(sendMessage);
     if (!state?.ok) throw new Error(state?.message || '无法读取插件资料');
     return state;
   }, loadCurated: readComposerCuratedCatalog });
@@ -65,7 +66,7 @@ export function createLocalComposerLibraryTools(options) {
   const taskProgress = () => progress ||= createComposerToolProgress({ storage: getLibraryStorage(), sessionId: options.session.id,
     userMessageId: options.userMessageId || options.session.activeTurn?.userMessageId || options.session.messages?.findLast(item => item.role === 'user')?.id });
   const tools = withComposerCaseOperations({ ...options, tools: workspace,
-    invoke: (operation, input) => chrome.runtime.sendMessage({ type: 'CASE_OPERATION', operation, input }) });
+    invoke: (operation, input) => sendMessage({ type: 'CASE_OPERATION', operation, input }) });
   // Offscreen documents expose runtime messaging, but no chrome.storage API.
   // Execute library work and persist continuations in the worker's shared host.
   if (!globalThis.chrome?.storage?.local) {
@@ -95,7 +96,7 @@ export function createLocalComposerLibraryTools(options) {
     clearContinuation: () => taskProgress().clearContinuation() };
 }
 
-export async function handleComposerLibraryHost(message, storage = getLibraryStorage()) {
+export async function handleComposerLibraryHost(message, storage = getLibraryStorage(), hostOptions = {}) {
   const operations = ['execute', 'loadContinuation', 'saveContinuation', 'retainSkillVersions', 'clearContinuation'];
   if (!operations.includes(message.operation)) throw new Error('未知创作台资料工具动作');
   const { composerSessions } = await storage.get('composerSessions');
@@ -104,7 +105,7 @@ export async function handleComposerLibraryHost(message, storage = getLibrarySto
     throw new Error('创作对话或用户要求已不存在，未执行工具动作');
   }
   const events = [];
-  const tools = createLocalComposerLibraryTools({ session, userMessageId: message.userMessageId,
+  const tools = createLocalComposerLibraryTools({ ...hostOptions, session, userMessageId: message.userMessageId,
     vision: message.vision, onEvent: event => { events.push(event); } });
   const data = message.operation === 'execute'
     ? await tools.execute(message.input.name, message.input.args, { callId: message.input.callId })
@@ -112,10 +113,10 @@ export async function handleComposerLibraryHost(message, storage = getLibrarySto
   return { ok: true, data, events };
 }
 
-async function readWorkspaceLibraryState() {
+async function readWorkspaceLibraryState(sendMessage) {
   const reader = createLibraryViewReader({
     storage: getLibraryStorage(),
-    prepare: ({ summaryOnly, creativeSummary } = {}) => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
+    prepare: ({ summaryOnly, creativeSummary } = {}) => sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
     uiLanguage: chrome.i18n.getUILanguage(),
     includeCreativeState: false
   });

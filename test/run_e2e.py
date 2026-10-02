@@ -91,6 +91,7 @@ SCRIPTS = [
     "composer_tool_images_e2e.py",
     "compatible_composer_stream_e2e.py",
     "composer_workspace_tools_e2e.py",
+    "composer_library_host_e2e.py",
     "composer_reference_remove_e2e.py",
     "composer_video_generation_e2e.py",
     "creative_job_recovery_e2e.py",

@@ -1165,7 +1165,11 @@ async function handleMessage(message, interaction = {}) {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
         throw new Error("创作台资料工具只能从插件工作空间调用");
       }
-      return handleComposerLibraryHost(message, libraryStorage);
+      // A worker cannot deliver runtime messages to itself. Reuse the same
+      // dispatcher and sender validation without nesting the host in enqueue.
+      return handleComposerLibraryHost(message, libraryStorage, {
+        sendMessage: nested => handleMessage(nested, interaction)
+      });
     case "CREATE_CREATIVE_SKILL":
       return enqueue(async () => createCreativeSkillAction(message));
     case "SAVE_CREATIVE_SKILL_VERSION":

@@ -42,3 +42,24 @@ test('worker host rejects deleted user requests and unknown operations before ex
   await assert.rejects(handleComposerLibraryHost({ operation: 'saveContinuation', sessionId: session.id, userMessageId: 'deleted' }, storage), /用户要求已不存在/);
   await assert.rejects(handleComposerLibraryHost({ operation: 'delete_all', sessionId: session.id, userMessageId: 'request' }, storage), /未知/);
 });
+
+test('worker case and Skill tools use the host dispatcher instead of messaging the worker itself', async t => {
+  const prior = globalThis.chrome;
+  t.after(() => { globalThis.chrome = prior; });
+  globalThis.chrome = { storage: { local: {} }, runtime: { sendMessage: () => {
+    throw new Error('worker runtime self-message cannot deliver an operation');
+  } } };
+  const calls = [];
+  const tools = createLocalComposerLibraryTools({
+    session: createComposerSession({ libraryTools: { candidates: [{ caseId: 'reference' }] } }),
+    sendMessage: async message => {
+      calls.push(message);
+      return message.type === 'CASE_OPERATION'
+        ? { ok: true, caseId: 'reference', revision: 'current', content: 'complete original' }
+        : { ok: true, data: { callName: 'method', content: 'complete method' } };
+    }
+  });
+  assert.equal((await tools.execute('read_case_details', { caseId: 'reference' }, { callId: 'read' })).data.content, 'complete original');
+  assert.equal((await tools.execute('read_skill', { skillId: 'method' }, { callId: 'skill' })).data.content, 'complete method');
+  assert.deepEqual(calls.map(call => call.type), ['CASE_OPERATION', 'SKILL_OPERATION']);
+});
