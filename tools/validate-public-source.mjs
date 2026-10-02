@@ -1,4 +1,4 @@
-import { access, readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readlink, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -40,8 +40,16 @@ for (const file of sourceFiles) {
   if (path.split("/").includes("AGENTS.override.md") || /(?:^|\/)\.env(?:\.|$)/.test(path) && !path.endsWith(".env.example")) {
     findings.push(`公开源码包含本地配置文件：${path}`);
   }
-  if (!await exists(file)) continue; // A tracked deletion has no publishable bytes.
-  const bytes = await readFile(file);
+  let metadata;
+  try {
+    metadata = await lstat(file);
+  } catch (error) {
+    if (error.code === "ENOENT") continue; // A tracked deletion has no publishable bytes.
+    throw error;
+  }
+  // Git publishes a symlink's target text, never the external file's contents.
+  // Reading errors must fail verification rather than silently skip a file.
+  const bytes = metadata.isSymbolicLink() ? Buffer.from(await readlink(file), "utf8") : await readFile(file);
   if (bytes.includes(0)) continue;
   let text;
   try {
@@ -59,15 +67,6 @@ if (findings.length) throw new Error(findings.join("\n"));
 
 process.stdout.write(`${textFileCount} 个公开文本文件边界检查通过\n`);
 
-async function exists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function collectFiles(directory) {
   // Standalone fixture directories have no Git index or ignore rules.
   const ignored = new Set([".git", "dist", "node_modules", "coverage"]);
@@ -76,7 +75,7 @@ async function collectFiles(directory) {
     if (ignored.has(entry.name)) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...await collectFiles(path));
-    else if (entry.isFile()) files.push(path);
+    else if (entry.isFile() || entry.isSymbolicLink()) files.push(path);
   }
   return files;
 }

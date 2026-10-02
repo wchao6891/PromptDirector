@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, copyFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, copyFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-async function checkFiles(files, { privateDirectory, git = false, ignore = [], tracked = [] } = {}) {
+async function checkFiles(files, { privateDirectory, git = false, ignore = [], tracked = [], links = {} } = {}) {
   const root = await mkdtemp(join(tmpdir(), "public-source-boundary-"));
   try {
     await mkdir(join(root, "tools"));
@@ -14,6 +14,7 @@ async function checkFiles(files, { privateDirectory, git = false, ignore = [], t
       await mkdir(join(root, path, ".."), { recursive: true });
       await writeFile(join(root, path), content);
     }
+    for (const [path, target] of Object.entries(links)) await symlink(target, join(root, path));
     if (git) {
       assert.equal(spawnSync("git", ["init", root]).status, 0);
       if (ignore.length) await writeFile(join(root, ".gitignore"), `${ignore.join("\n")}\n`);
@@ -122,4 +123,18 @@ test("public service URLs, synthetic identifiers and binary assets remain publis
     ".github/workflows/check.yml": "name: checks"
   });
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("a published symlink exposes its private target even when that target cannot be read", async () => {
+  const result = await checkFiles({ "README.md": "Public source" }, {
+    git: true,
+    tracked: ["notes.md"],
+    links: { "notes.md": ["", "Users", "example", "private", "missing.md"].join("/") }
+  });
+  assert.notEqual(result.status, 0, "The Git link text is public even though the external file is absent");
+  assert.match(result.stderr, /本机路径：notes.md:1/);
+  const portable = await checkFiles({ "README.md": "Public source" }, {
+    git: true, tracked: ["guide.md"], links: { "guide.md": "README.md" }
+  });
+  assert.equal(portable.status, 0, portable.stderr);
 });
