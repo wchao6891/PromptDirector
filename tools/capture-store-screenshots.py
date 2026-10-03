@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -146,7 +147,23 @@ def main() -> None:
         skills.locator(".skill-case-toggle").nth(0).click()
         skills.locator(".skill-case-toggle").nth(2).click()
         skills.locator("#skill-goal").fill("提炼画面的主体层级、光线组织与色彩节奏")
+        skills.locator("#skill-goal").blur()
+        skills.evaluate("window.scrollTo(0, 0)")
         skills.screenshot(path=str(OUTPUT_DIR / "02-skills-1280x800.png"), full_page=False)
+
+        # Synthetic text keeps published screenshots independent of private data and paid services.
+        result = "# 主体、光线与色彩\n\n## 主体层级\n用明暗对比突出主体，让次要元素保持克制。\n\n## 光线组织\n先确定主光方向，再用轮廓光分离人物与背景。\n\n## 色彩节奏\n统一环境色，只保留少量强调色引导视线。"
+        def mock_extraction(route):
+            route.fulfill(status=200, content_type="text/event-stream", body=(
+                f'data: {json.dumps({"model": "deepseek-v4-flash", "choices": [{"delta": {"content": result}, "finish_reason": "stop"}]}, ensure_ascii=False)}\n\n'
+                "data: [DONE]\n\n"
+            ))
+        session.context.route("https://api.deepseek.com/**", mock_extraction)
+        skills.locator("#skill-generate").click()
+        skills.locator("#promptdirector-app-dialog").get_by_role("button", name="开始提炼").click()
+        expect(skills.locator("#skill-draft-step")).to_be_visible()
+        expect(skills.locator("#skill-draft-preview")).to_contain_text("主体、光线与色彩")
+        skills.screenshot(path=str(OUTPUT_DIR / "04-skill-result-1280x800.png"), full_page=False)
 
         composer = session.open_page("composer.html", wait_until="networkidle")
         expect(composer.locator("#composer-instruction")).to_be_visible()
