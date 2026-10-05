@@ -233,16 +233,18 @@ test("every captured draft exposes project and the shared multi-tag editor befor
     collectorHtml.indexOf('<div id="capture-add-more-actions"')
   );
   assert.match(metadata, /id="capture-collection"/);
-  assert.match(metadata, /id="capture-new-collection-name"/);
-  assert.match(metadata, /data-i18n="标签"/);
+  const projects = await readFile(new URL('../extension/capture-organization.js', import.meta.url), 'utf8');
+  assert.match(projects, /name\.id = 'capture-new-collection-name'/);
+  assert.match(projects, /createDetailProjectSelector/);
+  assert.match(collectorSource, /compact: true/);
   assert.doesNotMatch(metadata, /自由标签|可选|不用预先创建|输入任意新标签/);
   assert.match(metadata, /id="custom-labels"/);
   assert.doesNotMatch(metadata, /id="capture-extra-metadata"[^>]*open/);
   assert.ok(metadata.indexOf("</details>") < metadata.indexOf('id="custom-labels"'));
   assert.doesNotMatch(collectorSource, /captureExtraMetadata\.open = !pageCaptureBatch/);
   assert.match(collectorSource, /collections = response\.collections \?\? \[\]/);
-  assert.match(collectorSource, /const selectedCollection = elements\.captureCollection\.value/);
-  assert.match(collectorSource, /newCollectionName: selectedCollection === NEW_COLLECTION_OPTION_VALUE/);
+  assert.match(collectorSource, /collectionId: draft\.collectionId/);
+  assert.match(collectorSource, /newCollectionName: draft\.newCollectionName/);
   assert.match(collectorSource, /const customLabelEditor = createTagEditor/);
   assert.match(collectorSource, /customLabels: customLabelEditor\.values/);
   assert.match(collectorSource, /type: "COMMIT_CAPTURE_DRAFT",[\s\S]*\.\.\.metadata/);

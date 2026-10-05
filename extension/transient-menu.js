@@ -18,7 +18,7 @@ export function bindTransientMenus(root = document, selector = "") {
       return;
     }
     const action = event.target instanceof Element ? event.target.closest("button, a[href]") : null;
-    if (action && !action.closest(".package-preferences")) current.open = false;
+    if (action && !action.closest(".package-preferences") && !action.closest('[data-menu-interactive]')) current.open = false;
   };
   const onToggle = (event) => {
     const current = closestMenu(event.target);

@@ -1,6 +1,8 @@
+import { WORKSPACE_OPERATION_SPECS } from './workspace-operation-specs.js';
+import { validate } from './case-operation-specs.js';
 import { agentError, requireInteger } from "./agent-protocol.js";
 
-export function createAgentWorkspace({ chromeApi, readCase, readSelection }) {
+export function createAgentWorkspace({ chromeApi, readCase, readSelection, readTemporary }) {
   const libraryUrl = chromeApi.runtime.getURL("library.html");
   const composerUrl = chromeApi.runtime.getURL("composer.html");
   async function contexts() {
@@ -9,6 +11,22 @@ export function createAgentWorkspace({ chromeApi, readCase, readSelection }) {
       .map(item => ({ tabId: item.tabId, surface: item.documentUrl.split(/[?#]/u)[0] === libraryUrl ? "library" : "composer" }));
   }
   return {
+    async live(operation, input = {}) {
+      validate(WORKSPACE_OPERATION_SPECS.find(spec => spec.name === operation).parameters, input, operation);
+      if (input.tabId !== undefined) requireInteger(input.tabId);
+      const available = (await contexts()).filter(item => item.surface === 'library');
+      if (!available.length) return { state: 'no_workspace', contexts: [] };
+      if (input.tabId === undefined && available.length > 1) return { state: 'choose_workspace', contexts: available };
+      const context = input.tabId === undefined ? available[0] : available.find(item => item.tabId === input.tabId);
+      if (!context) throw agentError('workspace_closed', '页面已关闭，请重新发现现场');
+      const temporary = operation === 'control_workspace' && input.action === 'open_temporary'
+        ? await readTemporary(input.transferId) : undefined;
+      let response;
+      try { response = await chromeApi.runtime.sendMessage({ type: 'AGENT_LIVE_WORKSPACE', operation, tabId: context.tabId, input, temporary }); }
+      catch { throw agentError('workspace_unavailable', '页面尚未加载协作功能，请保存编辑后刷新案例库页面'); }
+      if (!response?.ok) throw agentError(response?.code || 'workspace_unavailable', response?.message || '页面尚未就绪');
+      return { state: 'ready', tabId: context.tabId, ...response.result };
+    },
     async read(input = {}) {
       if (input.tabId === undefined && input.source !== "page") return readSelection(input);
       if (input.tabId !== undefined) requireInteger(input.tabId);
@@ -32,7 +50,7 @@ export function createAgentWorkspace({ chromeApi, readCase, readSelection }) {
       const openUrl = `${libraryUrl}?case=${encodeURIComponent(caseId)}`;
       const tab = await chromeApi.tabs.create({ url: openUrl, active: true });
       await chromeApi.windows.update(tab.windowId, { focused: true });
-      return { state: "opening", caseId, tabId: tab.id, openUrl, displayVerified: false,
+      return { state: "opening", caseId, tabId: tab.id, openUrl,
         next: "用 read_workspace_context 读取此 tabId，viewedCaseId 相符才表示详情已显示。新页面不改变原页面的选择或未保存编辑。" };
     }
   };

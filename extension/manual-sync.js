@@ -204,11 +204,11 @@ async function runManualSync({ vault, settings: settingsValue, dependencies: dep
     deps.onProgress({ phase: "uploading", current: index, total: missingAssets.length });
     const blob = await deps.readMedia(asset.id);
     requireNotAborted(signal);
-    if (!(blob instanceof Blob) || !blob.size) {
+    if (!(blob instanceof Blob) || !blob.size && !asset.id.startsWith('skill-file:')) {
       missingAssetIds.add(asset.id);
       continue;
     }
-    const objectId = await deps.writeObject(vault, blob, { signal });
+    const objectId = await deps.writeObject(vault, blob, { signal, assetId: asset.id });
     requireNotAborted(signal);
     localRefs[asset.id] = { objectId, contentType: blob.type || asset.contentType };
     effects.preparedRemoteObjects += 1;
@@ -409,7 +409,7 @@ async function* remoteMediaReplacements({ vault, imageRefs, localRefs, readObjec
   for (const [index, [assetId, reference]] of pending.entries()) {
     requireNotAborted(signal);
     onProgress({ phase: "downloading", current: index, total: pending.length });
-    const blob = await readObject(vault, reference.objectId, { signal });
+    const blob = await readObject(vault, reference.objectId, { signal, assetId });
     requireNotAborted(signal);
     yield { id: assetId, blob };
   }

@@ -99,7 +99,7 @@ def main() -> None:
         collector.reload(wait_until="networkidle")
         expect(collector.locator("#content-summary")).to_have_text("1 text excerpt")
         expect(collector.locator("#save-draft")).to_have_text("Save case")
-        expect(collector.locator("#capture-collection option").first).to_have_text("No project")
+        expect(collector.locator("#capture-collection > summary")).to_contain_text("Choose projects")
         assert_no_visible_chinese(collector.locator("body"), "collector text draft at 372px")
         assert collector.evaluate("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
 

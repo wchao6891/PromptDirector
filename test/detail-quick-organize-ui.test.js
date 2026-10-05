@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
-const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
+const css = await readFile(new URL("../extension/organization.css", import.meta.url), "utf8");
 const foundation = await readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8");
 const tagEditor = await readFile(new URL("../extension/tag-editor.js", import.meta.url), "utf8");
 
@@ -29,7 +29,8 @@ test("detail organization follows prompt and AI tags without an extra section ti
   assert.ok(detail.indexOf("createDetailAttributes(entry)") < detail.indexOf("createDetailQuickOrganization(entry)"));
   assert.doesNotMatch(quickOrganizer, /"快捷整理"/);
   assert.match(quickOrganizer, /"项目"/);
-  assert.match(quickOrganizer, /"添加标签"/);
+  assert.match(quickOrganizer, /compact: true/);
+  assert.doesNotMatch(quickOrganizer, /detail-organization-heading/);
   assert.doesNotMatch(quickOrganizer, /可选|任意输入|不用预先创建|还没有/);
   assert.match(quickOrganizer, /entry\.compoundCase\?\.customLabels \?\? entry\.customLabels/);
 });
@@ -38,7 +39,7 @@ test("detail projects use a compact multi-project dropdown and can be created in
   assert.match(quickOrganizer, /detail-project-menu/);
   assert.match(quickOrganizer, /"选择项目"/);
   assert.match(quickOrganizer, /t\("已加入 \{count\} 个项目", \{ count: selectedProjects\.length \}\)/);
-  assert.match(quickOrganizer, /checkbox\.type = "checkbox"/);
+  assert.match(quickOrganizer, /createDetailProjectSelector/);
   assert.match(quickOrganizer, /type: "REPLACE_COLLECTION_ENTRIES"/);
   assert.match(quickOrganizer, /type: "CREATE_COLLECTION"/);
   assert.match(quickOrganizer, /"新建并加入"/);
@@ -58,28 +59,28 @@ test("detail uses the shared removable multi-tag editor", () => {
 test("case deletion is a visible one-step recycle-bin action and no longer lives in the editor", () => {
   const detail = source.slice(source.indexOf("async function renderDetail"), source.indexOf("function createLocalDiscovery"));
   const metadata = source.slice(source.indexOf("function createDetailMetadata"), source.indexOf("function createFullAnalysis"));
-  assert.doesNotMatch(quickOrganizer, /移入回收站|trash-2|deleteCaseIncrementally/);
+  assert.match(quickOrganizer, /createDetailDeleteAction\(entry\)/);
+  assert.match(quickOrganizer, /createDetailSourceAction\(entry\)/);
   assert.match(footerActions, /"移入回收站"/);
   assert.match(footerActions, /createUiIcon\("trash-2"\)/);
   assert.match(footerActions, /案例及其媒体会移入回收站，可随时恢复/);
   assert.match(footerActions, /deleteCaseIncrementally\(deleteButton, entry\.id\)/);
-  assert.match(detail, /createDetailMetadata\(entry, \{ includeDelete: true \}\)/);
-  assert.match(detail, /else body\.append\(createDetailFooterActions\(entry\)\)/);
-  assert.match(metadata, /if \(includeDelete\) actions\.append\(createDetailDeleteAction\(entry\)\)/);
-  assert.doesNotMatch(detail, /content\.append\(createDetailFooterActions\(entry\)\)/);
+  assert.doesNotMatch(detail, /createDetailFooterActions|includeDelete/);
+  assert.doesNotMatch(metadata, /createDetailDeleteAction/);
   assert.doesNotMatch(editor, /DELETE_ENTRY|deleteCaseIncrementally|删除这个案例/);
 });
 
-test("single-image prompts have one editor while multi-image prompts separate current and shared text", () => {
+test("original prompts have one detail surface; case editing contains no duplicated original editor", () => {
   const prompt = source.slice(source.indexOf("function createMediaPromptSection"), source.indexOf("async function analyzeEntryVisualSet"));
-  assert.match(prompt, /images\.length > 1 \|\| options\.compoundMember/);
-  assert.match(prompt, /source\.originalAssetId \? "当前图片提示词" : "案例共享提示词"/);
-  assert.doesNotMatch(prompt, /promptIconButton\(t\("添加原始提示词"\), "plus"\)/);
-  assert.match(editor, /scope\.append\(option\("", t\("案例共享提示词"\)\)\)/);
-  assert.match(editor, /panelHost\.replaceChildren\(createPromptPanel/);
-  assert.match(editor, /assetId \? entry\.mediaPrompts\?\.find/);
-  assert.match(editor, /"当前图片提示词" : "当前视频提示词"/);
-  assert.match(prompt, /assetId: source\.originalAssetId/);
+  assert.doesNotMatch(editor, /entry-original|createPromptPanel|提示词范围/);
+  assert.match(prompt, /sharedOriginalPrompt\(entry\)/);
+  assert.match(prompt, /'原始提示词'/);
+  assert.match(prompt, /'当前媒体'/);
+  assert.match(prompt, /setAttribute\('role', 'tablist'\)/);
+  assert.match(prompt, /type: 'UPDATE_ENTRY_TEXT'/);
+  assert.match(prompt, /type: 'UPDATE_ENTRY_MEDIA_PROMPT'/);
+  assert.doesNotMatch(prompt, /prompt-more|replaceWith\(panel\)/);
+
 });
 
 test("entry title editing keeps one visible heading and an inline save action", () => {

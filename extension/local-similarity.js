@@ -74,7 +74,7 @@ export function createSimilarityIndex(entries = [], catalogValue, options = {}) 
   return { profiles, domains, tokenCache };
 }
 
-export function rankSimilarEntries(index, entryId, limit = Number.POSITIVE_INFINITY) {
+export function rankSimilarEntries(index, entryId, limit = Number.POSITIVE_INFINITY, { method = 'local' } = {}) {
   const current = index?.profiles?.get(entryId);
   if (!current?.domain) return [];
   const ranked = [];
@@ -90,6 +90,17 @@ export function rankSimilarEntries(index, entryId, limit = Number.POSITIVE_INFIN
     }
     // Tags never gate admission. With missing primary evidence, use the other available source,
     // clearly below results with the requested primary source; never invent pixels or prompts.
+    const promptAvailable = Boolean(current.prompt.size && candidate.prompt.size);
+    const tagsAvailable = Boolean(current.tags.size && candidate.tags.size);
+    if (method !== 'local') {
+      const available = method === 'prompt' ? promptAvailable : method === 'palette' ? colorAvailable : tagsAvailable;
+      if (!available) continue;
+      const score = method === 'prompt' ? prompt : method === 'palette' ? palette : tags;
+      ranked.push({ entry: candidate.entry, visualId: candidate.visualId, primary: score, secondary: 0, fallback: false,
+        score, promptSimilarity: promptAvailable ? prompt : null, paletteSimilarity: colorAvailable ? palette : null,
+        tagSimilarity: tagsAvailable ? tags : null, sameContentType: [...current.contentTypeIds].some(id => candidate.contentTypeIds.has(id)), reason: method === 'prompt' ? '提示词相似度' : method === 'palette' ? '色卡相似度' : '已确认视觉标签相似度' });
+      continue;
+    }
     const primaryAvailable = current.video ? prompt > 0 : colorAvailable;
     if (!primaryAvailable && !(current.video ? colorAvailable : prompt > 0)) continue;
     const primary = primaryAvailable ? (current.video ? prompt : palette) : (current.video ? palette : prompt);
@@ -98,6 +109,7 @@ export function rankSimilarEntries(index, entryId, limit = Number.POSITIVE_INFIN
       entry: candidate.entry, visualId: candidate.visualId,
       primary, secondary, fallback: !primaryAvailable,
       score: primary, promptSimilarity: prompt, paletteSimilarity: palette, tagSimilarity: tags,
+      promptAvailable, paletteAvailable: colorAvailable, tagsAvailable,
       sameContentType: [...current.contentTypeIds].some(id => candidate.contentTypeIds.has(id)),
       reason: primaryAvailable
         ? current.video ? (colorAvailable ? "提示词与封面色彩参考" : "提示词参考") : (prompt > 0 ? "色彩与提示词参考" : "色彩参考")
@@ -111,6 +123,7 @@ export function rankSimilarEntries(index, entryId, limit = Number.POSITIVE_INFIN
     const boundary = similarityBoundary(fallback ? group.map(item => item.primary) : primaryDistribution);
     for (const item of group) item.near = item.primary >= boundary;
   }
+  if (method !== 'local') return ranked.sort((a, b) => b.score - a.score || a.entry.id.localeCompare(b.entry.id)).slice(0, Math.max(0, Math.floor(Number(limit) || 0)));
   return ranked.sort((a, b) => Number(a.fallback) - Number(b.fallback)
     || Number(b.near) - Number(a.near)
     || b.secondary - a.secondary

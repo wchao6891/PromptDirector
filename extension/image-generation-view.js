@@ -5,12 +5,13 @@ import { normalizeGenerationInfo, readImageGenerationInfo } from './image-genera
 export function createGenerationInfoViewReader(readBlob) {
   let caseId;
   let cache = new Map();
-  return async function read(entry) {
+  return async function read(entry, { assetIds } = {}) {
     if (caseId !== entry.id) { caseId = entry.id; cache = new Map(); }
     const currentCache = cache;
     const mediaAssets = [];
     for (const asset of entry.mediaAssets ?? []) {
-      if (asset.kind !== 'image' || asset.usage === 'poster' || normalizeGenerationInfo(asset.generationInfo)) {
+      if (asset.kind !== 'image' || asset.usage === 'poster' || normalizeGenerationInfo(asset.generationInfo)
+          || (assetIds && !assetIds.includes(asset.id))) {
         mediaAssets.push(asset);
         continue;
       }

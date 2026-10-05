@@ -1,7 +1,7 @@
 """Real Chrome ingestion and existing detail UI; constructed PNG is a boundary fixture.
 Set PROMPTDIRECTOR_GENERATION_SAMPLES to a provenance JSON for real-file acceptance.
 """
-import base64, hashlib, json, os, struct, zlib
+import base64, hashlib, json, os, re, struct, zlib
 from pathlib import Path
 from playwright.sync_api import expect
 from e2e_support import extension_session
@@ -32,8 +32,12 @@ def main():
         entry_id = saved['entry']['id']
         page.goto(f'chrome-extension://{session.extension_id}/library.html?case={entry_id}', wait_until='networkidle')
         expect(page.locator('.original-prompt-panel .prompt-text').first).to_contain_text('雨夜书店')
-        expect(page.locator('.metadata-section')).to_contain_text('18446744073709551615')
-        assert page.locator('.metadata-section').count() == 1
+        source = page.get_by_role('button', name='来源信息', exact=True)
+        expect(source).to_have_attribute('aria-description', re.compile('.*18446744073709551615.*', re.S))
+        source.click()
+        expect(page.locator('#promptdirector-app-dialog .metadata-list')).to_contain_text('18446744073709551615')
+        page.locator('#promptdirector-app-dialog .app-dialog-close').click()
+        assert source.count() == 1
         for width in [1280, 390]:
             page.set_viewport_size({'width':width,'height':900})
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), width
@@ -46,7 +50,7 @@ def main():
         page.get_by_role('button',name='编辑原始提示词',exact=True).click()
         editor.fill('')
         page.locator('.original-prompt-panel').get_by_role('button',name='保存',exact=True).click()
-        expect(page.locator('.original-prompt-panel')).to_have_count(0)
+        expect(page.locator('.original-prompt-panel .prompt-read-body')).to_have_text('暂无提示词')
         state=page.evaluate("async () => chrome.runtime.sendMessage({type:'GET_STATE'})")
         entry=next(e for e in state['entries'] if e['id']==entry_id)
         assert entry['mediaPrompts']==[]
@@ -64,8 +68,8 @@ def main():
           await chrome.storage.local.set({entries});return entries;
         }""")
         page.goto(f'chrome-extension://{session.extension_id}/library.html?case={entry_id}', wait_until='networkidle')
-        expect(page.locator('.metadata-section')).to_contain_text('18446744073709551615')
-        expect(page.locator('.original-prompt-panel')).to_have_count(0)
+        expect(page.get_by_role('button', name='来源信息', exact=True)).to_have_attribute('aria-description', re.compile('.*18446744073709551615.*', re.S))
+        expect(page.locator('.original-prompt-panel .prompt-read-body')).to_have_text('暂无提示词')
         assert page.evaluate("async () => (await chrome.storage.local.get('entries')).entries") == stored
         # The existing confirmation dialog resolves before any new case commit.
         for action in ['跳过','覆盖']:

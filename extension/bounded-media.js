@@ -56,7 +56,11 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
     await response.body?.cancel?.().catch(() => undefined);
     throw new Error(`媒体文件超过本次接收预算（${maxBytes} bytes）`);
   }
-  const blob = await readBoundedBlob(response, maxBytes, options.controller?.signal ?? options.signal);
+  // Content-Length describes encoded bytes. Fetch exposes decoded body bytes;
+  // a compressed or absent length cannot be used as a reliable percentage.
+  const encoding = response?.headers?.get?.('content-encoding');
+  const totalBytes = Number.isSafeInteger(declared) && declared > 0 && (!encoding || encoding === 'identity') ? declared : null;
+  const blob = await readBoundedBlob(response, maxBytes, options.controller?.signal ?? options.signal, options.onProgress, totalBytes);
   // Only inspect a header window. The browser-managed Blob sink can spill to
   // disk; retaining all chunks and concatenating them duplicates large files.
   const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
@@ -166,10 +170,12 @@ export function assertRemoteMediaUrl(value, options = {}) {
   return url;
 }
 
-async function readBoundedBlob(response, limit, signal) {
+async function readBoundedBlob(response, limit, signal, onProgress, totalBytes) {
   if (!response?.body?.getReader) throw new Error("媒体响应无法流式读取");
   signal?.throwIfAborted();
   let total = 0;
+  const report = () => onProgress?.({ receivedBytes: total, totalBytes: totalBytes !== null && total <= totalBytes ? totalBytes : null });
+  report();
   const checked = response.body.pipeThrough(new TransformStream({
     transform(value, controller) {
       signal?.throwIfAborted();
@@ -178,11 +184,14 @@ async function readBoundedBlob(response, limit, signal) {
         throw new Error(`媒体文件超过本次接收预算（${limit} bytes）`);
       }
       controller.enqueue(value);
+      report();
     }
   }), { signal });
   const blob = await new Response(checked).blob();
   signal?.throwIfAborted();
   if (!total) throw new Error("媒体文件为空");
+  if (totalBytes !== null && total !== totalBytes) totalBytes = null;
+  report();
   return blob;
 }
 

@@ -51,7 +51,8 @@ test("trash restore and irreversible cleanup have separate explicit message cont
     assert.match(background, new RegExp(`case "${type}"`));
   }
   const cleanup = functionBlock("commitTrashCleanup", "restrictLocalStorageAccess");
-  assert.match(cleanup, /commitMetadataThenDeleteImages/);
+  assert.match(cleanup, /await commitLocalChanges\(\{ \.\.\.taken\.changes, \[TRASH_CLEANUP_KEY\]: pending \}\)/);
+  assert.match(cleanup, /await resumeTrashCleanup\(\)/);
   assert.match(cleanup, /deleteMediaBlobs/);
   assert.match(cleanup, /screenshotStorageKey/);
   assert.match(cleanup, /永久删除/);

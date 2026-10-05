@@ -180,8 +180,10 @@ test("shared ZIP and degraded folders salvage individual failures while verified
 });
 
 test("a committed import never deletes restored non-case media during later UI refresh failure", () => {
-  assert.equal(js.match(/let applySucceeded\s*=\s*false/g)?.length, 2);
-  assert.equal(js.match(/applySucceeded\s*=\s*true/g)?.length, 2);
-  assert.match(js, /creativeRuns[\s\S]*composerSessions[\s\S]*trashState/);
-  assert.match(js, /\(applySucceeded \|\| error\?\.code === "IMPORT_OUTCOME_UNKNOWN"\)\s*\?\s*new Set\(savedIds\)/);
+  for (const [start, end] of [['restoreCompleteFolderBackup', 'backupMediaPaths'], ['applyLibraryPackageBatch', 'cancelLibraryPackageBatch']]) {
+    const action = js.slice(js.indexOf(`async function ${start}(`), js.indexOf(`function ${end}(`));
+    assert.match(action, /createMediaStage\(\)/);
+    assert.match(action, /finally\s*\{\s*stage\.release\(\)/);
+    assert.doesNotMatch(action, /deleteMediaBlob|committedMediaIds/);
+  }
 });

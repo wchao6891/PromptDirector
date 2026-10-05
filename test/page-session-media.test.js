@@ -82,3 +82,22 @@ test('page-session streaming enforces temporary storage budget and preserves exa
     assert.equal(Object.hasOwn(record, 'chunks'), false);
   } finally { discardPageSessionMedia({ token: 'exact' }); globalThis.fetch = originalFetch; }
 });
+
+test('explicit discard aborts an in-flight page download instead of only removing an already-loaded blob', async () => {
+  const original = globalThis.fetch;
+  let entered, signal;
+  const began = new Promise(resolve => { entered = resolve; });
+  globalThis.fetch = async (_url, options) => {
+    signal = options.signal; entered();
+    await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  };
+  try {
+    const pending = preparePageSessionMedia({ token: 'cancel-running', url: 'https://media.example/video.mp4',
+      allowedUrls: ['https://media.example/video.mp4'], maxBytes: 64, chunkBytes: 16, timeoutMs: 1000 });
+    await began;
+    assert.equal(discardPageSessionMedia({ token: 'cancel-running' }), true);
+    await assert.rejects(pending, /取消/);
+    assert.equal(signal.aborted, true);
+    assert.equal(globalThis.__PROMPTDIRECTOR_PAGE_SESSION_DOWNLOADS__.has('cancel-running'), false);
+  } finally { globalThis.fetch = original; }
+});

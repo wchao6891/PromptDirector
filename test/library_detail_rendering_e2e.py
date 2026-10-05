@@ -109,6 +109,7 @@ def main() -> None:
               for (const id of ['detail-image-a', 'detail-image-b']) {
                 await saveMediaBlob(id, new Blob([bytes], {type: 'image/png'}), {checkCapacity: false});
               }
+              const canvas=document.createElement('canvas');canvas.width=20;canvas.height=20;const context=canvas.getContext('2d');context.fillStyle='#123456';context.fillRect(0,0,10,20);await saveMediaBlob('detail-image-b',await new Promise(resolve=>canvas.toBlob(resolve,'image/png')));
               await saveMediaBlob('detail-video-b', new Blob([Uint8Array.from(atob(video), c=>c.charCodeAt(0))], {type: 'video/mp4'}), {checkCapacity: false});
             }""",
             {"png": PNG_BASE64, "video": base64.b64encode((Path(__file__).parent / "fixtures/zhipu-local-video-smoke.mp4").read_bytes()).decode()},
@@ -164,10 +165,10 @@ def main() -> None:
         assert again_b["immediate"] == {"loadingId": "detail-b", "title": "", "oldImageVisible": False}, again_b
         assert back_to_a["staleFrames"] == [] and again_b["staleFrames"] == [], {"back": back_to_a, "again": again_b}
 
-        checker = library.locator(".detail-visual-item.has-alpha-channel").evaluate(
+        checker = library.locator(".detail-image.has-alpha-channel").evaluate(
             "node => ({backgroundImage: getComputedStyle(node).backgroundImage, viewer: getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim(), browser: getComputedStyle(document.documentElement).getPropertyValue('--ui-browser').trim(), checker: getComputedStyle(document.documentElement).getPropertyValue('--viewer-checker-a').trim()})"
         )
-        assert checker["backgroundImage"] != "none" and checker["viewer"] == checker["browser"], checker
+        assert checker["backgroundImage"] != "none" and checker["viewer"] == "#ffffff", checker
 
         library.evaluate(
             """() => {
@@ -176,10 +177,10 @@ def main() -> None:
             }"""
         )
         expect(library.locator("html")).to_have_attribute("data-theme", "dark")
-        dark_checker = library.locator(".detail-visual-item.has-alpha-channel").evaluate(
+        dark_checker = library.locator(".detail-image.has-alpha-channel").evaluate(
             "node => ({backgroundImage: getComputedStyle(node).backgroundImage, viewer: getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim(), browser: getComputedStyle(document.documentElement).getPropertyValue('--ui-browser').trim(), checker: getComputedStyle(document.documentElement).getPropertyValue('--viewer-checker-a').trim()})"
         )
-        assert dark_checker["backgroundImage"] != "none" and dark_checker["viewer"] == dark_checker["browser"], dark_checker
+        assert dark_checker["backgroundImage"] != "none" and dark_checker["viewer"] == "#000000", dark_checker
         assert dark_checker["checker"] != checker["checker"], {"light": checker, "dark": dark_checker}
 
         library.evaluate("window.__detailIdbDelayMs = 180")

@@ -234,7 +234,7 @@ def main() -> None:
                 }"""
             )
             assert not document_toolbar["navEditorOverlap"] and not document_toolbar["closeEditorOverlap"], document_toolbar
-            long_document = library.locator(".detail-visual-gallery.is-document-detail .detail-visual-stage").evaluate(
+            long_document = library.locator(".detail-visual-gallery.is-document-detail .detail-document").evaluate(
                 """stage => {
                   const before = {clientHeight: stage.clientHeight, scrollHeight: stage.scrollHeight};
                   stage.scrollTop = stage.scrollHeight;

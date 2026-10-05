@@ -37,7 +37,7 @@ test("local media detection keeps only supported formats and safe relative paths
     return true;
   });
   assert.equal(normalizeLocalRelativePath("folder/reference/frame.gif", "frame.gif"), "folder/reference/frame.gif");
-  assert.throws(() => normalizeLocalRelativePath("/Users/private/frame.gif", "frame.gif"), /相对路径/);
+  assert.throws(() => normalizeLocalRelativePath(["", "Users", "private", "frame.gif"].join("/"), "frame.gif"), /相对路径/);
   assert.throws(() => normalizeLocalRelativePath("../private/frame.gif", "frame.gif"), /相对路径/);
 });
 

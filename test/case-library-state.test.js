@@ -22,7 +22,8 @@ test('case reads exclude sessions, secrets and backup copies while observing imm
   state.entries = [];
   assert.deepEqual((await read()).entries, []);
   for (const keys of reads) for (const forbidden of ['composerSessions','migrationBackup','aiProviderRegistry','creativeRuns','facetUndo']) assert(!keys.includes(forbidden));
-  assert.deepEqual(Object.keys(first).sort(), ['compoundCases','entries','facetCatalog','organizerState']);
+  assert.deepEqual(Object.keys(first).sort(), ['compoundCases','entries','facetCatalog','organizerState','taxonomy']);
+  assert.deepEqual(first.taxonomy, state.taxonomy, 'Shared field queries must resolve current classification names/roles without pulling credentials or sessions');
 });
 
 test('legacy libraries use the full migration path rather than backing up a partial snapshot', async () => {

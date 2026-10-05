@@ -67,10 +67,14 @@ def main():
             kind, original, ai = entry["id"].split("-")
             page.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
             section = page.locator(".media-prompt-section")
-            expect(section.locator(".original-prompt-panel")).to_have_count(int(original))
+            expect(section.locator(".original-prompt-panel")).to_have_count(1)
+            expect(section.get_by_role("tab", name="原始提示词", exact=True)).to_have_count(1)
             expect(section.locator(f".{kind}-reconstruction-current")).to_have_count(int(ai))
+            expect(section.get_by_role("tab", name="当前媒体", exact=True)).to_have_count(0)
+            expect(section.get_by_role("tab", name="AI 逆推", exact=True)).to_have_count(int(ai))
             expect(section.get_by_role("button", name="以此创作", exact=True)).to_have_count(1)
             if ai == "1":
+                section.get_by_role("tab", name="AI 逆推", exact=True).click()
                 panel = section.locator(f".{kind}-reconstruction-current")
                 expect(panel.get_by_role("button", name="复制提示词", exact=True)).to_be_enabled()
                 panel.get_by_role("button", name="复制提示词", exact=True).click()
@@ -119,6 +123,7 @@ def main():
                 expect(section).to_be_visible()
                 expect(rules_action).to_be_focused()
                 assert abs(page.locator("#detail-content").evaluate("e => e.scrollTop") - reading_position) <= 1
+            section.get_by_role("tab", name="原始提示词", exact=True).click()
             if original == "1":
                 original_panel = section.locator(".original-prompt-panel")
                 original_panel.get_by_role("button", name="编辑原始提示词", exact=True).click()
@@ -133,22 +138,21 @@ def main():
                 if ai == "1":
                     expect(section.locator(f".{kind}-reconstruction-current .prompt-read-body")).to_have_text("人工编辑 AI 提示词")
             else:
-                page.locator(".entry-editor-inline > summary").click()
-                original_editor = page.locator(".entry-original-panel")
-                expect(original_editor.locator("textarea:visible")).to_have_count(0)
-                original_editor.get_by_role("button", name="编辑原始提示词", exact=True).click()
+                page.get_by_role("button", name="添加原始提示词", exact=True).click()
+                original_editor = page.locator(".original-prompt-panel").first
                 expect(original_editor.locator("textarea:visible")).to_have_count(1)
-                original_editor.get_by_role("textbox", name="编辑原始提示词", exact=True).fill("补充原始提示词")
+                original_editor.get_by_role("textbox", name="添加原始提示词", exact=True).fill("补充原始提示词")
                 original_editor.get_by_role("button", name="保存", exact=True).click()
                 expect(page.locator(".original-prompt-panel .prompt-read-body")).to_have_text("补充原始提示词")
-                page.locator(".entry-editor-inline > summary").click()
             page.get_by_role("button", name="关闭详情", exact=True).click()
 
         page.locator('.case-card[data-entry-id="multi-image"]').click()
         for index, original in ((0, "案例共享"), (1, "第二张原始"), (2, "案例共享")):
             page.locator(".detail-visual-thumb").nth(index).click()
-            expect(page.locator(".original-prompt-panel .prompt-read-body")).to_have_text(original)
+            page.get_by_role("tab", name="当前媒体" if index == 1 else "原始提示词", exact=True).click()
+            expect(page.locator(".media-prompt-section .prompt-read-body:visible")).to_have_text(original)
             expect(page.locator(".image-reconstruction-current")).to_have_count(1 if index == 2 else 0)
+        page.get_by_role("tab", name="AI 逆推", exact=True).click()
         ai_panel = page.locator(".image-reconstruction-current")
         ai_panel.get_by_role("button", name="编辑 AI 逆推提示词", exact=True).click()
         ai_panel.locator("textarea").fill("第三张 AI 人工修订")
@@ -158,15 +162,15 @@ def main():
         assert stored["text"] == "案例共享"
         assert next(p for p in stored["mediaPrompts"] if p["assetId"] == "multi-2")["source"] == "ai-suggestion"
         assert next(p for p in stored["mediaPrompts"] if p["assetId"] == "multi-1")["text"] == "第二张原始"
-        page.locator(".entry-editor-inline > summary").click()
-        page.get_by_role("combobox", name="提示词范围", exact=True).select_option("multi-2")
-        original_editor = page.locator(".entry-original-panel")
-        original_editor.get_by_role("button", name="编辑原始提示词", exact=True).click()
-        original_editor.get_by_role("textbox", name="编辑原始提示词", exact=True).fill("第三张独立原始")
+        page.get_by_role("tab", name="当前媒体", exact=True).click()
+        page.get_by_role("button", name="添加当前媒体提示词", exact=True).click()
+        original_editor = page.locator(".media-original-prompt-panel")
+        original_editor.get_by_role("textbox", name="添加当前媒体提示词", exact=True).fill("第三张独立原始")
         original_editor.get_by_role("button", name="保存", exact=True).click()
-        expect(page.locator(".original-prompt-panel .prompt-read-body")).to_have_text("第三张独立原始")
+        expect(page.locator(".media-original-prompt-panel .prompt-read-body:visible")).to_have_text("第三张独立原始")
+        page.get_by_role("tab", name="原始提示词", exact=True).click()
+        expect(page.locator(".original-prompt-panel .prompt-read-body:visible")).to_have_text("案例共享")
         expect(ai_panel.locator(".prompt-read-body")).to_have_text("第三张 AI 人工修订")
-        page.locator(".entry-editor-inline > summary").click()
         page.get_by_role("button", name="关闭详情", exact=True).click()
 
         page.locator('.case-card[data-entry-id="video-1-1"]').click()

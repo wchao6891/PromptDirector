@@ -7,6 +7,7 @@
     <script src="theme-bootstrap.js"></script>
     <link rel="stylesheet" href="ui-foundation.css" />
     <link rel="stylesheet" href="collector.css" />
+    <link rel="stylesheet" href="organization.css" />
   </head>
   <body>
     <main>
@@ -158,23 +159,12 @@
           <div><small data-i18n="待保存内容">待保存内容</small><h2 id="content-summary"></h2></div><button id="organize-toggle" class="organize-toggle" type="button" aria-expanded="false" title="编辑与整理" aria-label="编辑与整理" data-i18n-title="编辑与整理" data-i18n-aria-label="编辑与整理"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-pencil"></use></svg></button>
         </header>
         <div id="quick-preview" class="quick-preview"></div>
-        <section id="capture-metadata" class="save-metadata" aria-label="保存设置" data-i18n-aria-label="保存设置">
-          <label>
-            <span data-i18n="项目">项目</span>
-            <select id="capture-collection"></select>
-          </label>
-          <label id="capture-new-collection-row" hidden>
-            <span data-i18n="新项目名称">新项目名称</span>
-            <input id="capture-new-collection-name" autocomplete="off" placeholder="输入后会在保存案例时创建" data-i18n-placeholder="输入后会在保存案例时创建" />
-          </label>
+        <section id="capture-metadata" class="detail-quick-organization" aria-label="保存设置" data-i18n-aria-label="保存设置">
+          <details id="capture-collection" class="detail-project-menu"></details>
           <label id="capture-extra-metadata">
-            <span data-i18n="分类">分类</span>
-            <select id="content-type"></select>
+            <select id="content-type" aria-label="分类" title="分类" data-i18n-aria-label="分类" data-i18n-title="分类"></select>
           </label>
-          <div class="custom-label-editor">
-            <span data-i18n="标签">标签</span>
-            <div id="custom-labels"></div>
-          </div>
+          <div id="custom-labels"></div>
         </section>
         <div id="capture-add-more-actions" class="add-more-actions">
           <button id="add-smart-visuals" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-image"></use></svg><span data-i18n="选图">选图</span></button>

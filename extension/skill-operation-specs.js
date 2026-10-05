@@ -20,11 +20,26 @@ export const SKILL_OPERATION_SPECS = [
 const text = { type: 'string' };
 const requestId = { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' };
 export const SKILL_WRITE_SPECS = [
-  spec('save_skill', '按用户委托新建Skill或保存新版本。新建不传skillId；更新须skillId和已读expectedRevision。普通正文更新省略references会保留原引用，显式空数组才清空。整包files须含SKILL.md，保留脚本和二进制原件；不可同时另传正文、引用或说明。完整文件替换会保存之前版本的文件身份，沿用插件现有版本保留规则。相同requestId和参数重试返回原回执；保存不代表脚本已执行或验证。',
-    { requestId, skillId: id, expectedRevision: id, callName: id, portableId: id, description: text, skillMarkdown: id,
+  spec('save_skill', '按用户委托新建Skill或保存新版本。新建不传skillId；更新须skillId和已读expectedRevision。普通正文更新省略references会保留原引用，显式空数组才清空。整包输入用requestId+files（含SKILL.md），可加callName；description/portableId/skillMarkdown/references不得另传，说明与name写入SKILL.md。文字输入用requestId+callName+skillMarkdown，不带files。保留脚本和二进制原件。完整文件替换会保存之前版本的文件身份，沿用插件现有版本保留规则。相同requestId和参数重试返回原回执；保存不代表脚本已执行或验证。',
+    { requestId, skillId: id, expectedRevision: id, callName: id, portableId: { ...id, description: '仅文字模式；有files时将name写在SKILL.md' }, description: { ...text, description: '仅文字模式；有files时将description写在SKILL.md' }, skillMarkdown: { ...id, description: '仅文字模式；整包通过files传SKILL.md，不重复传正文' },
       references: { type: 'array', items: { type: 'object', properties: { path: id, markdown: id, runtime: { type: 'boolean' } }, required: ['path','markdown'], additionalProperties: false } },
       files: { type: 'array', minItems: 1, items: { type: 'object', properties: { path: id, transferId: id }, required: ['path','transferId'], additionalProperties: false } }
     }, ['requestId']),
   spec('restore_skill', '将保留版本恢复为新的当前版本，须先读取当前revision。默认mode=complete，同时恢复已记录的正文、引用和包文件；旧版本文件未知时拒绝，不使用当前脚本冒充。只有用户明确要求仅恢复文字时用mode=text。既有历史沿用插件版本保留上限。相同requestId重试返回原回执。',
     { requestId, skillId: id, expectedRevision: id, versionId: id, mode: { enum: ['complete','text'] } }, ['requestId','skillId','expectedRevision','versionId'])
 ];
+
+// Shared preflight: reject impossible requests before file upload as well as
+// at the authoritative write boundary. Package paths are not local file paths.
+export function validateSkillWriteShape(input) {
+  const fail = message => { throw Object.assign(new Error(message), { code: 'invalid_input' }); };
+  if (!input.files) return;
+  if (['skillMarkdown', 'references', 'description', 'portableId'].some(key => Object.hasOwn(input, key))) {
+    fail('整包保存以SKILL.md为准，不要同时传另一份正文、引用、说明或可移植ID；原文无需压缩。');
+  }
+  const paths = input.files.map(file => String(file.path).replace(/\\/g, '/'));
+  if (paths.some(path => !path || /^[a-z]:/i.test(path) || /[\u0000-\u001f]/u.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) || new Set(paths).size !== paths.length) {
+    fail('Skill包文件路径重复或无效。');
+  }
+  if (paths.filter(path => path === 'SKILL.md' || path.endsWith('/SKILL.md')).length !== 1) fail('完整Skill包须有且只有一个SKILL.md。');
+}

@@ -1,3 +1,4 @@
+import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { setTaskFeedbackState } from "./task-feedback.js";
 import { getLibraryStorage } from './library-storage.js';
@@ -74,7 +75,7 @@ import { applyLibraryToolEvent, settleLibraryToolEvents } from "./composer-libra
 import { createLocalComposerLibraryTools } from "./composer-library-host.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { readImageDimensions } from "./image-metadata.js";
-import { deleteMediaBlobs, getAllDerivedMetadata, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
+import { getAllDerivedMetadata, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
 import { prepareLocalMedia } from "./local-media.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { extractPdfSearchText } from "./document-viewer.js";
@@ -615,12 +616,12 @@ async function addTempReferences(filesValue) {
       reference: createTempReference({ file, assetId, referenceId, alias, extractedText: preparedFile.contentText })
     };
   }));
-  const savedAssetIds = [];
+  const stage = createMediaStage();
   try {
     for (const item of prepared) {
       const [assetId] = tempReferenceAssetIds(item.reference);
+      await stage.register([assetId]);
       await saveMediaBlob(assetId, item.preparedFile.blob);
-      savedAssetIds.push(assetId);
       const thumbnail = item.preparedFile.poster?.blob instanceof Blob ? item.preparedFile.poster.blob : undefined;
       const searchText = String(item.preparedFile.contentText ?? "").trim();
       if (thumbnail || searchText) {
@@ -637,9 +638,8 @@ async function addTempReferences(filesValue) {
     replaceComposerSessionUrl(composerSession.id);
     renderComposer();
     composerFeedback(`已添加 ${prepared.length} 个临时附件`);
-  } catch (error) {
-    await deleteMediaBlobs(savedAssetIds).catch(() => undefined);
-    throw error;
+  } finally {
+    await stage.release();
   }
 }
 

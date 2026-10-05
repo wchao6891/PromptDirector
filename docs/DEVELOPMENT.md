@@ -21,6 +21,8 @@ Load `extension/` in Chrome or Edge for source development, or extract the gener
 
 Published ZIPs keep a top-level `manifest.json`. Source organization does not change the installation layout or the existing local upgrade path.
 
+Keep personal Agent instructions in the Git-ignored `AGENTS.override.md`. Codex reads that file in place of `AGENTS.md`, so have it read the public `AGENTS.md` before adding local guidance. Run `npm run check:public` before committing; it checks publishable text files, including hidden workflows and new files. It does not audit Git history or the visible contents of images.
+
 ## Checks and packaging
 
 `npm run verify` runs source checks, historical data compatibility, packaged Chromium journeys and an upgrade rehearsal using a previous release. `npm run check:compat` checks the supported data formats. `npm run package:release` builds the Store upload variant. These commands do not publish a release or upload to the Store.

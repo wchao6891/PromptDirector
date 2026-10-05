@@ -152,7 +152,8 @@ async function prepareLocalMediaValue(file, assetId, options) {
     relativePath,
     sourceFormat: format.extension,
     formatCategory: definition.category,
-    contentHash: await sha256Blob(blob),
+    // Internal transfer preparation may reuse the digest verified at admission.
+    contentHash: options.verifiedContentHash ?? await sha256Blob(blob),
     capturedAt: now,
     reviewStatus: "verified"
   };

@@ -7,6 +7,8 @@ import { encodeFrame, frameDecoder } from "./framing.mjs";
 export const CONNECTOR_TIMEOUT_MS = 30000;
 
 export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = CONNECTOR_TIMEOUT_MS, instanceId } = {}) {
+  const id = randomUUID();
+  const request = encodeFrame({ type: 'request', id, operation, input });
   await ensurePrivateRoot(root);
   let instance;
   try { instance = instanceId || process.env.PROMPTDIRECTOR_INSTANCE || (await readJson(join(root, "selected.json"))).instanceId; }
@@ -19,7 +21,6 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
     throw Object.assign(new Error('资料库配对记录无法读取，请检查本机连接器记录。'), { code: 'invalid_pairing_record' });
   }
   return new Promise((resolve, reject) => {
-    const id = randomUUID();
     const socket = net.connect(paths.socket);
     let settled = false;
     const finish = (error, value) => {
@@ -30,7 +31,7 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
     const decode = frameDecoder(message => {
       if (message.type === "ready") {
         if (message.instanceId !== instance || message.protocolVersion !== 1) return finish(new Error("连接的资料库或协议不匹配。"));
-        socket.write(encodeFrame({ type: "request", id, operation, input }));
+        socket.write(request);
       } else if (message.id === id) {
         finish(message.error ? Object.assign(new Error(message.error.message), { code: message.error.code }) : null, message.result);
       }

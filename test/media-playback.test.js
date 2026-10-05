@@ -1,5 +1,5 @@
 import test from "node:test";
-import { tiktokMediaController } from "../extension/media-playback.js";
+import { tiktokMediaController, localVideoController } from "../extension/media-playback.js";
 import assert from "node:assert/strict";
 
 import {
@@ -8,6 +8,12 @@ import {
   ensureYouTubePlaybackPermission,
   youtubePlaybackError
 } from "../extension/media-playback.js";
+
+test('jumping to feedback preserves the single shared timeline instead of enabling native controls again', async () => {
+  const player = { dataset: { reviewTransport: 'true' }, controls: false, currentTime: 0, play: async () => {} };
+  await localVideoController(player).seekToMs(1234);
+  assert.equal(player.currentTime, 1.234); assert.equal(player.controls, false);
+});
 
 test("YouTube playback permission is requested only on demand and installs a scoped session rule", async () => {
   const calls = [];

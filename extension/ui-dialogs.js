@@ -1,6 +1,9 @@
 import { createUiIcon } from "./ui-icons.js";
 import { t, translateUiMessage } from "./i18n.js";
 import { setTaskFeedbackState } from "./task-feedback.js";
+import { bindDialogDragging } from './panel-drag.js';
+
+if (typeof document !== 'undefined') bindDialogDragging(document);
 
 const DIALOG_ID = "promptdirector-app-dialog";
 

@@ -14,14 +14,21 @@ export async function stageFiles(files, bodyFile, requestId, call, { purpose, li
   if (limits) {
     if (files.length > limits.maxFileCount) throw new Error('Skill包文件数量超过插件导入上限，未开始上传。');
     let totalBytes = 0;
-    for (const file of files) {
+    let textBytes = 0;
+    const packagePaths = files.map(file => file.packagePath?.replace(/\\/g, '/') || '');
+    const skillPath = purpose === 'skill-file' && packagePaths.find(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'));
+    const skillRoot = skillPath?.slice(0, -'SKILL.md'.length) || '';
+    for (const [index, file] of files.entries()) {
       if (!isAbsolute(file.path)) throw new Error('附件必须使用绝对路径。');
       const info = await stat(file.path);
       if (!info.isFile()) throw new Error('Skill附件必须是普通文件。');
       if (info.size > limits.maxFileBytes) throw new Error('Skill单文件超过插件导入上限，未开始上传。');
       totalBytes += info.size;
+      const relativePath = packagePaths[index].startsWith(skillRoot) ? packagePaths[index].slice(skillRoot.length) : '';
+      if (purpose === 'skill-file' && (relativePath === 'SKILL.md' || /^references\/.+\.md$/iu.test(relativePath))) textBytes += info.size;
     }
     if (totalBytes > limits.maxArchiveBytes) throw new Error('Skill包总大小超过插件导入上限，未开始上传。');
+    if (Number.isSafeInteger(limits.maxTextBytes) && textBytes > limits.maxTextBytes) throw Object.assign(new Error('Skill正文与引用超过插件本次解析预算，未开始上传；保留完整文件，请分批整理，不要删减原文。'), { code: 'RESOURCE_BUDGET_REACHED' });
   }
   const transferIds = []; const filePrompts = {}; let bodyTransferId;
   for (const [index, file] of files.entries()) {

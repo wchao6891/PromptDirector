@@ -45,7 +45,8 @@ for(const previouslyPrepared of [false,true]) test(`image generation uses the de
     messages: [{ role: 'user', content: '用雨夜案例的图片生成画面' }] });
   const original = 'data:image/png;base64,aW1hZ2U=';
   const runtime = createComposerLibraryTools({ session, vision: true, maxCharacters: 750000,
-    loadLibrary: async () => ({ entries }), readImage: async () => ({ dataUrl: original, sha256:'a'.repeat(64) }), readImageDigest:async()=>'a'.repeat(64) });
+    loadLibrary: async () => ({ entries }), readImage: async (_id, _signal, expectedHash) => expectedHash === 'a'.repeat(64)
+      ? { sha256: expectedHash } : { dataUrl: original, sha256:'a'.repeat(64) } });
   const requests = [];
   const result = await executeComposerTurnWithService({ session, route: 'compose', composerSettings: normalizeComposerSettings() }, { ai: {}, vision: {
     consent: true, openai: { apiKey: 'fixture', model: 'gpt-5-mini' }, compatible: { endpoint: 'https://fixture.invalid/v1/responses', protocol: 'responses', apiKey: 'fixture', model: 'fixture-planner',

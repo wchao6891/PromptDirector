@@ -1,4 +1,7 @@
-import { caseRevision } from "./case-operations.js";
+import { validate, CASE_SOURCE_PROPERTIES, CREATIVE_NOTE_PROPERTIES, CASE_OPERATION_SPECS } from './case-operation-specs.js';
+import { confirmClassification } from './classifier.js';
+import { uniqueNames } from './facets.js';
+import { caseRevision, editCaseEntry } from "./case-operations.js";
 import { projectRevision } from "./project-operations.js";
 import { materialProvenance } from "./material-provenance.js";
 import { canonicalInput } from "./agent-tasks.js";
@@ -22,6 +25,10 @@ export function resolveAgentProject(state, project = "") {
 
 export async function saveAgentMaterial(input, requestId, deps) {
   const { loadState, transfers, buildEntry, classify, place, commit, notify, schemaVersion } = deps;
+  if (input.creative) validate({ type: 'object', properties: CREATIVE_NOTE_PROPERTIES, additionalProperties: false }, input.creative, 'creative');
+  if (input.sourceFacts) validate(CASE_SOURCE_PROPERTIES.sourceFacts, input.sourceFacts, 'sourceFacts');
+  if (input.customLabels) validate({ type: 'array', items: { type: 'string', minLength: 1 } }, input.customLabels, 'customLabels');
+  if (input.timeNotes) validate(CASE_OPERATION_SPECS.find(spec => spec.name === 'edit_case').parameters.properties.patch.properties.timeNotes, input.timeNotes, 'timeNotes');
   const instanceId = await deps.getInstanceId?.() || "";
   const fingerprint = await sha256Blob(new Blob([JSON.stringify(canonicalInput(input))]));
   const receiptKey = `materialOperation:${instanceId}:${requestId}`;
@@ -49,7 +56,9 @@ export async function saveAgentMaterial(input, requestId, deps) {
   });
   const records = [];
   for (const id of [...new Set(input.transferIds || [])]) {
-    const record = await transfers.get(id);
+    const record = await transfers.get(id, { touch: false });
+    if (input.reviewRevisions && Object.hasOwn(input.reviewRevisions, id) && input.reviewRevisions[id] !== (record.reviewFeedback?.revision || 0)) throw agentError('review_conflict', '反馈已变化，请重新保存样片');
+    if (input.reviewRevision !== undefined && id === input.transferIds[0] && input.reviewRevision !== (record.reviewFeedback?.revision || 0)) throw agentError('review_conflict', '备注已变化，请重新保存样片');
     if (record.purpose) throw agentError('invalid_transfer_purpose', 'Skill包文件不能作为案例媒体入库。');
     if (record.state !== "ready") throw agentError("transfer_not_ready", "附件尚未准备好，或已经用于另一次入库。");
     if (record.reused) {
@@ -92,9 +101,18 @@ export async function saveAgentMaterial(input, requestId, deps) {
     sourcePages: [...(sourceUrl ? [{ url: sourceUrl, title: input.title }] : []), ...sources.filter(s => s.url).map(s => ({ url: s.url, title: s.title }))],
     agentProvenance: { requestId, instanceId, fingerprint, kind: input.kind, sources, ...provenance,
       ...(input.kind === "creation" && !provenance.creationVersion ? { creationVersion: { rootCaseId: base.id, number: 1 } } : {}), note: String(input.note || ""), savedAt: new Date().toISOString() },
-    customLabels: [], metadataLabels: [], facetAssignments: [], analysisCandidates: [],
+    creative: structuredClone(input.creative || {}), customLabels: uniqueNames(input.customLabels || []), metadataLabels: [], facetAssignments: [], analysisCandidates: [],
     analysisBreakdown: [], rejectedCandidateKeys: [], negativeTerms: [], analysisPending: false });
-  entry.classification = classify(entry, state);
+  if (input.sourceFacts) entry = editCaseEntry(entry, { sourceFacts: input.sourceFacts });
+  if (input.timeNotes) {
+    entry = editCaseEntry(entry, { timeNotes: input.timeNotes });
+    if (input.reviewRevision !== undefined || input.reviewRevisions) {
+      const feedback = records.flatMap(record => record.reviewFeedback?.notes || []);
+      entry.timeNotes = entry.timeNotes.map(note => ({ ...note, createdAt: feedback.find(item => item.id === note.id)?.createdAt || note.createdAt }));
+    }
+  }
+  if (input.classificationPathIds) entry = confirmClassification(entry, input.classificationPathIds, state.taxonomy);
+  else entry.classification = classify(entry, state);
   const promptPlan = await planImageGenerationPrompts(entry, mediaAssets, input.generationPromptChoices);
   if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
   entry = promptPlan.entry;

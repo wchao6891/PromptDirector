@@ -275,6 +275,19 @@ export function createStableMasonry(container, options = {}) {
     pendingCardResizeAnchor = null;
   }
 
+  // A new reading surface must not inherit deferred restoration from the old one.
+  function clearScrollAnchor() {
+    if (anchorFrame) cancelAnimationFrame(anchorFrame);
+    if (anchorTimer) clearTimeout(anchorTimer);
+    if (scrollFrame) cancelAnimationFrame(scrollFrame);
+    anchorFrame = 0;
+    anchorTimer = 0;
+    scrollFrame = 0;
+    releaseResizeAnchor();
+    viewportAnchor = null;
+    expectedInternalScrollPosition = null;
+  }
+
   function scheduleCommittedWidthCheck() {
     if (!geometry || Math.abs(container.clientWidth - geometry.containerWidth) <= 1) return;
     if (widthCommitFrame) cancelAnimationFrame(widthCommitFrame);
@@ -315,6 +328,7 @@ export function createStableMasonry(container, options = {}) {
   }
 
   function captureStoredAnchor(cards) {
+    if (!container.clientWidth) return null;
     const containerTop = container.getBoundingClientRect().top;
     const bounds = viewportBounds();
     const visible = cards
@@ -381,7 +395,7 @@ export function createStableMasonry(container, options = {}) {
     onLayout({ height, columnCount: geometry.columnCount, cardWidth: geometry.cardWidth });
   }
 
-  return { append, destroy, remove, reset };
+  return { append, clearScrollAnchor, destroy, remove, reset };
 }
 
 function readGeometry(container, scrollContainer = window) {

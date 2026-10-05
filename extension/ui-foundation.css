@@ -90,7 +90,7 @@
   --prompt-bg: var(--ui-raised);
   --empty-bg: var(--ui-raised);
   --empty-ink: var(--ui-muted);
-  --viewer-bg: var(--ui-browser);
+  --viewer-bg: #ffffff;
   --viewer-ink: var(--ui-text);
   --viewer-control: color-mix(in srgb, var(--ui-surface) 86%, transparent);
   --viewer-checker-a: #eef1ef;
@@ -130,7 +130,7 @@
   --bar: var(--ui-page);
   --subtle-card: color-mix(in srgb, var(--ui-page) 55%, var(--ui-surface));
   --prompt-ink: #eceeed;
-  --viewer-bg: var(--ui-browser);
+  --viewer-bg: #000000;
   --viewer-control: rgba(15, 17, 19, .82);
   --viewer-checker-a: #17191c;
   --viewer-checker-b: #25282c;
@@ -170,7 +170,7 @@
     --bar: var(--ui-page);
     --subtle-card: color-mix(in srgb, var(--ui-page) 55%, var(--ui-surface));
     --prompt-ink: #eceeed;
-    --viewer-bg: var(--ui-browser);
+    --viewer-bg: #000000;
     --viewer-control: rgba(15, 17, 19, .82);
     --viewer-checker-a: #17191c;
     --viewer-checker-b: #25282c;
@@ -659,8 +659,14 @@ input, textarea, [contenteditable]:not([contenteditable="false"]) {
 /* Shared business-dialog shell. Pages own dimensions and content layout only. */
 .ui-dialog { border: 1px solid var(--ui-border); border-top: 2px solid var(--ui-accent); border-radius: var(--ui-container-radius); padding: 0; color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow); }
 .ui-dialog::backdrop { background: rgba(7, 9, 11, .72); }
+/* Position changes must be immediate, including under reduced-motion duration rules. */
+.ui-floating-panel, .ui-floating-panel-positioner, [data-moved-panel] { transition-property: none; }
+.ui-floating-panel { border: 1px solid var(--ui-border); border-radius: var(--ui-container-radius); padding: 8px; color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow); }
+.panel-drag-handle { grid-column: 1 / -1; display: flex; justify-content: center; color: var(--ui-muted); cursor: move; touch-action: none; user-select: none; }
+.panel-drag-handle svg { height: 14px; transform: rotate(90deg); }
 .ui-dialog-header { display: flex; min-height: 64px; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--ui-border); padding: 13px 16px; background: var(--ui-surface); }
 .ui-dialog-heading { min-width: 0; }
+.ui-dialog-header { cursor: move; touch-action: none; }
 .ui-dialog-heading::before { content: "PROMPTDIRECTOR"; display: block; margin-bottom: 3px; color: var(--accent-ink); font-size: 10px; font-weight: 850; line-height: 1.5; letter-spacing: .08em; }
 .ui-dialog-heading > h2 { margin: 0; font-size: var(--ui-title-size); line-height: 1.4; overflow-wrap: anywhere; }
 .ui-dialog-heading > p { margin: 5px 0 0; color: var(--ui-muted); font-size: var(--ui-meta-size); line-height: 1.5; }

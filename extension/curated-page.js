@@ -1,3 +1,4 @@
+import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { getLibraryStorage } from './library-storage.js';
 import {
@@ -20,7 +21,7 @@ import {
 import { fetchCuratedPackage, readResponseBlobWithProgress } from "./curated-download.js";
 import { initializeUi, t } from "./i18n.js";
 import { parseLibraryPackage } from "./library-package.js";
-import { deleteMediaBlob, saveMediaBlob } from "./media-store.js";
+import { saveMediaBlob } from "./media-store.js";
 import { createStableMasonry } from "./stable-masonry.js";
 import { openZipBlob } from "./zip.js";
 
@@ -619,6 +620,7 @@ async function savePreviewCase(item, previewEntry, button) {
     if (!entryId || result.importedCount + result.existingCount !== 1) throw new Error("精选案例没有写入私人案例库");
     setProgressButton(button, { stage: result.importedCount === 1 ? "saved" : "existing" });
     markSavedCard(previewEntry.id);
+    if (result.warnings?.length) showToast(result.warnings.join("；"));
     setTimeout(() => openSavedCase(entryId), 280);
   } catch (error) {
     setProgressButton(button, { stage: "failed" });
@@ -641,6 +643,7 @@ async function saveEntirePackage(item, button) {
       throw new Error("精选案例包没有完整写入私人案例库");
     }
     setProgressButton(button, { stage: "saved" });
+    if (result.warnings?.length) showToast(result.warnings.join("；"));
     setTimeout(() => openSavedProject(result.projectId), 280);
   } catch (error) {
     setProgressButton(button, { stage: "failed" });
@@ -651,7 +654,7 @@ async function saveEntirePackage(item, button) {
 
 async function saveCuratedSelection(item, sourceEntryIds, { mode, onProgress }) {
   const unsubscribe = listenForProgress(item.id, onProgress);
-  const storedAssetIds = [];
+  const stage = createMediaStage();
   try {
     const { library, reader } = await loadPackageIndex(item);
     const requested = sourceEntryIds
@@ -683,8 +686,8 @@ async function saveCuratedSelection(item, sourceEntryIds, { mode, onProgress }) 
         const targetId = preview.visualIdMap?.[asset.id] ?? asset.id;
         const blob = parsed.assets.get(asset.id);
         if (!blob) throw new Error("精选案例媒体缺失");
+        await stage.register([targetId]);
         await saveMediaBlob(targetId, blob);
-        storedAssetIds.push(targetId);
         completedAssets += 1;
         emitProgress(item.id, { stage: "saving", completed: completedAssets, total: totalAssets });
       }
@@ -703,13 +706,9 @@ async function saveCuratedSelection(item, sourceEntryIds, { mode, onProgress }) 
       runIdMap: preview.runIdMap
     });
     if (!result?.ok) throw new Error(result?.message || "精选案例保存失败");
-    const retained = new Set(result.importedVisualIds ?? []);
-    await Promise.allSettled(storedAssetIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
     return result;
-  } catch (error) {
-    await Promise.allSettled(storedAssetIds.map((id) => deleteMediaBlob(id)));
-    throw error;
   } finally {
+    stage.release();
     unsubscribe();
   }
 }

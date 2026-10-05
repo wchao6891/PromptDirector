@@ -41,7 +41,14 @@ def main():
             call('begin_transfer', {'id': transfer_id, 'name': 'original.txt', 'mimeType': 'text/plain', 'byteSize': len(original), 'sha256': digest})
             call('append_transfer', {'id': transfer_id, 'offset': 0, 'data': base64.b64encode(original).decode()})
             assert call('finish_transfer', {'id': transfer_id})['state'] == 'ready'
-            args = {'requestId': 'browser-save', 'title': 'Agent browser fixture', 'text': 'Use the original as reference.', 'kind': 'creation', 'transferIds': [transfer_id], 'filePrompts': {transfer_id: '保留附件对应提示词'}}
+            image_bytes = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jW6kAAAAASUVORK5CYII=')
+            call('begin_transfer', {'id': 'browser-image', 'name': 'reference.png', 'mimeType': 'image/png', 'byteSize': len(image_bytes), 'sha256': hashlib.sha256(image_bytes).hexdigest()})
+            call('append_transfer', {'id': 'browser-image', 'offset': 0, 'data': base64.b64encode(image_bytes).decode()})
+            image_asset = call('finish_transfer', {'id': 'browser-image'})['assetId']
+            args = {'requestId': 'browser-save', 'title': 'Agent browser fixture', 'text': 'Use the original as reference.', 'kind': 'creation', 'transferIds': [transfer_id], 'filePrompts': {transfer_id: '保留附件对应提示词'}, 'creative': {'purpose':'广告参考','notes':'待审'}, 'customLabels':['人工分类'], 'sourceFacts':{'author':'fixture author'}}
+            args['transferIds'].append('browser-image')
+            args['classificationPathIds'] = ['content:reference']
+            args['timeNotes'] = [{'assetId': image_asset, 'startMs': 0, 'text': '保留人工画面反馈'}]
             call('save_material', args)
             saved = receipt(args['requestId'])
             case_id = saved['result']['results'][0]['entryId']
@@ -50,10 +57,13 @@ def main():
             assert found['total'] == 1, found
             case = call('read_case', {'caseId': case_id})
             assert case['content'] == args['text'], case
-            assert case['provenance']['kind'] == 'creation', case
+            source = json.loads(call('read_case_details', {'caseId': case_id, 'part': 'source'})['content'])
+            assert source['provenance']['kind'] == 'creation', source
+            assert source['sourceFacts']['author'] == 'fixture author'
+            assert json.loads(call('read_case_details',{'caseId':case_id,'part':'creative'})['content']) == args['creative']
             prompts = call('read_case', {'caseId': case_id, 'part': 'media_prompts'})
             assert '保留附件对应提示词' in prompts['content'], prompts
-            asset_id = case['media'][0]['assetId']
+            asset_id = json.loads(call('read_case_details', {'caseId': case_id, 'part': 'media'})['content'])[0]['id']
             media = call('read_media', {'caseId': case_id, 'assetId': asset_id})
             assert base64.b64decode(media['data']) == original
             assert media['sha256'] == digest
@@ -61,6 +71,16 @@ def main():
             assert '原始提示词与创作经验' in document['content'], document
             page.reload()
             page.wait_for_function("async () => (await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.length === 1")
+            complete = json.loads(call('read_case_details', {'caseId': case_id, 'parts': ['document', 'source', 'annotations', 'media'], 'length': 49152})['content'])
+            assert complete['document']['text'] == args['text']
+            assert complete['source']['sourceFacts']['author'] == args['sourceFacts']['author']
+            assert complete['annotations']['creative'] == args['creative']
+            assert complete['annotations']['customLabels'] == args['customLabels']
+            assert complete['annotations']['classification']['pathIds'] == args['classificationPathIds']
+            for key, value in args['timeNotes'][0].items():
+                assert complete['annotations']['timeNotes'][0][key] == value
+            assert len(complete['media']) == 2
+            assert base64.b64decode(call('read_media', {'caseId': case_id, 'assetId': image_asset})['data']) == image_bytes
             assert page.locator('#toggle-agent-connection').count() == 1
             assert page.locator('#agent-connection-help').count() == 1
             run.seed_storage(page, {'capturePermissionOnboarding': {'version': 1, 'acknowledgedAt': '2026-09-12T00:00:00Z', 'clipboardIncluded': True}})

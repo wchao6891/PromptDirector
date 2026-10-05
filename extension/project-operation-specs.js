@@ -1,4 +1,4 @@
-import { validate } from './case-operation-specs.js';
+import { validate, CASE_SOURCE_PROPERTIES, CREATIVE_NOTE_PROPERTIES, CASE_OPERATION_SPECS } from './case-operation-specs.js';
 
 const text = { type: 'string' }, id = { type: 'string', minLength: 1 };
 const object = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -13,7 +13,10 @@ export const PROJECT_OPERATION_SPECS = [
     parameters: object({ requestId, projectId: id, expectedRevision: id, name: id, requirements: text }, ['requestId', 'projectId', 'expectedRevision']) }
 ];
 export const MATERIAL_PROPERTIES = {
-  title: id, text, project: text, kind: { enum: ['collected', 'creation'] }, sourceUrl: text,
+  title: id, text, project: text, kind: { enum: ['collected', 'creation'] }, ...CASE_SOURCE_PROPERTIES,
+  creative: object(CREATIVE_NOTE_PROPERTIES), customLabels: { type: 'array', items: id, uniqueItems: true },
+  timeNotes: CASE_OPERATION_SPECS.find(spec => spec.name === 'edit_case').parameters.properties.patch.properties.timeNotes,
+  classificationPathIds: { type: 'array', items: id, minItems: 1, maxItems: 1 },
   sourceCaseIds: { type: 'array', items: id }, note: text,
   projectRevision: id,
   sourceReferences: { type: 'array', items: object({ caseId: id, expectedRevision: id, assetId: id,

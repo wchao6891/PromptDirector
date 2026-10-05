@@ -69,6 +69,9 @@ test('MCP transfers full Skill packages, updates/restores script versions, downl
     await writeFile(scriptPath,'print("first")');await writeFile(emptyPath,'');
     const saveArgs={requestId:'native-write',files:[{path:mainPath,packagePath:'SKILL.md'},{path:scriptPath,packagePath:'scripts/frames.py'},{path:emptyPath,packagePath:'scripts/__init__.py'}]};
     const saved=await invoke('save_skill',saveArgs);assert(saved.ok,JSON.stringify(saved));assert.equal(saved.fileCount,3);
+    const uploadCount=uploads;
+    const invalid=await invoke('save_skill',{...saveArgs,requestId:'mixed-input',skillMarkdown:'另一份正文'});
+    assert(invalid.isError);assert.equal(invalid.code,'invalid_input');assert.equal(uploads,uploadCount,'mutually exclusive input must fail before any native upload');
     assert((await invoke('save_skill',saveArgs)).replayed);
     await writeFile(scriptPath,'print("second")');
     const updated=await invoke('save_skill',{...saveArgs,requestId:'native-update',skillId:saved.skillId,expectedRevision:saved.revision});assert(updated.ok,JSON.stringify(updated));

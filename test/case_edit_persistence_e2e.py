@@ -28,7 +28,7 @@ def main():
         editor.locator('summary').click()
         title = editor.locator('.entry-edit-row input').first
         title.fill('尚未保存标题')
-        original = editor.locator('.entry-original-summary')
+        original = page.locator('.original-prompt-panel')
         original.get_by_role('button', name='编辑原始提示词', exact=True).click()
         original.locator('textarea').fill('尚未保存原始提示词')
         remove = editor.locator('.selected-edit-tags button').first
@@ -66,6 +66,7 @@ def main():
         page.reload()
         expect(page.locator('[data-entry-id="edit-case"].case-card')).to_be_visible()
         page.locator('[data-entry-id="edit-case"].case-card').click()
+        page.get_by_role('tab',name='AI 逆推',exact=True).click()
         ai = page.locator('.image-reconstruction-current')
         ai.get_by_role('button', name='编辑 AI 逆推提示词', exact=True).click()
         ai.locator('textarea').fill('')

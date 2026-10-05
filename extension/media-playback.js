@@ -118,7 +118,7 @@ export function localVideoController(video) {
     getCurrentTimeMs: async () => Math.max(0, Math.round(video.currentTime * 1000)),
     seekToMs: async (value) => {
       await video.preparePlayback?.();
-      video.controls = true;
+      video.controls = !video.dataset?.reviewTransport;
       video.currentTime = Math.max(0, Number(value) || 0) / 1000;
       await video.play().catch(() => undefined);
     }

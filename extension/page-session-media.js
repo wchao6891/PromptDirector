@@ -11,7 +11,8 @@ export async function preparePageSessionMedia(value = {}) {
     throw new Error("页面媒体读取上限无效");
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error("页面媒体读取时间预算无效");
-  const signal = AbortSignal.timeout(timeoutMs);
+  const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(timeoutMs)]);
   let url;
   try { url = new URL(clean(value.url)); } catch { throw new Error("页面媒体地址无效"); }
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("页面媒体只允许无凭据 HTTPS 地址");
@@ -26,42 +27,49 @@ export async function preparePageSessionMedia(value = {}) {
   if (!allowed.has(url.href)) throw new Error("页面媒体地址不在本次选择范围内");
   if (typeof globalThis.fetch !== "function") throw new Error("当前页面无法读取媒体");
 
-  const response = await globalThis.fetch(url.href, {
-    credentials: "include",
-    redirect: "error",
-    referrerPolicy: "strict-origin-when-cross-origin",
-    cache: "no-store",
-    signal
-  });
-  if (!response?.ok) throw new Error(`页面媒体读取失败（HTTP ${response?.status || 0}）`);
-  const declared = Number(response.headers?.get?.("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
-  }
-  if (!response.body?.getReader) throw new Error("页面媒体无法流式读取");
-  let totalBytes = 0;
-  const stream = response.body.pipeThrough(new TransformStream({ transform(part, controller) {
-    totalBytes += part.byteLength;
-    if (totalBytes > maxBytes) throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
-    controller.enqueue(part);
-  } }), { signal });
-  const blob = await new Response(stream).blob();
-  signal.throwIfAborted();
-  if (!totalBytes) throw new Error("页面媒体为空");
-  // Keep one browser-managed Blob. Encode only the requested transport chunk.
-  const stateKey = "__PROMPTDIRECTOR_PAGE_SESSION_MEDIA__";
-  const state = globalThis[stateKey] instanceof Map ? globalThis[stateKey] : new Map();
-  if (!(globalThis[stateKey] instanceof Map)) Object.defineProperty(globalThis, stateKey, { value: state, configurable: true });
-  clearTimeout(state.get(token)?.timer);
-  const timer = setTimeout(() => state.delete(token), timeoutMs);
-  state.set(token, { blob, chunkBytes, timer });
-  return {
-    token,
-    chunkCount: Math.ceil(blob.size / chunkBytes),
-    totalBytes,
-    contentType: clean(response.headers?.get?.("content-type")).split(";", 1)[0].toLocaleLowerCase("en-US")
-  };
+  const downloadsKey = '__PROMPTDIRECTOR_PAGE_SESSION_DOWNLOADS__';
+  const downloads = globalThis[downloadsKey] instanceof Map ? globalThis[downloadsKey] : new Map();
+  if (!(globalThis[downloadsKey] instanceof Map)) Object.defineProperty(globalThis, downloadsKey, { value: downloads, configurable: true });
+  downloads.set(token, controller);
+  try {
+    const response = await globalThis.fetch(url.href, {
+      credentials: "include",
+      redirect: "error",
+      referrerPolicy: "strict-origin-when-cross-origin",
+      cache: "no-store",
+      signal
+    });
+    if (!response?.ok) throw new Error(`页面媒体读取失败（HTTP ${response?.status || 0}）`);
+    const declared = Number(response.headers?.get?.("content-length"));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
+    }
+    if (!response.body?.getReader) throw new Error("页面媒体无法流式读取");
+    let totalBytes = 0;
+    const stream = response.body.pipeThrough(new TransformStream({ transform(part, controller) {
+      totalBytes += part.byteLength;
+      if (totalBytes > maxBytes) throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
+      controller.enqueue(part);
+    } }), { signal });
+    const blob = await new Response(stream).blob();
+    signal.throwIfAborted();
+    if (!totalBytes) throw new Error("页面媒体为空");
+    // Keep one browser-managed Blob. Encode only the requested transport chunk.
+    const stateKey = "__PROMPTDIRECTOR_PAGE_SESSION_MEDIA__";
+    const state = globalThis[stateKey] instanceof Map ? globalThis[stateKey] : new Map();
+    if (!(globalThis[stateKey] instanceof Map)) Object.defineProperty(globalThis, stateKey, { value: state, configurable: true });
+    clearTimeout(state.get(token)?.timer);
+    const timer = setTimeout(() => state.delete(token), timeoutMs);
+    state.set(token, { blob, chunkBytes, timer });
+    return {
+      token,
+      chunkCount: Math.ceil(blob.size / chunkBytes),
+      totalBytes,
+      contentType: clean(response.headers?.get?.("content-type")).split(";", 1)[0].toLocaleLowerCase("en-US")
+    };
+  } finally { downloads.delete(token); }
+
 }
 
 export async function readPageSessionMediaChunk(value = {}) {
@@ -79,8 +87,12 @@ export async function readPageSessionMediaChunk(value = {}) {
 
 export function discardPageSessionMedia(value = {}) {
   const token = String(value.token ?? "").trim();
+  const downloads = globalThis.__PROMPTDIRECTOR_PAGE_SESSION_DOWNLOADS__;
+  const controller = downloads instanceof Map ? downloads.get(token) : null;
+  controller?.abort(new DOMException('页面媒体读取已取消', 'AbortError'));
   const state = globalThis.__PROMPTDIRECTOR_PAGE_SESSION_MEDIA__;
-  if (!(state instanceof Map)) return false;
+  if (!(state instanceof Map)) return Boolean(controller);
   clearTimeout(state.get(token)?.timer);
-  return state.delete(token);
+  const removed = state.delete(token);
+  return Boolean(controller) || removed;
 }

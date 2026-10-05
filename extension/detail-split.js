@@ -30,6 +30,12 @@ export function attachDetailSplit(primary, { label, readRatio, saveRatio }) {
     return value / total;
   }
   const body = primary.querySelector(":scope > .detail-body");
+  const updatePreferences = () => {
+    ratio = readRatio();
+    if (ratio == null) primary.style.removeProperty('--detail-panel-width');
+    apply(ratio == null ? body.getBoundingClientRect().width : primary.clientWidth * ratio);
+  };
+  primary.addEventListener('layout-preferences-changed', updatePreferences);
   const observer = new ResizeObserver(() => {
     if (!separator.getClientRects().length) return;
     apply(ratio == null ? body.getBoundingClientRect().width : primary.clientWidth * ratio);
@@ -63,5 +69,5 @@ export function attachDetailSplit(primary, { label, readRatio, saveRatio }) {
     ratio = apply(body.getBoundingClientRect().width + (event.key === "ArrowLeft" ? KEYBOARD_STEP : -KEYBOARD_STEP));
     await saveRatio(ratio);
   });
-  return () => { observer.disconnect(); separator.remove(); };
+  return () => { observer.disconnect(); primary.removeEventListener('layout-preferences-changed', updatePreferences); separator.remove(); };
 }

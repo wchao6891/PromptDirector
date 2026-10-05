@@ -31,14 +31,14 @@ test("visual gallery cards contain only media and selection state", () => {
 
 test("time notes seek the local player and support optional segment ends", () => {
   const notes = source.slice(source.indexOf("function renderTimeNotes"), source.indexOf("function officialEmbedUrl"));
-  assert.match(notes, /seekToMs\(note\.startMs\)/);
-  assert.match(notes, /添加时间笔记/);
-  assert.match(notes, /更多记录选项/);
-  assert.match(notes, /endMs/);
+  assert.match(notes, /seekToMs\(ms\)/);
+  assert.match(notes, /mountReviewFeedback/);
+  assert.doesNotMatch(notes, /更多记录选项/);
+  assert.match(notes, /getRange/);
   assert.match(notes, /ADD_TIME_NOTE/);
   assert.match(notes, /DELETE_TIME_NOTE/);
   assert.match(notes, /ADD_VIDEO_KEYFRAME/);
-  assert.match(notes, /drawImage\(video/);
+  assert.match(notes, /captureReviewFrame/);
 });
 
 test("social video references prefer official embeds and never download a platform video", () => {

@@ -19,7 +19,8 @@ const encoder = new TextEncoder();
 export function searchResultVersion(entry, index) {
   return bytesToHex(sha256(encoder.encode(serializeSearchValue({
     id: entry.id, title: entry.title, text: entry.text || '', url: entry.url || '',
-    savedAt: entry.savedAt, tags: entry.customLabels || [], media: entryMediaAssets(entry), index
+    savedAt: entry.savedAt, tags: entry.customLabels || [], media: entryMediaAssets(entry), sourceFacts: entry.sourceFacts,
+    memberSources: entry.memberEntries?.map(member => ({ id: member.id, sourceFacts: member.sourceFacts })), index
   }))));
 }
 

@@ -1,0 +1,12 @@
+.shortcut-settings { margin: 0; padding: 16px; }
+.shortcut-group { margin: 0; }
+.shortcut-row { display: grid; grid-template-columns: minmax(0, 1fr) 180px 32px; align-items: center; gap: 8px; padding-block: 8px; border-bottom: 1px solid var(--ui-border); }
+.shortcut-row label { font-size: 13px; }
+.shortcut-row input { cursor: pointer; text-align: center; font-size: 12px; }
+.shortcut-row input:focus { border-color: var(--ui-accent); }
+.shortcut-settings footer, #layout-form footer { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+#shortcut-feedback { font-size: 12px; color: var(--ui-muted); }
+#shortcut-feedback.is-error { color: var(--ui-danger); }
+@media (max-width: 480px) { .shortcut-row { grid-template-columns: minmax(0, 1fr) 120px 32px; } }
+
+.shortcut-row input[data-recording=true] { outline: 2px solid var(--ui-accent); outline-offset: 1px; }

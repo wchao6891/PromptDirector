@@ -1,3 +1,8 @@
+import { createMediaStage } from './staged-media.js';
+import { mountShortcutSettings } from './shortcuts.js';
+import { mountReviewFeedback, feedbackIcon, mountAuthoredNotes } from './review-feedback.js';
+import { captureReviewFrame } from './review-file-transfer.js';
+import { installLibraryAgentWorkspace } from './library-agent-workspace.js';
 import { selectedCaseTags } from './case-tags.js';
 import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { createTransientFeedback } from "./transient-feedback.js";
@@ -29,6 +34,8 @@ import { attachArticleEditor } from "./article-editor.js";
 import { renderArticleBlockText } from "./article-text-view.js";
 import { articleBlockIsMarkdown } from "./article-document.js";
 import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
+import { observeImageTransparency } from "./image-transparency.js";
+import { createDetailProjectSelector } from "./detail-project-selector.js";
 import { readImageDimensions } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { mediaFormatLabel, usesArticleReader, usesPostReader } from "./case-presentation.js";
@@ -124,6 +131,9 @@ import {
 import { createStableMasonry } from "./stable-masonry.js";
 import { createVirtualGallery } from "./virtual-gallery.js";
 import { ResourceCache } from "./resource-cache.js";
+import { ResourceUrlCache } from './resource-url-cache.js';
+import { createArticleImageLoader } from './article-images.js';
+import { mountLayoutSettings } from './layout-settings.js';
 import { operationBudget, readJsonWithResourceBudget } from "./resource-policy.js";
 import {
   DEFAULT_VISION_INSTRUCTIONS_BY_LOCALE,
@@ -135,7 +145,6 @@ import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.j
 import { contactSheetPlan, renderContactSheetBatch, selectedSkillContentImages } from "./skill-contact-sheet.js";
 import {
   entryHasVisual,
-  entryPalette,
   primaryVisual,
   primaryVisionDescription
 } from "./visuals.js";
@@ -198,7 +207,8 @@ import {
   createLibraryVisibilityReader
 } from "./organizer.js";
 import { visualAnalysisPromptReplacement } from "./image-prompt.js";
-import { detailPromptSources } from "./prompt-sources.js";
+import { detailPromptSources, sharedOriginalPrompt, originalMediaPrompt, caseOriginalPromptText } from "./prompt-sources.js";
+const promptTabByAsset = new Map();
 import { createPromptPanel, promptIconButton } from "./prompt-panel.js";
 import { preserveElementPosition, replaceDetailSection } from "./detail-position.js";
 import {
@@ -217,7 +227,6 @@ import {
 } from "./local-media.js";
 import {
   LOCAL_ASSET_LINK_STATUS,
-  deleteLocalAssetHandle,
   getLocalAssetHandleRecord,
   inspectLocalAssetHandle,
   saveLocalAssetHandle
@@ -258,7 +267,7 @@ const elements = Object.fromEntries([
   "create-node-form", "delete-content-type", "detail-close", "detail-content", "detail-drawer", "detail-mode-toggle", "detail-navigation", "detail-next",
   "detail-prev", "detail-resizer", "drawer-backdrop", "drawer-toolbar", "empty-filter", "empty-library", "empty-state",
   "facet-filters", "feedback", "filter-sidebar", "sidebar-resizer", "gallery-heading", "gallery-view-controls", "manage-case-order", "legacy-candidates",
-  "image-lightbox", "image-lightbox-close", "image-lightbox-image", "library-title", "load-more", "load-sentinel", "manage-facets", "manager-close", "manager-dialog", "manager-feedback",
+  "library-title", "load-more", "load-sentinel", "manage-facets", "manager-close", "manager-dialog", "manager-feedback",
   "manager-pending", "manager-content-types", "manager-vocabulary", "new-node-aliases",
   "new-node-name", "new-node-parent", "pending-count", "pending-filter",
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "organize-detail-progress", "data-safety-progress", "library-package-import-progress", "maintenance-progress-bar", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
@@ -315,7 +324,7 @@ let mediaDragCard = null;
 const mediaDragUrls = new Set();
 const urlProtected = url => mediaDragUrls.has(url) || [...document.querySelectorAll('img[src],video[src],audio[src],source[src]')].some(node => node.src === url);
 const urlCache = () => new ResourceCache({ maxEntries: previewCacheEntries, protectedValue: urlProtected, dispose: url => URL.revokeObjectURL(url) });
-const thumbnailUrls = urlCache();
+const thumbnailUrls = new ResourceUrlCache({ maxBytes: cacheWorkingBytes, protectedValue: urlProtected });
 const originalUrls = urlCache();
 document.addEventListener('dragstart', event => {
   mediaDragCard = event.target.closest?.('.case-card') || null;
@@ -340,7 +349,7 @@ let activeThumbnails = 0;
 const detailMediaUrls = new Set();
 const detailControllerCleanups = new Set();
 let activeDetailDiscovery = null;
-const documentPreviewUrls = urlCache();
+const documentPreviewUrls = new ResourceUrlCache({ maxBytes: cacheWorkingBytes, protectedValue: urlProtected });
 const documentDerived = new ResourceCache({ maxEntries: previewCacheEntries, maxBytes: cacheWorkingBytes,
   cost: value => (value.searchText?.length || 0) * 2 + (value.thumbnail?.size || 0) + (value.remoteImages || []).reduce((sum, image) => sum + (image.blob?.size || 0), 0) });
 let imageDerivedMetadata = new Map();
@@ -410,7 +419,7 @@ let galleryPreferenceWrite = Promise.resolve();
 function persistGalleryPreference(change) {
   uiPreferences = { ...uiPreferences, ...change };
   galleryPreferenceWrite = galleryPreferenceWrite.then(async () => {
-    await updateUiPreferences({ ...uiPreferences, ...change });
+    await updateUiPreferences(change);
   }).catch(error => showFeedback(error.message, true));
   return galleryPreferenceWrite;
 }
@@ -452,6 +461,7 @@ let canUndoFacetUpdate = false;
 let activeAnalysisLocale = currentLocale() === "en" ? "en" : "zh-CN";
 let activeAnalysisKind = "text";
 let activeSettingsTab = "general";
+let shortcutSettingsMounted = false;
 let activeAiRoutingTab = "tasks";
 let selectionMode = "";
 let projectSelectionId = "";
@@ -512,7 +522,6 @@ let localSimilarityIndex = createSimilarityIndex([], facetCatalog);
 let documentCacheGeneration = 0;
 const caseCardCache = new ResourceCache({ maxEntries: previewCacheEntries, protectedValue: card => card.isConnected });
 let visibleEntryById = new Map();
-let lightboxTrigger = null;
 const transientFeedback = createTransientFeedback();
 let syncStatus = {};
 let dataSafetyOperationActive = false;
@@ -536,6 +545,8 @@ let importPollTimer = 0;
 let importDragDepth = 0;
 let externalLibraryRefreshTimer = 0;
 let externalLibraryRefreshPending = false;
+let workspaceLibraryRevision = 0;
+let liveWorkspace = null;
 let extensionUpdateStatus = null;
 let localUpgradeFeedback = "";
 let localUpgradeCleanupRequired = false;
@@ -589,6 +600,8 @@ window.addEventListener("scroll", () => {
 libraryStorage.subscribe((changes) => {
   if (changes[REFERENCE_SELECTION_KEY]?.newValue) void referenceSelectionWriter.observe(changes[REFERENCE_SELECTION_KEY].newValue);
   if (!["entries", "organizerState", "compoundCases", "batchJob"].some((key) => changes[key])) return;
+  workspaceLibraryRevision++;
+  liveWorkspace?.observe('library');
   externalLibraryRefreshPending = true;
   scheduleExternalLibraryRefresh();
 });
@@ -611,6 +624,31 @@ void installWorkspaceReader({ chromeApi: chrome, readContext: async () => {
   return { surface: "library", projectId, selectionMode, viewedCaseId: currentDetailId,
     viewedAssetId: activeDetailMediaIdByEntry.get(currentDetailId), selectedCaseIds: JSON.parse(selection), ...materials };
 } });
+void installLibraryAgentWorkspace({ chromeApi: chrome, t,
+  libraryActions: { previousCase: () => moveDetail(-1), nextCase: () => moveDetail(1), closeDetail,
+    focusSearch: () => elements.searchInput.focus(), importReview: () => document.querySelector('#open-temporary-review').click(),
+    startCompose: () => elements.startCompose.click(), openSettings: () => elements.openSettings.click() },
+  confirmDiscard: () => confirmAppAction({ title: '放弃未保存的备注？', confirmLabel: '放弃修改', danger: true }),
+  readContext: () => ({ surface: "library", ready: document.body.dataset.libraryState === "ready", libraryRevision: workspaceLibraryRevision,
+    projectId: selectedCollectionId, selectionMode, selectedCaseIds: [...selectedCaseIds],
+    viewedCaseId: currentDetailId, viewedAssetId: elements.detailDrawer.querySelector('.detail-visual-gallery')?.dataset.displayedAssetId || null,
+    promptSource: elements.detailContent.querySelector('.prompt-source-tabs [aria-selected="true"]')?.dataset.promptTab || null,
+    pendingAssetId: elements.detailDrawer.querySelector('.detail-visual-gallery')?.dataset.pendingAssetId || null,
+    filters: { query: elements.searchInput.value, contentTypeId: selectedContentId, facets: [...selectedFacets],
+      pending: elements.pendingFilter.checked, unassigned: unassignedViewActive, includeSubprojects: uiPreferences.includeSubprojects },
+    sort: caseSortMode, view: uiPreferences.galleryView, detailMode: elements.detailDrawer.classList.contains('is-reviewing') ? 'review' : elements.detailDrawer.dataset.detailMode }),
+  isDirty: () => Boolean(promptEditState?.dirty || elements.detailContent.querySelector('[data-dirty="true"]')),
+  openCase: async id => {
+    if (!logicalCases.some(item => item.id === id)) throw new Error("案例已不存在");
+    return openDetail(id);
+  },
+  selectCases: async ids => {
+    if (ids.some(id => !logicalCases.some(item => item.id === id))) throw new Error("选择包含已不存在的案例");
+    if (selectionMode && selectionMode !== "select") throw new Error("请先完成当前批量操作");
+    selectionMode = "select"; selectedCaseIds.clear(); for (const id of ids) selectedCaseIds.add(id);
+    renderGallery(); updateSelectionBar(); await referenceSelectionWriter.save(ids);
+  }
+}).then(controller => { liveWorkspace = controller; });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && externalLibraryRefreshPending) scheduleExternalLibraryRefresh();
 });
@@ -621,10 +659,21 @@ window.addEventListener("focus", () => {
 const libraryLayout = createLibraryLayout({
   preferences: uiPreferences,
   persist: async sidebarLayout => {
-    try { uiPreferences = await updateUiPreferences({ ...uiPreferences, sidebarLayout }); }
+    try { uiPreferences = await updateUiPreferences({ sidebarLayout }); }
     catch (error) { showFeedback(error.message, true); }
   },
   onToggle: renderFilterToggleState
+});
+const layoutSettings = mountLayoutSettings(document.querySelector('#settings-layout-panel'), {
+  back: () => openSettingsDialog('general'),
+  apply: value => {
+    uiPreferences = value;
+    libraryLayout.update(value.sidebarLayout);
+    applySidebarWidth(value.sidebarWidth);
+    applyDetailViewPreferences();
+    renderGallery();
+    elements.detailContent.querySelector('.detail-primary')?.dispatchEvent(new Event('layout-preferences-changed'));
+  }
 });
 bindEvents();
 const libraryTopbar = document.querySelector(".topbar");
@@ -886,19 +935,9 @@ function bindEvents() {
   elements.projectSelectionCancel.addEventListener("click", exitProjectSelection);
   elements.projectSelectionSave.addEventListener("click", completeTaskSelection);
   elements.loadMore.addEventListener("click", () => renderNextBatch(galleryGeneration));
-  for (const select of [elements.uiLocale, elements.uiTheme, elements.uiMotion]) {
-    select.addEventListener("change", async () => {
-      await updateUiPreferences({
-        ...uiPreferences,
-        locale: elements.uiLocale.value,
-        theme: elements.uiTheme.value,
-        motion: elements.uiMotion.value,
-        analysisDiagnostics: uiPreferences.analysisDiagnostics,
-        sidebarWidth: uiPreferences.sidebarWidth,
-        detailMode: uiPreferences.detailMode,
-        detailSidebarWidth: uiPreferences.detailSidebarWidth,
-        detailPanelRatio: uiPreferences.detailPanelRatio
-      });
+  for (const [select, key] of [[elements.uiLocale, 'locale'], [elements.uiTheme, 'theme'], [elements.uiMotion, 'motion']]) {
+    select.addEventListener('change', async () => {
+      await updateUiPreferences({ [key]: select.value });
     });
   }
   elements.showAnalysisDiagnostics.addEventListener("change", updateAnalysisDiagnosticsPreference);
@@ -1169,17 +1208,6 @@ function bindEvents() {
   elements.drawerBackdrop.addEventListener("click", closeDetail);
   elements.detailPrev.addEventListener("click", () => moveDetail(-1));
   elements.detailNext.addEventListener("click", () => moveDetail(1));
-  elements.imageLightboxClose.addEventListener("click", closeImageLightbox);
-  elements.imageLightboxImage.addEventListener("click", closeImageLightbox);
-  elements.imageLightbox.addEventListener("click", (event) => {
-    if (event.target === elements.imageLightbox) closeImageLightbox();
-  });
-  elements.imageLightbox.addEventListener("close", () => {
-    elements.imageLightboxImage.removeAttribute("src");
-    elements.imageLightbox.classList.remove("has-alpha-channel");
-    lightboxTrigger?.focus();
-    lightboxTrigger = null;
-  });
   elements.composerTaskKey.addEventListener("change", renderComposerMethodSettings);
   elements.composerSettingsForm.addEventListener("submit", saveComposerMethodSettings);
   elements.saveComposerAgent.addEventListener("click", saveComposerAgentInstruction);
@@ -1200,13 +1228,7 @@ function bindEvents() {
       cancelCaseOrderDrag();
       return;
     }
-    if (event.defaultPrevented || !currentDetailId || document.querySelector("dialog[open]")) return;
-    if (event.key === "Escape") closeDetail();
-    const editingText = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.target?.isContentEditable || event.target.closest?.("video, audio");
-    if (!editingText && ["ArrowLeft", "ArrowRight"].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
-      event.preventDefault();
-      moveDetail(event.key === "ArrowLeft" ? -1 : 1);
-    }
+
   });
   window.addEventListener("blur", () => {
     cancelCaseSelectionSweep();
@@ -1330,7 +1352,7 @@ async function refreshLibrary() {
   if (elements.visionBatchDialog.open) renderVisionBatchDialog();
   if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
   if (elements.textBatchDialog.open) renderAnalysisBatch();
-  if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty && !elements.detailContent.querySelector('.article-document-reader[data-editing="true"], .time-note-form[data-dirty="true"]')) await renderDetail();
+  if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty && !elements.detailContent.querySelector('.article-document-reader[data-editing="true"], [data-dirty="true"]')) await renderDetail();
   scheduleMaintenanceStatusPoll();
   if (response.restoredArchivedFacetCount) {
     showFeedback(`已自动恢复 ${response.restoredArchivedFacetCount} 个误归档维度，原案例标签没有丢失`);
@@ -1535,7 +1557,7 @@ async function saveBrowsePreference(change) {
   controls.forEach((control) => { control.disabled = true; });
   try {
     await galleryPreferenceWrite;
-    uiPreferences = await updateUiPreferences({ ...uiPreferences, ...change });
+    uiPreferences = await updateUiPreferences(change);
     caseOrderManagementActive = false;
   } catch (error) {
     showFeedback(error.message, true);
@@ -1646,6 +1668,7 @@ function reconcileInitialCaseCards() {
 
 function observePendingCardMedia(cards) {
   for (const card of cards) {
+    for (const image of card.querySelectorAll('img[data-visual-id], img[data-document-id]')) preparePreviewPlaceholder(image);
     for (const image of card.querySelectorAll("img[data-visual-id]")) {
       if (!image.src) imageObserver.observe(image);
     }
@@ -1653,6 +1676,35 @@ function observePendingCardMedia(cards) {
       if (!image.src) documentObserver.observe(image);
     }
   }
+}
+
+function preparePreviewPlaceholder(image) {
+  if (image.dataset.previewReady !== undefined) return;
+  const wrap = image.parentElement;
+  const placeholder = el('span', 'preview-placeholder');
+  placeholder.setAttribute('aria-hidden', 'true');
+  placeholder.append(createUiIcon('image'));
+  const ready = () => {
+    const loaded = Boolean(image.complete && image.naturalWidth);
+    image.dataset.previewReady = String(loaded);
+    placeholder.hidden = loaded;
+  };
+  ready();
+  wrap.append(placeholder);
+  if (image.dataset.visualId) observeImageTransparency(image, transparent => image.closest('.case-image-wrap')?.classList.toggle('has-alpha-channel', transparent));
+  image.addEventListener('load', ready);
+  image.addEventListener('error', () => {
+    showPreviewError(image);
+    const cache = image.dataset.documentId ? documentPreviewUrls : thumbnailUrls;
+    const key = image.dataset.documentId || image.dataset.visualId;
+    if (cache.get(key) === image.src) cache.delete(key);
+  });
+}
+
+function showPreviewError(image) {
+  image.dataset.previewReady = 'false';
+  const placeholder = image.parentElement?.querySelector('.preview-placeholder');
+  if (placeholder) { placeholder.hidden = false; placeholder.title = t('预览暂不可用'); }
 }
 
 function scheduleVisibleMediaHydration() {
@@ -1810,7 +1862,7 @@ function createCaseCard(entry) {
   const cover = caseCoverAsset(entry);
   if (cover && mainVisual?.kind !== "video") {
     const wrap = el("div", "case-image-wrap");
-    wrap.classList.toggle("has-alpha-channel", alphaCapableImage(cover));
+
     const dimensions = imageDimensions(cover);
     if (dimensions) {
       wrap.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
@@ -2213,8 +2265,7 @@ async function hydrateDocumentPreview(image) {
     if (derived?.thumbnail) {
       let url = documentPreviewUrls.get(assetId);
       if (!url) {
-        url = URL.createObjectURL(derived.thumbnail);
-        documentPreviewUrls.set(assetId, url);
+        url = documentPreviewUrls.create(assetId, derived.thumbnail);
       }
       image.src = url;
       const pages = image.parentElement?.querySelector(".pdf-cover-label span");
@@ -3743,7 +3794,11 @@ function renderSettingsPanels({ resetActiveScroll = false } = {}) {
     const panel = document.querySelector(`[data-settings-panel="${activeSettingsTab}"]`);
     if (panel) panel.scrollTop = settingsPanelScroll.get(activeSettingsTab) || 0;
   }
+  if (activeSettingsTab === "shortcuts" && !shortcutSettingsMounted) {
+    mountShortcutSettings(document.querySelector("#settings-shortcuts-panel"), uiPreferences); shortcutSettingsMounted = true;
+  }
   if (activeSettingsTab === "ai") renderAiRoutingSummary();
+  if (activeSettingsTab === 'layout') void layoutSettings.open().catch(error => showFeedback(error.message, true));
   if (activeSettingsTab === "rules") renderAnalysisSettings();
   if (activeSettingsTab === "tasks") {
     renderBatchManager();
@@ -4291,9 +4346,7 @@ async function createCompleteFolderBackup() {
 async function restoreCompleteFolderBackup() {
   if (dataSafetyOperationActive) return showDataSafetyFeedback("当前操作仍在进行，请等待完成", true);
   if (typeof window.showDirectoryPicker !== "function") return showDataSafetyFeedback("当前浏览器不支持资料夹恢复，请使用最新版 Chrome", true);
-  const savedIds = [];
-  let applyStarted = false;
-  let applySucceeded = false;
+  const stage = createMediaStage();
   setDataSafetyBusy(true);
   try {
     const directory = await window.showDirectoryPicker({ mode: "read" });
@@ -4461,15 +4514,14 @@ async function restoreCompleteFolderBackup() {
       return;
     }
     const operationId = createLibraryImportOperationId();
+    await stage.register(resourceWrites.map(item => item.targetId));
     for (const item of resourceWrites) {
       const blob = item.resourceType === "skill"
         ? restoredResources.skillAssets.get(item.sourceId)
         : restoredResources.assets.get(item.sourceId);
       if (!(blob instanceof Blob)) throw new Error("预检后的备份资源已经变化，请重新检查");
       await savePortableAssetBlob(item.targetId, blob);
-      savedIds.push(item.targetId);
     }
-    applyStarted = true;
     const response = await applyLibraryImportWithReceipt({
       type: "APPLY_LIBRARY_IMPORT", library: restoredLibrary,
       operationId,
@@ -4477,18 +4529,15 @@ async function restoreCompleteFolderBackup() {
       plan: preview.plan
     });
     if (!response?.ok) throw new Error(response?.message || "资料夹恢复失败");
-    applySucceeded = true;
     await refreshLibrary();
     showDataSafetyFeedback(`${translateUiMessage(response.message)} · ${t("{label}已按预检方案完成", { label: recoveryLabel })}`);
     if (exactReplace) transientFeedback.revealRecovery(elements.libraryRecoveryActions);
     await renderDataSafetyStatus();
   } catch (error) {
-    const retained = (applySucceeded || error?.code === "IMPORT_OUTCOME_UNKNOWN")
-      ? new Set(savedIds)
-      : applyStarted ? await committedMediaIds(savedIds) : new Set();
-    await Promise.allSettled(savedIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
+
     if (error?.name !== "AbortError") showDataSafetyFeedback(error.message, true);
   } finally {
+    stage.release();
     setDataSafetyBusy(false);
   }
 }
@@ -4829,9 +4878,7 @@ async function applyLibraryPackageBatch() {
     return;
   }
   if (!batch.preview?.canApply || batch.capacityError) return;
-  const savedIds = [];
-  let applyStarted = false;
-  let applySucceeded = false;
+  const stage = createMediaStage();
   batch.submitting = true;
   renderLibraryPackageBatch();
   try {
@@ -4843,6 +4890,7 @@ async function applyLibraryPackageBatch() {
       if (!(blob instanceof Blob)) throw new Error("预检后的案例包资源已经变化，请重新检查");
       return { assetId: write.targetId, blob };
     });
+    await stage.register(resourceWrites.map(item => item.assetId));
     await savePortableAssetBlobs(resourceWrites, {
       checkCapacity: false,
       onProgress: ({ writtenBytes, totalBytes }) => {
@@ -4852,10 +4900,8 @@ async function applyLibraryPackageBatch() {
         setTaskProgress(elements.libraryPackageImportProgress, { completed: writtenBytes, total: totalBytes, pending: true });
       }
     });
-    for (const write of resourceWrites) savedIds.push(write.assetId);
     elements.libraryPackageImportFeedback.textContent = t("正在提交案例…");
     setTaskProgress(elements.libraryPackageImportProgress, { pending: true });
-    applyStarted = true;
     const operationId = createLibraryImportOperationId();
     const response = await applyLibraryImportWithReceipt({
       type: "APPLY_LIBRARY_IMPORT_BATCH",
@@ -4865,7 +4911,6 @@ async function applyLibraryPackageBatch() {
       plan: batch.preview.plan
     });
     if (!response?.ok) throw new Error(response?.message || "案例包导入失败");
-    applySucceeded = true;
     const ordinaryItems = batch.ordinaryItems;
     await refreshLibrary();
     finishLibraryPackageBatch();
@@ -4873,10 +4918,6 @@ async function applyLibraryPackageBatch() {
     await renderDataSafetyStatus();
     if (ordinaryItems.length) await prepareLocalImport(ordinaryItems, { source: ordinaryItems.some((item) => item.relativePath.includes("/")) ? "folder" : "files" });
   } catch (error) {
-    const retained = (applySucceeded || error?.code === "IMPORT_OUTCOME_UNKNOWN")
-      ? new Set(savedIds)
-      : applyStarted ? await committedMediaIds(savedIds) : new Set();
-    await Promise.allSettled(savedIds.filter((id) => !retained.has(id)).map((id) => deleteMediaBlob(id)));
     if (pendingLibraryPackageBatch === batch) {
       batch.submitting = false;
       const message = error?.message || "案例包导入失败";
@@ -4884,6 +4925,8 @@ async function applyLibraryPackageBatch() {
       if (pendingLibraryPackageBatch === batch) batch.submitError = message;
       renderLibraryPackageBatch();
     }
+  } finally {
+    stage.release();
   }
 }
 
@@ -5119,15 +5162,6 @@ async function importCreativeExperimentArchive() {
   }
 }
 
-async function committedMediaIds(ids) {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_LIBRARY_ASSET_RETENTION", assetIds: ids });
-    if (!response?.ok) return new Set(ids);
-    return new Set(response.assetIds);
-  } catch {
-    return new Set(ids);
-  }
-}
 
 async function validateImportedImageDimensions(images) {
   for (const image of images.values()) {
@@ -5158,9 +5192,9 @@ async function hydrateCardImage(image) {
         wrap.classList.add("case-image-wrap-fixed");
       }
       image.src = url;
-    }
+    } else if (image.isConnected) showPreviewError(image);
   } catch {
-    image.closest(".case-image-wrap")?.replaceWith(textEl("div", "case-shot-missing", image.dataset.videoId ? "封面暂不可用，打开查看视频" : "截图读取失败"));
+    showPreviewError(image);
   } finally {
     loadingImages.delete(visualId);
   }
@@ -5200,8 +5234,7 @@ async function createThumbnailUrl(visualId) {
   const derived = await getDerivedMedia(visualId).catch(() => null);
   if (derived?.thumbnail) {
     await cacheImageDimensions(visualId, derived.thumbnail);
-    const url = URL.createObjectURL(derived.thumbnail);
-    thumbnailUrls.set(visualId, url);
+    const url = thumbnailUrls.create(visualId, derived.thumbnail);
     return url;
   }
   const blob = await screenshotBlob(visualId);
@@ -5216,26 +5249,23 @@ async function createThumbnailUrl(visualId) {
   try {
     bitmap = await createImageBitmap(blob);
   } catch {
-    const url = URL.createObjectURL(blob);
-    thumbnailUrls.set(visualId, url);
+    const url = thumbnailUrls.create(visualId, blob);
     return url;
   }
   try {
     assertImageDimensions(bitmap.width, bitmap.height);
     const maxWidth = 640;
     if (bitmap.width <= maxWidth) {
-      const url = URL.createObjectURL(blob);
-      thumbnailUrls.set(visualId, url);
+      const url = thumbnailUrls.create(visualId, blob);
       return url;
     }
     const canvas = document.createElement("canvas");
     canvas.width = maxWidth;
     canvas.height = Math.max(1, Math.round(bitmap.height * maxWidth / bitmap.width));
-    canvas.getContext("2d", { alpha: false }).drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const thumbnail = await canvasBlob(canvas, "image/webp", 0.76);
     await saveDerivedMedia(visualId, { ...derived, thumbnail }).catch(() => undefined);
-    const url = URL.createObjectURL(thumbnail);
-    thumbnailUrls.set(visualId, url);
+    const url = thumbnailUrls.create(visualId, thumbnail);
     return url;
   } finally {
     bitmap.close();
@@ -5465,7 +5495,7 @@ function applySidebarWidth(value) {
 
 async function saveSidebarWidth(value) {
   const sidebarWidth = normalizeSidebarWidth(value);
-  uiPreferences = await updateUiPreferences({ ...uiPreferences, sidebarWidth });
+  uiPreferences = await updateUiPreferences({ sidebarWidth });
   applySidebarWidth(sidebarWidth);
 }
 
@@ -5513,20 +5543,32 @@ function detailSidebarRuntimeWidth(value = uiPreferences.detailSidebarWidth) {
 
 function applyDetailViewPreferences() {
   const sidebar = uiPreferences.detailMode === "sidebar" && !mobileLayout.matches;
+  const detailMode = sidebar ? "sidebar" : "fullscreen";
+  const modeChanged = elements.detailDrawer.dataset.detailMode !== detailMode;
   const width = detailSidebarRuntimeWidth();
   elements.detailDrawer.classList.toggle("detail-sidebar-mode", sidebar);
-  elements.detailDrawer.dataset.detailMode = sidebar ? "sidebar" : "fullscreen";
+  elements.detailDrawer.setAttribute('aria-modal', String(!sidebar || elements.detailDrawer.classList.contains('is-reviewing')));
+  if (sidebar && !elements.detailDrawer.classList.contains('is-reviewing')) {
+    for (const player of elements.detailDrawer.querySelectorAll('video,audio')) player.pause();
+  }
+  elements.detailDrawer.dataset.detailMode = detailMode;
   elements.detailDrawer.style.setProperty("--detail-sidebar-width", `${width}px`);
   elements.detailResizer.setAttribute("aria-valuenow", String(width));
   elements.detailModeToggle.replaceChildren(createUiIcon(sidebar ? "maximize-2" : "panel-left"));
   const label = t(sidebar ? "切换全屏详情" : "切换侧栏详情");
   elements.detailModeToggle.setAttribute("aria-label", label);
   elements.detailModeToggle.title = label;
+  if (modeChanged) {
+    // Changing the reading surface also invalidates deferred discovery anchoring.
+    activeDetailDiscovery?.clearScrollAnchor();
+    elements.detailContent.scrollTop = 0;
+    for (const surface of elements.detailContent.querySelectorAll('.detail-primary, .detail-body, .detail-visual-gallery')) surface.scrollTop = 0;
+  }
 }
 
 async function toggleDetailMode() {
   const detailMode = uiPreferences.detailMode === "sidebar" ? "fullscreen" : "sidebar";
-  uiPreferences = await updateUiPreferences({ ...uiPreferences, detailMode });
+  uiPreferences = await updateUiPreferences({ detailMode });
   applyDetailViewPreferences();
 }
 
@@ -5554,7 +5596,7 @@ function bindDetailSidebarResize() {
     pointerId = null;
     elements.detailResizer.classList.remove("is-resizing");
     const detailSidebarWidth = normalizeDetailSidebarWidth(elements.detailResizer.getAttribute("aria-valuenow"));
-    uiPreferences = await updateUiPreferences({ ...uiPreferences, detailSidebarWidth });
+    uiPreferences = await updateUiPreferences({ detailSidebarWidth });
     applyDetailViewPreferences();
   };
   elements.detailResizer.addEventListener("pointerup", finish);
@@ -5564,7 +5606,7 @@ function bindDetailSidebarResize() {
     event.preventDefault();
     const current = Number(elements.detailResizer.getAttribute("aria-valuenow"));
     const detailSidebarWidth = normalizeDetailSidebarWidth(current + (event.key === "ArrowLeft" ? 16 : -16));
-    uiPreferences = await updateUiPreferences({ ...uiPreferences, detailSidebarWidth });
+    uiPreferences = await updateUiPreferences({ detailSidebarWidth });
     applyDetailViewPreferences();
   });
   addEventListener("resize", applyDetailViewPreferences, { passive: true });
@@ -5614,10 +5656,14 @@ async function openDetail(entryId, { preserveQueue = false, returnFocus = null }
 
 async function closeDetail() {
   if (!await confirmPromptEditDiscard()) return false;
+  if (document.fullscreenElement && elements.detailDrawer.contains(document.fullscreenElement)) {
+    try { await document.exitFullscreen(); }
+    catch (error) { showFeedback(translateUiMessage(error.message), true); return false; }
+  }
   const returnFocus = detailReturnFocus;
-  if (elements.imageLightbox.open) elements.imageLightbox.close();
   clearVideoTaskQueries(currentDetailId);
   currentDetailId = null;
+  elements.detailDrawer.classList.remove("is-reviewing");
   detailRenderGeneration += 1;
   detailReturnFocus = null;
   detailQueueMode = "";
@@ -5635,6 +5681,7 @@ async function closeDetail() {
 }
 
 function moveDetail(offset) {
+  if (elements.detailDrawer.classList.contains("is-reviewing")) return;
   const index = visibleEntries.findIndex((entry) => entry.id === currentDetailId);
   if (index < 0) return;
   const target = visibleEntries[index + offset];
@@ -5661,7 +5708,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   const renderEntryId = currentDetailId;
   let entry = logicalCases.find((item) => item.id === currentDetailId);
   if (!entry) return closeDetail();
-  entry = await readDetailGenerationInfo(entry);
+  if (!usesArticleReader(entry)) entry = await readDetailGenerationInfo(entry);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
   const mediaIdentity = JSON.stringify(entryMediaAssets(entry).filter(asset => asset.usage !== "poster").map(({ id, kind, usage, storageMode, contentHash, sourceUrl, reference, recordType }) =>
     ({ id, kind, usage, storageMode, contentHash, sourceUrl, reference, recordType })));
@@ -5674,12 +5721,17 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     const header = mountedBody.querySelector(":scope > .detail-header-section");
     if (header) replaceDetailSection(header, createDetailHeader(entry));
     refreshActiveDetailAssetSections(entry);
+    mountAuthoredNotes(mountedBody, entry, t);
     refreshLocalDiscovery(entry);
     return;
   }
+  const mountedGallery = elements.detailContent.querySelector(".detail-visual-gallery");
+  const feedbackFramesOnly = mountedBody && mountedGallery?.canAppendFeedbackFrames?.(entry, mountedBody.dataset.mediaIdentity, mediaIdentity);
   if (!rebuildMedia && !resetScroll && !entry.compoundCase && !usesPostReader(entry) && !usesArticleReader(entry)
-      && elements.detailDrawer.dataset.entryId === entry.id && mountedBody?.dataset.mediaIdentity === mediaIdentity && mountedBody.dataset.presentation === presentation) {
-    elements.detailContent.querySelector(".detail-visual-gallery")?.updateEntry?.(entry);
+      && elements.detailDrawer.dataset.entryId === entry.id && (mountedBody?.dataset.mediaIdentity === mediaIdentity || feedbackFramesOnly) && mountedBody.dataset.presentation === presentation) {
+    await mountedGallery?.updateEntry?.(entry);
+    if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
+    mountedBody.dataset.mediaIdentity = mediaIdentity;
     refreshActiveDetailAssetSections(entry);
     // Editors stay mounted while open; updates to unrelated sections remain local.
     const replacement = createDetailBody(entry);
@@ -5687,7 +5739,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     const currentPrompt = mountedBody.querySelector(":scope > .prompt-section");
     if (currentPrompt) nextSections.splice(isEntryPending(entry) ? 2 : 1, 0, currentPrompt);
     for (const child of [...mountedBody.children]) {
-      if (child.matches(".prompt-section")) continue;
+      if (child.matches(".prompt-section, .review-authored-notes")) continue;
       const next = nextSections.find(node => node.className === child.className);
       if (next) replaceDetailSection(child, next);
       else child.remove();
@@ -5696,6 +5748,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
       const child = nextSections[index];
       if (!child.isConnected) mountedBody.insertBefore(child, nextSections[index + 1] || null);
     }
+    mountAuthoredNotes(mountedBody, entry, t);
     refreshLocalDiscovery(entry);
     return;
   }
@@ -5749,14 +5802,12 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   body.append(createDetailQuickOrganization(entry));
   const breakdown = createFullAnalysis(entry);
   if (breakdown) body.append(breakdown);
-  const metadata = createDetailMetadata(entry, { includeDelete: true });
-  if (metadata) body.append(metadata);
-  else body.append(createDetailFooterActions(entry));
   primary.append(body);
   content.append(primary);
   const discovery = createLocalDiscovery(entry);
   if (discovery) content.append(discovery.section);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
+  mountAuthoredNotes(body, entry, t);
   elements.detailDrawer.dataset.entryId = entry.id;
   delete elements.detailDrawer.dataset.loadingEntryId;
   elements.detailContent.replaceChildren(content);
@@ -5767,7 +5818,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
       label: t("调整图文分栏宽度"),
       readRatio: () => uiPreferences.detailPanelRatio,
       saveRatio: async detailPanelRatio => {
-        uiPreferences = await updateUiPreferences({ ...uiPreferences, detailPanelRatio });
+        uiPreferences = await updateUiPreferences({ detailPanelRatio });
       }
     });
     const cleanup = () => { dispose(); detailControllerCleanups.delete(cleanup); };
@@ -5780,7 +5831,7 @@ function createDetailBody(entry) {
   body.append(createDetailHeader(entry));
   if (isEntryPending(entry)) body.append(createPendingReviewPanel(entry));
   for (const section of [createVisualSetAnalyses(entry), createDetailAttributes(entry), createDetailQuickOrganization(entry),
-    createFullAnalysis(entry), createDetailMetadata(entry, { includeDelete: true }) || createDetailFooterActions(entry)]) {
+    createFullAnalysis(entry)]) {
     if (section) body.append(section);
   }
   return body;
@@ -5912,7 +5963,7 @@ function createLocalDiscovery(entry) {
   }
 
   function mount() {
-    activeDetailDiscovery = { section, cleanup };
+    activeDetailDiscovery = { section, cleanup, clearScrollAnchor: () => masonry?.clearScrollAnchor() };
     masonry = createStableMasonry(grid, {
       scrollContainer: elements.detailContent,
       onLayout: scheduleDiscoveryLoadCheck
@@ -5947,7 +5998,6 @@ async function renderCompoundDetail(entry, content, body) {
     const memberTitle = rawTextEl("h3", "", member.title);
     memberTitle.title = member.title;
     title.append(rawTextEl("span", "compound-part-index", translateUiMessage(`部分 ${index + 1}`)), memberTitle);
-    title.append(rawTextEl("p", "detail-meta", contentName(member)));
     const headingActions = el("div", "compound-part-heading-actions");
     if (index === 0) {
       headingActions.append(textEl("span", "compound-primary-badge", "主要案例"));
@@ -5974,7 +6024,7 @@ async function renderCompoundDetail(entry, content, body) {
     section.append(createEntryEditor(member));
     body.append(section);
   }
-  body.append(createDetailQuickOrganization(entry), createDetailFooterActions(entry));
+  body.append(createDetailQuickOrganization(entry));
 }
 
 function createCompoundActions(entry) {
@@ -6126,7 +6176,7 @@ async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
   if (asset.kind === "image" && asset.storageMode === "managed") {
     const image = document.createElement("img");
     image.src = await originalScreenshotUrl(asset.id);
-    image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
+    observeImageTransparency(image, transparent => image.classList.toggle("has-alpha-channel", transparent));
     image.alt = asset.sourceTitle || entry.title;
     image.loading = "lazy";
     image.addEventListener('dragstart', event => {
@@ -6136,7 +6186,7 @@ async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
         name: copyFilename(asset, entry.title, 0), file: { kind: 'image', url: image.src, mimeType: asset.mimeType, name: copyFilename(asset, entry.title, 0) } });
       event.stopPropagation();
     });
-    image.addEventListener("click", () => openImageLightbox(image, entry));
+    image.addEventListener("click", () => { void enterImageReview(entry, asset.id); });
     card.append(image);
   } else if (asset.kind === "video") {
     const poster = posterAssetForVideo(entry, asset);
@@ -6175,6 +6225,25 @@ async function createCompactCapturedMedia(entry, asset, { post = false } = {}) {
 async function createArticleDocumentReader(entryValue) {
   const entry = normalizeEntryMedia(entryValue);
   const reader = el("article", "article-document-reader");
+  const generation = detailRenderGeneration;
+  const images = createArticleImageLoader(elements.detailContent, async id => {
+    const url = await originalScreenshotUrl(id);
+    void readDetailGenerationInfo(entry, { assetIds: [id] }).then(enriched => {
+      if (generation !== detailRenderGeneration || currentDetailId !== entry.id) return;
+      Object.assign(entry, enriched);
+      const body = reader.closest('.detail-body');
+      const current = body?.querySelector('.source-open-action');
+      const source = createDetailSourceAction(entry);
+      if (current && source) current.replaceWith(source);
+    });
+    return url;
+  }, (image, asset, error) => {
+    const retry = rawTextEl('button', 'button-secondary', t('重新加载图片'));
+    retry.title = error.message;
+    retry.addEventListener('click', () => { retry.remove(); images.observe(image, asset); });
+    image.after(retry);
+  });
+  detailControllerCleanups.add(() => images.dispose());
   const assets = new Map(entry.mediaAssets.map((asset) => [asset.id, asset]));
   const allBlocks = entry.articleDocument?.blocks || [];
   const blockById = new Map(allBlocks.map(block => [block.id, block]));
@@ -6221,11 +6290,11 @@ async function createArticleDocumentReader(entryValue) {
         if (asset?.kind === "image" && asset.storageMode === "managed") {
           const image = document.createElement("img");
           image.className = "article-document-image";
-          image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
+          observeImageTransparency(image, transparent => image.classList.toggle("has-alpha-channel", transparent));
           image.alt = block.label || entry.title;
-          image.src = await originalScreenshotUrl(asset.id);
+          images.observe(image, asset);
           image.loading = "lazy";
-          image.addEventListener("click", () => openImageLightbox(image, entry));
+          image.addEventListener("click", () => { void enterImageReview(entry, asset.id); });
           figure.append(image);
         } else figure.append(articleSourceLink(block.sourceUrl, block.label || "打开原图"));
         if (block.label) figure.append(rawTextEl("figcaption", "", block.label));
@@ -6295,6 +6364,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   const entry = normalizedEntry;
   const contentAssets = entry.mediaAssets.filter(asset => asset.usage !== "poster");
   const gallery = el("section", "detail-visual-gallery");
+  gallery.dataset.mediaEntryId = entry.id;
   gallery.classList.toggle("is-immersive", immersive);
   const stage = el("div", "detail-visual-stage ui-scrollbar");
   const rail = el("div", "detail-visual-rail");
@@ -6307,6 +6377,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   const nextMedia = promptIconButton(t("下一项媒体"), "chevron-right");
   previousMedia.classList.add("icon-button");
   nextMedia.classList.add("icon-button");
+  previousMedia.dataset.reviewMedia = 'previous'; nextMedia.dataset.reviewMedia = 'next';
   const mediaPosition = el("span", "detail-media-position");
   mediaPosition.setAttribute("aria-live", "polite");
   mediaNavigation.append(previousMedia, mediaPosition, nextMedia);
@@ -6320,8 +6391,6 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   let renderToken = 0;
   let activeController = null;
   let activeMediaBody = null;
-  let lockedImageStageHeight = 0;
-  let lockedImageStageWidth = 0;
   const resizeObserver = new ResizeObserver(() => {
     const asset = contentAssets[activeIndex];
     const image = stage.querySelector(".detail-image");
@@ -6331,6 +6400,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   resizeObserver.observe(elements.detailDrawer);
   const cleanup = () => {
     renderToken += 1;
+    notes.reviewFeedback?.dispose();
     activeController?.destroy?.();
     activeMediaBody?.releaseMedia?.();
     activeController = null;
@@ -6338,44 +6408,47 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     detailControllerCleanups.delete(cleanup);
   };
   detailControllerCleanups.add(cleanup);
-  gallery.updateEntry = value => {
+  // Appending a feedback frame must not reset the video or discard its draft.
+  gallery.canAppendFeedbackFrames = (value, before, after) => {
+    const previous = JSON.parse(before), next = JSON.parse(after);
+    const frameIds = new Set((value.timeNotes || []).map(note => note.frameAssetId));
+    return next.length > previous.length && JSON.stringify(next.slice(0, previous.length)) === before
+      && next.slice(previous.length).every(asset => asset.kind === "image" && (frameIds.has(asset.id) || value.mediaAssets?.find(item => item.id === asset.id)?.derivedFromAssetId === gallery.dataset.displayedAssetId));
+  };
+  gallery.updateEntry = async value => {
+    const previousCount = contentAssets.length;
     const wasPrimary = entry.primaryMediaId;
     const previousNotes = JSON.stringify(entry.timeNotes);
     const updated = normalizeEntryMedia(value);
     Object.assign(entry, updated);
     contentAssets.splice(0, contentAssets.length, ...updated.mediaAssets.filter(asset => asset.usage !== "poster"));
+    if (contentAssets.length > previousCount) {
+      for (let index = previousCount; index < contentAssets.length; index += 1) {
+        imageUrls[index] = await originalScreenshotUrl(contentAssets[index].id);
+        if (!gallery.isConnected) return;
+        rail.append(await createThumbnail(index, contentAssets[index]));
+      }
+      gallery.classList.toggle("has-media-navigation", contentAssets.length > 1);
+      const caption = stage.querySelector('.detail-visual-caption');
+      caption?.insertBefore(mediaNavigation, caption.querySelector('.detail-media-tools')); caption?.classList.add('has-media-navigation'); gallery.insertBefore(rail, notes);
+      previousMedia.disabled = activeIndex === 0;
+      nextMedia.disabled = activeIndex === contentAssets.length - 1;
+      mediaPosition.textContent = t("媒体 {index}/{total}", { index: activeIndex + 1, total: contentAssets.length });
+    }
     const asset = contentAssets[activeIndex];
-    if (wasPrimary !== entry.primaryMediaId && asset) {
+    if ((wasPrimary !== entry.primaryMediaId || previousCount !== contentAssets.length) && asset) {
       const item = stage.querySelector(".detail-visual-item");
       item?.classList.toggle("is-primary", asset.id === entry.primaryMediaId);
       const label = stage.querySelector(".detail-visual-caption > span:first-child");
       const position = asset.id === entry.primaryMediaId ? `${t("主要媒体")} · ${activeIndex + 1}/${contentAssets.length}` : `${activeIndex + 1}/${contentAssets.length}`;
-      if (label) label.textContent = [position, mediaMetadataText(asset)].filter(Boolean).join(" · ");
+      if (label) { label.title = [position, mediaMetadataText(asset)].filter(Boolean).join(" · "); label.textContent = asset.kind === "video" ? assetFormatLabel(asset) : label.title; }
       if (asset.id === entry.primaryMediaId) stage.querySelector('[data-set-primary]')?.remove();
     }
     if (previousNotes !== JSON.stringify(entry.timeNotes)) renderTimeNotes(notes, entry, asset, () => activeController);
   };
 
-  function syncImageStageSize(asset, image) {
-    const dimensions = imageDimensions(asset) || (image.naturalWidth && image.naturalHeight
-      ? { width: image.naturalWidth, height: image.naturalHeight }
-      : null);
-    if (!dimensions) return;
-    const galleryWidth = gallery.clientWidth || elements.detailDrawer.clientWidth;
-    if (!galleryWidth) return;
-    const railHeight = contentAssets.length > 1 ? rail.offsetHeight + mediaNavigation.offsetHeight : 0;
-    const toolbarHeight = elements.detailDrawer.querySelector(".drawer-toolbar")?.offsetHeight || 0;
-    const containerHeight = immersive ? gallery.clientHeight : elements.detailDrawer.clientHeight - toolbarHeight;
-    if (containerHeight <= railHeight + 1) return;
-    const availableHeight = containerHeight - railHeight;
-    if (immersive) {
-      stage.style.height = `${availableHeight}px`;
-      return;
-    }
-    if (lockedImageStageWidth && Math.abs(lockedImageStageWidth - galleryWidth) > 1) lockedImageStageHeight = 0;
-    lockedImageStageWidth = galleryWidth;
-    if (!lockedImageStageHeight) lockedImageStageHeight = Math.min(galleryWidth * dimensions.height / dimensions.width, availableHeight);
-    stage.style.height = `${lockedImageStageHeight}px`;
+  function syncImageStageSize() {
+    stage.style.removeProperty('height');
   }
 
   function captureDetailScrollAnchor(anchor) {
@@ -6394,9 +6467,57 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     snapshot.top = snapshot.anchor.getBoundingClientRect().top;
   }
 
-  async function renderActive() {
+  async function renderActive(index = activeIndex) {
     const token = ++renderToken;
-    const asset = contentAssets[activeIndex];
+    const asset = contentAssets[index];
+    const replacing = Boolean(gallery.dataset.displayedAssetId);
+    gallery.dataset.pendingAssetId = asset.id;
+    if (!replacing) {
+      const pendingItem = el("div", "detail-media-loading");
+      pendingItem.setAttribute("role", "status");
+      pendingItem.setAttribute("aria-label", `正在打开第 ${index + 1} 项媒体`);
+      pendingItem.append(el("span", "detail-media-loading-block"));
+      stage.replaceChildren(pendingItem);
+    }
+    const item = el("figure", `detail-visual-item${asset.id === entry.primaryMediaId ? " is-primary" : ""}`);
+
+    let body;
+    try { body = await createMediaViewer(asset, imageUrls[index], entry); }
+    catch (error) {
+      console.debug("PromptDirector media viewer initialization", error);
+      body = el("div", "detail-video-wrap");
+      body.append(textEl("p", "media-playback-status", "媒体暂不可用"));
+    }
+    const discardViewer = () => {
+      body.mediaController?.destroy?.();
+      body.releaseMedia?.();
+      for (const media of body.querySelectorAll?.("video, audio") || []) {
+        media.pause();
+        URL.revokeObjectURL(media.src);
+        detailMediaUrls.delete(media.src);
+      }
+      if (token === renderToken) delete gallery.dataset.pendingAssetId;
+      return false;
+    };
+    if (token !== renderToken || currentDetailId !== ownerEntryId) return discardViewer();
+    // Keep the old player and feedback usable until this replacement is ready.
+    // A note can become dirty or start saving while its next viewer is loading.
+    if (replacing) {
+      if (!gallery.isConnected) return discardViewer();
+      const savingEdits = () => notes.reviewFeedback?.getState().saving || elements.detailContent.querySelector('.prompt-edit-actions .button-secondary:disabled');
+      if (savingEdits()) {
+        showFeedback(t("正在保存…"));
+        return discardViewer();
+      }
+      if (!await confirmPromptEditDiscard()) return discardViewer();
+      if (token !== renderToken || currentDetailId !== ownerEntryId) return discardViewer();
+      if (!gallery.isConnected) return discardViewer();
+      if (savingEdits()) {
+        showFeedback(t("正在保存…"));
+        return discardViewer();
+      }
+    }
+    activeIndex = index;
     previousMedia.disabled = activeIndex === 0;
     nextMedia.disabled = activeIndex === contentAssets.length - 1;
     mediaPosition.textContent = t("媒体 {index}/{total}", { index: activeIndex + 1, total: contentAssets.length });
@@ -6411,31 +6532,6 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     activeController?.destroy?.();
     activeController = null;
     activeMediaBody?.releaseMedia?.();
-    activeMediaBody = null;
-    const pendingItem = el("div", "detail-media-loading");
-    pendingItem.setAttribute("role", "status");
-    pendingItem.setAttribute("aria-label", `正在打开第 ${activeIndex + 1} 项媒体`);
-    pendingItem.append(el("span", "detail-media-loading-block"));
-    stage.replaceChildren(pendingItem);
-    const item = el("figure", `detail-visual-item${asset.id === entry.primaryMediaId ? " is-primary" : ""}`);
-    item.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
-    let body;
-    try { body = await createMediaViewer(asset, imageUrls[activeIndex], entry); }
-    catch (error) {
-      console.debug("PromptDirector media viewer initialization", error);
-      body = el("div", "detail-video-wrap");
-      body.append(textEl("p", "media-playback-status", "媒体暂不可用"));
-    }
-    if (token !== renderToken || currentDetailId !== ownerEntryId) {
-      body.mediaController?.destroy?.();
-      body.releaseMedia?.();
-      for (const media of body.querySelectorAll?.("video, audio") || []) {
-        media.pause();
-        URL.revokeObjectURL(media.src);
-        detailMediaUrls.delete(media.src);
-      }
-      return;
-    }
     activeMediaBody = body;
     const localVideo = body instanceof HTMLVideoElement ? body : body.querySelector?.("video") ?? null;
     if (localVideo) addVideoPlayButton(localVideo);
@@ -6451,7 +6547,8 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     activeController = body.mediaController || (localVideo ? localVideoController(localVideo) : null);
     const caption = el("figcaption", "detail-visual-caption");
     const position = asset.id === entry.primaryMediaId ? `${t("主要媒体")} · ${activeIndex + 1}/${contentAssets.length}` : `${activeIndex + 1}/${contentAssets.length}`;
-    caption.append(rawTextEl("span", "", [position, mediaMetadataText(asset)].filter(Boolean).join(" · ")));
+    const mediaLabel = rawTextEl("span", "", ["video", "image"].includes(asset.kind) ? assetFormatLabel(asset) : [position, mediaMetadataText(asset)].filter(Boolean).join(" · "));
+    mediaLabel.title = [position, mediaMetadataText(asset)].filter(Boolean).join(" · "); caption.append(mediaLabel);
     const actions = el("span", "detail-visual-actions");
     if (asset.storageMode === "reference" && (asset.reference?.url || asset.sourceUrl)) {
       const source = textEl("a", "button-secondary media-reference-fallback", "打开来源");
@@ -6468,6 +6565,16 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       finally { download.disabled = false; }
     };
     download.addEventListener("click", downloadAction);
+    if (localVideo?.dataset.originalDragUrl) {
+      download.draggable = true;
+      download.addEventListener('dragstart', event => {
+        if (!event.dataTransfer || !dragLibraryId) { event.preventDefault(); return; }
+        const name = copyFilename(asset, entry.title, 0);
+        setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: entry.id, assetId: asset.id, name,
+          file: { kind: 'video', url: localVideo.dataset.originalDragUrl, mimeType: asset.mimeType, name } });
+        event.stopPropagation();
+      });
+    }
     const mediaActions = [];
     if (asset.storageMode !== "reference" || asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE) {
       actions.append(download);
@@ -6501,9 +6608,21 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       event.preventDefault(); event.stopPropagation();
       showQuickMenu(download, mediaActions, { x: event.clientX, y: event.clientY }, message => showFeedback(message, true));
     });
-    caption.append(actions);
+    if (contentAssets.length > 1) { caption.append(mediaNavigation); caption.classList.add('has-media-navigation'); }
+    const tools = el('div', 'detail-media-tools'); tools.append(actions); caption.append(tools);
+    if (localVideo || asset.kind === "image") {
+      if (localVideo) caption.classList.add('review-media-toolbar');
+      for (const button of actions.querySelectorAll('button')) {
+        const label = button.textContent;
+        const icon = button === download ? 'download' : button.dataset.setPrimary ? 'check' : 'trash-2';
+        button.classList.remove('button-secondary'); button.classList.add('icon-button');
+        button.title = label; if (!button.hasAttribute('aria-label')) button.setAttribute('aria-label', label);
+        button.replaceChildren(createUiIcon(icon));
+      }
+    }
     item.append(body, caption);
     stage.scrollTop = 0;
+    gallery.dataset.displayedAssetId = asset.id; delete gallery.dataset.pendingAssetId;
     stage.replaceChildren(item);
     if (asset.kind === "image" && body instanceof HTMLImageElement) {
       if (body.complete && body.naturalWidth) syncImageStageSize(asset, body);
@@ -6515,18 +6634,17 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       button.setAttribute("aria-pressed", String(index === activeIndex));
     }
     refreshActiveDetailAssetSections(entry);
+    return true;
   }
 
   async function switchMedia(index, trigger) {
     if (switchingMedia || index < 0 || index >= contentAssets.length || activeIndex === index) return;
     switchingMedia = true;
     try {
-      if (!await confirmPromptEditDiscard()) return;
       if (ownerEntryId !== currentDetailId || !gallery.isConnected) return;
       const railScrollLeft = rail.scrollLeft;
       const preservedAnchor = captureDetailScrollAnchor(trigger);
-      activeIndex = index;
-      await renderActive();
+      if (!await renderActive(index)) return;
       if (!gallery.isConnected) return;
       rail.scrollLeft = railScrollLeft;
       (trigger.disabled ? mediaNavigation : trigger).focus({ preventScroll: true });
@@ -6547,11 +6665,11 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
     switchMedia(activeIndex + (event.key === "ArrowLeft" ? -1 : 1), event.target);
   });
 
-  for (const [index, asset] of contentAssets.entries()) {
+  async function createThumbnail(index, asset) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "detail-visual-thumb";
-    button.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
+
     button.setAttribute("aria-label", `${asset.id === entry.primaryMediaId ? "主要媒体，" : ""}查看第 ${index + 1} 项媒体`);
     const poster = asset.kind === "video" ? posterAssetForVideo(entry, asset) : null;
     const thumbnailUrl = asset.kind === "image" ? imageUrls[index] : poster ? await originalScreenshotUrl(poster.id) : "";
@@ -6559,7 +6677,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       const image = document.createElement("img");
       image.alt = "";
       image.src = thumbnailUrl;
-      image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
+      observeImageTransparency(image, transparent => image.classList.toggle("has-alpha-channel", transparent));
       const fallback = textEl("span", "media-thumb-label", asset.kind === "video" ? "▶ 视频" : "图片不可用");
       fallback.hidden = true;
       image.addEventListener("error", () => { image.hidden = true; fallback.hidden = false; });
@@ -6575,10 +6693,15 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       button.append(textEl("span", "media-thumb-label", labels[asset.kind] || "资料"));
     }
     button.addEventListener("click", () => switchMedia(index, button));
-    rail.append(button);
+    return button;
   }
+  for (const [index, asset] of contentAssets.entries()) rail.append(await createThumbnail(index, asset));
+  gallery.selectAsset = async assetId => {
+    const index = contentAssets.findIndex(asset => asset.id === assetId);
+    if (index < 0) throw new Error("素材不属于当前案例");
+    await switchMedia(index, mediaNavigation);
+  };
   gallery.append(stage);
-  if (contentAssets.length > 1) gallery.append(mediaNavigation);
   if (contentAssets.length > 1) gallery.append(rail);
   gallery.append(notes);
   await renderActive();
@@ -6667,14 +6790,15 @@ function createVideoAnalysisWorkspace(entry, asset, actionTarget) {
   const task = videoAnalysisTaskStateByAsset.get(taskKey);
   const running = ["queued", "running"].includes(task?.status);
   const current = currentVideoReconstruction(entry, asset.id);
-  const card = current ? createCurrentVideoReconstruction(entry, asset, current) : null;
+  const source = detailPromptSources(entry, asset);
+  const card = source.ai ? createCurrentVideoReconstruction(entry, asset, { ...current, reconstructionPrompt: source.ai }, source.aiSource) : null;
   const header = card?.querySelector(".prompt-toolbar") || actionTarget || el("div", "prompt-toolbar");
   if (card) workspace.append(card);
   else if (!actionTarget) workspace.append(header);
-  if (!current) header.append(createPromptRulesAction("video"));
+  if (!card) header.append(createPromptRulesAction("video"));
 
   if (!running && !["failed", "stopped"].includes(task?.status)) {
-    const run = textEl("button", "button-secondary video-analysis-run", "逆推视频提示词");
+    const run = promptIconButton(t("逆推视频提示词"), "wand-sparkles"); run.classList.add("icon-button", "video-analysis-run");
     run.addEventListener("click", async () => {
       try {
         await startVideoAnalysis(entry, asset, run);
@@ -6737,7 +6861,7 @@ function createVideoAnalysisTaskStatus(task) {
       ? "上次执行状态未知，未自动重试；服务商可能已收到请求"
       : attempt?.error || (task.providerMayHaveAccepted ? "已停止等待，未保存结果；服务商可能已收到请求" : "已取消，未发送");
     status.append(rawTextEl("span", "", t(message)));
-    const retry = textEl("button", "button-secondary video-analysis-run", "逆推视频提示词");
+    const retry = promptIconButton(t("逆推视频提示词"), "wand-sparkles"); retry.classList.add("icon-button", "video-analysis-run");
     retry.addEventListener("click", async () => {
       if (!await confirmAppAction({
         title: "重新发送这次视频分析？",
@@ -6785,13 +6909,15 @@ function attachVideoAnalysisElapsed(element, startedAtValue) {
   }, 1000);
 }
 
-function createCurrentVideoReconstruction(entry, asset, record) {
+function createCurrentVideoReconstruction(entry, asset, record, aiSource = "analysis") {
   const card = createPromptPanel({
     key: `${entry.id}:${asset.id}:ai`, title: t("AI 逆推提示词"), text: record.reconstructionPrompt,
     className: "video-reconstruction-current", editorClass: "video-reconstruction-editor", markdown: true, t,
     editLabel: "编辑 AI 逆推提示词",
     actions: [createPromptCopyAction(record.reconstructionPrompt), createPromptRulesAction("video")],
-    onSave: text => savePromptPanel({ type: "UPDATE_VIDEO_RECONSTRUCTION_PROMPT", entryId: entry.id, assetId: asset.id, reconstructionPrompt: text }),
+    onSave: text => savePromptPanel(aiSource === "media-prompt"
+      ? { type: "UPDATE_ENTRY_MEDIA_PROMPT", entryId: entry.id, assetId: asset.id, text, preserveAiSource: true }
+      : { type: "UPDATE_VIDEO_RECONSTRUCTION_PROMPT", entryId: entry.id, assetId: asset.id, reconstructionPrompt: text }),
     onError: error => showFeedback(error.message, true)
   });
   card.querySelector(".prompt-read-body").classList.add("video-reconstruction-text");
@@ -6871,7 +6997,7 @@ async function createMediaViewer(asset, imageUrl, entry) {
   if (asset.kind === "image") {
     const image = document.createElement("img");
     image.className = "detail-image";
-    image.classList.toggle("has-alpha-channel", alphaCapableImage(asset));
+    observeImageTransparency(image, transparent => image.classList.toggle("has-alpha-channel", transparent));
     image.alt = copyFilename(asset, entry.title, 0);
     image.src = imageUrl;
     image.draggable = true;
@@ -6884,11 +7010,11 @@ async function createMediaViewer(asset, imageUrl, entry) {
     });
     image.tabIndex = 0;
     image.role = "button";
-    image.addEventListener("click", () => openImageLightbox(image, entry));
+    image.addEventListener("click", () => { void enterImageReview(entry, asset.id); });
     image.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      openImageLightbox(image, entry);
+      void enterImageReview(entry, asset.id);
     });
     return image;
   }
@@ -6907,7 +7033,9 @@ async function createMediaViewer(asset, imageUrl, entry) {
     video.autoplay = false;
     video.playsInline = true;
     video.draggable = true;
+    video.dataset.originalDragUrl = url;
     video.addEventListener('dragstart', event => {
+      if (video.controls || video.dataset.reviewTransport || elements.detailDrawer.classList.contains('is-reviewing')) { event.preventDefault(); return; }
       if (!event.dataTransfer) return;
       if (!dragLibraryId) { event.preventDefault(); showFeedback('资料库身份暂不可读，请刷新后再拖动', true); return; }
       const name = copyFilename(asset, entry.title, 0);
@@ -7113,12 +7241,13 @@ function addVideoPlayButton(video) {
   const surface = el("div", "detail-video-surface");
   video.replaceWith(surface);
   const button = iconActionButton("play", "播放视频", async () => {
-    try { await video.preparePlayback?.(); video.controls = true; await video.play(); }
+    try { await video.preparePlayback?.(); video.controls = !video.dataset.reviewTransport; await video.play(); }
     catch (error) { showFeedback(error.message, true); }
   });
   button.classList.add("detail-video-play");
-  const update = () => { button.hidden = !video.paused && !video.ended || Boolean(video.error); };
-  for (const event of ["play", "pause", "ended", "error"]) video.addEventListener(event, update);
+  let started = false;
+  const update = () => { if (!video.paused) started = true; button.hidden = started || video.readyState >= 2 || Boolean(video.error); video.draggable = !video.controls && !video.dataset.reviewTransport; };
+  for (const event of ["play", "pause", "ended", "error", "loadeddata", "seeked"]) video.addEventListener(event, update);
   surface.append(video, button);
   update();
 }
@@ -7293,156 +7422,70 @@ function basicEmbedController(frame, status, providerLabel) {
 }
 
 function renderTimeNotes(container, entry, asset, getController) {
-  if (asset.kind !== "video" || entry.compoundCase) return container.replaceChildren();
-  const header = el("div", "time-note-header");
-  const heading = textEl("h3", "", "时间点笔记");
-  const add = textEl("button", "button-secondary", "添加时间笔记");
-  header.append(heading, add);
-  const list = el("div", "time-note-list");
-  for (const note of (entry.timeNotes ?? []).filter((item) => item.assetId === asset.id)) {
-    const row = el("div", "time-note-row");
-    const jump = textEl("button", "button-secondary time-note-jump", note.endMs
-      ? `${formatMediaTime(note.startMs)}–${formatMediaTime(note.endMs)}`
-      : formatMediaTime(note.startMs));
-    jump.addEventListener("click", async () => {
-      if (asset.reference?.provider === "youtube") {
-        await chrome.tabs.create({ url: youtubeWatchUrl(asset.reference?.url || asset.sourceUrl, note.startMs), active: true });
-        return;
-      }
-      const controller = getController();
-      if (typeof controller?.seekToMs !== "function") return showFeedback("这个外部播放器无法直接跳转，请按笔记时间打开原网页", true);
-      try { await controller.seekToMs(note.startMs); }
-      catch { showFeedback("播放器暂时无法跳转", true); }
-    });
-    const remove = promptIconButton(t("删除笔记"), "trash-2");
-    remove.classList.add("icon-button", "quiet-danger", "time-note-remove");
-    remove.addEventListener("click", () => perform(remove, { type: "DELETE_TIME_NOTE", entryId: entry.id, noteId: note.id }));
-    row.append(jump, rawTextEl("p", "", note.text), remove);
-    list.append(row);
+  if (!["video", "image"].includes(asset.kind) || entry.compoundCase) { container.reviewFeedback?.dispose(); container.reviewFeedback = null; return container.replaceChildren(); }
+  const notes = (entry.timeNotes || []).filter(note => note.assetId === asset.id);
+  if (container.reviewFeedback?.assetId === asset.id) {
+    container.reviewFeedback.update(notes, entry.creative || {}); return;
   }
-
-  const form = el("div", "time-note-form");
-  form.hidden = true;
-  const text = document.createElement("textarea");
-  text.rows = 2;
-  text.placeholder = t("记录这个画面、动作变化或提示词用法");
-  text.setAttribute("aria-label", t("笔记内容"));
-  const start = document.createElement("input");
-  start.type = "number";
-  start.min = "0";
-  start.step = "0.1";
-  start.placeholder = t("时间（秒）");
-  const startField = el("label", "time-note-field");
-  startField.append(textEl("span", "", "时间（秒）"), start);
-  const save = textEl("button", "", "保存笔记");
-  const cancel = textEl("button", "button-secondary", "取消");
-  const advanced = el("details", "time-note-advanced");
-  advanced.append(textEl("summary", "", "更多记录选项"));
-  const advancedBody = el("div", "time-note-advanced-body");
-  const end = document.createElement("input");
-  end.type = "number";
-  end.min = "0";
-  end.step = "0.1";
-  end.placeholder = t("片段结束秒数（可选）");
-  const endField = el("label", "time-note-field");
-  endField.append(textEl("span", "", "片段结束秒数（可选）"), end);
-  advancedBody.append(endField);
-  const controller = getController();
-  if (controller?.video) {
-    const keyframe = textEl("button", "button-secondary", "保存当前帧");
-    keyframe.addEventListener("click", () => saveVideoKeyframe(keyframe, controller.video, entry, asset, text, () => { form.dataset.dirty = "false"; }));
-    advancedBody.append(keyframe);
-  }
-  advanced.append(advancedBody);
-  const markDirty = () => { form.dataset.dirty = String(Boolean(text.value.trim() || end.value)); };
-  form.addEventListener("input", markDirty);
-  add.addEventListener("click", async () => {
-    const restore = preserveElementPosition(header);
-    form.hidden = false;
-    add.hidden = true;
-    let currentMs = null;
-    const currentController = getController();
-    try {
-      if (typeof currentController?.getCurrentTimeMs === "function") currentMs = await currentController.getCurrentTimeMs();
-    } catch { /* Manual time entry remains available when the player cannot report its position. */ }
-    if (!form.isConnected || form.hidden) return;
-    if (Number.isFinite(currentMs)) start.value = String(Math.round(currentMs / 100) / 10);
-    restore();
-    text.focus({ preventScroll: true });
-  });
-  cancel.addEventListener("click", () => {
-    const restore = preserveElementPosition(header);
-    text.value = "";
-    start.value = "";
-    end.value = "";
-    advanced.open = false;
-    form.dataset.dirty = "false";
-    form.hidden = true;
-    add.hidden = false;
-    restore();
-    add.focus({ preventScroll: true });
-  });
-  save.addEventListener("click", async () => {
-    if (!text.value.trim()) return showFeedback("请先写下这段画面的笔记", true);
-    if (start.value === "" || !start.checkValidity() || !end.checkValidity() || (end.value !== "" && Number(end.value) <= Number(start.value))) {
-      return showFeedback("请填写有效时间，结束时间应晚于开始时间", true);
-    }
-    const response = await perform(save, {
-      type: "ADD_TIME_NOTE",
-      entryId: entry.id,
-      note: {
-        assetId: asset.id,
-        startMs: Math.max(0, Math.round(Number(start.value || 0) * 1000)),
-        ...(end.value ? { endMs: Math.max(0, Math.round(Number(end.value) * 1000)) } : {}),
-        text: text.value
-      }
-    }, false);
-    if (response?.ok) {
-      form.dataset.dirty = "false";
-      const restore = preserveElementPosition(container);
-      await refreshLibrary();
-      restore();
-      container.querySelector(".time-note-header button")?.focus({ preventScroll: true });
-    }
-  });
-  const actions = el("div", "time-note-form-actions");
-  actions.append(cancel, save);
-  form.append(text, startField, advanced, actions);
-  container.replaceChildren(header, list, form);
-}
-
-async function saveVideoKeyframe(button, video, entry, asset, text, onSaved) {
-  if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
-    return showFeedback("请先播放或定位到可见画面，再保存当前帧", true);
-  }
-  const frameId = globalThis.crypto.randomUUID();
-  button.disabled = true;
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-    const blob = await canvasBlob(canvas, "image/webp");
-    await saveMediaBlob(frameId, blob);
-    const currentMs = Math.max(0, Math.round(video.currentTime * 1000));
-    const response = await chrome.runtime.sendMessage({
-      type: "ADD_VIDEO_KEYFRAME", entryId: entry.id,
-      asset: {
-        id: frameId, kind: "image", storageMode: "managed", mimeType: blob.type,
-        byteSize: blob.size, width: canvas.width, height: canvas.height,
-        sourceTitle: `${entry.title} · ${formatMediaTime(currentMs)}`
-      },
-      note: { assetId: asset.id, startMs: currentMs, text: text.value.trim() || `关键帧 ${formatMediaTime(currentMs)}` }
-    });
-    if (!response?.ok) throw new Error(response?.message || "关键帧保存失败");
-    onSaved?.();
-    showFeedback(response.message);
+  const send = async message => {
+    const response = await chrome.runtime.sendMessage(message);
+    if (response?.ok === false) throw new Error(response.message || t('保存失败'));
+    entry.timeNotes = response.entry.timeNotes;
     await refreshLibrary();
-  } catch (error) {
-    await deleteMediaBlob(frameId).catch(() => undefined);
-    showFeedback(error.message || "关键帧保存失败", true);
-  } finally {
-    button.disabled = false;
+    return (response.entry.timeNotes || []).filter(note => note.assetId === asset.id);
+  };
+  container.reviewFeedback?.dispose();
+  const feedback = mountReviewFeedback({ container, notes, authored: entry.creative || {}, timed: asset.kind === 'video', t,
+    getPosition: async () => {
+      if (asset.kind === 'image') return 0;
+      const controller = getController();
+      if (!controller?.getCurrentTimeMs) throw new Error('请输入备注时间');
+      return controller.getCurrentTimeMs();
+    },
+    getRange: () => container.closest('.detail-visual-gallery')?.reviewRange?.(),
+    seek: async ms => {
+      const controller = getController();
+      if (!controller?.seekToMs) throw new Error('当前播放器不能直接跳转，请打开来源');
+      await controller.seekToMs(ms);
+    },
+    saveNote: note => send({ type: 'ADD_TIME_NOTE', entryId: entry.id, note: { ...note, assetId: asset.id } }),
+    removeNote: id => send({ type: 'DELETE_TIME_NOTE', entryId: entry.id, noteId: id })
+  });
+  feedback.assetId = asset.id; container.reviewFeedback = feedback;
+  const gallery = container.closest('.detail-visual-gallery');
+  if (gallery) {
+    gallery.reviewFeedback = feedback;
+    let capturing = false;
+    gallery.captureFrame = async () => {
+      if (capturing) return;
+      capturing = true;
+      const button = gallery.querySelector('[data-review-capture]'); if (button) button.disabled = true;
+      let id;
+      try {
+        const player = getController()?.video;
+        const frameTimeMs = Math.round(player.currentTime * 1000);
+        const width = player.videoWidth, height = player.videoHeight;
+        const blob = await captureReviewFrame(player); id = crypto.randomUUID();
+        await saveMediaBlob(id, blob);
+        const result = await chrome.runtime.sendMessage({ type: 'ADD_VIDEO_KEYFRAME', entryId: entry.id,
+          asset: { id, kind: 'image', storageMode: 'managed', mimeType: blob.type, byteSize: blob.size,
+            width, height, derivedFromAssetId: asset.id, frameTimeMs, sourceTitle: entry.title } });
+        if (!result?.ok) throw new Error(result?.message || t('保存失败'));
+        await refreshLibrary(); showFeedback(t('截图已保存'));
+      } catch (error) {
+        if (id) await chrome.runtime.sendMessage({ type: 'DISCARD_UNREFERENCED_MEDIA', assetIds: [id] }).catch(() => {});
+        throw error;
+      } finally { capturing = false; if (button?.isConnected) button.disabled = false; }
+    };
+  }
+  const toolbar = gallery?.querySelector('.detail-visual-caption');
+  if (toolbar) {
+    toolbar.querySelector('[data-review-feedback]')?.remove();
+    const button = feedbackIcon('创作备注', 'message-square', t); button.dataset.reviewFeedback = '';
+    button.addEventListener('click', () => { void feedback.open(); });
+    const range = toolbar.querySelector('.review-range-controls');
+    const tools = toolbar.querySelector('.detail-media-tools') || toolbar;
+    (range || tools).insertBefore(button, range ? null : tools.querySelector('.detail-visual-actions'));
   }
 }
 
@@ -7513,19 +7556,23 @@ function formatMediaTime(milliseconds) {
   return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}` : `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
-function openImageLightbox(trigger, entry) {
-  if (!trigger.src) return;
-  lightboxTrigger = trigger;
-  elements.imageLightboxImage.src = trigger.src;
-  elements.imageLightboxImage.alt = translateUiMessage(`${entry.title} 原图`);
-  elements.imageLightbox.classList.toggle("has-alpha-channel", trigger.classList.contains("has-alpha-channel") || Boolean(trigger.closest?.(".has-alpha-channel")));
-  elements.imageLightbox.showModal();
-  elements.imageLightboxClose.focus();
-}
-
-function closeImageLightbox() {
-  if (elements.imageLightbox.open) elements.imageLightbox.close();
-  elements.imageLightbox.classList.remove("has-alpha-channel");
+async function enterImageReview(entry, assetId) {
+  try {
+    if (elements.detailDrawer.classList.contains('is-reviewing')) {
+      elements.detailDrawer.dispatchEvent(new Event('toggle-media-review')); return;
+    }
+    const ownerId = currentDetailId;
+    let gallery = [...elements.detailDrawer.querySelectorAll('.detail-visual-gallery')].find(node => node.dataset.mediaEntryId === entry.id);
+    if (!gallery) {
+      gallery = await createDetailMediaGallery(entry, { immersive: true });
+      if (currentDetailId !== ownerId) return;
+      gallery.classList.add('auxiliary-review-gallery');
+      elements.detailContent.querySelector('.detail-primary').prepend(gallery);
+    }
+    if (gallery.dataset.displayedAssetId !== assetId) await gallery.selectAsset(assetId);
+    if (currentDetailId !== ownerId) return;
+    elements.detailDrawer.dispatchEvent(new Event('enter-media-review'));
+  } catch (error) { showFeedback(translateUiMessage(error.message), true); }
 }
 
 function createDetailHeader(entry) {
@@ -7533,10 +7580,6 @@ function createDetailHeader(entry) {
   const title = rawTextEl("h2", "detail-title", entry.title);
   title.title = entry.title;
   section.append(title, createEntryEditor(entry, { inline: true }));
-  const meta = el("div", "detail-meta");
-  meta.append(textEl("span", "", contentName(entry)), rawTextEl("span", "", formatDate(entry.savedAt)));
-  section.append(meta);
-  section.append(createPalette(paletteForEntry(entry)?.colors));
   return section;
 }
 
@@ -7544,9 +7587,6 @@ function createDetailQuickOrganization(entry) {
   const section = el("section", "detail-section detail-quick-organization");
 
   const projects = el("div", "detail-organization-group");
-  const projectHeading = el("div", "detail-organization-heading");
-  projectHeading.append(textEl("strong", "", "项目"));
-  projects.append(projectHeading);
   const entryIds = expandLogicalCaseIds([entry.id], compoundCases);
   const selectedProjectsForEntry = () => organizerState.collections.filter((collection) => {
     const members = new Set(collection.entryIds);
@@ -7572,51 +7612,32 @@ function createDetailQuickOrganization(entry) {
         ? collectionPathLabel(organizerState, selected[0].id)
         : t("已加入 {count} 个项目", { count: selected.length });
   };
-  projectSummaryText.setAttribute("role", "button");
-  projectSummaryText.tabIndex = 0;
-  const locate = event => {
+  projectSummary.addEventListener("dblclick", event => {
     if (!selectedProjectsForEntry().length) return;
-    event.preventDefault(); event.stopPropagation();
-    locateCaseProject(entry, projectSummaryText);
-  };
-  projectSummaryText.addEventListener("click", locate);
-  projectSummaryText.addEventListener("keydown", event => {
-    if (event.key === "Enter" || event.key === " ") locate(event);
+    event.preventDefault();
+    projectMenu.open = false;
+    locateCaseProject(entry, projectSummary);
   });
-  projectSummary.append(projectSummaryText, createUiIcon("chevron-down"));
+  projectSummary.title = t("项目");
+  projectSummary.append(createUiIcon("folder"), projectSummaryText, createUiIcon("chevron-down"));
   const projectPopover = el("div", "detail-project-popover");
-  const projectList = el("div", "detail-project-list");
-  const selectorLabelsByProject = collectionSelectorLabelsById(organizerState);
-  for (const collection of organizerState.collections) {
-    const members = new Set(collection.entryIds);
-    const matchingCount = entryIds.filter((id) => members.has(id)).length;
-    const selected = matchingCount === entryIds.length;
-    const partiallySelected = matchingCount > 0 && !selected;
-    const label = el("label", "detail-project-option");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = selected;
-    checkbox.indeterminate = partiallySelected;
-    checkbox.addEventListener("change", async () => {
+  projectPopover.dataset.menuInteractive = 'true';
+  const selector = createDetailProjectSelector({
+    getState: () => organizerState, entryIds, getChildren: indexProjectChildren,
+    onChange: async (collectionId, checked, checkbox) => {
+      const collection = organizerState.collections.find(item => item.id === collectionId);
+      if (!collection) return;
       const nextIds = new Set(collection.entryIds);
-      for (const id of entryIds) checkbox.checked ? nextIds.add(id) : nextIds.delete(id);
+      for (const id of entryIds) checked ? nextIds.add(id) : nextIds.delete(id);
       const response = await perform(checkbox, {
-        type: "REPLACE_COLLECTION_ENTRIES",
-        collectionId: collection.id,
-        entryIds: [...nextIds]
+        type: "REPLACE_COLLECTION_ENTRIES", collectionId, entryIds: [...nextIds]
       }, false);
-      if (!response) {
-        checkbox.checked = selected;
-        checkbox.indeterminate = partiallySelected;
-        return;
-      }
+      if (!response) return;
       consumePendingExternalLibraryRefresh();
       organizerState = response.organizerState ?? organizerState;
       syncProjectSummary();
-    });
-    label.append(checkbox, rawTextEl("span", "", selectorLabelsByProject.get(collection.id)));
-    projectList.append(label);
-  }
+    }
+  });
   const newProject = el("div", "detail-new-project");
   const newProjectName = document.createElement("input");
   newProjectName.placeholder = t("输入新项目名称");
@@ -7644,22 +7665,23 @@ function createDetailQuickOrganization(entry) {
     void submitProject();
   });
   newProject.append(newProjectName, createProject);
-  projectPopover.append(projectList, newProject);
+  projectPopover.append(selector.element, newProject);
   projectMenu.append(projectSummary, projectPopover);
   projects.append(projectMenu);
 
   const labels = el("div", "detail-organization-group");
-  const labelHeading = el("div", "detail-organization-heading");
-  labelHeading.append(textEl("strong", "", "添加标签"));
-  labels.append(labelHeading);
   const customLabels = uniqueNames(entry.compoundCase?.customLabels ?? entry.customLabels);
   const editor = createTagEditor({
-    values: customLabels,
+    values: customLabels, compact: true,
     onChange: (values, trigger) => saveDetailCustomLabels(entry, trigger, values)
   });
   labels.append(editor.element);
 
-  section.append(projects, labels);
+  const actions = el("div", "metadata-actions");
+  const source = createDetailSourceAction(entry);
+  if (source) actions.append(source);
+  actions.append(createDetailDeleteAction(entry));
+  section.append(projects, labels, actions);
   return section;
 }
 
@@ -7667,7 +7689,9 @@ function createDetailDeleteAction(entry) {
   const deleteButton = el("button", "button-danger-secondary detail-delete-action");
   deleteButton.type = "button";
   deleteButton.setAttribute("aria-label", `将“${entry.title}”移入回收站`);
-  deleteButton.append(createUiIcon("trash-2"), textEl("span", "", "删除案例"));
+  deleteButton.classList.add("prompt-icon-action");
+  deleteButton.title = t("移入回收站");
+  deleteButton.append(createUiIcon("trash-2"));
   deleteButton.addEventListener("click", async () => {
     if (!await confirmAppAction({
       title: `将“${entry.title}”移入回收站？`,
@@ -7678,13 +7702,6 @@ function createDetailDeleteAction(entry) {
     await deleteCaseIncrementally(deleteButton, entry.id);
   });
   return deleteButton;
-}
-
-function createDetailFooterActions(entry) {
-  const footer = el("section", "detail-footer-actions");
-  const deleteButton = createDetailDeleteAction(entry);
-  footer.append(deleteButton);
-  return footer;
 }
 
 async function saveDetailCustomLabels(entry, button, customLabels) {
@@ -7952,9 +7969,11 @@ function createLocalMediaUploadControl(entry, { label, accept = elements.mediaFi
 async function uploadLocalMediaToEntry(file, entryId) {
   const assetId = globalThis.crypto.randomUUID();
   let prepared = null;
+  const stage = createMediaStage();
   try {
     prepared = await prepareLocalMedia(file, assetId);
     const { blob, asset, poster } = prepared;
+    await stage.register([assetId, poster?.asset?.id].filter(Boolean));
     await saveMediaBlob(assetId, blob);
     if (poster) await saveMediaBlob(poster.asset.id, poster.blob);
     const response = await sendWithGenerationPromptConfirmation({
@@ -7964,11 +7983,9 @@ async function uploadLocalMediaToEntry(file, entryId) {
     showFeedback(response.message);
     await refreshLibrary();
   } catch (error) {
-    // A lost acknowledgement can follow a successful commit. Cleanup checks
-    // all persisted references in the worker before discarding staged bytes.
-    await chrome.runtime.sendMessage({ type: "DISCARD_UNREFERENCED_MEDIA",
-      assetIds: [assetId, prepared?.poster?.asset?.id].filter(Boolean) }).catch(() => undefined);
     showFeedback(error.message || "媒体添加失败", true);
+  } finally {
+    stage.release();
   }
 }
 
@@ -8078,7 +8095,7 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
   await discardPendingLocalImport();
   const browsingScrollY = window.scrollY;
   const rootName = source === "folder" ? commonImportRoot(fileItems) : "";
-  const draft = { source, rootName, browsingScrollY, customLabels: [], stagedAssets: [], skipped: [],
+  const draft = { source, rootName, browsingScrollY, customLabels: [], stagedAssets: [], skipped: [], mediaStage: createMediaStage(),
     duplicateIndex: createExactMediaDuplicateIndex(entries, { readBlob: getMediaBlob }) };
   pendingLocalImport = draft;
   elements.importDialogTitle.textContent = t("确认导入");
@@ -8123,7 +8140,7 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
 }
 
 async function prepareImportFile({ file, handle = null, relativePath, forceImport = false }, draft) {
-  const assetId = globalThis.crypto.randomUUID();
+  let assetId = globalThis.crypto.randomUUID();
   let prepared = null;
   try {
     prepared = await prepareLocalMedia(file, assetId, { relativePath, forceImport });
@@ -8132,11 +8149,22 @@ async function prepareImportFile({ file, handle = null, relativePath, forceImpor
       lastModified: file.lastModified
     });
     const duplicate = await draft.duplicateIndex.find(duplicateProbe, { contentHash: prepared.asset.contentHash });
-    await saveMediaBlob(assetId, prepared.blob);
-    if (prepared.poster) await saveMediaBlob(prepared.poster.asset.id, prepared.poster.blob);
+    if (duplicate.duplicateAssetId) {
+      assetId = duplicate.duplicateAssetId;
+      const prior = draft.stagedAssets.find(item => item.assetId === assetId);
+      const owner = entries.find(entry => entry.mediaAssets?.some(asset => asset.id === assetId));
+      const original = owner?.mediaAssets.find(asset => asset.id === assetId);
+      const poster = prior?.posterAsset ?? owner?.mediaAssets.find(asset => asset.id === original?.posterAssetId);
+      prepared.poster = poster ? { asset: poster } : null;
+      await draft.mediaStage.write([assetId, poster?.id].filter(Boolean), () => {});
+    } else {
+      await draft.mediaStage.write([assetId, prepared.poster?.asset?.id].filter(Boolean), async () => {
+        await saveMediaBlob(assetId, prepared.blob);
+        if (prepared.poster) await saveMediaBlob(prepared.poster.asset.id, prepared.poster.blob);
+      });
+    }
     if (pendingLocalImport !== draft) {
-      await deleteMediaBlob(assetId).catch(() => undefined);
-      if (prepared.poster) await deleteMediaBlob(prepared.poster.asset.id).catch(() => undefined);
+      draft.mediaStage.release();
       return;
     }
     draft.stagedAssets.push({
@@ -8166,8 +8194,7 @@ async function prepareImportFile({ file, handle = null, relativePath, forceImpor
     draft.duplicateIndex.add({ id: assetId, byteSize: prepared.blob.size,
       mimeType: prepared.asset.mimeType, sourceTitle: file.name, contentHash: duplicate.contentHash });
   } catch (error) {
-    await deleteMediaBlob(assetId).catch(() => undefined);
-    if (prepared?.poster?.asset?.id) await deleteMediaBlob(prepared.poster.asset.id).catch(() => undefined);
+    // Failed writes remain in the durable stage until this batch settles.
     if (pendingLocalImport === draft) {
       const failure = importFailureDetails(error);
       const { code, message, forceAllowed, ...details } = failure;
@@ -8304,9 +8331,9 @@ async function preserveUnsupportedImportReference(item, button) {
     }
     const assetId = globalThis.crypto.randomUUID();
     const reference = createUnsupportedLocalAssetReference(file, assetId, { relativePath });
-    await saveLocalAssetHandle(assetId, handle, file);
+    await draft.mediaStage.write([assetId], () => saveLocalAssetHandle(assetId, handle, file), [assetId]);
     if (pendingLocalImport !== draft) {
-      await deleteLocalAssetHandle(assetId).catch(() => undefined);
+      draft.mediaStage.release();
       return;
     }
     draft.skipped = draft.skipped.filter((candidate) => candidate !== item);
@@ -8353,6 +8380,7 @@ function importSelectedByteSize(staged) {
 
 async function startLocalImportJob() {
   if (!pendingLocalImport?.stagedAssets.length) return;
+  const draft = pendingLocalImport;
   if (importTagEditor.input.value.trim()) await importTagEditor.commit();
   elements.importStart.disabled = true;
   showImportFeedback("正在把资料交给后台导入…", false, true);
@@ -8379,6 +8407,7 @@ async function startLocalImportJob() {
     });
     if (!response?.ok) throw new Error(response?.message || "无法开始导入");
     activeImportJob = response.job;
+    draft.mediaStage.release();
     pendingLocalImport = null;
     renderImportJob();
     if (["queued", "running"].includes(activeImportJob.status)) scheduleImportJobPoll();
@@ -8562,12 +8591,9 @@ async function closeImportDialog() {
 }
 
 async function discardPendingLocalImport() {
-  const staged = pendingLocalImport?.stagedAssets ?? [];
+  const draft = pendingLocalImport;
   pendingLocalImport = null;
-  await Promise.allSettled(staged.flatMap((item) => [item.assetId, item.posterAssetId].filter(Boolean)).map(deleteMediaBlob));
-  await Promise.allSettled(staged
-    .filter((item) => item.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE)
-    .map((item) => deleteLocalAssetHandle(item.assetId)));
+  draft?.mediaStage.release();
 }
 
 function showImportFeedback(message, isError = false, pending = false) {
@@ -8898,7 +8924,33 @@ function createDetailAttributes(entry) {
   return section;
 }
 
-function createDetailMetadata(entry, { includeDelete = false } = {}) {
+function createDetailSourceAction(entry) {
+  const rows = entrySourceMetadataRows(entry, currentLocale() === "en" ? "Source" : "来源");
+  const sourceUrl = safeHttpUrl(entry.url);
+  if (!rows.length && !sourceUrl) return null;
+  const label = t(sourceUrl ? "打开来源" : "来源信息");
+  const action = el(sourceUrl ? "a" : "button", "button-secondary prompt-icon-action source-open-action");
+  action.setAttribute("aria-label", label);
+  const facts = rows.map(row => `${row.label}：${row.value}`).join("\n");
+  action.title = [label, facts].filter(Boolean).join("\n");
+  if (facts) action.setAttribute("aria-description", facts);
+  if (sourceUrl) { action.href = sourceUrl; action.target = "_blank"; action.rel = "noopener noreferrer"; }
+  else {
+    action.type = "button";
+    action.addEventListener("click", () => showAppDialog({ title: label, confirmLabel: "关闭", renderBody: ({ body }) => {
+      const list = el("dl", "metadata-list");
+      for (const row of rows) {
+        const item = el("div", "metadata-row");
+        item.append(rawTextEl("dt", "metadata-key", row.label), rawTextEl("dd", "metadata-value", row.value)); list.append(item);
+      }
+      body.append(list);
+    } }));
+  }
+  action.append(createUiIcon(sourceUrl ? "external-link" : "file-text"));
+  return action;
+}
+
+function createDetailMetadata(entry) {
   const rows = entrySourceMetadataRows(entry, currentLocale() === "en" ? "Source" : "来源");
   const sourceUrl = safeHttpUrl(entry.url);
   if (!rows.length && !sourceUrl) return null;
@@ -8913,7 +8965,6 @@ function createDetailMetadata(entry, { includeDelete = false } = {}) {
     openSource.rel = "noopener noreferrer";
     actions.append(openSource);
   }
-  if (includeDelete) actions.append(createDetailDeleteAction(entry));
   if (actions.childElementCount) heading.append(actions);
   section.append(heading);
   const list = el("dl", "metadata-list");
@@ -9014,6 +9065,7 @@ function createPromptCopyAction(text) {
 
 function createPromptRulesAction(kind) {
   const action = promptIconButton(t("编辑分析规则"), "settings");
+  action.dataset.promptSecondary = '';
   action.addEventListener("click", () => openSettingsDialog("rules", kind));
   return action;
 }
@@ -9027,31 +9079,59 @@ async function savePromptPanel(message) {
 
 function createMediaPromptSection(entry, asset, options) {
   const source = detailPromptSources(entry, asset);
+  const tabKey = `${entry.id}:${asset.id}`;
+  const sharedOriginal = sharedOriginalPrompt(entry);
+  const multipleMedia = entryMediaAssets(entry).filter(item => ['image', 'video'].includes(item.kind) && item.usage !== 'poster').length > 1;
+  const caseOriginal = multipleMedia ? sharedOriginal || caseOriginalPromptText(entry) : source.original;
+  const originalIsMedia = !multipleMedia && Boolean(source.originalAssetId);
+  const editableOriginal = Boolean(sharedOriginal || originalIsMedia);
+  const mediaOriginal = String(originalMediaPrompt(entry, asset.id)?.text || '').trim();
   const section = el("section", "detail-section prompt-section media-prompt-section");
-  const images = entryMediaAssets(entry).filter(item => item.kind === "image" && item.usage !== "poster");
-  const separateImage = asset.kind === "image" && (images.length > 1 || options.compoundMember);
-  let originalPanel;
-  if (source.original) {
-    originalPanel = createPromptPanel({ key: `${entry.id}:${asset.id}:original`, title: t(separateImage
-      ? source.originalAssetId ? "当前图片提示词" : "案例共享提示词" : "原始提示词"), text: source.original, t,
-      className: "original-prompt-panel", editLabel: "编辑原始提示词", actions: [createPromptCopyAction(source.original)],
-      onError: error => showFeedback(error.message, true),
-      onSave: text => savePromptPanel(source.originalAssetId
-        ? { type: "UPDATE_ENTRY_MEDIA_PROMPT", entryId: entry.id, assetId: source.originalAssetId, text }
-        : { type: "UPDATE_ENTRY_TEXT", entryId: entry.id, text, textRevision: entryTextRevision(entry) })
+  const contentAssets = entryMediaAssets(entry).filter(item => item.usage !== 'poster');
+  if (contentAssets.length > 1) {
+    const picker = document.createElement('select'); picker.className = 'sidebar-media-picker'; picker.setAttribute('aria-label', t('切换内容信息'));
+    contentAssets.forEach((item, index) => picker.append(option(item.id, `${index + 1} · ${item.sourceTitle || assetFormatLabel(item)}`)));
+    picker.value = asset.id;
+    picker.addEventListener('change', () => {
+      const gallery = [...elements.detailDrawer.querySelectorAll('.detail-visual-gallery')].find(item => item.selectAsset && item.dataset.mediaEntryId === entry.id);
+      void gallery?.selectAsset(picker.value).catch(error => showFeedback(error.message, true));
     });
-    section.append(originalPanel);
+    section.append(picker);
   }
-  const emptyActions = el("div", "prompt-toolbar");
-  if (!source.original && !source.ai) {
-    const empty = el("div", "prompt-empty-state");
-    empty.append(textEl("span", "", entry.sourceFacts?.originalPromptAvailable === false ? "当前页面未显示原始提示词" : "暂无提示词"), emptyActions);
-    section.append(empty);
+  const images = entryMediaAssets(entry).filter(item => item.kind === "image" && item.usage !== "poster");
+  const tabs = el('div', 'settings-tabs prompt-source-tabs');
+  tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', t('提示词范围'));
+  const panels = new Map();
+  const originalPanel = createPromptPanel({ key: `${tabKey}:original`, title: t('原始提示词'), text: caseOriginal, t,
+    className: 'original-prompt-panel', editLabel: editableOriginal ? '编辑原始提示词' : '添加原始提示词',
+    editIcon: editableOriginal ? 'pencil' : 'plus', emptyLabel: t('暂无提示词'),
+    actions: caseOriginal ? [createPromptCopyAction(caseOriginal)] : [],
+    onError: error => showFeedback(error.message, true),
+    onSave: text => savePromptPanel(originalIsMedia
+      ? { type: 'UPDATE_ENTRY_MEDIA_PROMPT', entryId: entry.id, assetId: asset.id, text }
+      : { type: 'UPDATE_ENTRY_TEXT', entryId: entry.id, text, textRevision: entryTextRevision(entry) }) });
+  const mediaPanel = createPromptPanel({ key: `${tabKey}:media`, title: t('当前媒体'), text: mediaOriginal, t,
+    className: 'media-original-prompt-panel', editLabel: mediaOriginal ? '编辑当前媒体提示词' : '添加当前媒体提示词',
+    editIcon: mediaOriginal ? 'pencil' : 'plus', emptyLabel: t('暂无提示词'),
+    actions: mediaOriginal ? [createPromptCopyAction(mediaOriginal)] : [],
+    onError: error => showFeedback(error.message, true),
+    onSave: text => savePromptPanel({ type: 'UPDATE_ENTRY_MEDIA_PROMPT', entryId: entry.id, assetId: asset.id, text }) });
+  if (!originalIsMedia && !sharedOriginal && (caseOriginal || entry.text?.trim() || entry.sourceFacts?.originalPromptAvailable === false)) {
+    originalPanel.querySelector('[aria-label="' + t('添加原始提示词') + '"]')?.remove();
   }
-  const target = originalPanel?.querySelector(".prompt-toolbar") || emptyActions;
+  section.append(originalPanel); panels.set('shared', originalPanel);
+  if (multipleMedia) { section.append(mediaPanel); panels.set('media', mediaPanel); }
+  const emptyAi = el('article', 'prompt-content-panel');
+  const emptyAiHeading = el('div', 'prompt-section-heading');
+  const emptyAiLabel = textEl('h3', '', 'AI 提示词');
+  const emptyActions = el('div', 'prompt-toolbar');
+  emptyAiHeading.append(emptyAiLabel, emptyActions);
+  emptyAi.append(emptyAiHeading, textEl('div', 'prompt-empty-state', '暂无提示词'));
+  const target = emptyActions;
   if (asset.kind === "video") {
     const workspace = createVideoAnalysisWorkspace(entry, asset, source.ai ? null : target);
-    section.append(workspace);
+    if (!workspace.querySelector('.prompt-content-panel')) workspace.prepend(emptyAi);
+    section.append(workspace); panels.set('ai', workspace);
   } else {
     let aiPanel;
     if (source.ai) {
@@ -9065,9 +9145,11 @@ function createMediaPromptSection(entry, asset, options) {
       });
       section.append(aiPanel);
     }
+    if (!aiPanel) section.append(emptyAi);
+    panels.set('ai', aiPanel || emptyAi);
     const toolbar = aiPanel?.querySelector(".prompt-toolbar") || target;
     if (!entry.compoundCase) {
-      const analyze = textEl("button", "button-secondary", "分析图片");
+      const analyze = promptIconButton(t("分析图片"), "wand-sparkles");
       analyze.addEventListener("click", () => analyzeEntryVision(entry, analyze, asset));
       toolbar.prepend(analyze);
     }
@@ -9078,17 +9160,17 @@ function createMediaPromptSection(entry, asset, options) {
     status.setAttribute("aria-live", "polite");
     status.textContent = statusValue?.message ? translateUiMessage(statusValue.message) : "";
     status.hidden = !status.textContent;
-    const statusPanel = aiPanel || originalPanel;
+    const statusPanel = aiPanel || emptyAi;
     if (statusPanel) statusPanel.querySelector(".prompt-section-heading").after(status);
     else section.append(status);
     const analysisInput = canonicalTextAnalysisInput(entry, asset.id);
     if (analysisInput.text) {
-      const analyzeText = textEl("button", "button-secondary", "分析文字标签");
+      const analyzeText = promptIconButton(t("分析文字标签"), "sparkles");
       analyzeText.addEventListener("click", () => analyzeSingleEntry(entry, analyzeText, analysisInput));
       toolbar.append(analyzeText);
     }
     if (images.filter(item => item.storageMode === "managed").length > 1 && !entry.compoundCase) {
-      const batch = textEl("button", "button-secondary", "批量图片分析");
+      const batch = promptIconButton(t("批量图片分析"), "images");
       batch.addEventListener("click", () => analyzeEntryVisualSet(entry, batch));
       toolbar.append(batch);
     }
@@ -9107,6 +9189,56 @@ function createMediaPromptSection(entry, asset, options) {
     coreActions.append(createComposerAction(entry));
     section.append(coreActions);
   }
+  // Analysis actions stay directly reachable in the same toolbar for every source tab.
+  const aiPanel = panels.get('ai');
+  const aiToolbar = aiPanel.querySelector('.prompt-toolbar');
+  const taskStatuses = [...aiPanel.querySelectorAll('.video-analysis-task-status,.vision-analysis-status')];
+  const analysisActions = [...aiToolbar.children].filter(button => !button.matches('[aria-label="' + t('复制提示词') + '"], [aria-label="' + t('编辑 AI 逆推提示词') + '"]'));
+  const showTab = name => {
+    for (const [key, panel] of panels) {
+      const selected = key === name;
+      panel.hidden = !selected;
+      const button = tabs.querySelector(`[data-prompt-tab="${key}"]`);
+      if (button) { button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; }
+      if (selected) {
+        const heading = panel.querySelector('.prompt-section-heading');
+        heading.querySelector('h3')?.classList.add('sr-only');
+        heading.prepend(tabs);
+        heading.querySelector('.prompt-toolbar').append(...analysisActions);
+        for (const status of taskStatuses) heading.after(status);
+      }
+    }
+    promptTabByAsset.set(tabKey, name);
+  };
+  for (const [name, label] of [['shared', '原始提示词'], ...(multipleMedia ? [['media', '当前媒体']] : []), ...(source.ai ? [['ai', 'AI 逆推']] : [])]) {
+    const button = textEl('button', '', label); button.type = 'button'; button.dataset.promptTab = name;
+    button.setAttribute('role', 'tab'); button.id = `prompt-tab-${crypto.randomUUID()}`;
+    const panel = panels.get(name); panel.id = `prompt-page-${crypto.randomUUID()}`;
+    panel.tabIndex = 0; panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', button.id);
+    button.setAttribute('aria-controls', panel.id);
+    button.addEventListener('click', async () => {
+      if (button.getAttribute('aria-selected') === 'true') return;
+      const editingPanel = section.querySelector('[data-editing="true"]');
+      if (editingPanel?.querySelector('.prompt-edit-actions .button-secondary')?.disabled) return;
+      if (editingPanel?.dataset.dirty === 'true' && !await confirmPromptEditDiscard()) return;
+      promptTabByAsset.set(tabKey, name);
+      if (editingPanel) {
+        editingPanel.querySelector('.prompt-edit-actions button.button-secondary')?.click();
+        if (section.isConnected) { showTab(name); button.focus({ preventScroll: true }); }
+        else elements.detailContent.querySelector(`[data-prompt-tab="${name}"][aria-selected="true"]`)?.focus({ preventScroll: true });
+      } else { showTab(name); button.focus({ preventScroll: true }); }
+    });
+    button.addEventListener('keydown', event => {
+      const buttons = [...tabs.children], index = buttons.indexOf(button);
+      const next = event.key === 'ArrowRight' ? (index + 1) % buttons.length : event.key === 'ArrowLeft' ? (index + buttons.length - 1) % buttons.length
+        : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : null;
+      if (next !== null) { event.preventDefault(); buttons[next].click(); }
+    });
+    tabs.append(button);
+  }
+  const previousTab = promptTabByAsset.get(tabKey);
+  const availableTabs = new Set([...tabs.children].map(button => button.dataset.promptTab));
+  showTab(availableTabs.has(previousTab) ? previousTab : (caseOriginal ? 'shared' : multipleMedia && mediaOriginal ? 'media' : source.ai ? 'ai' : 'shared'));
   return section;
 }
 
@@ -9256,7 +9388,7 @@ async function analyzeEntryVisualSet(entry, button) {
         const image = card?.querySelector("img");
         if (!image) return;
         image.src = await originalScreenshotUrl(asset.id);
-        card.querySelector(".visual-analysis-inspect")?.addEventListener("click", () => openImageLightbox(image, entry));
+        card.querySelector(".visual-analysis-inspect")?.addEventListener("click", () => card.classList.toggle('is-inspecting'));
       });
     },
     onSubmit: async (values, { status }) => {
@@ -9422,45 +9554,6 @@ function createEntryEditor(entry, options = {}) {
   body.append(cover);
   const currentAsset = entryMediaAssets(entry).find(asset => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId));
   section.dataset.assetId = currentAsset?.id || "";
-  if (!usesArticleReader(entry)) {
-    const promptEditor = el("div", "entry-original-editor");
-    const scope = document.createElement("select");
-    scope.setAttribute("aria-label", t("提示词范围"));
-    scope.append(option("", t("案例共享提示词")));
-    if (currentAsset && ["image", "video"].includes(currentAsset.kind)) {
-      scope.append(option(currentAsset.id, t(currentAsset.kind === "image" ? "当前图片提示词" : "当前视频提示词")));
-    }
-    const panelHost = el("div", "entry-original-panel");
-    let selectedScope = "";
-    const renderOriginal = () => {
-      const assetId = scope.value;
-      const value = assetId ? entry.mediaPrompts?.find(item => item.assetId === assetId && item.source !== "ai-suggestion")?.text || "" : entry.text || "";
-      panelHost.replaceChildren(createPromptPanel({
-        key: `${entry.id}:editor:${assetId || "shared"}`, title: t("原始提示词"), text: value, t,
-        className: "entry-original-summary", editLabel: "编辑原始提示词",
-        onError: error => showFeedback(error.message, true),
-        onSave: async text => {
-          const response = await chrome.runtime.sendMessage(assetId
-            ? { type: "UPDATE_ENTRY_MEDIA_PROMPT", entryId: entry.id, assetId, text }
-            : { type: "UPDATE_ENTRY_TEXT", entryId: entry.id, text, textRevision: entryTextRevision(entry) });
-          if (!response?.ok) throw new Error(response?.message || t("提示词保存失败"));
-          Object.assign(entry, response.entry);
-          await refreshLibrary();
-          showFeedback(response.message);
-        }
-      }));
-    };
-    scope.addEventListener("change", async () => {
-      if (!await confirmPromptEditDiscard()) { scope.value = selectedScope; return; }
-      selectedScope = scope.value;
-      renderOriginal();
-    });
-    if (scope.options.length > 1) promptEditor.append(scope);
-    promptEditor.append(panelHost);
-    panelHost.addEventListener("prompt-edit-finished", renderOriginal);
-    renderOriginal();
-    body.append(promptEditor);
-  }
   if (entry.classification?.status !== "needs_review") {
     const classification = createClassificationControl(entry, {
       buttonLabel: "保存",
@@ -11157,9 +11250,6 @@ function scheduleMaintenanceStatusPoll() {
 function handleLibraryMaintenanceMessage(message) {
   if (message?.type === "LIBRARY_DERIVED_METADATA_UPDATED" && message.assetId && message.metadata) {
     imageDerivedMetadata.set(message.assetId, message.metadata);
-    for (const palette of document.querySelectorAll("[data-palette-id]")) {
-      if (palette.dataset.paletteId === message.assetId) syncPalette(palette, message.metadata.palette?.colors);
-    }
     return;
   }
   if (message?.type === "LIBRARY_MAINTENANCE_PROGRESS") {
@@ -11893,38 +11983,10 @@ function releaseDetailControllers() {
   for (const cleanup of [...detailControllerCleanups]) cleanup();
 }
 
-function createPalette(colors = [], assetId = "") {
-  const palette = el("div", "palette");
-  if (assetId) palette.dataset.paletteId = assetId;
-  syncPalette(palette, colors);
-  return palette;
-}
-
-function syncPalette(palette, colorsValue = []) {
-  const colors = (Array.isArray(colorsValue) ? colorsValue : []).filter(Boolean);
-  palette.replaceChildren();
-  palette.hidden = !colors.length && !palette.dataset.paletteId;
-  palette.classList.toggle("is-empty", !colors.length);
-  palette.setAttribute("aria-label", colors.length ? translateUiMessage(`代表色卡：${colors.join("、")}`) : t("暂无色卡"));
-  colors.forEach((color) => {
-    const swatch = el("span", "swatch");
-    swatch.style.backgroundColor = color;
-    swatch.title = color;
-    palette.append(swatch);
-  });
-}
-
 function imageDimensions(asset) {
   const width = Math.max(0, Number(asset?.width) || Number(imageDerivedMetadata.get(asset?.id)?.width) || 0);
   const height = Math.max(0, Number(asset?.height) || Number(imageDerivedMetadata.get(asset?.id)?.height) || 0);
   return width && height ? { width, height } : null;
-}
-
-function paletteForEntry(entry) {
-  const inline = entryPalette(entry);
-  if (inline?.colors?.length) return inline;
-  const visual = primaryVisual(entry);
-  return visual?.id ? imageDerivedMetadata.get(visual.id)?.palette : null;
 }
 
 function discoveryVisualId(entry) {
@@ -11941,12 +12003,6 @@ function discoveryColors(entry) {
   return asset?.palette?.colors ?? imageDerivedMetadata.get(visualId)?.palette?.colors ?? [];
 }
 
-function alphaCapableImage(asset) {
-  if (asset?.kind !== "image") return false;
-  const mimeType = String(asset.mimeType ?? "").toLocaleLowerCase("en-US");
-  const format = String(asset.sourceFormat ?? "").toLocaleLowerCase("en-US").replace(/^\./u, "");
-  return ["image/png", "image/webp", "image/gif"].includes(mimeType) || ["png", "webp", "gif"].includes(format);
-}
 
 function sanitizeSelections() {
   const validNodes = new Set([
@@ -12105,7 +12161,7 @@ async function updateAnalysisDiagnosticsPreference() {
   const enabled = elements.showAnalysisDiagnostics.checked;
   elements.showAnalysisDiagnostics.disabled = true;
   try {
-    const next = await updateUiPreferences({ ...uiPreferences, analysisDiagnostics: enabled });
+    const next = await updateUiPreferences({ analysisDiagnostics: enabled });
     Object.assign(uiPreferences, next);
     renderAnalysisDiagnostics();
   } catch (error) {

@@ -81,7 +81,7 @@ test('real native broker binds one library, authenticates and forwards response'
   let ready; const readiness = new Promise(resolve => { ready = resolve; });
   output.on('data', frameDecoder(message => {
     if (message.type === 'ready') ready();
-    else if (message.type === 'request') input.write(encodeFrame({ type: 'response', id: message.id, result: { operation: message.operation, input: message.input } }));
+    else if (message.type === 'request') input.write(encodeFrame({ type: 'response', id: message.id, result: message.operation === 'status' ? { sourceProtectionVersion: 1 } : { operation: message.operation, input: message.input } }));
   }));
   const host = await startNativeHost({ root, origin: `chrome-extension://${extensionId}/`, input, output });
   try {
@@ -96,6 +96,9 @@ test('real native broker binds one library, authenticates and forwards response'
       assert.equal(content.operation, 'search'); assert.equal(content.input.query, '素材');
       for (const [name, args] of [
         ['search_cases', { query: '动作', mediaKind: 'video', hasOriginalPrompt: true, alternatives: ['打斗'], sort: 'newest', minDurationMs: 1000, maxDurationMs: 5000, expectedRevision: 'search-version', countOnly: false, offset: 0, limit: 24 }],
+        ['read_live_workspace', { tabId: 7 }],
+        ['wait_workspace_changes', { tabId: 7, afterRevision: 'page:1', waitMs: 15000 }],
+        ['control_workspace', { tabId: 7, expectedRevision: 'page:2', requestId: 'visible', action: 'set_loop', enabled: true, startMs: 100, endMs: 2000 }],
         ['read_workspace_content', { part: 'selection', expectedRevision: 'selected-version', offset: 0, length: 49152 }],
         ['manage_analysis_batch',{action:'create',requestId:'batch',instruction:'分析',items:[{caseId:'case',expectedRevision:'revision',assets:[]}]}],
         ['list_analysis_batches',{query:'广告',status:'partial'}],
@@ -136,7 +139,7 @@ test('SDK client performs real stdio MCP handshake and discovers bounded tools',
   try {
     await client.connect(transport);
     const list = await client.listTools();
-    assert.equal(list.tools.length, 28);
+    assert.equal(list.tools.length, 33);
     assert(list.tools.some(tool => tool.name === 'promptdirector_capture_url'));
     const organize = list.tools.find(tool => tool.name === 'promptdirector_organize_case').inputSchema.properties;
     assert(organize.action.enum.includes('combine_cases'));
@@ -215,7 +218,7 @@ test('installer creates a reviewable private runtime and origin-bound registrati
 
     assert(!JSON.stringify(paired).includes('secret'));
     const client = new Client({ name: 'installed-runtime-test', version: '1' });
-    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.equal((await client.listTools()).tools.length, 28); }
+    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.equal((await client.listTools()).tools.length, 33); }
     finally { await client.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -223,7 +226,7 @@ test('installer creates a reviewable private runtime and origin-bound registrati
 test('CLI discovers the same MCP operations without a second command registry', {timeout:5000}, async () => {
   const {callFromCli}=await import('../call.mjs');
   const result=await callFromCli('list');
-  assert.equal(result.tools.length,28);
+  assert.equal(result.tools.length,33);
   assert(result.tools.some(tool=>tool.name==='promptdirector_read_workspace_context'));
   await assert.rejects(callFromCli('not_a_real_operation'), /not|unknown|不存在/i);
 });

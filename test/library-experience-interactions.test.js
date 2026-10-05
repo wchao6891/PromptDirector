@@ -21,13 +21,24 @@ test("case navigation has a stable parent and management keeps project and trash
 function mediaSwitchHarness(confirm = async () => true) {
   const ctx = vm.createContext({
     switchingMedia: false, activeIndex: 0, contentAssets: [{ id: "first" }, { id: "second" }],
-    ownerEntryId: "case", currentDetailId: "case", gallery: { isConnected: true },
+    ownerEntryId: "case", currentDetailId: "case", gallery: { isConnected: true, dataset: { displayedAssetId: 'first' } },
     rail: { scrollLeft: 20 }, mediaNavigation: { focus() { ctx.focused = "media-navigation"; } },
-    confirmPromptEditDiscard: confirm, renders: 0, focused: "", errors: [],
-    renderActive: async () => { ctx.renders++; ctx.rail.scrollLeft = 0; },
+    confirmPromptEditDiscard: confirm, renders: 0, focused: "", errors: [], preparations: 0, discardedViewers: 0,
+    renderToken: 0, imageUrls: [], entry: { id: 'case', primaryMediaId: 'first' }, notes: { reviewFeedback: { getState: () => ({ saving: false }) } },
+    elements: { detailContent: { querySelector: () => null } },
+    el: () => ({}), t: value => value,
+    createMediaViewer: async () => { ctx.preparations++; return { releaseMedia() { ctx.discardedViewers++; } }; },
     captureDetailScrollAnchor: () => ({}), restoreDetailScrollAnchor: () => {},
     requestAnimationFrame: callback => callback(), showFeedback: message => ctx.errors.push(message)
   });
+  // Execute the real viewer await, latest-draft confirmation, and identity checks.
+  // Only the synchronous DOM construction after the accepted commit is doubled.
+  const renderStart = source.indexOf('  async function renderActive(index = activeIndex)');
+  const commit = '    activeIndex = index;';
+  const renderCommit = source.indexOf(commit, renderStart);
+  assert.ok(renderStart >= 0 && renderCommit > renderStart);
+  vm.runInContext(source.slice(renderStart, renderCommit + commit.length) + '\n    renders++; rail.scrollLeft = 0; onCommit?.(); return true;\n  }', ctx);
+  ctx.onCommit = null;
   const start = source.indexOf("  async function switchMedia(");
   const end = source.indexOf('  previousMedia.addEventListener("click"', start);
   vm.runInContext(source.slice(start, end), ctx);
@@ -53,6 +64,8 @@ test("declining to discard a draft keeps the current media", async () => {
   await ctx.switchMedia(1, ctx.trigger);
   assert.equal(ctx.activeIndex, 0);
   assert.equal(ctx.renders, 0);
+  assert.equal(ctx.preparations, 1, 'preparing the next viewer must not replace the current media');
+  assert.equal(ctx.discardedViewers, 1);
   assert.equal(ctx.switchingMedia, false);
 });
 
@@ -67,92 +80,114 @@ test("repeated clicks share one pending confirmation and a detached gallery cann
   resolve(true);
   await first;
   assert.equal(ctx.renders, 0);
+  assert.equal(ctx.activeIndex, 0);
+  assert.equal(ctx.discardedViewers, 1);
   assert.equal(ctx.switchingMedia, false);
 });
 
 test("reaching a disabled media arrow keeps keyboard focus within media navigation", async () => {
   const ctx = mediaSwitchHarness();
-  ctx.renderActive = async () => { ctx.trigger.disabled = true; };
+  ctx.onCommit = () => { ctx.trigger.disabled = true; };
   await ctx.switchMedia(1, ctx.trigger);
   assert.equal(ctx.focused, "media-navigation");
+});
+
+test('a note save begun during media preparation keeps the original player and pending draft', async () => {
+  let release;
+  let confirmations = 0;
+  const ctx = mediaSwitchHarness(async () => { confirmations++; return true; });
+  ctx.createMediaViewer = () => new Promise(resolve => { release = resolve; });
+  const pending = ctx.switchMedia(1, ctx.trigger);
+  ctx.notes.reviewFeedback.getState = () => ({ saving: true });
+  release({ releaseMedia() { ctx.discardedViewers++; } }); await pending;
+  assert.equal(ctx.activeIndex, 0);
+  assert.equal(ctx.renders, 0);
+  assert.equal(confirmations, 0);
+  assert.equal(ctx.discardedViewers, 1);
+  assert.deepEqual(ctx.errors, ['正在保存…']);
+});
+
+test('a save started while discard confirmation is pending cannot be replaced by the prepared viewer', async () => {
+  let resolve;
+  const ctx = mediaSwitchHarness(() => new Promise(done => { resolve = done; }));
+  const pending = ctx.switchMedia(1, ctx.trigger);
+  await new Promise(done => setImmediate(done));
+  ctx.notes.reviewFeedback.getState = () => ({ saving: true });
+  resolve(true); await pending;
+  assert.equal(ctx.activeIndex, 0);
+  assert.equal(ctx.renders, 0);
+  assert.equal(ctx.discardedViewers, 1);
+  assert.deepEqual(ctx.errors, ['正在保存…']);
 });
 
 // Small DOM doubles execute the production note handlers; they do not verify browser layout.
 class Control {
   constructor(tag, className = "", text = "") {
     Object.assign(this, { tag, className, textContent: text, children: [], handlers: {}, dataset: {}, attributes: {}, value: "", hidden: false, isConnected: true });
-    this.classList = { add: (...names) => { this.className += " " + names.join(" "); } };
+    this.classList = { add: (...names) => { this.className += " " + names.join(" "); }, remove() {} };
   }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(key, value) { this.attributes[key] = value; }
+  removeAttribute(key) { delete this.attributes[key]; }
   addEventListener(event, handler) { this.handlers[event] = handler; }
-  fire(event) { return this.handlers[event]?.(); }
+  fire(event) { return this.handlers[event]?.({ preventDefault() {} }); }
+  getAttribute(name) { return this.attributes[name]; }
+  cloneNode() { return Object.assign(new Control(this.tag, this.className), { attributes: { ...this.attributes }, type: this.type, min: this.min, step: this.step }); }
   focus(options) { this.focusOptions = options; }
   checkValidity() { return !this.value || Number.isFinite(Number(this.value)) && Number(this.value) >= 0; }
   querySelector() { return null; }
 }
 
+const feedbackSource = (await readFile(new URL('../extension/review-feedback.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '').replace(/export function /g, 'function ');
+const panelDragSource = (await readFile(new URL('../extension/panel-drag.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '').replace(/export function /g, 'function ');
+const panelPositionSource = (await readFile(new URL('../extension/panel-position.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '').replace(/export (async )?function /g, '$1function ');
 function noteHarness(controller = null, response = { ok: true }) {
-  const nodes = [];
-  const el = (tag, className, text) => { const node = new Control(tag, className, text); nodes.push(node); return node; };
-  const messages = [], feedback = [];
-  const ctx = vm.createContext({
-    el, textEl: el, rawTextEl: el, document: { createElement: tag => el(tag) }, t: value => value,
-    formatMediaTime: value => String(value / 1000), promptIconButton: label => el("button", "button-secondary", label),
-    preserveElementPosition: () => () => {}, refreshLibrary: async () => {},
-    perform: async (_button, message) => { messages.push(message); return response; },
-    showFeedback: message => feedback.push(message)
-  });
-  const start = source.indexOf("function renderTimeNotes(");
-  const end = source.indexOf("async function saveVideoKeyframe(", start);
-  vm.runInContext(source.slice(start, end), ctx);
-  const container = el("section");
-  ctx.renderTimeNotes(container, { id: "case", timeNotes: [{ id: "note", assetId: "video", startMs: 3000, text: "existing" }] }, { id: "video", kind: "video" }, () => controller);
-  return { nodes, messages, feedback, byText: text => nodes.find(node => node.textContent === text), byClass: name => nodes.find(node => node.className === name) };
+  const nodes = [], messages = [];
+  const make = tag => { const node = new Control(tag); nodes.push(node); return node; };
+  const ctx = vm.createContext({ document: { createElement: make }, createUiIcon: () => make('svg'), crypto: { randomUUID: () => 'new-note' },
+    Number, Promise, notes: [{ id: 'existing', startMs: 3000, text: 'existing' }],
+    getPosition: async () => { if (!controller?.getCurrentTimeMs) throw new Error('请输入备注时间'); return controller.getCurrentTimeMs(); },
+    seek: async () => { if (!controller?.seekToMs) throw new Error('当前播放器无法直接跳转'); },
+    saveNote: async note => { messages.push({ note }); if (!response?.ok) throw new Error('保存失败'); return [...ctx.notes, note]; },
+    removeNote: async () => [] });
+  vm.runInContext(panelDragSource + '\n' + panelPositionSource + '\n' + feedbackSource, ctx);
+  const container = make('section'); ctx.container = container;
+  vm.runInContext('api = mountReviewFeedback({ container, notes, getPosition, seek, saveNote, removeNote })', ctx);
+  return { nodes, messages, api: ctx.api, byClass: name => nodes.find(node => node.className.startsWith(name)) };
 }
 
-test("uncontrollable external players keep manual time entry and show an honest seek failure", async () => {
+test("uncontrollable external players keep manual time entry and report honest seek failure", async () => {
   const harness = noteHarness({ destroy() {} });
-  await harness.byText("添加时间笔记").fire("click");
-  assert.equal(harness.byClass("time-note-form").hidden, false);
-  assert.equal(harness.nodes.find(node => node.tag === "input").value, "");
-  await harness.byText("3").fire("click");
-  assert.equal(harness.feedback.length, 1);
-  assert.match(harness.feedback[0], /无法直接跳转/);
+  await harness.api.open();
+  assert.equal(harness.api.panel.hidden, false);
+  assert.equal(harness.nodes.find(node => node.tag === 'input').value, '');
+  await harness.byClass('button-secondary review-feedback-jump').fire('click');
+  await Promise.resolve();
+  assert.match(harness.byClass('review-feedback-status').textContent, /无法直接跳转/);
 });
 
-test("cancelling a note clears its draft and returns focus without moving the reading position", async () => {
+test("folding feedback retains its draft and reopens without moving the reading position", async () => {
   const harness = noteHarness({ getCurrentTimeMs: async () => 12500 });
-  await harness.byText("添加时间笔记").fire("click");
-  const text = harness.nodes.find(node => node.tag === "textarea");
-  const form = harness.byClass("time-note-form");
-  text.value = "unsaved feedback";
-  await form.fire("input");
-  assert.equal(form.dataset.dirty, "true");
-  await harness.byText("取消").fire("click");
-  assert.equal(form.dataset.dirty, "false");
-  assert.equal(text.value, "");
-  assert.equal(form.hidden, true);
-  assert.equal(harness.byText("添加时间笔记").focusOptions.preventScroll, true);
+  await harness.api.open();
+  const text = harness.nodes.find(node => node.tag === 'textarea');
+  text.value = 'unsaved feedback'; await harness.byClass('review-feedback-form').fire('input');
+  harness.api.hide(); assert.equal(harness.api.panel.hidden, true);
+  assert.equal(harness.api.getState().dirty, true);
+  await harness.api.open();
+  assert.equal(text.value, 'unsaved feedback');
+  assert.equal(text.focusOptions.preventScroll, true);
 });
 
-test("failed note saves retain the draft and an unknown time is not silently saved as zero", async () => {
-  const harness = noteHarness(null, null);
-  await harness.byText("添加时间笔记").fire("click");
-  const text = harness.nodes.find(node => node.tag === "textarea");
-  const start = harness.nodes.find(node => node.tag === "input");
-  const form = harness.byClass("time-note-form");
-  text.value = "keep this";
-  await form.fire("input");
-  await harness.byText("保存笔记").fire("click");
-  assert.equal(harness.messages.length, 0);
-  start.value = "0";
-  await harness.byText("保存笔记").fire("click");
+test("failed feedback saves retain the draft and unknown time is never silently saved as zero", async () => {
+  const harness = noteHarness(null, null); await harness.api.open();
+  const text = harness.nodes.find(node => node.tag === 'textarea'), start = harness.nodes.find(node => node.tag === 'input');
+  text.value = 'keep this'; await harness.byClass('review-feedback-form').fire('input');
+  await harness.api.save(); assert.equal(harness.messages.length, 0);
+  start.value = '0'; await harness.api.save();
   assert.equal(harness.messages[0].note.startMs, 0);
-  assert.equal(form.dataset.dirty, "true");
-  assert.equal(text.value, "keep this");
-  assert.equal(form.hidden, false);
+  assert.equal(harness.api.getState().dirty, true); assert.equal(text.value, 'keep this');
+  assert.equal(harness.api.panel.hidden, false);
 });
 
 function completionHarness(job) {

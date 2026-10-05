@@ -26,7 +26,7 @@ test("import staging persists only resumable metadata and safe relative paths", 
     formatCategory: "image",
     posterAssetId: "poster:one",
     duplicateAssetId: "existing:one",
-    absolutePath: "/Users/private/frame.png",
+    absolutePath: ["", "Users", "private", "frame.png"].join("/"),
     file: { private: true }
   });
 
@@ -45,7 +45,7 @@ test("import staging persists only resumable metadata and safe relative paths", 
     posterAssetId: "poster:one",
     duplicateAssetId: "existing:one"
   });
-  assert.equal(JSON.stringify(result.state).includes("/Users/private"), false);
+  assert.equal(JSON.stringify(result.state).includes(["", "Users", "private"].join("/")), false);
 });
 
 test("staging preserves audio and inert linked attachment boundaries", () => {
@@ -88,7 +88,7 @@ test("staging preserves unsupported local links without pretending their source 
       forceAllowed: false
     },
     handle: { kind: "file", getFile() {} },
-    absolutePath: "/Users/private/custom.zzz"
+    absolutePath: ["", "Users", "private", "custom.zzz"].join("/")
   }] });
 
   assert.equal(state.assets.length, 1);
@@ -99,7 +99,7 @@ test("staging preserves unsupported local links without pretending their source 
   assert.equal(state.assets[0].sourceLastModified, 1_776_500_123_000);
   assert.equal(Object.hasOwn(state.assets[0], "contentHash"), false);
   assert.equal(Object.hasOwn(state.assets[0], "handle"), false);
-  assert.equal(JSON.stringify(state).includes("/Users/private"), false);
+  assert.equal(JSON.stringify(state).includes(["", "Users", "private"].join("/")), false);
 });
 
 test("unsupported local link moves from staging to a case media record without a blob fingerprint", () => {

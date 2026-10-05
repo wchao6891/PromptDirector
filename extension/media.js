@@ -96,7 +96,8 @@ export function normalizeMediaAsset(value = {}) {
     ...(Array.isArray(value.processingWarnings) ? { processingWarnings: [...new Set(value.processingWarnings.map(clean).filter(Boolean))] } : {}),
     ...(kind === "document" && Array.isArray(value.extractionWarnings) ? { extractionWarnings: [...new Set(value.extractionWarnings.map(clean).filter(Boolean))] } : {}),
     ...(kind === "document" ? { extractedTextFormat: normalizeExtractedTextFormat(value.extractedTextFormat, format) } : {}),
-    ...(usage === "poster" && clean(value.derivedFromAssetId) ? { derivedFromAssetId: clean(value.derivedFromAssetId) } : {}),
+    ...((usage === "poster" || kind === "image") && clean(value.derivedFromAssetId) ? { derivedFromAssetId: clean(value.derivedFromAssetId) } : {}),
+    ...(kind === "image" && clean(value.derivedFromAssetId) && Number.isFinite(value.frameTimeMs) && value.frameTimeMs >= 0 ? { frameTimeMs: Math.round(value.frameTimeMs) } : {}),
     ...(kind === "video" && storageMode === "reference" && reference.url ? { reference } : {}),
     ...(localAssetReference ?? {}),
     ...(value.palette?.colors?.length ? { palette: structuredClone(value.palette) } : {}),
@@ -321,8 +322,8 @@ export function updateEntryMedia(entryValue, assetId, updater) {
 export function addTimeNote(entryValue, noteValue = {}) {
   const entry = normalizeEntryMedia(entryValue);
   const assetId = clean(noteValue.assetId);
-  const asset = entry.mediaAssets.find((item) => item.id === assetId && item.kind === "video");
-  if (!asset) throw new Error("时间点笔记必须关联当前案例中的视频");
+  const asset = entry.mediaAssets.find((item) => item.id === assetId && ["video", "image"].includes(item.kind));
+  if (!asset) throw new Error("创作备注必须关联当前案例中的图片或视频");
   const note = normalizeTimeNote(
     { ...noteValue, id: clean(noteValue.id) || `note:${crypto.randomUUID()}` },
     new Set(entry.mediaAssets.map((item) => item.id))
@@ -351,9 +352,10 @@ export function setEntryMediaPrompt(entryValue, assetIdValue, textValue, source 
   }
   entry.mediaPrompts = entry.mediaPrompts.filter((item) => item.assetId !== assetId ||
     (preserveOtherSource && item.source !== source && !(source === "manual" && item.source === "embedded")));
-  if (text) entry.mediaPrompts.push({
+  if (text || source === 'ai-suggestion') entry.mediaPrompts.push({
     assetId,
     text,
+    ...(!text && source === 'ai-suggestion' ? { cleared: true } : {}),
     textRevision: 1,
     source: normalizeMediaPromptSource(source),
     updatedAt: new Date().toISOString()
@@ -476,11 +478,13 @@ function normalizeMediaPrompts(values, assetIds) {
     const text = cleanMultiline(value?.text);
     const source = normalizeMediaPromptSource(value?.source);
     const identity = JSON.stringify([assetId, source]);
-    if (!assetIds.has(assetId) || !text || seen.has(identity)) return [];
+    const cleared = source === 'ai-suggestion' && value.cleared === true;
+    if (!assetIds.has(assetId) || (!text && !cleared) || seen.has(identity)) return [];
     seen.add(identity);
     return [{
       assetId,
       text,
+      ...(cleared ? { cleared: true } : {}),
       textRevision: Math.max(1, Math.trunc(Number(value.textRevision) || 1)),
       source,
       updatedAt: validIso(value.updatedAt) || new Date().toISOString()

@@ -19,6 +19,7 @@ export function createCaseLibraryReader({ storage, readFullState }) {
     return {
       entries: state.entries,
       facetCatalog: state.facetCatalog,
+      taxonomy: state.taxonomy,
       organizerState: normalizeOrganizerState(state.organizerState, state.entries.map(entry => entry.id)),
       compoundCases: normalizeCompoundCases(state.compoundCases, state.entries)
     };

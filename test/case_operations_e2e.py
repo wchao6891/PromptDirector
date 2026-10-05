@@ -37,6 +37,22 @@ def main():
                 return worker.evaluate('([op, data]) => agentTestDispatch(op, data)', [op, data])
             def read(case_id, part='overview'):
                 return call('read_case_details', {'caseId': case_id, 'part': part})
+            combined = call('read_case_details', {'caseId': 'mixed', 'parts': ['overview', 'source', 'media', 'document', 'annotations']})
+            assert combined['nextOffset'] is None
+            combined_parts = json.loads(combined['content'])
+            for part, value in combined_parts.items():
+                single = read('mixed', part)
+                assert single['revision'] == combined['revision']
+                assert json.loads(single['content']) == value
+            internal = page.evaluate("""async () => {
+                const {withComposerCaseOperations}=await import('./composer-case-operations.js');
+                const wrapper=withComposerCaseOperations({tools:{specs:[],instructions:''},
+                    session:{messages:[{id:'u'}],referenceSnapshots:[{entryId:'mixed'}]},
+                    invoke:(operation,input)=>chrome.runtime.sendMessage({type:'CASE_OPERATION',operation,input})});
+                return wrapper.execute('read_case_details',{caseId:'mixed',parts:['source','media']},{ });
+            }""")
+            assert internal['data']['ok'],internal
+            assert json.loads(internal['data']['content']) == {key:combined_parts[key] for key in ['source','media']}
             before = read('mixed')
             split = {'requestId': 'browser-split', 'caseId': 'mixed', 'expectedRevision': before['revision'], 'action': 'split_media',
                      'groups': [{'assetIds': ['second-image'], 'title': '第二作品', 'text': '核实后的第二帖', 'sourceUrl': 'https://x.com/author/status/202/history'}]}
@@ -60,6 +76,7 @@ def main():
                 session:{messages:[{id:'u'}],referenceSnapshots:[{entryId:'mixed'}]},
                 invoke:(operation,input)=>chrome.runtime.sendMessage({type:'CASE_OPERATION',operation,input})});
               return wrapper.execute('edit_case',{requestId:'workspace-edit',caseId:'mixed',expectedRevision:revision,
+                sourceCorrection:{reason:'核对原作品来源',fields:['sourceUrl','sourceFacts']},
                 patch:{title:'已核对原作品',sourceUrl:'https://x.com/author/status/101/history',sourceFacts:{itemId:'101'}}},{});
             }''', {'revision': revision})
             assert edited['data']['ok'], edited
@@ -135,7 +152,7 @@ def main():
                     content = call('read_workspace_content', {'part': 'reference', 'expectedRevision': overview['revision'], 'referenceId': ref['referenceId']})
                     assert json.loads(content['content'])['originalText'] == ''
                     assert ref['originalPromptCharacters'] == 0
-                    edit = call('edit_case', {'requestId': 'original-edit', 'caseId': receiver_id, 'expectedRevision': read(receiver_id)['revision'],
+                    edit = call('edit_case', {'requestId': 'original-edit', 'sourceCorrection': {'reason':'人工明确修正原词来源', 'fields':['mediaPrompts']}, 'caseId': receiver_id, 'expectedRevision': read(receiver_id)['revision'],
                         'patch': {'mediaPrompts': [{'assetId': 'first-image', 'source': 'manual', 'text': '人工修正词'}, {'assetId': 'first-image', 'source': 'webpage', 'text': '旧网页词'}]}})
                     assert edit['ok'], edit
                     overview = call('read_workspace_context', {})

@@ -1,7 +1,7 @@
 import { createCreativeSkill, normalizeCreativeSkillsState, saveCreativeSkillVersion, restoreCreativeSkillVersion,
   skillPackageAssetIds, currentCreativeSkillVersion, protectedSkillVersionIds } from './creative-skills.js';
 import { parseSkillFiles } from './creative-skill-package.js';
-import { SKILL_WRITE_SPECS } from './skill-operation-specs.js';
+import { SKILL_WRITE_SPECS, validateSkillWriteShape } from './skill-operation-specs.js';
 import { validate } from './case-operation-specs.js';
 import { skillRevision } from './skill-operations.js';
 import { sha256Blob } from './blob-digest.js';
@@ -21,6 +21,7 @@ export function createSkillWriter({ storage, transfers, readBlob, commit, enqueu
     const spec = SKILL_WRITE_SPECS.find(item => item.name === name);
     if (!spec) fail('unknown_operation', '未知Skill写入。');
     validate(spec.parameters, input, name);
+    validateSkillWriteShape(input);
     const key = `skillOperation:${input.requestId}`;
     const fingerprint = await skillRevision({ name, input });
     const stored = await storage.get(['creativeSkills', 'composerSessions', 'creativeRuns', 'creativeJobs', key]);
@@ -53,14 +54,11 @@ export function createSkillWriter({ storage, transfers, readBlob, commit, enqueu
     } else {
       let values = input;
       if (input.files) {
-        if (['skillMarkdown','references','description','portableId'].some(key => Object.hasOwn(input,key))) {
-          fail('invalid_input', '整包保存以SKILL.md为准，不要同时传另一份正文、引用、说明或可移植ID。');
-        }
         const blobs = new Map(), recordsByPath = new Map();
         for (const item of input.files) {
           const path = item.path.replace(/\\/g, '/');
           if (blobs.has(path) || /^[a-z]:/i.test(path) || /[\u0000-\u001f]/u.test(path)) fail('invalid_input', 'Skill包文件路径重复或无效。');
-          const record = await transfers.get(item.transferId);
+          const record = await transfers.get(item.transferId, { touch: false });
           if (record.purpose !== 'skill-file' || !['ready','committed'].includes(record.state)) {
             fail('transfer_not_ready', '请通过Skill文件传输接口传完并校验文件后再保存。');
           }

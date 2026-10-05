@@ -224,7 +224,10 @@ export function skillPackageLimits(value = {}) {
   return {
     maxArchiveBytes: shared.maxArchiveBytes,
     maxFileCount: shared.maxFileCount,
-    maxFileBytes: shared.maxFileBytes || LIBRARY_TRANSFER_LIMITS.maxFileBytes
+    maxFileBytes: shared.maxFileBytes || LIBRARY_TRANSFER_LIMITS.maxFileBytes,
+    quotaPolicy: 'no_fixed_product_quota',
+    maxTextBytes: operationBudget(value.budget).maxTextBytes,
+    note: 'MAX_SAFE_INTEGER表示数值表达边界，不是业务配额；maxTextBytes是本次正文与引用解析预算。完整文件分块传输，不要求缩短原文。'
   };
 }
 

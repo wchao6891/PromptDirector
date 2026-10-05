@@ -13,7 +13,7 @@ test("opening the capture workspace never starts synchronization", async () => {
   const start = source.indexOf('case "GET_CAPTURE_WORKSPACE"');
   const end = source.indexOf('case "GET_DATA_SAFETY_STATUS"', start);
   const branch = source.slice(start, end);
-  assert.match(branch, /return enqueueCapture\(async \(\) => captureWorkspace\(\)\)/);
+  assert.match(branch, /return captureWorkspace\(\)/);
   assert.doesNotMatch(branch, /scheduleAutomaticSync|scheduleIdleSync|synchronizeNow|manualSyncController|SYNC_NOW/);
 });
 
@@ -36,7 +36,10 @@ test("draft edits and save share one lightweight queue so the last capture canno
     const start = source.indexOf(`case "${messageType}"`);
     assert.notEqual(start, -1, `${messageType} handler is missing`);
     const branch = source.slice(start, source.indexOf("case ", start + 6));
-    assert.match(branch, /enqueueCapture/, `${messageType} must stay ordered with capture writes`);
+    const transaction = branch.includes('captureSaveTasks.run')
+      ? source.slice(source.indexOf('async function runCaptureSave'), source.indexOf('async function commitPageCapture')) : branch;
+    assert.match(transaction, /enqueueCapture/, `${messageType} must stay ordered with capture writes`);
+    if (messageType === 'COMMIT_CAPTURE_DRAFT') assert.match(transaction, /enqueue\(/);
   }
 });
 

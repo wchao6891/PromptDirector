@@ -1,8 +1,9 @@
 import { skillFileOwners, skillPackageFiles } from './skill-files.js';
-import { libraryStoredAssets } from "./library-asset-inventory.js";
+import { libraryStoredAssets, libraryStoredAssetIds } from "./library-asset-inventory.js";
+import { syncStateHasContent } from "./sync-model.js";
 import { mediaIdentity, sameMediaIdentity, sharedLibraryMediaFiles } from "./library-shared-media.js";
-import { normalizeFacetCatalog, uniqueNames } from "./facets.js";
-import { normalizeSettings } from "./lib.js";
+import { createDefaultFacetCatalog, normalizeFacetCatalog, uniqueNames } from "./facets.js";
+import { normalizeSettings, DEFAULT_SETTINGS, DEFAULT_SETTINGS_EN } from "./lib.js";
 import { SCHEMA_VERSION, mergeTaxonomies, normalizeTaxonomy } from "./taxonomy.js";
 import {
   collectionEntryIds,
@@ -655,7 +656,10 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   }
   const importedTrashAssets = trashMediaAssets(imported.trashState);
   const importMetadata = localImportMetadata(options);
-  const empty = !(current.entries ?? []).length && options.preserveLibraryConfiguration !== true;
+  const retainedAssetIds = libraryStoredAssetIds(current, { includeLocalOnly: true });
+  const empty = options.preserveLibraryConfiguration !== true
+    && !retainedAssetIds.size && !options.reservedVisualIds?.length
+    && !libraryHasRetainedContentOrConfiguration(current);
   if (empty) {
     const skillMerge = mergeCreativeSkillsState(current.creativeSkills, imported.creativeSkills, options);
     return {
@@ -721,6 +725,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   next.facetCatalog = normalizeFacetCatalog(next.facetCatalog);
   next.settings = normalizeSettings(next.settings);
   next.classificationRules = Array.isArray(next.classificationRules) ? next.classificationRules : [];
+  next.entries = Array.isArray(next.entries) ? next.entries : [];
   next.organizerState = normalizeOrganizerState(next.organizerState, next.entries.map((entry) => entry.id));
   next.compoundCases = normalizeCompoundCases(next.compoundCases, next.entries);
   const taxonomyMerge = mergeTaxonomies(next.taxonomy, imported.taxonomy);
@@ -746,9 +751,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
   }
   for (const entry of next.entries) indexEntry(entry);
   const usedVisualIds = new Set([
-    ...next.entries.flatMap((entry) => normalizeEntryMedia(entry).mediaAssets.map((visual) => visual.id)),
-    ...normalizeCreativeRuns(next.creativeRuns).flatMap((run) => run.outputs.map((output) => output.visual.id)),
-    ...temporaryReferenceAssets(next.composerSessions).map((asset) => asset.assetId),
+    ...retainedAssetIds,
     ...(Array.isArray(options.reservedVisualIds) ? options.reservedVisualIds : [])
   ]);
   const entryIdMap = {};
@@ -925,8 +928,11 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     visualIdMap[asset.assetId] = targetAssetId;
     createdVisualIdMap[asset.assetId] = targetAssetId;
   }
-  const skillMerge = mergeCreativeSkillsState(next.creativeSkills, imported.creativeSkills, options);
+  const skillMerge = mergeCreativeSkillsState(next.creativeSkills, imported.creativeSkills, {
+    ...options, reservedAssetIds: [...usedVisualIds]
+  });
   next.creativeSkills = skillMerge.state;
+  for (const id of libraryStoredAssetIds({ creativeSkills: next.creativeSkills })) usedVisualIds.add(id);
   const composerMerge = mergeComposerSessions(
     next.composerSessions,
     imported.composerSessions,
@@ -1004,6 +1010,18 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
     remappedCount,
     skippedCount
   };
+}
+
+function libraryHasRetainedContentOrConfiguration(state) {
+  if (syncStateHasContent(state) || (state.classificationRules ?? []).length) return true;
+  // Default first-run configuration may be restored from a package. Explicit
+  // user choices still belong to the receiver after its last active case goes.
+  const settings = JSON.stringify(normalizeSettings(state.settings));
+  if (settings !== JSON.stringify(DEFAULT_SETTINGS) && settings !== JSON.stringify(DEFAULT_SETTINGS_EN)) return true;
+  return JSON.stringify(normalizeTaxonomy(state.taxonomy)) !== JSON.stringify(normalizeTaxonomy())
+    || JSON.stringify(normalizeFacetCatalog(state.facetCatalog ?? createDefaultFacetCatalog())) !== JSON.stringify(normalizeFacetCatalog(createDefaultFacetCatalog()))
+    || JSON.stringify(normalizeComposerSettings(state.composerSettings)) !== JSON.stringify(normalizeComposerSettings())
+    || JSON.stringify(normalizeCreativeExperimentSettings(state.creativeExperimentSettings)) !== JSON.stringify(normalizeCreativeExperimentSettings());
 }
 
 function localImportMetadata(options = {}) {

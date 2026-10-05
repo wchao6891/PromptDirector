@@ -621,6 +621,7 @@ export async function resolvePageCaptureImage(mediaValue = {}, options = {}) {
       const blob = downloaded?.blob instanceof Blob ? downloaded.blob : downloaded;
       return { blob, metadata: downloaded?.metadata || null, sourceUrl: url, captureMethod: "source", usedPixelFallback: false, failures };
     } catch (error) {
+      options.signal?.throwIfAborted();
       failures.push({ url, message: String(error?.message || error) });
     }
   }
@@ -631,6 +632,7 @@ export async function resolvePageCaptureImage(mediaValue = {}, options = {}) {
         const blob = downloaded?.blob instanceof Blob ? downloaded.blob : downloaded;
         return { blob, metadata: downloaded?.metadata || null, sourceUrl: url, captureMethod: "page-session", usedPixelFallback: false, failures };
       } catch (error) {
+        options.signal?.throwIfAborted();
         failures.push({ url, method: "page-session", message: String(error?.message || error) });
       }
     }
@@ -641,6 +643,7 @@ export async function resolvePageCaptureImage(mediaValue = {}, options = {}) {
       const sessionBytes = mediaValue.captureMethod === "page-session" && Boolean(mediaValue.dataUrl);
       return { blob: await options.decodeDataUrl(dataUrl), sourceUrl: "", captureMethod: sessionBytes ? "page-session" : "pixel-fallback", usedPixelFallback: !sessionBytes, failures };
     } catch (error) {
+      options.signal?.throwIfAborted();
       failures.push({ url: "pixel-fallback", message: String(error?.message || error) });
     }
   }

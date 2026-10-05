@@ -4,6 +4,8 @@ import { SKILL_OPERATION_SPECS } from './skill-operation-specs.js';
 import { validate } from './case-operation-specs.js';
 import { sha256Blob } from './blob-digest.js';
 import { AGENT_CHUNK_BYTES, agentError, bytesToBase64 } from './agent-protocol.js';
+import { ResourceCache } from './resource-cache.js';
+import { operationBudget } from './resource-policy.js';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -23,7 +25,10 @@ function chunk(content, offset, length) {
     nextOffset: offset + length < content.length ? offset + length : null };
 }
 
-export function createSkillOperations({ loadState, readBlob }) {
+export function createSkillOperations({ loadState, readBlob, digest = sha256Blob, budget }) {
+  const limits = operationBudget(budget);
+  const snapshots = new ResourceCache({ maxEntries: limits.maxRequests, maxBytes: limits.workingBytes,
+    cost: value => value.blob.size + (value.text?.length || 0) * 2 });
   return { async execute(name, input = {}) {
     const spec = SKILL_OPERATION_SPECS.find(item => item.name === name);
     if (!spec) fail('unknown_operation', '未知Skill操作。');
@@ -73,8 +78,10 @@ export function createSkillOperations({ loadState, readBlob }) {
       ]);
       return { ...common, part, runtimeDependencies: isCurrent ? skill.runtimeDependencies : version.runtimeDependencies ?? [], ...chunk(content, offset, length) };
     }
+    const snapshotKey = JSON.stringify([skill.id, version.id, revision, input.source, input.path]);
+    let snapshot = offset ? snapshots.get(snapshotKey) : null;
     let blob, storedHash;
-    if (input.source === 'current') blob = generated().get(input.path);
+    if (input.source === 'current') blob = snapshot?.blob ?? generated().get(input.path);
     else {
       if (!packageFiles) fail('skill_files_unrecorded', '这个旧版本没有记录脚本或包文件；不能用当前文件代替。');
       const file = packageFiles.find(file => file.path === input.path);
@@ -85,15 +92,23 @@ export function createSkillOperations({ loadState, readBlob }) {
       if (file.byteSize && blob.size !== file.byteSize) fail('skill_file_changed', 'Skill包文件大小不一致，请先检查资料。');
     }
     if (!(blob instanceof Blob)) fail('skill_file_not_found', '文件不属于此Skill，请重新读取文件清单。');
+    if (offset && !input.expectedHash) fail('skill_hash_required', '文件续读须携带首块sha256为expectedHash。');
+    if (snapshot && blob.size !== snapshot.blob.size) fail('skill_file_changed', 'Skill文件内容已变化，请从头读取。');
+    // Continue from the immutable first-page Blob: reopening IndexedDB creates
+    // new Blob wrappers, so object-identity digest caches cannot serve paging.
+    // Fresh first pages and evicted/restarted readers verify current bytes again.
+    if (!snapshot) snapshot = { blob, sha256: await digest(blob) };
+    blob = snapshot.blob;
     const fileInfo = { ...common, source: input.source, path: input.path, name: input.path, mimeType: blob.type, byteSize: blob.size };
-    const sha256 = await sha256Blob(blob);
+    const { sha256 } = snapshot;
     if (storedHash && storedHash !== sha256) fail('skill_file_changed', 'Skill文件与保存时摘要不一致，请先恢复原件。');
     if (input.expectedHash && input.expectedHash !== sha256) fail('skill_file_changed', 'Skill文件内容已变化，请从头读取。');
-    if (offset && !input.expectedHash) fail('skill_hash_required', '文件续读须携带首块sha256为expectedHash。');
+    snapshots.set(snapshotKey, snapshot);
     if (input.encoding !== 'binary') {
       let content;
-      try { content = new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()); }
+      try { content = snapshot.text ??= new TextDecoder('utf-8', { fatal: true }).decode(await blob.arrayBuffer()); }
       catch { fail('skill_file_binary', '文件不是UTF-8文字，请使用binary或download_skill_file读取原件。'); }
+      snapshots.trim(snapshotKey);
       return { ...fileInfo, sha256, encoding: 'text', ...chunk(content, offset, length) };
     }
     if (offset > blob.size) fail('invalid_input', '读取位置超出文件。');

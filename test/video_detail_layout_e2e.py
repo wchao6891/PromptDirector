@@ -38,6 +38,8 @@ def layout_snapshot(page) -> dict:
           const videoRect = video.getBoundingClientRect();
           const captionRect = caption.getBoundingClientRect();
           const styles = caption ? getComputedStyle(caption) : null;
+          const painted = button => { const r=button.getBoundingClientRect(), clip=button.closest('.detail-media-tools')?.getBoundingClientRect() || captionRect;
+            return {left:Math.max(r.left,clip.left), right:Math.min(r.right,clip.right), top:r.top, bottom:r.bottom}; };
           return {
             videoBottom: videoRect.bottom,
             captionTop: captionRect.top,
@@ -45,11 +47,12 @@ def layout_snapshot(page) -> dict:
             labelFontSize: Number.parseFloat(label ? getComputedStyle(label).fontSize : '0'),
             buttonHeights: buttons.map(button => button.getBoundingClientRect().height),
             buttonFontSizes: buttons.map(button => Number.parseFloat(getComputedStyle(button).fontSize)),
+            buttonCenters: buttons.map(button => { const r=button.getBoundingClientRect(); return r.top+r.height/2; }),
             buttonsOverlap: buttons.some((button, index) => {
-              const current = button.getBoundingClientRect();
+              const current = painted(button);
               return buttons.slice(index + 1).some(other => {
-                const next = other.getBoundingClientRect();
-                return current.left < next.right && current.right > next.left
+                const next = painted(other);
+                return current.right > current.left && next.right > next.left && current.left < next.right && current.right > next.left
                   && current.top < next.bottom && current.bottom > next.top;
               });
             }),
@@ -121,7 +124,7 @@ def main() -> None:
         library.wait_for_function("()=>document.querySelector('.detail-video').currentTime>0")
         expect(play).to_be_hidden()
         library.locator('.detail-video').evaluate('(v)=>v.pause()')
-        expect(play).to_be_visible()
+        expect(play).to_be_hidden()
         expect(library.get_by_role("button", name="设为主要")).to_be_visible()
         expect(library.get_by_role("button", name="此媒体移入回收站", exact=True)).to_be_visible()
         expect(library.get_by_role("button", name="逆推视频提示词", exact=True)).to_have_count(1)
@@ -131,6 +134,7 @@ def main() -> None:
         expect(result.locator('.video-reconstruction-text script')).to_have_count(0)
         assert library.evaluate('window.unsafeVideoOutput !== true')
         expect(result.locator('textarea')).to_be_hidden()
+        library.get_by_role('tab', name='AI 逆推', exact=True).click()
         result.get_by_role('button', name='编辑 AI 逆推提示词', exact=True).click()
         result.locator('textarea').fill('已人工校正：主体向右移动，镜头保持稳定。')
         result.get_by_role('button', name='保存', exact=True).click()
@@ -150,7 +154,9 @@ def main() -> None:
         library.locator('.detail-video').evaluate("v=>{v.style.aspectRatio='16 / 9';v.style.maxHeight='360px'}")
         library.wait_for_function("()=>document.querySelector('.detail-video').getBoundingClientRect().height<=360")
         balanced=library.locator('.detail-visual-gallery').bounding_box()
-        assert balanced['y']>0 and abs(balanced['y']+balanced['height']/2-450)<3,balanced
+        assert abs(balanced['height']-gallery_box['height'])<1,balanced
+        stage=library.locator('.detail-video-surface').bounding_box();video_box=library.locator('.detail-video').bounding_box()
+        assert abs(video_box['y']+video_box['height']/2-stage['y']-stage['height']/2)<3,(stage,video_box)
         if evidence_dir: library.screenshot(path=str(Path(evidence_dir)/'video-detail-landscape-layout.png'))
         library.locator('.detail-video').evaluate("v=>{v.style.aspectRatio='180 / 320';v.style.removeProperty('max-height')}")
         desktop = layout_snapshot(library)
@@ -160,6 +166,7 @@ def main() -> None:
         assert desktop["buttonHeights"] and min(desktop["buttonHeights"]) >= 36, desktop
         assert all(size == 12 for size in desktop["buttonFontSizes"]), desktop
         assert not desktop["buttonsOverlap"], desktop
+        assert max(desktop['buttonCenters'])-min(desktop['buttonCenters'])<1, desktop
 
         library.set_viewport_size({"width": 390, "height": 844})
         expect(library.locator(".detail-visual-caption")).to_be_visible()
@@ -168,6 +175,7 @@ def main() -> None:
         assert mobile["captionTop"] >= mobile["videoBottom"], mobile
         assert mobile["buttonHeights"] and min(mobile["buttonHeights"]) >= 44, mobile
         assert not mobile["buttonsOverlap"], mobile
+        assert max(mobile['buttonCenters'])-min(mobile['buttonCenters'])<1, mobile
         assert mobile["galleryHeight"] < mobile["viewportHeight"] * 2, mobile
         result.scroll_into_view_if_needed()
         assert library.evaluate('document.documentElement.scrollWidth <= innerWidth'), '390px 页面横向溢出'

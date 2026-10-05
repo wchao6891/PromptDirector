@@ -1,4 +1,5 @@
 // Pure schemas shared by the local creative workspace and the installed MCP adapter.
+import { CASE_QUERY_PROPERTIES } from './case-query-specs.js';
 const text = { type: 'string' };
 const id = { type: 'string', minLength: 1 };
 const object = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -11,27 +12,37 @@ const facts = object(Object.fromEntries([
 ].map(key => [key, nullableText])));
 facts.properties.engagement = { type: ['object', 'null'], additionalProperties: { type: 'number', minimum: 0 } };
 facts.properties.originalPromptAvailable = { type: ['boolean', 'null'] };
-const source = { sourceUrl: text, sourceFacts: facts };
+export const CASE_SOURCE_PROPERTIES = { sourceUrl: text, sourceFacts: facts };
+export const CREATIVE_NOTE_PROPERTIES = { prompt: text, summary: text, notes: text, purpose: text, plan: text };
+const source = CASE_SOURCE_PROPERTIES;
 const identity = { caseId: id, expectedRevision: id };
 const requestId = { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' };
 export const CASE_SEARCH_PROPERTIES = {
+  ...CASE_QUERY_PROPERTIES,
   query: { type: 'string', default: '' },
   alternatives: { type: 'array', items: { type: 'string', minLength: 1 }, description: '同义或并列查询做并集；每个查询中的多个词是交集' },
   project: { type: 'string', description: '项目名称或已知ID，包含子项目；同名时指定ID' },
+  provider: { type: 'string', minLength: 1, description: '按已保存sourceFacts.provider精确匹配来源平台，不搜索正文提及的平台' },
+  authorHandle: { type: 'string', minLength: 1, description: '按已保存sourceFacts.handle精确匹配作者账号，忽略前导@和大小写；正文致谢或提及不算作者' },
   mediaKind: { enum: ['image', 'video', 'document'], description: '只按实际素材类型筛选，忽略视频封面' },
   hasOriginalPrompt: { type: 'boolean', description: '有无原词；指定mediaKind时只判断该类素材，AI逆推不算原词；组合任一匹配素材有原词即为true' },
   minDurationMs: { type: 'number', minimum: 0, description: '视频或音频素材最短时长（毫秒，包含边界）；未知时长不当作0；与原词筛选匹配同一素材' },
   maxDurationMs: { type: 'number', minimum: 0, description: '视频或音频素材最长时长（毫秒，包含边界）；返回durationCoverage说明未知时长范围' },
   expectedRevision: { type: 'string', minLength: 1, description: '翻页必须携带首屏revision并保持筛选不变；search_changed时从第一页重新检索，不混用新旧结果' },
-  sort: { enum: ['relevance', 'newest', 'oldest'] },
+  sort: { enum: ['relevance', 'newest', 'oldest', 'engagement'] },
+  engagementMetric: { type: 'string', minLength: 1, description: 'sort=engagement时必填，如likes或reposts；按已保存指标降序，未知排末，不合成跨平台评分。先指定provider确保可比；组合多来源不合计热度。' },
   countOnly: { type: 'boolean' }
 };
+const caseDetailPart = { enum: ['overview', 'source', 'media', 'document', 'annotations', 'organization', 'analysis_coverage', 'creative'] };
 export const CASE_OPERATION_SPECS = [
-  { name: 'read_case_details', description: '读取案例的完整结构与修改版本。part 分别读取概览、来源、媒体、正文结构、标注、项目关系；analysis_coverage列逐媒体已存分析、原件摘要和实际coverage，未记录范围为null，不能当作全图/全片。verification=verified_at_save只证明保存时核验，当前读取不重验文件字节。content 是分页 JSON，须按 nextOffset 读完再解析。后续分页携带 expectedRevision，避免混合不同版本。组合案例返回成员编号，编辑时指定成员。仅读取元数据，不下载原件。',
-    parameters: object({ caseId: id, part: { enum: ['overview', 'source', 'media', 'document', 'annotations', 'organization', 'analysis_coverage'] },
+  { name: 'read_case_details', description: '读取案例的完整结构与修改版本。首次读取可省略expectedRevision，后续只使用本工具返回的案例revision；不能传入页面现场/控制/全文版本。只需一部分用part；同时需要多部分用parts数组（与part互斥），例如parts=[overview,source,media]一次取得同一版本，content为按部分命名的JSON对象，避免分三次调用。正文全文用document；无需的部分不读取。analysis_coverage列逐媒体已存分析、原件摘要和实际coverage，未记录范围为null，不能当作全图/全片。verification=verified_at_save只证明保存时核验，当前读取不重验文件字节。content 是分页 JSON，须按 nextOffset 读完再解析。后续分页携带 expectedRevision，避免混合不同版本。组合案例返回成员编号，编辑时指定成员。仅读取元数据，不下载原件。',
+    parameters: object({ caseId: id, part: caseDetailPart, parts: { ...list(caseDetailPart), minItems: 1, uniqueItems: true, description: '同时需要多个部分时一次读取；与part互斥，续页保持parts和revision' },
       expectedRevision: id, offset: { type: 'integer', minimum: 0 }, length: { type: 'integer', minimum: 1, maximum: 49152 } }, ['caseId']) },
-  { name: 'edit_case', description: '在用户委托范围内编辑已有案例，先读取当前版本。仅修改 patch 提供的字段；sourceFacts 中 null 明确清除错误字段。coverVisualId设置已存在的图片为封面，null恢复自动封面，不替换视频原件。组合案例可改title/customLabels/coverVisualId，正文和媒体须指定成员。文章用 articlePatches 修改已读段落，不能用 text 覆盖结构化文章。媒体来源修改不改变原件；推断提示词使用 ai-suggestion，不冒称原始提示词。相同 requestId 重试返回原回执；版本冲突需重读，不能盲目覆盖。成功后返回真实修改版本。',
-    parameters: object({ requestId, ...identity, patch: object({ title: id, text,
+  { name: 'edit_case', description: '在用户委托范围内编辑已有案例，先读取当前版本。原文、来源和原始提示词默认保护；仅用户明确要求修正时用sourceCorrection列明字段与原因。creative精准编辑自己的prompt/summary/notes/purpose/plan，不改原资料。classificationPathIds使用已读分类编号，mediaOrder提供全部媒体编号排列，不改原件或段落结构。仅修改 patch 提供的字段；sourceFacts 中 null 明确清除错误字段。coverVisualId设置已存在的图片为封面，null恢复自动封面，不替换视频原件。组合案例可改title/customLabels/coverVisualId，正文和媒体须指定成员。文章用 articlePatches 修改已读段落，不能用 text 覆盖结构化文章。媒体来源修改不改变原件；推断提示词使用 ai-suggestion，不冒称原始提示词。相同 requestId 重试返回原回执；版本冲突需重读，不能盲目覆盖。成功后返回真实修改版本。',
+    parameters: object({ requestId, ...identity, sourceCorrection: object({ reason: id, fields: list({ enum: ['sourceUrl', 'sourceFacts', 'mediaSources', 'text', 'articlePatches', 'mediaPrompts'] }) }, ['reason', 'fields']), patch: object({ title: id, text,
+      creative: object(CREATIVE_NOTE_PROPERTIES),
+      classificationPathIds: { ...list(id), minItems: 1, maxItems: 1 },
+      mediaOrder: { ...list(id), uniqueItems: true },
       ...source, customLabels: list(text), primaryMediaId: id, coverVisualId: nullableText,
       articlePatches: list(object({ blockId: id, text }, ['blockId', 'text'])),
       mediaSources: list(object({ assetId: id, originalWorkUrl: text, sourceTitle: text, sourceAuthor: text }, ['assetId'])),
@@ -54,8 +65,12 @@ export function validateCaseOperation(name, input) {
   const spec = CASE_OPERATION_SPECS.find(item => item.name === name);
   if (!spec) throw new Error('未知案例操作');
   validate(spec.parameters, input, name);
+  if (name === 'read_case_details' && input.part !== undefined && input.parts !== undefined) {
+    throw Object.assign(new Error('part与parts只能选择一种；需要多部分时使用parts'), { code: 'invalid_input' });
+  }
 }
 export function validate(schema, value, path) {
+  if (!schema || Object.keys(schema).length === 0) return;
   if (schema.enum && !schema.enum.includes(value)) throw new Error(`${path}：选项无效`);
   const types = Array.isArray(schema.type) ? schema.type : schema.type ? [schema.type] : [];
   const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;

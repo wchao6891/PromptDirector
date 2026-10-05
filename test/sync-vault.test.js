@@ -203,3 +203,48 @@ async function writeText(directory, name, value) {
   await writable.write(value);
   await writable.close();
 }
+
+test('encrypted sync preserves legal empty package files and source MIME while rejecting empty ordinary media', async()=>{
+  const root=new MemoryDirectory('root');const vault=await createOrUnlockSyncVault(root,'password-123');
+  for (const [id,blob] of [
+    ['skill-file:empty',new Blob([],{type:'application/octet-stream'})],
+    ['skill-file:python',new Blob(['print(1)'],{type:'text/x-python'})],
+    ['skill-file:binary',new Blob(['binary'],{type:'application/octet-stream'})]
+  ]) {
+    const objectId=await writeSyncObject(vault,blob,{assetId:id});
+    const restored=await readSyncObject(vault,objectId,{assetId:id});
+    assert.equal(await restored.text(),await blob.text());assert.equal(restored.type,blob.type);assert.equal(restored.size,blob.size);
+    if(!blob.size)await assert.rejects(readSyncObject(vault,objectId,{assetId:'ordinary-image'}),/同步媒体无效/);
+  }
+  await assert.rejects(writeSyncObject(vault,new Blob([]),{assetId:'ordinary-image'}),/同步媒体无效/);
+  await assert.rejects(writeSyncObject(vault,new Blob(['print(1)'],{type:'text/x-python'}),{assetId:'ordinary-image'}),/不是受支持/);
+});
+
+test('manual sync sends and restores current and historical empty Skill files without salvaging user work', async()=>{
+  const {createManualSyncController}=await import('../extension/manual-sync.js');
+  const {createCreativeSkill,saveCreativeSkillVersion,normalizeCreativeSkillsState,currentCreativeSkillVersion}=await import('../extension/creative-skills.js');
+  const {validatePortableAssetRecord}=await import('../extension/media-store.js');
+  const files=[{path:'scripts/__init__.py',assetId:'skill-file:empty',byteSize:0},
+    {path:'scripts/tool.py',assetId:'skill-file:python',byteSize:8}];
+  const created=createCreativeSkill({}, {callName:'可同步的方法',skillMarkdown:'# 原版',packageFiles:files});
+  const skills=saveCreativeSkillVersion(created.state,created.skill.id,{skillMarkdown:'# 人工新版'}).state;
+  const vault=await createOrUnlockSyncVault(new MemoryDirectory('roundtrip'),'password-123');
+  function client(deviceId,creativeSkills={},blobs=new Map()) {
+    let state={entries:[],creativeSkills,settings:{libraryTitle:'PromptDirector'}},meta={};
+    const deleted=[];
+    const controller=createManualSyncController({readState:async()=>structuredClone(state),readMeta:async()=>structuredClone(meta),
+      readMedia:async id=>blobs.get(id),writeMedia:async(id,blob)=>{validatePortableAssetRecord(id,blob);blobs.set(id,blob);},
+      deleteMedia:async id=>{deleted.push(id);blobs.delete(id);},commit:async next=>{if(!next.trackingOnly)state=structuredClone(next.state);meta=structuredClone(next.meta);}});
+    return {run:()=>controller.start({vault,settings:{enabled:true,vaultId:vault.header.vaultId,deviceId}}),blobs,deleted,get state(){return state;}};
+  }
+  const source=client('sender',skills,new Map([['skill-file:empty',new Blob([],{type:'application/octet-stream'})],['skill-file:python',new Blob(['print(1)'],{type:'text/x-python'})]]));
+  const uploaded=await source.run();assert.equal(uploaded.ok,true);assert.equal(uploaded.skippedMediaCount,0);assert.deepEqual(source.deleted,[]);
+  const receiver=client('receiver');const restored=await receiver.run();assert.equal(restored.ok,true);assert.deepEqual(receiver.deleted,[]);
+  for(const value of [source,receiver]) {
+    const skill=normalizeCreativeSkillsState(value.state.creativeSkills).items[0];assert.equal(currentCreativeSkillVersion(skill).skillMarkdown,'# 人工新版');
+    assert(skill.packageFiles.some(f=>f.path==='scripts/__init__.py'));assert(skill.versions.filter(v=>v.id!==skill.currentVersionId).every(v=>v.packageFiles.some(f=>f.path==='scripts/__init__.py')));
+    assert.equal(skill.versions.find(v=>v.id!==skill.currentVersionId).skillMarkdown,'# 原版');
+    assert.equal(value.blobs.get('skill-file:empty').size,0);assert.equal(await value.blobs.get('skill-file:python').text(),'print(1)');
+    assert.equal(value.blobs.get('skill-file:python').type,'text/x-python');
+  }
+});

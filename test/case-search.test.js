@@ -47,7 +47,7 @@ test('project and media restrictions run before unrelated document reads; counti
   const {external,documentReads}=fixture();
   const result=await external.search({project:'父项目',mediaKind:'video',countOnly:true});
   assert.equal(result.total,2);assert.deepEqual(result.cases,[]);assert.equal(result.nextOffset,null);assert.equal(documentReads(),0);
-  assert(result.projects.some(item=>item.id==='child'&&item.parentId==='parent'));
+  assert(!Object.hasOwn(result,'projects'),'count-only searches must not attach the unrelated project tree');
 });
 test('compound search uses each matching member media and its own prompt provenance', () => {
   const {state}=fixture();

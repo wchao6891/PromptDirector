@@ -177,7 +177,7 @@ export function entrySearchText(entry, catalogValue, nodeByIdValue) {
     ...Object.entries(sourceFacts.engagement || {}).flatMap(([key, value]) => [key, value])
   ];
   return [
-    entry.title, entry.text, entry.url, ...tags, ...(entry.customLabels ?? []), ...(entry.metadataLabels ?? []),
+    entry.title, entry.text, entry.url, ...Object.values(entry.creative || {}), ...tags, ...(entry.customLabels ?? []), ...(entry.metadataLabels ?? []),
     ...(entry.mediaPrompts ?? []).map(prompt => prompt.text),
     ...sourceFactValues,
     ...visualDescriptions(entry),

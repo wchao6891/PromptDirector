@@ -13,6 +13,7 @@ import { createDefaultFacetCatalog, createFacet, createFacetNode } from "../exte
 import { CONTENT_IDS, CONTENT_ROLES, SCHEMA_VERSION, createContentType, createDefaultTaxonomy } from "../extension/taxonomy.js";
 import { COMPOSER_METHOD_VERSION, createComposerSession, normalizeComposerSettings } from "../extension/composer.js";
 import { createZipBlob, readZipBlob } from "../extension/zip.js";
+import { DEFAULT_SETTINGS } from "../extension/lib.js";
 
 function packageData(entries, facetCatalog) {
   return {
@@ -434,7 +435,7 @@ test("empty-library import restores cases, settings, vocabulary and source rules
   const data = packageData([entry("one")], catalog());
   const result = mergeLibraryPackage({
     entries: [], taxonomy: createDefaultTaxonomy(), facetCatalog: createDefaultFacetCatalog(),
-    classificationRules: [], settings: { libraryTitle: "空资料库" }
+    classificationRules: [], settings: DEFAULT_SETTINGS
   }, data);
 
   assert.equal(result.importedCount, 1);

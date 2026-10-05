@@ -85,7 +85,8 @@ def main():
                 'SKILL.md': b'---\nname: storyboards\ndescription: Updated workflow\ncustom: preserve\n---\nUpdated body\n',
                 'scripts/frames.py': b'print("new script")',
                 'scripts/__init__.py': b'',
-                'references/raw.bin': bytes([255, 0, 128, 9])
+                'references/raw.bin': bytes([255, 0, 128, 9]),
+                'references/source.md': ('完整原词、负面约束和案例证据。\n' * 4000).encode()
             }
             for i, (path, content) in enumerate(contents.items()):
                 transfer_id = 'skill-write-' + str(i)
@@ -100,6 +101,16 @@ def main():
             save_args = {'requestId': 'skill-full-update', 'skillId': skill['id'], 'expectedRevision': fresh['revision'], 'files': files}
             saved = call('save_skill', save_args)
             assert saved['ok'], saved
+            saved_refs = ''; ref_offset = 0
+            while True:
+                ref_page = call('read_skill', {'skillId': skill['id'], 'part': 'references', 'offset': ref_offset, 'expectedRevision': saved['revision']})
+                saved_refs += ref_page['content']
+                if ref_page['nextOffset'] is None:
+                    break
+                ref_offset = ref_page['nextOffset']
+            reference = json.loads(saved_refs)['references'][0]
+            assert reference['markdown'] == contents['references/source.md'].decode().strip()
+            assert reference['runtime'] is True
             assert call('save_skill', save_args)['replayed']
             inside_saved = page.evaluate("input => chrome.runtime.sendMessage({type:'SKILL_OPERATION',operation:'save_skill',input})", save_args)
             assert inside_saved['ok'] and inside_saved['data']['replayed'], inside_saved
@@ -131,7 +142,7 @@ def main():
                 return {assets:parsed.skillAssets.size,versions:parsed.creativeSkills.items[0].versions.length,files:all.length};
               } finally {URL.revokeObjectURL(archive.url);}
             }''')
-            assert backup['assets'] == 5 and backup['versions'] == 4, backup
+            assert backup['assets'] == 6 and backup['versions'] == 4, backup
             print('PASS: shared Skill reads and complete writes, retained script versions, binary/empty files, retry receipt, restore/reload, actual ZIP backup with all historical bytes; isolated fixture only')
 
 

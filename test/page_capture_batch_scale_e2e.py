@@ -41,18 +41,20 @@ def main():
         expect(p.locator('#page-capture-help')).to_be_hidden()
         expect(p.locator('#page-capture-list-summary')).to_be_hidden()
         p.locator('#page-capture-save-mode').select_option('multiple')
-        p.locator('#capture-collection').select_option(label='＋ 新建项目')
+        p.locator('#capture-collection > summary').click()
         project='隔离测试：长项目名称保持完整且归属不丢失'
-        p.locator('#capture-new-collection-name').fill(project); p.locator('#capture-new-collection-name').press('Tab')
+        p.locator('#capture-new-collection-name').fill(project); p.locator('#capture-new-collection-name').press('Enter')
         category=p.locator('#content-type option').evaluate_all("nodes=>nodes.find(n=>n.value)?.value")
         p.locator('#content-type').select_option(category)
+        p.locator('#custom-labels [aria-label="添加标签"]').filter(has=p.locator('svg')).click()
         for label in ['规模验证','图文配对']:
             p.locator('#custom-labels input').fill(label);p.locator('#custom-labels input').press('Enter')
+        p.locator('#custom-labels input').press('Escape')
         for width in [320,390]:
             p.set_viewport_size({'width':width,'height':844})
             p.locator('#page-capture').evaluate('e=>e.scrollTop=e.scrollHeight')
             p.locator('#page-capture-organize').click()
-            assert p.locator('#capture-collection').evaluate('e=>e===document.activeElement')
+            assert p.locator('#capture-collection > summary').evaluate('e=>e===document.activeElement')
             assert p.locator('#capture-metadata').bounding_box()['y']>=0
             assert p.locator('#capture-new-collection-name').input_value()==project
             assert p.evaluate('document.documentElement.scrollWidth<=innerWidth')

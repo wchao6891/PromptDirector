@@ -145,11 +145,12 @@ test('a resumed creative search retains media and original-prompt filters in its
 
 test('image analysis inputs carry the digest of delivered originals and refresh changed attachments',async()=>{
  const session=createComposerSession({messages:[{id:'u',role:'user',content:'使用案例a的图片'}]});
- let digest='a'.repeat(64),reads=0;
+ let digest='a'.repeat(64),reads=0,checks=0;
  const runtime=createComposerLibraryTools({session,vision:true,maxCharacters:750000,loadLibrary:async()=>({entries:[entry('a')]}),
-  readImage:async()=>{reads++;return {dataUrl:'data:image/png;base64,eA==',sha256:digest};},readImageDigest:async()=>digest});
+  readImage:async(_id,_signal,expectedHash)=>{checks++;if(expectedHash===digest)return {sha256:digest};reads++;return {dataUrl:'data:image/png;base64,eA==',sha256:digest};}});
  const use=()=>runtime.execute('use_case_images',{caseId:'a',imageIds:['a-image']},{callId:'image'});
  const first=await use();assert.equal(first.images.length,1);assert.equal(first.data.media[0].sha256,digest);
  const same=await use();assert.equal(same.images.length,0);assert.equal(reads,1);
  digest='b'.repeat(64);const changed=await use();assert.equal(changed.images.length,1);assert.equal(changed.data.media[0].sha256,digest);assert.equal(reads,2);
+ assert.equal(checks,3,'Each request reads/checks one snapshot; changed images do not need a second check');
 });

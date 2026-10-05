@@ -1,3 +1,4 @@
+import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
@@ -49,7 +50,6 @@ import {
   skillSourceSelectionSummary
 } from "./skill-source-picker.js";
 import {
-  deleteMediaBlobs,
   getDerivedMedia,
   getMediaBlob,
   saveSkillPackageBlob
@@ -311,6 +311,7 @@ function routeUrl(route) {
 }
 
 function renderRoute(route) {
+  finishSkillRun();
   activeView = route.view;
   activeSkillId = route.skillId;
   document.body.dataset.skillView = route.view;
@@ -386,6 +387,8 @@ function renderWorkspace(view, skillId = "") {
   elements.skillBuilder.dataset.stage = "sources";
   elements.skillShowDraft.hidden = true;
   elements.skillGenerate.textContent = t("生成可编辑草稿");
+  elements.skillGenerate.disabled = false;
+  elements.skillRetryVision.disabled = false;
   elements.skillGenerate.classList.remove("button-secondary");
   elements.skillBackSources.hidden = !selectingSources;
   elements.skillSourceSidebar.hidden = !selectingSources;
@@ -978,10 +981,11 @@ async function generateDraft() {
   if (!goal) throw new Error(t("请先说明希望提炼什么"));
   elements.skillGenerate.disabled = true;
   setFeedback(elements.skillGenerationFeedback, "");
-  startSkillRun();
+  const run = startSkillRun();
   try {
     updateSkillRun("prepare", t("正在准备发送内容"), 0, 1);
     const sources = await selectedSkillSources();
+    assertCurrentSkillRun(run);
     const workload = skillExtractionWorkload({
       goal,
       sources,
@@ -991,7 +995,9 @@ async function generateDraft() {
     const images = selectedSkillContentImages(entries, sourceSelectionSnapshots());
     const visualPlan = selectedAnalysisMode() === "vision" ? contactSheetPlan(images) : [];
     const privateSettings = await getPrivateSettings({ allowUnconfiguredVision: selectedAnalysisMode() !== "vision" });
+    assertCurrentSkillRun(run);
     const approved = await confirmSkillExtractionWorkload({ workload, visualPlan, settings: privateSettings });
+    assertCurrentSkillRun(run);
     if (!approved) {
       finishSkillRun(t("已取消，没有发送内容"));
       return;
@@ -1008,6 +1014,7 @@ async function generateDraft() {
     }
     await generateTextDraft(privateSettings, sources);
   } catch (error) {
+    if (activeSkillRun !== run) return;
     if (error?.name === "AbortError") {
       failSkillRun(t("已停止，本次不完整输出没有保存"), false);
       return;
@@ -1015,13 +1022,16 @@ async function generateDraft() {
     failSkillRun(error.message || t("提炼失败"), true);
     throw error;
   } finally {
-    elements.skillGenerate.disabled = false;
+    if (activeSkillRun === run || !activeSkillRun && activeSkillId === run.skillId && activeView === run.view) elements.skillGenerate.disabled = false;
   }
 }
 
 async function runVisualBatches(plan, options = {}) {
+  const run = activeSkillRun;
+  assertCurrentSkillRun(run);
   if (!plan.length) throw new Error(t("所选案例没有可用于视觉分析的内容图"));
   const settings = options.settings ?? await getPrivateSettings({ allowUnconfiguredVision: false });
+  assertCurrentSkillRun(run);
   const service = settings.visionRuntime;
   if (!service.available) throw new Error(t("当前没有已配置且已同意使用的视觉模型，请先在设置中完成配置"));
   const failures = [];
@@ -1029,7 +1039,9 @@ async function runVisualBatches(plan, options = {}) {
     updateSkillRun("vision", t("正在分析图片 {current}/{total}", { current: index + 1, total: plan.length }), index, plan.length);
     try {
       const rendered = await renderContactSheetBatch(batch, getMediaBlob);
+      assertCurrentSkillRun(run);
       const dataUrl = await blobToDataUrl(rendered.blob);
+      assertCurrentSkillRun(run);
       const result = await analyzeCreativeSkillVisualBatch({
         goal: elements.skillGoal.value,
         locale: currentLocale(),
@@ -1039,14 +1051,16 @@ async function runVisualBatches(plan, options = {}) {
         aiProfile: service.profile,
         instructionOverride: elements.skillVisionInstruction.value
       }, settings, {
-        signal: activeSkillRun?.controller.signal,
+        signal: run.controller.signal,
         timeoutMs: null,
-        onDelta: () => touchSkillRun(t("正在接收图片分析结果"))
+        onDelta: () => { if (isCurrentSkillRun(run)) touchSkillRun(t("正在接收图片分析结果")); }
       });
+      assertCurrentSkillRun(run);
       visualSuccesses.push(result.description);
       completeSkillRunUnit();
       appendSkillRunLog(t("图片批次 {current}/{total} 完成 · {model}", { current: index + 1, total: plan.length, model: result.model }));
     } catch (error) {
+      assertCurrentSkillRun(run);
       if (error?.name === "AbortError") throw error;
       failures.push({ batch, error: error.message || t("视觉批次失败") });
       appendSkillRunLog(t("图片批次 {current}/{total} 失败：{message}", { current: index + 1, total: plan.length, message: error.message || t("服务错误") }));
@@ -1068,19 +1082,28 @@ async function retryVisualFailures() {
   elements.skillRetryVision.disabled = true;
   const plan = visualFailures.map((item) => item.batch);
   visualFailures = [];
-  startSkillRun();
+  const run = startSkillRun();
   activeSkillRun.totalUnits = Math.max(1, plan.length + (pendingAfterVision ? 1 : 0));
   try {
     const completed = await runVisualBatches(plan);
     if (completed && pendingAfterVision) await generateTextDraft();
+  } catch (error) {
+    if (activeSkillRun !== run) return;
+    if (error?.name === "AbortError") { failSkillRun(t("已停止，本次不完整输出没有保存"), false); return; }
+    throw error;
   } finally {
-    elements.skillRetryVision.disabled = false;
+    if (activeSkillRun === run || !activeSkillRun && activeSkillId === run.skillId && activeView === run.view) elements.skillRetryVision.disabled = false;
   }
 }
 
 async function generateTextDraft(settingsValue = null, sourcesValue = null) {
+  const run = activeSkillRun;
+  assertCurrentSkillRun(run);
+  const originalDraft = run.draftMarkdown;
   const settings = settingsValue ?? await getPrivateSettings({ allowUnconfiguredVision: true });
+  assertCurrentSkillRun(run);
   const sources = sourcesValue ?? await selectedSkillSources();
+  assertCurrentSkillRun(run);
   const result = await extractCreativeSkillDraftBatched({
     goal: elements.skillGoal.value,
     sources,
@@ -1089,14 +1112,21 @@ async function generateTextDraft(settingsValue = null, sourcesValue = null) {
     aiProfile: settings.skillTextProfile,
     instructionOverride: elements.skillTextInstruction.value
   }, settings, {
-    signal: activeSkillRun?.controller.signal,
+    signal: run.controller.signal,
     timeoutMs: null,
-    onDelta: () => touchSkillRun(t("正在接收 Skill 草稿")),
+    onDelta: () => { if (isCurrentSkillRun(run)) touchSkillRun(t("正在接收 Skill 草稿")); },
     onProgress: ({ phase, current, total }) => {
+      if (!isCurrentSkillRun(run)) return;
       updateSkillRun("text", phase === "synthesis" ? t("正在汇总全部批次") : t("正在提炼文字 {current}/{total}", { current, total }), current - 1, total);
       if (current > 1 || phase === "synthesis") completeSkillRunUnit();
     }
   });
+  assertCurrentSkillRun(run);
+  if (elements.skillMarkdown.value !== originalDraft) {
+    const replace = await confirmAppAction({ title: "替换当前 Skill 草稿？", description: "提炼期间草稿已有修改，替换会丢失这些修改。", confirmLabel: "替换草稿", danger: true });
+    assertCurrentSkillRun(run);
+    if (!replace) { finishSkillRun(t("已保留当前草稿")); return; }
+  }
   completeSkillRunUnit();
   elements.skillMarkdown.value = result.markdown;
   if (!elements.skillCallName.value.trim()) elements.skillCallName.value = result.callName;
@@ -1378,6 +1408,7 @@ async function importFile() {
   const file = elements.skillZipFile.files?.[0];
   elements.skillZipFile.value = "";
   if (!file) return;
+  elements.skillImportDialog.close();
   const parsed = await parseSkillFile(file);
   await importParsedSkill(parsed, file.name);
 }
@@ -1386,6 +1417,7 @@ async function importFolder() {
   const files = [...(elements.skillFolderFiles.files ?? [])];
   elements.skillFolderFiles.value = "";
   if (!files.length) return;
+  elements.skillImportDialog.close();
   const map = new Map(files.map((file) => [file.webkitRelativePath || file.name, file]));
   const parsed = await parseSkillFiles(map);
   await importParsedSkill(parsed, files[0].webkitRelativePath?.split("/")[0] || t("Skill 目录"));
@@ -1404,12 +1436,12 @@ async function importParsedSkill(parsed, sourceName) {
     if (!approved) return;
   }
   const packageFiles = [];
-  const savedIds = [];
+  const stage = createMediaStage();
   try {
     for (const [path, blob] of parsed.files) {
       const assetId = `skill-file:${crypto.randomUUID()}`;
+      await stage.register([assetId]);
       await saveSkillPackageBlob(assetId, blob);
-      savedIds.push(assetId);
       packageFiles.push({ path, assetId, byteSize: blob.size, mimeType: blob.type || "application/octet-stream" });
     }
     const provenance = parsed.references.find((item) => item.path === "references/provenance.md")?.markdown ?? "";
@@ -1431,12 +1463,10 @@ async function importParsedSkill(parsed, sourceName) {
     });
     if (!response?.ok) throw new Error(response?.message || t("Skill 导入失败"));
     creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
-    elements.skillImportDialog.close();
     renderSkillList();
     setFeedback(elements.skillFeedback, t("已导入 /{name}", { name: response.skill.callName }));
-  } catch (error) {
-    await deleteMediaBlobs(savedIds);
-    throw error;
+  } finally {
+    await stage.release();
   }
 }
 
@@ -1534,10 +1564,21 @@ function selectedAnalysisMode() {
   return elements.skillUseVision.checked ? "vision" : "text";
 }
 
+function isCurrentSkillRun(run) {
+  return Boolean(run && activeSkillRun === run && activeSkillId === run.skillId && activeView === run.view && !run.controller.signal.aborted);
+}
+
+function assertCurrentSkillRun(run) {
+  if (!isCurrentSkillRun(run)) throw new DOMException("Skill workspace changed or extraction stopped", "AbortError");
+}
+
 function startSkillRun() {
   if (activeSkillRun?.controller && !activeSkillRun.controller.signal.aborted) activeSkillRun.controller.abort();
   activeSkillRun = {
     controller: new AbortController(),
+    skillId: activeSkillId,
+    view: activeView,
+    draftMarkdown: elements.skillMarkdown.value,
     startedAt: Date.now(),
     completedUnits: 0,
     totalUnits: 1,
@@ -1554,6 +1595,7 @@ function startSkillRun() {
   activeSkillRun.elapsedTimer = setInterval(renderSkillRunElapsed, 1000);
   renderSkillRunElapsed();
   touchSkillRun(t("正在准备发送内容"));
+  return activeSkillRun;
 }
 
 function updateSkillRun(stage, message, current = 0, total = 1) {
@@ -1590,6 +1632,7 @@ function finishSkillRun(message = "") {
   }
   clearSkillRunTimers();
   if (!message) {
+    activeSkillRun.controller.abort();
     elements.skillRunPanel.hidden = true;
     activeSkillRun = null;
     return;
