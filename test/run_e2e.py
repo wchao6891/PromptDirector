@@ -61,6 +61,7 @@ SCRIPTS = [
     "library_resource_window_e2e.py",
     "library_startup_read_scope_e2e.py",
     "library_incremental_refresh_e2e.py",
+    "library_version_guard_e2e.py",
     "library_browse_return_e2e.py",
     "curated_workflow_e2e.py",
     "curated_skills_install_e2e.py",

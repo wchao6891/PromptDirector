@@ -59,7 +59,7 @@ import {
   confirmClassification,
   createSourceRule
 } from "./classifier.js";
-import { migrateLibraryState, needsMigration } from "./migration.js";
+import { casesLostByMigration, migrateLibraryState, needsMigration } from "./migration.js";
 import { planCaseCopies, assertCompoundProjectScope } from "./library-folder-ownership.js";
 import { remapEntryMediaIds } from "./library-portable-media.js";
 import {
@@ -313,6 +313,7 @@ import {
 } from "./trash.js";
 import { normalizeUiPreferences, resolveLocale, updateLayoutPreferences } from "./preferences.js";
 import { translateForLocale } from "./i18n.js";
+import { libraryFromNewerVersion, newerLibraryError } from "./library-version-guard.js";
 import { normalizeShortcutOverrides, shortcutBindings, shortcutConflict } from './keyboard-shortcuts.js';
 import { CHROME_WEB_STORE_URL } from "./product-links.js";
 import { PALETTE_VERSION, hasCurrentPalette } from "./palette.js";
@@ -483,6 +484,7 @@ const STORAGE_KEYS = Object.freeze({
   facetCatalog: "facetCatalog",
   classificationRules: "classificationRules",
   migrationBackup: "migrationBackup",
+  upgradeBackup: "upgradeBackup",
   folderOwnershipBackup: "folderOwnershipBackup",
   classificationResetBackup: "classificationResetBackup",
   facetMigrationBackup: "creativeFacetMigrationBackupV5",
@@ -3546,10 +3548,25 @@ async function discardSaveUndoBackup(undoValue) {
   await discardScreenshotReplacementBackup(undo.entryId, { backupEntryId: undo.backupEntryId });
 }
 
+// Only the library records a migration rewrites. Other recovery copies are not nested inside, so a
+// backup per upgrade does not grow with every version.
+const MIGRATION_BACKUP_KEYS = Object.freeze(["schemaVersion", "entries", "trashState", "compoundCases", "taxonomy",
+  "facetCatalog", "classificationRules", "organizerState", "settings", "tagCatalog"]);
+function migrationBackupSnapshot(stored) {
+  return {
+    fromSchemaVersion: Number.isInteger(stored.schemaVersion) ? stored.schemaVersion : null,
+    toSchemaVersion: SCHEMA_VERSION,
+    createdAt: new Date().toISOString(),
+    state: structuredClone(Object.fromEntries(MIGRATION_BACKUP_KEYS.filter(key => stored[key] !== undefined).map(key => [key, stored[key]])))
+  };
+}
+
 async function readState() {
   const doneReading = startPhase("background", "readState");
   const stored = await libraryStorage.get([...Object.values(STORAGE_KEYS), "tagCatalog"]);
   doneReading({ bytes: () => jsonBytes(stored) });
+  // Checked before any repair or migration write: a newer library is left exactly as it is.
+  if (libraryFromNewerVersion(stored)) throw newerLibraryError();
   const aiConfiguration = aiConfigurationFromStorage(stored);
   const aiStorageOutdated = aiConfigurationNeedsStorageUpdate(stored, aiConfiguration);
   if (aiStorageOutdated) {
@@ -3568,6 +3585,12 @@ async function readState() {
     return readState();
   }
   const migration = shouldMigrate ? migrateLibraryState(stored) : null;
+  const lostCaseIds = migration ? casesLostByMigration(stored, migration.state) : [];
+  if (lostCaseIds.length) {
+    // Nothing has been written yet; the library stays exactly as stored until a fixed version runs.
+    throw Object.assign(new Error(`升级检查发现 ${lostCaseIds.length} 个案例会丢失，已停止升级；资料没有改动`),
+      { code: "MIGRATION_WOULD_LOSE_CASES", lostEntryIds: lostCaseIds.slice(0, 20) });
+  }
   let state = migration?.state ?? {
     schemaVersion: SCHEMA_VERSION,
     entries: stored[STORAGE_KEYS.entries],
@@ -3590,6 +3613,11 @@ async function readState() {
     if (!stored[STORAGE_KEYS.migrationBackup]) {
       update[STORAGE_KEYS.migrationBackup] = migration?.backup;
     }
+    // Every schema upgrade also keeps the library exactly as it was before that upgrade, replacing
+    // the copy from the previous upgrade; the first-ever backup above is never replaced, and
+    // repairs within one version keep the existing upgrade copy.
+    const upgrading = !Number.isInteger(stored.schemaVersion) || stored.schemaVersion < SCHEMA_VERSION;
+    if (upgrading || !stored[STORAGE_KEYS.upgradeBackup]) update[STORAGE_KEYS.upgradeBackup] = migrationBackupSnapshot(stored);
     if (migration.resetPerformed && !stored[STORAGE_KEYS.facetMigrationBackup]) {
       update[STORAGE_KEYS.facetMigrationBackup] = migration.backup;
     }

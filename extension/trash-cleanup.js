@@ -6,7 +6,7 @@ import { removeEntriesFromCompoundCases } from './compound-cases.js';
 
 // Local recovery snapshots are not a second recycle bin after permanent deletion.
 const SNAPSHOT_KEYS = ['folderOwnershipBackup', 'libraryReplacementRecoveryPoint',
-  'migrationBackup', 'classificationResetBackup', 'creativeFacetMigrationBackupV5'];
+  'migrationBackup', 'upgradeBackup', 'classificationResetBackup', 'creativeFacetMigrationBackupV5'];
 export const TRASH_HISTORY_KEYS = [...SNAPSHOT_KEYS,
   'facetUndo', 'visionAnalysisUndo', 'analysisBatchUndo', 'lastSaveUndo'];
 export const TRASH_CLEANUP_KEY = 'pendingTrashCleanup';

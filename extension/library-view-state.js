@@ -1,3 +1,4 @@
+import { libraryFromNewerVersion, newerLibraryError } from './library-version-guard.js';
 import { SCHEMA_VERSION, normalizeTaxonomy, contentRoleForEntry } from './taxonomy.js';
 import { needsMigration } from './migration.js';
 import { recoverFullyArchivedFacets } from './facets.js';
@@ -50,6 +51,7 @@ export function createLibraryViewReader({ storage, prepare, uiLanguage, includeC
   return async () => {
     let stored = await storage.get(keys);
     let restoredArchivedFacetCount = 0;
+    if (libraryFromNewerVersion(stored)) throw newerLibraryError();
     if (libraryViewNeedsPreparation(stored) || (includeCreativeState && !Array.isArray(stored.composerSessionSummaries))) {
       const prepared = await prepare({ summaryOnly: !libraryCoreNeedsPreparation(stored), creativeSummary: includeCreativeState });
       if (!prepared?.ok) throw new Error(prepared?.message || '无法准备本地案例库');

@@ -1,5 +1,6 @@
 import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, updateLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
 import { jsonBytes, startPhase } from "./perf-trace.js";
+import { assertLibraryWritable } from "./library-version-guard.js";
 
 // The case library records a reader needs to find, show and edit cases.
 export const CASE_LIBRARY_KEYS = Object.freeze(['schemaVersion', 'entries', 'trashState', 'compoundCases',
@@ -11,7 +12,7 @@ const touchesCaseLibrary = keys => keys.some(key => CASE_LIBRARY_KEYS.includes(k
 
 // Browser metadata writes share one lock across extension pages. Read/modify/write
 // commits preserve concurrent sync markers; originals stay in media-store.js.
-export function createLibraryStorage({ backend, changes, lock, revision = () => globalThis.crypto.randomUUID() }) {
+export function createLibraryStorage({ backend, changes, lock, revision = () => globalThis.crypto.randomUUID(), assertWritable = async () => {} }) {
   if (!["get", "set", "remove"].every(name => typeof backend?.[name] === "function") || typeof lock !== "function") {
     throw new Error("资料读写接口缺少存储或写入协调能力。");
   }
@@ -28,8 +29,12 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     get: keys => backend.get(keys),
     // Available before our minimum Chrome version; never load values to enumerate keys.
     getKeys: () => backend.getKeys(),
-    set: values => lock(async () => backend.set(await withSummary(values))),
-    remove: keys => lock(() => {
+    set: values => lock(async () => {
+      await assertWritable(backend);
+      await backend.set(await withSummary(values));
+    }),
+    remove: keys => lock(async () => {
+      await assertWritable(backend);
       const removed = typeof keys === 'string' ? [keys] : keys;
       // Invalidate derived values in the same lock. The next reader rebuilds
       // them from the retained source instead of advertising a deleted undo.
@@ -42,6 +47,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     // Read/modify/write is serialized with every set/remove using this backend.
     // The transform must not call a nested write on this same interface.
     update: (keys, transform) => lock(async () => {
+      await assertWritable(backend);
       const update = await transform(await backend.get(keys));
       if (!update || typeof update !== "object" || Array.isArray(update)) throw new Error("资料更新内容无效。");
       await backend.set(await withSummary(update));
@@ -62,7 +68,8 @@ export function getLibraryStorage() {
   boundStorage ??= createLibraryStorage({
     backend: chrome.storage.local,
     changes: chrome.storage.onChanged,
-    lock: operation => navigator.locks.request("promptdirector-library-metadata-write", operation)
+    lock: operation => navigator.locks.request("promptdirector-library-metadata-write", operation),
+    assertWritable: assertLibraryWritable
   });
   return boundStorage;
 }

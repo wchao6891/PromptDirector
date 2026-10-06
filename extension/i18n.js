@@ -3328,7 +3328,9 @@ const EN = Object.freeze({
   "项目快照无效": "The project snapshot is invalid",
   "当前资料库存在同编号但内容不同的项目": "The library already has a different project with the same ID",
   "项目成员案例不存在": "A case in this project no longer exists",
-  "原父项目不存在，已恢复到根级": "The original parent project is gone; restored at the top level"
+  "原父项目不存在，已恢复到根级": "The original parent project is gone; restored at the top level",
+  "资料库由更新版本的 PromptDirector 保存，请先更新插件再打开；资料没有被改动": "This library was saved by a newer version of PromptDirector. Update the extension to open it; nothing was changed.",
+  "资料没有改动": "nothing was changed"
 });
 
 let activeLocale = "zh-CN";
@@ -3511,6 +3513,7 @@ export function translateUiMessage(value) {
     [/^合集名称不能为空$/, "Project name is required"],
     [/^这个合集已经存在$/, "A project with this name already exists"],
     // Background messages with interpolated values.
+    [/^升级检查发现 (\d+) 个案例会丢失，已停止升级$/u, "The upgrade check found $1 cases that would be lost, so the upgrade stopped"],
     [/^(.+)尚未分配 AI 服务$/u, (_match, task) => `${translateUiMessage(task)} has no AI service assigned`],
     [/^已识别 (\d+) 项网页内容，请确认后保存$/u, "Found $1 page items. Review them before saving."],
     [/^正文仍有 (\d+) 项媒体未加载，已保存当前可用内容，请回到来源页面核对$/u, "$1 media items in the article had not loaded. Available content was saved; check the source page."],

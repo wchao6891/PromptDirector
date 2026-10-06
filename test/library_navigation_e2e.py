@@ -131,6 +131,7 @@ def main() -> None:
                 "node => { const rect = node.getBoundingClientRect(); return {left: rect.left, top: rect.top, width: rect.width, height: rect.height, scrollY}; }"
             )
             first_card.hover()
+            first_card.page.wait_for_timeout(250)  # the hover border fades in over 140 ms unless motion is reduced
             after_hover = first_card.evaluate(
                 """node => {
                   const rect = node.getBoundingClientRect();
