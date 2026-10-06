@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, isAbsolute, join } from 'node:path';
 import { connectorRoot, ensurePrivateRoot } from './paths.mjs';
+import { readablePath } from './sensitive-paths.mjs';
 
 async function digest(handle) {
   const hash = createHash('sha256');
@@ -17,10 +18,10 @@ export async function stageFiles(files, bodyFile, requestId, call, { purpose, li
     let textBytes = 0;
     const packagePaths = files.map(file => file.packagePath?.replace(/\\/g, '/') || '');
     const skillPath = purpose === 'skill-file' && packagePaths.find(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'));
-    const skillRoot = skillPath?.slice(0, -'SKILL.md'.length) || '';
+    const skillRoot = (skillPath || '').slice(0, -'SKILL.md'.length);
     for (const [index, file] of files.entries()) {
       if (!isAbsolute(file.path)) throw new Error('附件必须使用绝对路径。');
-      const info = await stat(file.path);
+      const info = await stat(await readablePath(file.path));
       if (!info.isFile()) throw new Error('Skill附件必须是普通文件。');
       if (info.size > limits.maxFileBytes) throw new Error('Skill单文件超过插件导入上限，未开始上传。');
       totalBytes += info.size;
@@ -33,7 +34,7 @@ export async function stageFiles(files, bodyFile, requestId, call, { purpose, li
   const transferIds = []; const filePrompts = {}; let bodyTransferId;
   for (const [index, file] of files.entries()) {
     if (!isAbsolute(file.path)) throw new Error('附件必须使用绝对路径。');
-    const handle = await open(file.path, 'r');
+    const handle = await open(await readablePath(file.path), constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
     try {
       const stat = await handle.stat();
       if (!stat.isFile() || (!stat.size && purpose !== 'skill-file')) throw new Error('附件必须是普通文件；案例附件不能为空。');

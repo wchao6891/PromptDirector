@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { win32 } from 'node:path';
+import { CONNECTOR_TIMEOUT_MS } from './bridge-client.mjs';
 const execute = promisify(execFile);
 export const nativeRegistryKey = 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.promptdirector.connector';
 export function windowsCommand(name, env = process.env) {
@@ -49,10 +50,13 @@ foreach($r in $actual.GetAccessRules($true,$true,[Security.Principal.SecurityIde
   if (process.env.PROMPTDIRECTOR_DEBUG) console.error('[PromptDirector permissions] start');
   try {
     const result = await execute(windowsCommand('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      windowsHide: true, env: { ...process.env, PROMPTDIRECTOR_PRIVATE_DIRECTORY: root }
+      windowsHide: true, timeout: CONNECTOR_TIMEOUT_MS, killSignal: 'SIGKILL', env: { ...process.env, PROMPTDIRECTOR_PRIVATE_DIRECTORY: root }
     });
     if (process.env.PROMPTDIRECTOR_DEBUG) console.error(`[PromptDirector permissions] ${Date.now() - started}ms\n${result.stderr}`);
-  } catch { throw new Error('无法保护 Windows 连接目录，请确认目录属于当前用户且允许设置私有访问权限。'); }
+  } catch (error) {
+    if (error.killed) throw Object.assign(new Error('Windows 连接目录权限检查超时（PowerShell 无响应），请稍后重试或检查安全软件是否拦截 PowerShell。'), { code: 'connector_timeout' });
+    throw new Error('无法保护 Windows 连接目录，请确认目录属于当前用户且允许设置私有访问权限。');
+  }
 }
 export function windowsLauncher(plan) {
   const quote = value => {

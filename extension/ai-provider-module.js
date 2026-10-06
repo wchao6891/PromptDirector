@@ -552,17 +552,24 @@ async function downloadJob(fetchImpl, providerProfiles, job = {}, requestOptions
   }
   if (!downloadUrl) throw new Error("视频任务还没有可下载的结果地址");
   const headers = {};
+  const gemini = job.protocol === "gemini";
+  let requestUrl = downloadUrl;
   if (sameOrigin(downloadUrl, profile.endpoint) && profile.apiKey) {
-    if (job.protocol === "gemini") headers["x-goog-api-key"] = profile.apiKey;
-    else headers.Authorization = `Bearer ${profile.apiKey}`;
+    // Gemini file downloads redirect to a storage host. Fetch keeps custom headers across
+    // redirects, so the key travels in the Gemini URL query, which the redirect target replaces.
+    if (gemini) {
+      const keyed = new URL(downloadUrl);
+      keyed.searchParams.set("key", profile.apiKey);
+      requestUrl = keyed.href;
+    } else headers.Authorization = `Bearer ${profile.apiKey}`;
   }
   const control = createRequestControl(requestOptions);
   try {
-    const response = await fetchImpl(downloadUrl, {
+    const response = await fetchImpl(requestUrl, {
       method: "GET",
       headers,
       credentials: "omit",
-      redirect: "error",
+      redirect: gemini ? "follow" : "error",
       referrerPolicy: "no-referrer",
       cache: "no-store",
       signal: control.signal
@@ -598,7 +605,7 @@ function normalizePolledJob(job, payload, apiKey = "") {
     ...job,
     status: completed ? "completed" : "running",
     fileId: clean(payload.file_id ?? job.fileId),
-    downloadUrl: safeOptionalUrl(payload?.unsigned_urls?.[0] ?? payload?.content?.video_url ?? payload?.video?.url ?? payload?.response?.generatedVideos?.[0]?.video?.uri ?? job.downloadUrl),
+    downloadUrl: safeOptionalUrl(payload?.unsigned_urls?.[0] ?? payload?.content?.video_url ?? payload?.video?.url ?? payload?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri ?? payload?.response?.generatedVideos?.[0]?.video?.uri ?? job.downloadUrl),
     providerPayload: payload && typeof payload === "object" ? structuredClone(payload) : {}
   };
 }

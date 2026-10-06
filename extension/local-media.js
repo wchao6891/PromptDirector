@@ -245,10 +245,11 @@ export async function extractLocalDocumentText(blob, options = {}) {
 }
 
 export function createExactMediaDuplicateIndex(entries = [], options = {}) {
+  // Identical bytes are a duplicate whatever the file is called; only same-size originals are ever hashed.
   const buckets = new Map();
-  const keyFor = (size, mimeType, name) => JSON.stringify([Number(size), clean(mimeType).toLocaleLowerCase("en-US"), clean(name)]);
+  const keyFor = (size) => Number(size);
   const add = (asset) => {
-    const key = keyFor(asset.byteSize, asset.mimeType, asset.sourceTitle ?? asset.name);
+    const key = keyFor(asset.byteSize);
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = { nextOrder: 0, byHash: new Map(), pending: [], cursor: 0 };
@@ -266,13 +267,13 @@ export function createExactMediaDuplicateIndex(entries = [], options = {}) {
   return {
     add,
     async find(file, { contentHash: preparedHash, signal } = {}) {
-      const format = detectLocalMediaFile(file);
+      detectLocalMediaFile(file);
       signal?.throwIfAborted();
       // Only the caller that just prepared this exact immutable Blob may reuse
       // its hash. Background admission independently hashes its stored bytes.
       const contentHash = preparedHash || await sha256Blob(file);
       signal?.throwIfAborted();
-      const bucket = buckets.get(keyFor(file.size, format.mimeType, file.name));
+      const bucket = buckets.get(keyFor(file.size));
       if (!bucket) return { contentHash, duplicateAssetId: "" };
       let match = bucket.byHash.get(contentHash);
       while (bucket.cursor < bucket.pending.length) {

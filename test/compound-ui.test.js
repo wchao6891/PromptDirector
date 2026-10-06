@@ -48,3 +48,18 @@ function functionBlock(start, end) {
   assert.ok(startIndex >= 0 && endIndex > startIndex, `missing source block: ${start}`);
   return source.slice(startIndex, endIndex);
 }
+
+test("unsaved compound organizing holds library refreshes instead of being rebuilt away", () => {
+  const organizer = functionBlock("function createCompoundOrganizer", "async function createDetailMediaGallery");
+  const editor = functionBlock("function createEntryEditor", "function renderManager");
+  const refresh = functionBlock("async function refreshLibrary", "async function loadImageDerivedMetadata");
+  // Compound details always fully re-render, so the shared dirty marker is the only guard.
+  assert.match(refresh, /\[data-dirty="true"\]'\)\) await renderDetail\(\)/);
+  assert.match(organizer, /details\.dataset\.dirty = String\(title\.input\.value !== \(entry\.title \|\| ""\) \|\| memberIds\.join/);
+  assert.match(organizer, /const renderOrder = \(\) => \{\n    syncDirty\(\);/);
+  assert.match(organizer, /details\.dataset\.dirty = "false";\n    const response = await perform/);
+  assert.match(organizer, /if \(!response\?\.ok\) syncDirty\(\);/);
+  assert.match(source, /createEntryEditor\(member, \{ compoundMember: true \}\)/);
+  assert.match(editor, /if \(options\.compoundMember\) titleField\.dataset\.dirty = String\(titleInput\.value !== \(entry\.title \|\| ""\)\)/);
+  assert.match(editor, /titleField\.dataset\.dirty = "false";[\s\S]*if \(!response\) syncTitleDirty\(\);/);
+});

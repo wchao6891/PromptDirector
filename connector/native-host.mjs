@@ -10,6 +10,8 @@ export async function startNativeHost({ root = connectorRoot(), origin, input = 
   await ensurePrivateRoot(root);
   const config = await readJson(join(root, "config.json"));
   if (origin !== `chrome-extension://${config.extensionId}/`) throw new Error("Native host extension identity mismatch.");
+  // Changes whenever Chrome restarts the host (extension reload or update), so clients can tell a new extension.
+  const hostSessionId = randomUUID();
   const sockets = new Set();
   const pending = new Map();
   let server;
@@ -64,7 +66,7 @@ export async function startNativeHost({ root = connectorRoot(), origin, input = 
             socket.destroy(); return;
           }
           authenticated = true;
-          socket.write(encodeFrame({ type: "ready", instanceId: message.instanceId, protocolVersion: 1 }));
+          socket.write(encodeFrame({ type: "ready", instanceId: message.instanceId, protocolVersion: 1, hostSessionId }));
           return;
         }
         if (value.type !== "request" || typeof value.id !== "string" || typeof value.operation !== "string") throw new Error("Invalid request.");

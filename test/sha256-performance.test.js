@@ -10,12 +10,18 @@ import { reusableAgentFile } from '../extension/agent-transfer-reuse.js';
 import { saveAgentMaterial } from '../extension/agent-save.js';
 import { AGENT_CHUNK_BYTES } from '../extension/agent-protocol.js';
 
+// A content scan reads the bytes either as a stream (large files) or as one buffer (native digest).
+function countScans(blob, onScan) {
+  const stream = blob.stream.bind(blob), arrayBuffer = blob.arrayBuffer.bind(blob);
+  blob.stream = () => { onScan(); return stream(); };
+  blob.arrayBuffer = () => { onScan(); return arrayBuffer(); };
+}
+
 test('preparing a verified upload does not scan its bytes again; ordinary imports still compute their identity', async () => {
   const file = new File(['original notes'], 'notes.txt', { type: 'text/plain' });
   const expected = await sha256Blob(file);
   let scans = 0;
-  const stream = file.stream.bind(file);
-  file.stream = () => { scans++; return stream(); };
+  countScans(file, () => scans++);
   const verified = await prepareLocalMedia(file, 'verified', { verifiedContentHash: expected });
   assert.equal(verified.asset.contentHash, expected);
   assert.equal(verified.contentText, 'original notes');
@@ -28,8 +34,7 @@ test('ready reuse skips the middle scan while final saving still rejects same-si
   const blob = new Blob(['original'], { type: 'image/png' });
   const sha256 = await sha256Blob(blob);
   let scans = 0, current = blob;
-  const stream = blob.stream.bind(blob);
-  blob.stream = () => { scans++; return stream(); };
+  countScans(blob, () => scans++);
   const state = { entries: [{ id: 'case', mediaAssets: [{ id: 'image', kind: 'image', storageMode: 'managed',
     mimeType: blob.type, byteSize: blob.size, contentHash: sha256 }] }] };
   const data = {};
@@ -81,7 +86,7 @@ test('evicting text cache releases work but preserves deterministic pagination a
 });
 
 function skillReader({ blob, hash, budget } = {}) {
-  let current = blob, scans = 0, decodes = 0;
+  let current = blob, scans = 0, decodes = 0, hashing = 0;
   const created = createCreativeSkill({}, { callName: 'File reader', portableId: 'reader', description: 'Read originals', skillMarkdown: 'Read.',
     packageFiles: [{ path: 'references/original.txt', assetId: 'original', ...(hash ? { sha256: hash } : {}) }] });
   const state = { creativeSkills: created.state };
@@ -91,9 +96,10 @@ function skillReader({ blob, hash, budget } = {}) {
       if (!current) return null;
       const wrapper = new Blob([current], { type: current.type });
       const arrayBuffer = wrapper.arrayBuffer.bind(wrapper);
-      wrapper.arrayBuffer = () => { decodes++; return arrayBuffer(); };
+      // Buffer reads inside the digest are the hash scan, not a text decode.
+      wrapper.arrayBuffer = () => { if (!hashing) decodes++; return arrayBuffer(); };
       return wrapper;
-    }, digest: value => { scans++; return sha256Blob(value); } };
+    }, digest: async value => { scans++; hashing++; try { return await sha256Blob(value); } finally { hashing--; } } };
   return { service: createSkillOperations(options), restart: () => createSkillOperations(options), state,
     input: { skillId: created.skill.id, source: 'package', path: 'references/original.txt' },
     get scans() { return scans; }, get decodes() { return decodes; }, set current(value) { current = value; } };

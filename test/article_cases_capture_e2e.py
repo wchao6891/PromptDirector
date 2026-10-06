@@ -48,8 +48,9 @@ def main():
    panel.locator('#page-capture-mode').select_option('article')
    expect(panel.locator('.page-capture-item')).to_have_count(4,timeout=30000)
    panel.locator('#page-capture-save').click()
-   panel.wait_for_function("async()=>{const s=await chrome.runtime.sendMessage({type:'GET_STATE'});return s.entries.length===3}")
+   expect(panel.locator("#page-capture")).to_be_hidden(timeout=60000)
    entries=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
+   assert {e['title'] for e in entries} == {f'{i}、案例{i}' for i in range(1,4)}, [(e['title'],len(e.get('mediaAssets',[]))) for e in entries]
    for i in range(1,4):
     entry=next(e for e in entries if e['title']==f'{i}、案例{i}')
     assert len(entry['mediaAssets'])==i,(i,entry)

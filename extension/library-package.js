@@ -778,7 +778,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       const sourceAssets = normalizeEntryMedia(source).mediaAssets;
       const existingAssets = normalizeEntryMedia(identical).mediaAssets;
       for (let index = 0; index < sourceAssets.length; index += 1) {
-        if (existingAssets[index]) visualIdMap[sourceAssets[index].id] = existingAssets[index].id;
+        if (existingAssets[index] && !createdVisualIdMap[sourceAssets[index].id]) visualIdMap[sourceAssets[index].id] = existingAssets[index].id;
       }
       continue;
     }
@@ -805,7 +805,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
         const sourceAssets = normalizeEntryMedia(source).mediaAssets;
         const existingAssets = normalizeEntryMedia(existing).mediaAssets;
         for (let index = 0; index < sourceAssets.length; index += 1) {
-          if (existingAssets[index]) visualIdMap[sourceAssets[index].id] = existingAssets[index].id;
+          if (existingAssets[index] && !createdVisualIdMap[sourceAssets[index].id]) visualIdMap[sourceAssets[index].id] = existingAssets[index].id;
         }
       }
       continue;

@@ -1239,6 +1239,7 @@ async function restoreVersion(versionId) {
   creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
   const version = currentCreativeSkillVersion(response.skill);
   elements.skillMarkdown.value = version.skillMarkdown;
+  elements.skillDescription.value = response.skill.description;
   renderVersions(response.skill);
   setFeedback(elements.skillSaveStatus, response.message);
 }
@@ -1343,7 +1344,7 @@ async function refreshCuratedSubmission() {
       const cover = el("div", "skill-cover-detail");
       showSkillCoverImage(cover, () => snapshot.files.get(file.path));
       detail.append(cover);
-    } else detail.append(textEl("pre", file.text));
+    } else detail.append(textEl("pre", file.text ?? t("附件原文件随技能包发布")));
     return detail;
   }));
   const list = elements.skillSubmissionFindings.querySelector("ul");

@@ -13,7 +13,7 @@ export function captureIconButton(icon, label, onClick, className = "") {
 }
 
 export function createPageCaptureCard(candidate, {
-  selected, listMode, busy, hidden, meta, onSelect, onLocate, onPreviewMedia, createArticlePreview, previewOpen, onIncludeSupplement, selectedMediaIds = [], onIncludeMediaGroup, onRemoveMedia, loadLocalVisual
+  selected, listMode, busy, hidden, meta, onSelect, onLocate, onPreviewMedia, createArticlePreview, previewOpen, onIncludeSupplement, selectedMediaIds = [], onIncludeMediaGroup, onRemoveMedia, loadLocalVisual, onSplitMedia
 }) {
   const card = document.createElement("article");
   card.className = `page-capture-item${selected ? " confirmed" : ""}`;
@@ -54,11 +54,13 @@ export function createPageCaptureCard(candidate, {
     button.type = "button";
     button.title = media.alt || t(media.kind === "video" ? "视频" : "图片");
     button.setAttribute("aria-label", button.title);
-    const url = media.kind === "video" ? media.posterUrl : media.previewDataUrl || media.dataUrl || media.url;
+    const url = pageCapturePreviewSource(candidate, media);
     if (url || media.localAssetId) {
       const image = document.createElement("img");
+      if (candidate.adapter === "generic") { image.loading = "lazy"; image.decoding = "async"; }
       if (media.localAssetId) loadLocalVisual(image, media.localAssetId);
       else image.src = url;
+      bindPageCapturePreviewFallback(image, candidate, media);
       image.alt = "";
       image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => button.replaceChildren(createUiIcon(media.kind === "video" ? "video" : "image")), { once: true });
@@ -104,7 +106,20 @@ export function createPageCaptureCard(candidate, {
   details.open = previewOpen;
   const summary = document.createElement("summary");
   summary.textContent = t("预览完整内容");
-  details.append(summary, createArticlePreview());
+  details.append(summary);
+  if (candidate.adapter !== "generic" || previewOpen) details.append(createArticlePreview());
+  else details.addEventListener("toggle", () => {
+    if (details.open && !details.querySelector(".page-capture-article")) details.append(createArticlePreview());
+  });
+  if (onSplitMedia) {
+    const split = document.createElement("button");
+    split.type = "button";
+    split.className = "button-secondary compact";
+    split.textContent = t("按媒体拆开");
+    split.disabled = busy;
+    split.addEventListener("click", onSplitMedia);
+    actions.append(split);
+  }
   if (candidate.possibleOmissions?.length) {
     const omissions = document.createElement("details");
     omissions.className = "page-capture-omissions";
@@ -142,4 +157,21 @@ export function createPageCaptureCard(candidate, {
   card.append(actions);
   card.dataset.candidateId = candidate.id;
   return card;
+}
+
+// Pixel backups are still frames. Generic captures should show the source when
+// it can load, retaining the backup only for a real source loading failure.
+export function pageCapturePreviewSource(candidate, media = {}) {
+  if (media.kind === 'video') return media.posterUrl;
+  return candidate?.adapter === 'generic' ? media.url || media.previewDataUrl || media.dataUrl
+    : media.previewDataUrl || media.dataUrl || media.url;
+}
+
+export function bindPageCapturePreviewFallback(image, candidate, media = {}) {
+  const fallback = media.previewDataUrl || media.dataUrl;
+  if (candidate?.adapter !== 'generic' || media.kind !== 'image' || !media.url || !fallback || fallback === media.url) return;
+  image.addEventListener('error', event => {
+    event.stopImmediatePropagation();
+    image.src = fallback;
+  }, { once: true });
 }

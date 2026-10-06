@@ -18,9 +18,9 @@ test("visual batch selection preselects analyzable project cases before continui
 
 test("visible thumbnails use a bounded queue and a rebuildable persistent cache", () => {
   assert.match(library, /thumbnailConcurrency = Math\.max\(1, Math\.min\(2,/);
-  assert.match(library, /scheduleThumbnail\(\(\) => createThumbnailUrl\(visualId\)\)/);
+  assert.match(library, /thumbnailLoader\.request\(visualId, image\)/);
   assert.match(library, /getDerivedMedia\(visualId\)/);
-  assert.match(library, /saveDerivedMedia\(visualId, \{ \.\.\.derived, thumbnail \}\)/);
+  assert.match(library, /saveDerivedMedia\(visualId, \{ \.\.\.derived, thumbnail, animated: false \}\)/);
 });
 
 test("narrow-screen add menu starts below the complete two-row header", () => {

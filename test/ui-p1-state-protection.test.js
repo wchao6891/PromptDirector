@@ -141,7 +141,7 @@ function curatedContext(mode) {
     chrome: { runtime: { sendMessage: async message => {
       if (message.type === 'REGISTER_STAGED_MEDIA') { await registry.register(message.operationId, 'page', message.assetIds); return { ok: true }; }
       if (message.type === 'RELEASE_STAGED_MEDIA') { release = registry.release(message.operationId, 'page'); await release; return { ok: true }; }
-      if (message.type === 'PREVIEW_CURATED_IMPORT') return { ok: true, importedSourceEntryIds: ['S'] };
+      if (message.type === 'PREVIEW_CURATED_IMPORT') return { ok: true, importedSourceEntryIds: ['S'], importedVisualIds: ['asset'] };
       if (message.type === 'APPLY_CURATED_IMPORT') {
         if (mode === 'before-commit') return { ok: false, message: 'commit rejected' };
         referenced.add('asset');

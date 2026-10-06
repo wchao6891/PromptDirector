@@ -3,6 +3,8 @@ export const SHORTCUT_COMMANDS = [
   { id: 'markIn', scope: 'review', label: '入点', key: 'I' },
   { id: 'markOut', scope: 'review', label: '出点', key: 'O' },
   { id: 'playPause', scope: 'review', label: '播放 / 暂停', key: 'Space' },
+  { id: 'previousFrame', scope: 'review', label: '前一帧', key: 'ArrowLeft', repeat: true },
+  { id: 'nextFrame', scope: 'review', label: '后一帧', key: 'ArrowRight', repeat: true },
   { id: 'addFeedback', scope: 'review', label: '创作备注', key: 'M' },
   { id: 'toggleLoop', scope: 'review', label: '循环', key: '' },
   { id: 'mute', scope: 'review', label: '静音', key: '' },
@@ -64,16 +66,19 @@ export function shortcutConflict(bindings) {
   }
   return null;
 }
+// Focused widgets that move with arrow keys keep them before any application command.
+const ARROW_KEY_OWNERS = '[role=slider],[role=separator],[role=listbox],[role=option],[role=tablist],[role=tab],[role=tree],[role=treeitem],[role=menu],[role=menuitem],[role=radiogroup],[role=radio],input[type=range],[data-arrow-keys]';
 export function installShortcutRouter({ target = document, bindings, scope, actions }) {
   const handler = event => {
-    if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat) return;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+    if (event.key?.startsWith('Arrow') && event.target?.closest?.(ARROW_KEY_OWNERS)) return;
     const current = scope(event);
     const text = event.target?.closest?.('textarea,input:not([type=range]):not([type=button]):not([type=checkbox]),select,[contenteditable=true]');
     const values = bindings();
     if (current === 'feedback' && event.target?.closest?.('button') && ['Enter', ' '].includes(event.key)) return;
     const command = SHORTCUT_COMMANDS.find(item => item.scope === current && (!text || item.input)
       && values[item.id] && [shortcutForEvent(event), shortcutForEvent(event, true)].includes(values[item.id]) && actions[item.id]);
-    if (!command) return;
+    if (!command || event.repeat && !command.repeat) return;
     event.preventDefault(); event.stopPropagation();
     actions[command.id](event);
   };

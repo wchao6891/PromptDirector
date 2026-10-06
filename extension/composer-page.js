@@ -1244,7 +1244,9 @@ function renderReferenceInputs() {
 
 async function retryComposerTurn() {
   if (!composerSession || activeOperation) return;
+  const failedUserMessageId = composerSession.lastFailure?.userMessageId;
   if (lastCreativeJob?.sessionId === composerSession.id &&
+      lastCreativeJob.userMessageId === failedUserMessageId &&
       ["failed", "canceled", "interrupted"].includes(lastCreativeJob.status) &&
       lastCreativeJob.error?.retryable) {
     if (!await confirmAppAction({ title: t("重新发起付费请求？"), description: t("上一次请求可能已经产生费用。重试会创建一个新任务，并可能再次计费。"), confirmLabel: t("继续重试") })) return;
@@ -1256,6 +1258,24 @@ async function retryComposerTurn() {
     return;
   }
   if (!composerSession.lastFailure?.retryable) return;
+  if (["create_image", "create_video"].includes(composerSession.outputMode) || sessionHasVideoReferences(composerSession)) {
+    // Media turns run only as background jobs; the in-page path cannot persist their results or send video references.
+    if ((creativeJobs.items ?? []).some(item => item.sessionId === composerSession.id && item.userMessageId === failedUserMessageId)) {
+      throw new Error(composerSession.lastFailure.message);
+    }
+    const failure = composerSession.lastFailure;
+    const working = clearComposerFailure(composerSession);
+    composerSession = working;
+    renderComposer();
+    try {
+      await startPersistentCreativeJob({ session: working, userMessageId: failure.userMessageId, startPhase: working.currentInstruction ? "generation" : "planning", imageEdit: null });
+    } catch (error) {
+      composerSession = setComposerFailure(working, { ...failure, message: error.message || failure.message });
+      composerSession = await saveSession(composerSession).catch(() => composerSession);
+      renderComposer();
+    }
+    return;
+  }
   if (composerSession.activeTurn?.providerMayHaveAccepted && !await confirmAppAction({
     title: t("重新发起文字请求？"),
     description: t("上一次请求可能已经被服务商接收。重试会发起新的请求，并可能再次计费；已保留的部分内容不会覆盖新结果。"),
@@ -2700,6 +2720,9 @@ async function applyCreativeSkill(skill) {
 
 async function removeAppliedSkill(skillId) {
   if (!composerSession) return;
+  if (activeOperation?.kind === "compose" && activeOperation.sessionId === composerSession.id) {
+    return composerFeedback("生成期间不能修改当前对话的 Skill", true);
+  }
   composerSession = createComposerSession({ ...composerSession, appliedSkills: composerSession.appliedSkills.filter((item) => item.skillId !== skillId), currentInstruction: "", retrievedSources: [], currentRoute: "", currentRouteSource: "" });
   composerSession = await saveSession(composerSession);
   renderComposer();

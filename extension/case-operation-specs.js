@@ -19,13 +19,14 @@ const identity = { caseId: id, expectedRevision: id };
 const requestId = { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' };
 export const CASE_SEARCH_PROPERTIES = {
   ...CASE_QUERY_PROPERTIES,
-  query: { type: 'string', default: '' },
+  query: { type: 'string', default: '', description: '可与similarTo合并：按用户明确在意的内容用区分性词过滤，再按文字相似排序。同片名/班底不等于同技法；多个词是交集，同义表达用alternatives。探索任务不强制所有标签一致。' },
   alternatives: { type: 'array', items: { type: 'string', minLength: 1 }, description: '同义或并列查询做并集；每个查询中的多个词是交集' },
   project: { type: 'string', description: '项目名称或已知ID，包含子项目；同名时指定ID' },
   provider: { type: 'string', minLength: 1, description: '按已保存sourceFacts.provider精确匹配来源平台，不搜索正文提及的平台' },
   authorHandle: { type: 'string', minLength: 1, description: '按已保存sourceFacts.handle精确匹配作者账号，忽略前导@和大小写；正文致谢或提及不算作者' },
   mediaKind: { enum: ['image', 'video', 'document'], description: '只按实际素材类型筛选，忽略视频封面' },
   hasOriginalPrompt: { type: 'boolean', description: '有无原词；指定mediaKind时只判断该类素材，AI逆推不算原词；组合任一匹配素材有原词即为true' },
+  hasPrompt: { type: 'boolean', description: '有无可用原词或已存AI词，指定mediaKind时只判断该类素材。false可只补查缺提示词的候选，不重复检查已能按词判断的案例。' },
   minDurationMs: { type: 'number', minimum: 0, description: '视频或音频素材最短时长（毫秒，包含边界）；未知时长不当作0；与原词筛选匹配同一素材' },
   maxDurationMs: { type: 'number', minimum: 0, description: '视频或音频素材最长时长（毫秒，包含边界）；返回durationCoverage说明未知时长范围' },
   expectedRevision: { type: 'string', minLength: 1, description: '翻页必须携带首屏revision并保持筛选不变；search_changed时从第一页重新检索，不混用新旧结果' },

@@ -537,6 +537,44 @@ test("cross-origin video downloads omit provider credentials while same-origin d
   assert.equal(calls.every((call) => call.options.credentials === "omit"), true);
 });
 
+test("Gemini Veo REST operations resolve the generated sample and download through its redirect without a key header", async () => {
+  const calls = [];
+  const videoUri = "https://generativelanguage.googleapis.com/v1beta/files/veo-out:download?alt=media";
+  const module = createAiProviderModule({ fetchImpl: async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes("/operations/")) return jsonResponse({
+      name: "models/veo-3.1-generate-preview/operations/op-1",
+      done: true,
+      response: { "@type": "type.googleapis.com/google.ai.generativelanguage.v1beta.PredictLongRunningResponse", generateVideoResponse: { generatedSamples: [{ video: { uri: videoUri } }] } }
+    });
+    return videoResponse();
+  } });
+  module.configureProvider({ id: "gemini", endpoint: "https://generativelanguage.googleapis.com", apiKey: "gemini-secret", protocol: "gemini" });
+
+  const polled = await module.poll({ providerId: "gemini", protocol: "gemini", remoteId: "models/veo-3.1-generate-preview/operations/op-1", status: "running" });
+  assert.equal(polled.status, "completed");
+  assert.equal(polled.downloadUrl, videoUri);
+  const downloaded = await module.download(polled);
+
+  const download = calls[1];
+  assert.equal(download.options.redirect, "follow");
+  assert.equal(download.options.headers["x-goog-api-key"], undefined);
+  assert.equal(download.options.headers.Authorization, undefined);
+  assert.equal(new URL(download.url).searchParams.get("key"), "gemini-secret");
+  assert.equal(new URL(download.url).origin, "https://generativelanguage.googleapis.com");
+  assert.equal(downloaded.downloadUrl, videoUri);
+  assert.equal(downloaded.blob.size, MP4.byteLength);
+});
+
+test("Gemini downloads from a foreign origin carry no API key and still follow the storage redirect", async () => {
+  const calls = [];
+  const module = createAiProviderModule({ fetchImpl: async (url, options = {}) => { calls.push({ url, options }); return videoResponse(); } });
+  module.configureProvider({ id: "gemini", endpoint: "https://generativelanguage.googleapis.com", apiKey: "gemini-secret", protocol: "gemini" });
+  await module.download({ providerId: "gemini", protocol: "gemini", remoteId: "x", status: "completed", downloadUrl: "https://storage.example/out.mp4" });
+  assert.equal(calls[0].url, "https://storage.example/out.mp4");
+  assert.equal(JSON.stringify(calls).includes("gemini-secret"), false);
+});
+
 test("video downloads reject oversized declarations and spoofed non-video bodies", async () => {
   const responses = [
     videoResponse({ "content-length": String(LIBRARY_TRANSFER_LIMITS.maxVideoBytes + 1) }),

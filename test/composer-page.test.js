@@ -260,3 +260,30 @@ test("composer keeps one stable creation toolbar and separates result action lev
   assert.match(composerCss, /\.composer-message\.status \.composer-message-content\s*\{[^}]*display:\s*inline-grid[^}]*\}/s);
   assert.match(composerCss, /composer-page-paused[\s\S]*animation-play-state:\s*paused/);
 });
+
+test("composer retry replays only the failed turn's job and keeps media turns on the background job path", async () => {
+  const composerJs = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
+  const retry = composerJs.slice(composerJs.indexOf("async function retryComposerTurn"), composerJs.indexOf("async function runComposerTurn"));
+  const jobBranch = retry.slice(0, retry.indexOf("RETRY_CREATIVE_JOB"));
+  const mediaBranch = retry.slice(retry.indexOf('["create_image", "create_video"]'), retry.indexOf("providerMayHaveAccepted"));
+
+  // A paid replay of an older job must never answer a retry for a newer failed turn.
+  assert.match(jobBranch, /lastCreativeJob\.userMessageId === failedUserMessageId/);
+  // The in-page path cannot persist video or send video references, so media turns never reach it.
+  assert.match(mediaBranch, /sessionHasVideoReferences\(composerSession\)/);
+  assert.match(mediaBranch, /item\.userMessageId === failedUserMessageId/);
+  assert.match(mediaBranch, /startPersistentCreativeJob\(/);
+  assert.doesNotMatch(mediaBranch, /runComposerTurn|runAgentExecution/);
+});
+
+test("removing an applied Skill is blocked while the current conversation is generating", async () => {
+  const composerJs = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
+  const remove = composerJs.slice(composerJs.indexOf("async function removeAppliedSkill"), composerJs.indexOf("async function openSkillCenter"));
+  assert.match(remove, /activeOperation\?\.kind === "compose" && activeOperation\.sessionId === composerSession\.id/);
+});
+
+test("restoring a Skill version refreshes the editable description so the next save keeps the restore", async () => {
+  const skillsJs = await readFile(new URL("../extension/skills-page.js", import.meta.url), "utf8");
+  const restore = skillsJs.slice(skillsJs.indexOf("async function restoreVersion"), skillsJs.indexOf("async function deleteSkill"));
+  assert.match(restore, /elements\.skillDescription\.value = response\.skill\.description/);
+});

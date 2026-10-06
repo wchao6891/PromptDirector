@@ -15,7 +15,30 @@ import { CASE_QUERY_PROPERTIES, CASE_QUERY_DESCRIPTION } from '../extension/case
 
 const requestId = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
 const project = z.string().optional();
-export function createServer(call = callExtension) {
+const TIMING = process.env.PROMPTDIRECTOR_TIMING === '1';
+const CONNECTION_ERROR_CODES = new Set(['connector_offline', 'connector_timeout', 'connector_access_denied']);
+
+export function createServer(callBridge = callExtension) {
+  // Status is reused only while the same native-host session answers: capability checks then cost no extra
+  // round trip, and a reloaded extension is detected at the handshake before any request is sent.
+  let cached = null;
+  const call = async (operation, input) => {
+    let hostSession;
+    const started = TIMING ? performance.now() : 0;
+    const result = await callBridge(operation, input, {
+      ...(cached ? { expectedHostSession: cached.hostSession } : {}),
+      onHostSession: value => { hostSession = value; }
+    }).catch(error => {
+      if (error?.code === 'connector_session_changed' || CONNECTION_ERROR_CODES.has(error?.code)) cached = null;
+      throw error;
+    }).finally(() => {
+      // Developer timing goes to stderr so the MCP stdout protocol stays untouched; no arguments are logged.
+      if (TIMING) process.stderr.write(`${JSON.stringify({ timing: 'bridge', operation, ms: Math.round(performance.now() - started) })}\n`);
+    });
+    if (operation === 'status') cached = hostSession ? { status: result, hostSession } : null;
+    return result;
+  };
+  const requireStatus = async (satisfied) => cached && satisfied(cached.status) ? cached.status : call('status');
   const server = new McpServer({ name: 'promptdirector', version: packageInfo.version }, {
     instructions: AGENT_INSTRUCTIONS
   });
@@ -23,7 +46,12 @@ export function createServer(call = callExtension) {
     server.registerTool(`promptdirector_${name}`, { title: TOOL_TITLES[name], description, inputSchema,
       annotations: { readOnlyHint: readonly, destructiveHint: destructive, idempotentHint: name !== 'show_case', openWorldHint: name === 'capture_url' } },
     async input => {
-      try { const result = await handler(input); return { content: [{ type: 'text', text: JSON.stringify(result), annotations: { audience: ['assistant'] } }] }; }
+      try {
+        const result = await handler(input).catch(error => {
+          if (error?.code !== 'connector_session_changed') throw error;
+          return handler(input);
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(result), annotations: { audience: ['assistant'] } }] }; }
       catch (error) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error.code || 'operation_failed', message: error.message }) }] }; }
     });
   }
@@ -47,7 +75,7 @@ export function createServer(call = callExtension) {
   for (const spec of ANALYSIS_BATCH_SPECS) tool(spec.name,spec.description,z.fromJSONSchema(spec.parameters),/^(read|list)_/.test(spec.name),input=>call(spec.name,input),!/^(read|list)_/.test(spec.name));
   tool('status', '连接异常或首次需要探测能力时检查；已有成功业务回执不重复检查连接。', {}, true, () => call('status'));
   tool('describe_case_query', '发现当前库可组合查询的字段、实际互动指标，以及关系/缺失/排序/统计语义。只读帮助，不读取媒体原件。', {}, true, async () => {
-    const status = await call('status');
+    const status = await requireStatus(current => current.caseQueryVersion === 1);
     if (status.caseQueryVersion !== 1) throw Object.assign(new Error('插件后台尚未加载统一字段查询；保存未完成编辑后重载扩展，再重新读取字段帮助。'), { code: 'unsupported_case_query' });
     return call('describe_case_query');
   });
@@ -80,7 +108,7 @@ export function createServer(call = callExtension) {
     const readonly = spec.name.startsWith('read_') || spec.name === 'list_skills';
     tool(spec.name, spec.description, z.fromJSONSchema(spec.parameters), readonly, async input => {
       if (spec.name === 'edit_case') {
-        const status = await call('status');
+        const status = await requireStatus(current => current.sourceProtectionVersion === 1);
         if (status.sourceProtectionVersion !== 1) throw Object.assign(new Error('插件后台尚未加载原始资料保护；保存未完成编辑后重载扩展，再执行修改。'), { code: 'unsupported_source_protection' });
       }
       return call(spec.name, input);
@@ -93,7 +121,7 @@ export function createServer(call = callExtension) {
   }), false, async input => {
     const { files, ...metadata } = input;
     validateSkillWriteShape({ ...metadata, ...(files ? { files: files.map(file => ({ path: file.packagePath })) } : {}) });
-    const status = await call('status');
+    const status = await requireStatus(current => current.capabilities?.includes('save_skill') && (!files || current.skillPackageLimits));
     if (!status.capabilities?.includes('save_skill')) throw new Error('插件后台尚不支持Skill写入，请更新并重载插件后重试；未上传文件。');
     if (!files) return call('save_skill',metadata);
     if (!status.skillPackageLimits) throw new Error('插件未声明Skill包限制，未开始上传；请核对插件与连接器版本。');
@@ -107,14 +135,17 @@ export function createServer(call = callExtension) {
       offset: { type: 'integer', minimum: 0, default: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 24 } },
     additionalProperties: false
   }), true, async input => {
-    const requested = ['provider', 'authorHandle', 'engagementMetric', ...Object.keys(CASE_QUERY_PROPERTIES)].filter(key => input[key] !== undefined);
+    const requested = ['provider', 'authorHandle', 'engagementMetric', 'hasPrompt', ...Object.keys(CASE_QUERY_PROPERTIES)].filter(key => input[key] !== undefined);
     if (requested.length || input.sort === 'engagement') {
-      const status = await call('status');
+      const supports = current => (!Object.keys(CASE_QUERY_PROPERTIES).some(key => input[key] !== undefined) || current.caseQueryVersion === 1)
+        && requested.every(key => current.searchFilters?.includes(key))
+        && (input.sort !== 'engagement' || current.searchFilters?.includes('engagementMetric'));
+      const status = await requireStatus(supports);
       if (Object.keys(CASE_QUERY_PROPERTIES).some(key => input[key] !== undefined) && status.caseQueryVersion !== 1) {
         throw Object.assign(new Error('插件后台尚未加载统一字段查询；保存未完成编辑后重载扩展。不能把忽略字段条件的旧结果当作查询成功。'), { code: 'unsupported_case_query' });
       }
       if (requested.some(key => !status.searchFilters?.includes(key)) || input.sort === 'engagement' && !status.searchFilters?.includes('engagementMetric')) {
-        throw Object.assign(new Error('插件后台尚未加载来源与互动筛选；请保存未完成编辑后重载扩展，不能将旧搜索结果当作精确筛选。'), { code: 'unsupported_search_filters' });
+        throw Object.assign(new Error('插件后台尚未加载所需搜索筛选；请保存未完成编辑后重载扩展，不能将旧搜索结果当作精确筛选。'), { code: 'unsupported_search_filters' });
       }
     }
     return call('search', input);
@@ -151,7 +182,7 @@ export function createServer(call = callExtension) {
   }, false, async input => {
     const authoredFields = ['creative', 'customLabels', 'classificationPathIds', 'sourceFacts', 'timeNotes'].filter(key => input[key] !== undefined);
     if (authoredFields.length) {
-      const status = await call('status');
+      const status = await requireStatus(current => authoredFields.every(key => current.materialFields?.includes(key)));
       if (authoredFields.some(key => !status.materialFields?.includes(key))) {
         throw Object.assign(new Error('插件后台尚不支持本次回存字段；请保存未完成编辑后重载扩展。未上传或保存资料。'), { code: 'unsupported_material_fields' });
       }

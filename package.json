@@ -22,14 +22,14 @@
     "check:pdfjs": "node tools/pdfjs-runtime.mjs --check",
     "check:store": "node tools/build-store-assets.mjs --check && node tools/check-store-readiness.mjs",
     "check:compat": "node tools/check-data-compatibility.mjs",
-    "package": "npm run build:brand && npm run build:capture-runtime && npm run build:hash && npm run build:documents && npm run build:icons && node tools/package-extension.mjs",
-    "package:release": "npm run build:brand && npm run build:capture-runtime && npm run build:hash && npm run build:documents && npm run build:icons && node tools/package-extension.mjs --release",
+    "package": "npm run build:brand && npm run build:capture-runtime && npm run build:hash && npm run build:video-frames && npm run build:documents && npm run build:icons && node tools/package-extension.mjs",
+    "package:release": "npm run build:brand && npm run build:capture-runtime && npm run build:hash && npm run build:video-frames && npm run build:documents && npm run build:icons && node tools/package-extension.mjs --release",
     "test:e2e": "python3 test/run_e2e.py",
     "test:local-extension": "npm run package && node tools/local-extension-lab.mjs",
     "test:live:zhipu": "node tools/zhipu-live-smoke.mjs",
     "test:upgrade": "node tools/run-release-upgrade-e2e.mjs",
     "test:smart-picker": "python3 test/smart_visual_picker_e2e.py",
-    "verify:source": "npm run check:public && npm run check && npm run check:capture-runtime && npm run check:hash && npm run check:brand && npm run check:documents && npm run check:pdfjs && npm run check:store && npm run check:compat && npm test",
+    "verify:source": "npm run check:public && npm run check && npm run check:capture-runtime && npm run check:hash && npm run check:video-frames && npm run check:brand && npm run check:documents && npm run check:pdfjs && npm run check:store && npm run check:compat && npm test",
     "verify:release": "npm run verify:source && npm run test:local-extension && npm run package:release && npm run test:upgrade",
     "verify": "npm run verify:release",
     "build:hash": "node tools/hash-runtime.mjs",
@@ -37,7 +37,9 @@
     "build:capture-runtime": "node tools/capture-runtime.mjs",
     "check:capture-runtime": "node tools/capture-runtime.mjs --check",
     "package:connector": "node tools/package-connector.mjs",
-    "package:distribution": "npm run package && npm run package:release && node tools/prepare-public-release.mjs"
+    "package:distribution": "npm run package && npm run package:release && node tools/prepare-public-release.mjs",
+    "build:video-frames": "node tools/video-frame-runtime.mjs",
+    "check:video-frames": "node tools/video-frame-runtime.mjs --check"
   },
   "dependencies": {
     "@jonahschulte/rtf-toolkit": "0.5.0",
@@ -45,6 +47,7 @@
     "@noble/hashes": "2.4.0",
     "hls.js": "1.7.2",
     "mammoth": "1.12.3",
+    "mediabunny": "1.61.1",
     "pdfjs-dist": "6.2.108",
     "turndown": "7.2.4"
   },

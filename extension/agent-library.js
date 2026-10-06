@@ -11,6 +11,7 @@ import { detailPromptSources } from "./prompt-sources.js";
 import { sha256Blob } from "./blob-digest.js";
 import { resolveCaseMediaId } from './media-identity-aliases.js';
 import { assertCaseFilesReadable, caseFilesUnavailable } from './case-file-status.js';
+import { startPhase } from './perf-trace.js';
 
 // Explicit projections: never return GET_STATE or model runtime credentials.
 export function createAgentLibrary({ loadState, readBlob, readDerived, readDerivedMetadata, libraryUrl }) {
@@ -44,22 +45,33 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
   }
   return {
     async describeQuery() {
+      let done = startPhase("agent", "describe:load");
       const state = await load();
-      return describeCaseQuery(state.entries, state);
+      done();
+      done = startPhase("agent", "describe:fields");
+      try { return describeCaseQuery(state.entries, state); } finally { done(); }
     },
     async search(input = {}) {
       const { query = "", offset = 0, limit = 24 } = input;
       requireInteger(offset); requireInteger(limit, { min: 1, max: 100 });
+      let done = startPhase("agent", "search:load");
       const state = await load();
-      const { minDurationMs, maxDurationMs, hasOriginalPrompt, ...indexScope } = input;
+      done();
+      const { minDurationMs, maxDurationMs, hasOriginalPrompt, hasPrompt, ...indexScope } = input;
       filterCaseSearchEntries([], state.organizerState, input);
       const scoped = filterCaseSearchEntries(state.entries, state.organizerState, indexScope);
+      done = startPhase("agent", "search:derived");
       const docs = await documents(scoped);
       const derived = await readDerivedMetadata();
+      done();
+      done = startPhase("agent", "search:index");
       const { index, resultVersion } = searchCache.build(scoped, state.facetCatalog, docs, derived, new Set(state.entries.map(e => e.id)));
+      done();
       // Coverage must include unknown-duration candidates; structural project/type
       // scoping happens below, while index reads already skip unrelated projects.
+      done = startPhase("agent", "search:match");
       const result = await searchCaseResult(state.entries, index, state.organizerState, input, resultVersion, { ...state, documentTextByAsset: docs, derivedMetadataByAsset: derived });
+      done();
       const { matches: entries, revision, durationCoverage, engagementCoverage } = result;
       const page = caseSearchPage(result, input, limit, entry => ({ ...summary(entry), sources: caseSearchSourceSummary(entry, input), excerpt: caseFilesUnavailable(entry) ? '' : String(entry.text || "").slice(0, 240), excerptOnly: true }));
       return { ...page, query, revision, ...(durationCoverage ? { durationCoverage } : {}), ...(engagementCoverage ? { engagementCoverage } : {}), total: entries.length, offset,

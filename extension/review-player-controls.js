@@ -1,9 +1,10 @@
 import { feedbackIcon, reviewTime } from './review-feedback.js';
 import { setUiIcon } from './ui-icons.js';
+import { createVideoFrameStepper } from './video-frame-step.js';
 
 // A shared, visible timeline: the selected segment belongs to the actual
 // playback duration, rather than to a browser-specific native control layout.
-export function installReviewPlayerControls(player, { range, review, t = value => value, failed }) {
+export function installReviewPlayerControls(player, { range, review, current, t = value => value, failed }) {
   if (player.reviewTransport) return player.reviewTransport;
   const surface = player.closest('.detail-video-surface') || player.parentElement;
   const controls = document.createElement('div'); controls.className = 'review-transport';
@@ -17,19 +18,30 @@ export function installReviewPlayerControls(player, { range, review, t = value =
   track.append(selection, ...markers, seek);
   const row = document.createElement('div'); row.className = 'review-transport-row';
   const play = feedbackIcon('播放 / 暂停', 'play', t);
+  const previousFrame = feedbackIcon('前一帧', 'step-back', t);
+  const nextFrame = feedbackIcon('后一帧', 'step-forward', t);
+  previousFrame.dataset.reviewFrame = 'previous'; nextFrame.dataset.reviewFrame = 'next';
+  if (!player.getPlaybackBlob) for (const button of [previousFrame, nextFrame]) {
+    button.disabled = true; button.title = t('此播放器无法读取原视频帧，请使用本地原件');
+  }
   const clock = document.createElement('span'); clock.className = 'review-playback-clock';
   const mute = feedbackIcon('静音', 'volume-2', t);
-  const reviewButton = feedbackIcon('审片', 'clapperboard', t); row.append(play, clock, mute, reviewButton); controls.append(track, row);
+  const reviewButton = feedbackIcon('审片', 'clapperboard', t); row.append(play, previousFrame, nextFrame, clock, mute, reviewButton); controls.append(track, row);
   let playIcon = 'play', muteIcon = 'volume-2';
   surface.classList.add('has-review-transport'); surface.append(controls);
   player.dataset.reviewTransport = 'true'; player.controls = false; player.draggable = false;
   const ready = async () => { await player.preparePlayback?.(); player.preload = 'metadata'; };
+  const frames = createVideoFrameStepper(player, { prepare: ready, current });
+  for (const [button, direction] of [[previousFrame, -1], [nextFrame, 1]]) {
+    button.addEventListener('click', () => { void frames.step(direction).catch(error => { if (error.name !== 'AbortError' && (!current || current())) failed(new Error(t(error.message))); }); });
+  }
   play.addEventListener('click', async () => {
+    frames.cancel();
     try { if (player.paused) { await ready(); await player.play(); } else player.pause(); }
     catch (error) { failed(error); }
   });
   player.addEventListener('click', () => play.click());
-  seek.addEventListener('input', () => { player.currentTime = Number(seek.value) / 1000; update(); });
+  seek.addEventListener('input', () => { frames.cancel(); player.currentTime = Number(seek.value) / 1000; update(); });
   mute.addEventListener('click', () => { player.muted = !player.muted; update(); });
   reviewButton.hidden = Boolean(player.closest('#temporary-review-dialog'));
   reviewButton.addEventListener('click', () => { void Promise.resolve().then(review).catch(failed); });
@@ -61,5 +73,5 @@ export function installReviewPlayerControls(player, { range, review, t = value =
   }
   for (const type of ['loadedmetadata', 'durationchange', 'timeupdate', 'seeked', 'play', 'pause', 'ended', 'volumechange', 'error']) player.addEventListener(type, update);
   update();
-  player.reviewTransport = { update, play, mute, review: reviewButton }; return player.reviewTransport;
+  player.reviewTransport = { update, play, mute, previousFrame, nextFrame, review: reviewButton, destroy: () => frames.destroy() }; return player.reviewTransport;
 }

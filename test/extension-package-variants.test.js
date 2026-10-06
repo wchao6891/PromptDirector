@@ -31,7 +31,7 @@ test("hash runtime packages remain acceptable to installed updaters and hash str
   const { pathToFileURL } = await import("node:url");
   const { createHash } = await import("node:crypto");
   const { isExtensionProgramPath } = await import("../extension/local-extension-upgrade.js");
-  const names = ["blob-digest.js", "THIRD_PARTY_NOTICES.md", ...(await readdir(new URL("../extension/vendor/noble-hashes/", import.meta.url))).map(name => `vendor/noble-hashes/${name}`)];
+  const names = ["blob-digest.js", "resource-policy.js", "THIRD_PARTY_NOTICES.md", ...(await readdir(new URL("../extension/vendor/noble-hashes/", import.meta.url))).map(name => `vendor/noble-hashes/${name}`)];
   const input = await Promise.all(names.map(async name => ({ name, data: await readFile(new URL(name === "THIRD_PARTY_NOTICES.md" ? `../${name}` : `../extension/${name}`, import.meta.url)) })));
   for (const release of [false, true]) {
     const packaged = packageRuntimeFiles(input, { release });
@@ -46,7 +46,8 @@ test("hash runtime packages remain acceptable to installed updaters and hash str
     const data = Buffer.from("案例原件 integrity ".repeat(10000));
     const blob = new Blob([data]);
     blob.arrayBuffer = () => { throw new Error("must hash through the stream"); };
-    assert.equal(await sha256Blob(blob), createHash("sha256").update(data).digest("hex"));
+    assert.equal(await sha256Blob(blob, { budget: { workingBytes: data.length } }), createHash("sha256").update(data).digest("hex"));
+    assert.equal(await sha256Blob(new Blob([data])), createHash("sha256").update(data).digest("hex"), "native digest agrees");
     assert.equal(await sha256Blob(new Blob()), createHash("sha256").digest("hex"));
   }
 });

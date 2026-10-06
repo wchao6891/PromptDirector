@@ -634,6 +634,7 @@ async function generateVideoTurn(input, service, settingsValue, preparedImages, 
   let finalPrompt = remote?.finalPrompt || "";
   let remoteId = remote?.remoteId || "";
   let promptResult = null;
+  const userImageCount = preparedImages.length;
   if (!remoteId) {
     promptResult = await executeVisualTextTurn({
       ...input,
@@ -646,7 +647,7 @@ async function generateVideoTurn(input, service, settingsValue, preparedImages, 
     form.append("prompt", finalPrompt);
     form.append("size", state.parameters.size);
     form.append("seconds", state.parameters.duration);
-    if (preparedImages[0]?.dataUrl) {
+    if (userImageCount && preparedImages[0]?.dataUrl) {
       const blob = imageBlobFromDataUrl(preparedImages[0].dataUrl);
       form.append("input_reference", blob, `first-frame.${imageExtension(blob.type) || "png"}`);
     }
@@ -758,6 +759,8 @@ async function generateProviderVideoTurn(input, service, settingsValue, prepared
   let finalPrompt = remote?.finalPrompt || "";
   let job = remote?.job || null;
   let promptResult = null;
+  // Video images are frame slots; only the user's chosen references fill them, never images the planner viewed via tools.
+  const userImageCount = preparedImages.length;
   if (!job) {
     promptResult = await assembleImagePrompt(input, preparedImages, {
       ...options,
@@ -776,7 +779,7 @@ async function generateProviderVideoTurn(input, service, settingsValue, prepared
         ...state.parameters,
         ...(state.parameters.size && !state.parameters.resolution ? { resolution: state.parameters.size } : {})
       },
-      images: preparedImages.map((image, index) => ({
+      images: preparedImages.slice(0, userImageCount).map((image, index) => ({
         role: index === 0 ? "firstFrame" : "lastFrame",
         url: image.dataUrl
       }))

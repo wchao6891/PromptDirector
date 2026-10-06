@@ -88,6 +88,11 @@ test('real native broker binds one library, authenticates and forwards response'
     input.write(encodeFrame({ type: 'hello', protocolVersion: 1, extensionId, instanceId }));
     await readiness;
     assert.deepEqual(await callExtension('search', { query: '案例' }, { root }), { operation: 'search', input: { query: '案例' } });
+    let hostSession;
+    await callExtension('status', {}, { root, onHostSession: value => { hostSession = value; } });
+    assert.match(hostSession, /^[0-9a-f-]{36}$/);
+    await callExtension('status', {}, { root, expectedHostSession: hostSession });
+    await assert.rejects(callExtension('search', { query: '旧会话' }, { root, expectedHostSession: 'reloaded-host' }), { code: 'connector_session_changed' });
     const client = new Client({ name: 'full-path-test', version: '1' });
     try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../mcp.mjs', import.meta.url))], env: { ...process.env, PROMPTDIRECTOR_CONNECTOR_HOME: root } }));

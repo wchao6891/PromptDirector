@@ -104,3 +104,28 @@ test("AI tags show only leaf labels while preserving their full path for context
   assert.match(editor, /"创作标签"/);
   assert.match(editor, /"添加标签"/);
 });
+
+test("detail project checkbox changes only this case and keeps refreshes caused by others", () => {
+  // A whole-list replace from a stale local organizer would drop a case an
+  // agent or another tab added to the same project meanwhile.
+  assert.match(quickOrganizer, /type: "BATCH_SET_PROJECT", collectionId, entryIds, mode: checked \? "move" : "remove"/);
+  assert.doesNotMatch(quickOrganizer, /nextIds/);
+  assert.match(quickOrganizer, /const mark = externalLibraryRefreshMark\(\);[\s\S]*consumePendingExternalLibraryRefresh\(mark\)/);
+  const consume = source.slice(source.indexOf("function consumePendingExternalLibraryRefresh"), source.indexOf("async function previewDeepSeekAnalysisBatch"));
+  assert.match(consume, /if \(mark\.pending \|\| workspaceLibraryRevision - mark\.revision > 1\) return;/);
+  assert.doesNotMatch(source, /consumePendingExternalLibraryRefresh\(\)/);
+});
+
+test("detail label edits apply only the user's add or remove onto the latest labels", () => {
+  const start = source.indexOf("async function saveDetailCustomLabels");
+  const save = source.slice(start, source.indexOf("\n}\n", start));
+  // While a draft label holds detail refreshes, the editor list can be stale;
+  // pressing Enter must not delete a label a batch or agent added meanwhile.
+  assert.match(tagEditor, /options\.onChange\?\.\(requested, trigger, previous\)/);
+  assert.match(quickOrganizer, /saveDetailCustomLabels\(entry, trigger, values, previous\)/);
+  // Only the delta is sent; the background applies it to the latest stored labels (label-edits.test.js).
+  assert.match(save, /const addLabels = requested\.filter\(\(label\) => !before\.has\(label\)\)/);
+  assert.match(save, /const removeLabels = \[\.\.\.before\]\.filter\(\(label\) => !after\.has\(label\)\)/);
+  assert.doesNotMatch(save, /customLabels\s*\n?\s*\}, false\)/, "the page must not send a whole label list built from a stale view");
+  assert.match(save, /consumePendingExternalLibraryRefresh\(mark\)/);
+});

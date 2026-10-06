@@ -40,7 +40,7 @@
 
 ## 统一字段查询
 
-先调用 `describe_case_query` 取得字段名、类型、支持操作、作用域和库内实际互动指标。查询统一使用 `search_cases`，内部创作台与 CLI 沿用同一规则；`status.caseQueryVersion=1` 声明后台已加载。旧后台会明确报错，保存未完成编辑后重载扩展，再刷新宿主工具。
+字段未知时调用 `describe_case_query` 取得字段名、类型、支持操作、作用域和库内实际互动指标。同一会话复用已知定义，不必每次先查帮助。查询统一使用 `search_cases`，内部创作台与 CLI 沿用同一规则；`status.caseQueryVersion=1` 声明后台已加载。旧后台会明确报错，保存未完成编辑后重载扩展，再刷新宿主工具。
 
 `where` 接受 `{field,op,value}`、`{all:[条件]}`、`{any:[条件]}`、`{not:条件}`，或 `{scope,where:条件}`。`member/source/media/label/project/classification` 作用域表示同一关系记录满足子条件；例如组合里某作者的视频有原词，应在同一 member 内再嵌套 media，不拼接另一个作者的词。未知字段和不支持的操作直接失败。顶层 provider/authorHandle 限定参与来源/成员字段查询与互动排序的成员，逻辑案例数量字段仍计整个案例。
 
@@ -67,7 +67,13 @@
 
 `groupBy` 返回 groups/groupTotal；同一来源、素材、标签、项目或分类的多个字段按同一关系记录分组，每组同一案例只计一次，同域统计也只使用该组的关系记录。`aggregates` 支持 count（不传field）、known/missing、数值 sum/avg/min/max；缺失不补0，数值统计同时给 known/missing。统计针对全匹配集，与本页数量无关；分组排序用 orderBy 的分组字段、group.count 或 aggregate.统计名称（单值不使用reduce），不能与案例select/旧sort混用；组与案例都用 offset/limit/revision 续读，后续页须携带 expectedRevision 并保持查询参数。
 
-`similarTo:{"caseId":"已知参考编号","method":"local"}` 复用已有本地相似引擎，其他 method 是 prompt/palette/tags。只有同媒体域可比，返回理由、fallback、分项数值及 similarityCoverage；缺少证据为null，已知不相似为0。它依据库内文字/标签/色卡，不等于视觉识别。颜色精确值使用 palette.colors，色彩相似使用 palette 方法。
+`similarTo:{"caseId":"已知参考编号"}` 默认按完整提示词比较。指定 `mediaKind:"video"` 时只比较视频提示词，含图片和视频的参考也能找到纯视频案例；不指定类型时沿参考的媒体域比较。逐素材优先原词，缺失时用已保存的 AI 词并标明来源。默认候选的 `excerpt` 返回提示词预览，`similarity.promptEvidence` 标明来源和完整字符数，覆盖信息附参考的 `referencePrompt`（sources、excerpt、excerptOnly、characters）；摘要沿用现有候选的240字符预览预算，排名仍使用全文，需全文时正常读取。省略 select 可保留媒体、来源、摘要与匹配依据。
+
+分数衡量库内文字重合，不是画面相似概率，也不理解用户本次最在意的创作维度。比如同一部片的两种转场可能因片名和班底文字相同而高分；候选的具体技法与任务不符时不能仅凭分数推荐。Agent先理解用户目标，用已有参考和候选摘要判断相同点/关键差异。明确的内容限制可将 `query`/`alternatives` 或 `where` 与 `similarTo` 合并在一次搜索中；例如找同类无缝转场可结合 `query:"seamless transition"`，需要更广探索时不强制标签全部一致。无需添加固定多轮视觉检查；现有文字不足才补读。
+
+Agent 根据任务需要与候选质量选择 limit、判断是否继续；证据足够即交付，不固定调用次数或要求读完分页。只对缺提示词的候选按需补查，`hasPrompt:false` 可限定补查范围（含原词或已存AI词即为true，受mediaKind/来源/时长条件约束）；提示词足够时不默认读封面和视频，用户要求视觉核验除外。0分表示没有已知词语重合，不能为凑数当作相似。当前是本地词语相似度，不保证跨语言语义匹配；必要的关键词变体可一次放入 alternatives。
+
+显式 `method:"local"` 保留插件既有探索规则；palette/tags 与 local 仍在相同完整媒体域中比较，插件内推荐算法不变。返回理由、fallback、分项数值及 similarityCoverage，缺失为null，0为已知不相似；覆盖数量是当前库比较域，其他查询条件还会进一步筛选。未读取原件不代表视觉识别。颜色精确值使用 palette.colors，色彩相似使用 palette 方法。
 
 ## 工具
 

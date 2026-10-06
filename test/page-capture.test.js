@@ -441,6 +441,7 @@ test("the generic collector preserves original resolution and every selectable m
     matches: (selector) => selector === "img",
     closest: () => null,
     getAttribute: (name) => attributes.get(name) || "",
+    hasAttribute: (name) => attributes.has(name),
     getBoundingClientRect: () => ({ x: 0, y: 0, width: 320, height: 480, top: 0, bottom: 480 })
   });
   const body = new Element();

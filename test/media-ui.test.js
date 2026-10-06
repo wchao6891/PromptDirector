@@ -183,7 +183,7 @@ test("similar material stays local, image-led, and free of project-age resurfaci
   assert.match(discovery, /local-discovery-media/);
   assert.doesNotMatch(discovery, /local-discovery-copy|相似色卡|同类\$\{name\}/);
   assert.match(discovery, /相似资料/);
-  assert.match(discovery, /localSimilarityIndex\.profiles\.size/);
+  assert.match(discovery, /const similarityIndex = currentSimilarityIndex\(\)[\s\S]*similarityIndex\.profiles\.size/);
   assert.match(discovery, /renderedCount \+ PAGE_SIZE/);
   assert.match(discovery, /createStableMasonry\(grid, \{[\s\S]*scrollContainer: elements\.detailContent/);
   assert.match(discovery, /IntersectionObserver\([\s\S]*root: elements\.detailContent/);

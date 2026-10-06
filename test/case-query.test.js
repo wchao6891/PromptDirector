@@ -6,11 +6,87 @@ import { createComposerSession } from '../extension/composer.js';
 import { buildSearchIndex } from '../extension/search-index.js';
 import { createDefaultFacetCatalog, createFacetNode } from '../extension/facets.js';
 import { prepareCaseQuery } from '../extension/case-query.js';
+import { createSimilarityIndex, rankSimilarEntries } from '../extension/local-similarity.js';
 
 const eq = (field, value) => ({ field, op: 'eq', value });
 const exists = (field, value = true) => ({ field, op: 'exists', value });
 const scoped = (scope, ...all) => ({ scope, where: { all } });
 const ids = result => result.cases.map(row => row.caseId);
+
+test('a task-specific technique filter excludes a same-film different-technique text match in one query without rewriting originals', async () => {
+  const credits = '\nDirector - North Studio\nDOP - Robin Grey\nEditor - Morgan Lane\nOriginal Source - Link';
+  const image = (id, text) => entry(id, { text, mediaAssets: [{ id: `${id}-image`, kind: 'image' }] });
+  const reference = image('reference', 'Film One (2023)\nShot breakdown: Overhead seamless transition tilt up shot\nTechnique - Seamless Transition, Tilt, Transitions' + credits);
+  const sibling = image('sibling', 'Film One (2023)\nShot breakdown: whip transition yo-yo\nTechnique - Transitions, Whip Transition' + credits);
+  const match = image('match', 'Film Two\nShot breakdown: Aerial tilt up scale shift seamless transition\nTechnique - Seamless Transition');
+  const before = structuredClone([reference, sibling, match]);
+  const f = fixture([reference, sibling, match]);
+  const input = { similarTo: { caseId: 'reference' }, mediaKind: 'image' };
+  const broad = await f.external.search(input);
+  assert.equal(broad.cases[0].caseId, 'sibling'); // Lexical overlap is not task suitability.
+  assert.match(broad.cases[0].similarity.reason, /非画面相似度/);
+  const focused = await f.external.search({ ...input, query: 'seamless transition' });
+  assert.deepEqual(ids(focused), ['match']);
+  assert.equal(focused.cases[0].similarity.score, broad.cases.find(row => row.caseId === 'match').similarity.score);
+  assert.deepEqual(f.state.entries, before);
+});
+
+test('Agent video prompt search reaches pure videos from a mixed reference without changing exploratory library similarity', async () => {
+  const mixed = entry('mixed', { text: 'webpage introduction', mediaAssets: [
+    { id: 'v', kind: 'video' }, { id: 'i', kind: 'image' }
+  ], mediaPrompts: [
+    { assetId: 'v', source: 'webpage', text: 'highway car chase dashcam' },
+    { assetId: 'i', source: 'webpage', text: 'flower ocean coral' }
+  ] });
+  const video = entry('video', { text: 'highway car chase dashcam' });
+  const other = entry('other', { text: 'flower ocean coral' });
+  const missing = entry('missing', { text: '', sourceFacts: { originalPromptAvailable: false } });
+  const f = fixture([mixed, video, other, missing]);
+  const input = { similarTo: { caseId: 'mixed' }, mediaKind: 'video', limit: 1 };
+  const found = await f.external.search(input);
+  assert.deepEqual(ids(found), ['video']);
+  assert.equal(found.similarityCoverage.method, 'prompt');
+  assert.equal(found.similarityCoverage.sameDomainCases, 3);
+  assert.equal(found.similarityCoverage.unknownExcluded, 1);
+  assert.equal(found.similarityCoverage.referencePrompt.excerpt, 'highway car chase dashcam');
+  assert.deepEqual(found.cases[0].similarity.promptEvidence.sources, ['original']);
+  assert.ok(found.cases[0].similarity.score > 0.99);
+  const next = await f.external.search({ ...input, offset: found.nextOffset, expectedRevision: found.revision });
+  assert.equal(next.cases[0].similarity.score, 0);
+  assert.deepEqual((await f.internal.execute('search_cases', input, { callId: 'prompt' })).data.candidates.map(row => row.similarity), found.cases.map(row => row.similarity));
+  assert.deepEqual(rankSimilarEntries(createSimilarityIndex([mixed, video, other, missing]), 'mixed'), []);
+  assert.equal((await f.external.search({ ...input, similarTo: { caseId: 'mixed', method: 'local' } })).total, 0);
+});
+
+test('missing-prompt expansion distinguishes saved AI from originals and does not borrow image or poster prompts for video', async () => {
+  const a = entry('a'), ai = entry('ai', { text: '', mediaPrompts: [{ assetId: 'ai-video', source: 'ai-suggestion', text: a.text }] });
+  const missing = entry('missing', { text: '', mediaAssets: [{ id: 'v', kind: 'video' }, { id: 'i', kind: 'image' }, { id: 'p', kind: 'image', usage: 'poster' }],
+    mediaPrompts: [{ assetId: 'i', source: 'manual', text: a.text }, { assetId: 'p', source: 'manual', text: a.text }] });
+  const f = fixture([a, ai, missing]);
+  const found = await f.external.search({ similarTo: { caseId: 'a' }, mediaKind: 'video' });
+  assert.deepEqual(ids(found), ['ai']);
+  assert.deepEqual(found.cases[0].similarity.promptEvidence.sources, ['ai']);
+  assert.deepEqual(ids(await f.external.search({ mediaKind: 'video', hasPrompt: false })), ['missing']);
+  assert.deepEqual(ids(await f.external.search({ mediaKind: 'video', hasPrompt: true, hasOriginalPrompt: false })), ['ai']);
+  const empty = await f.external.search({ similarTo: { caseId: 'missing' }, mediaKind: 'video' });
+  assert.equal(empty.total, 0); assert.equal(empty.similarityCoverage.referencePrompt.characters, 0);
+  assert.deepEqual(empty.similarityCoverage.referencePrompt.sources, []);
+  await f.internal.execute('search_cases', { mediaKind: 'video', hasPrompt: false }, { callId: 'missing' });
+  assert.equal(normalizeLibraryToolState(f.session().libraryTools).events.at(-1).search.hasPrompt, false);
+  ai.vaultReadStatus = { readOnly: true };
+  assert.equal((await f.external.search({ similarTo: { caseId: 'a' }, mediaKind: 'video' })).total, 0);
+});
+
+test('prompt candidates preview existing text but ranking and original reads retain the full prompt', async () => {
+  const text = 'city skyline '.repeat(100) + 'highway chase';
+  const a = entry('a', { text }), b = entry('b', { text });
+  const f = fixture([a, b]);
+  const found = await f.external.search({ similarTo: { caseId: 'a' }, mediaKind: 'video' });
+  const evidence = found.cases[0].similarity.promptEvidence;
+  assert.equal(evidence.characters, text.length); assert.equal(evidence.excerptOnly, true);
+  assert.ok(found.cases[0].excerpt.length < text.length); assert.ok(found.cases[0].similarity.score > 0.99);
+  assert.deepEqual((await f.external.search({ select: ['prompt.original'], query: 'highway' })).cases[0]['prompt.original'], [text]);
+});
 function entry(id, value = {}) {
   return { id, title: id, text: 'robot city', savedAt: '2026-10-01T00:00:00Z', libraryAddedAt: '2026-10-02T00:00:00Z',
     sourceFacts: { provider: 'x', author: '导演', handle: 'Arvin', originalPromptAvailable: true, capturedAt: '2026-10-01T00:00:00Z', engagement: { bookmarks: 2 }, ...value.sourceFacts },

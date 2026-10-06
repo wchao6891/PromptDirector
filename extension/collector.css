@@ -593,3 +593,7 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 #capture-metadata #custom-labels { min-width: 0; }
 #capture-metadata .prompt-icon-action { display: inline-flex; justify-content: center; align-items: center; width: 36px; height: 36px; padding: 6px; }
 #feedback .ui-task-progress { display: block; width: 100%; margin-top: 7px; }
+
+.page-capture-details-option { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.page-capture-details-option[hidden] { display: none; }
+.page-capture-details-option input { margin: 0; width: auto; }

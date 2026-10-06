@@ -73,6 +73,7 @@ export function createCaptureSaveTasks({ storage, execute, notify, cleanup = asy
     progress.release = async ids => {
       job.record = { ...job.record, assetIds: job.record.assetIds.filter(id => !ids.includes(id)) }; await persist(job.record);
     };
+    progress.mediaCached = key => job.record.checkpoints.some(item => item.key === key);
     progress.media = async (key, load) => {
       controller.signal.throwIfAborted();
       const cache = await openCache();

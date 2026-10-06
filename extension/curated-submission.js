@@ -35,7 +35,7 @@ export function prepareCuratedSubmissionState(stateValue = {}, selection = {}) {
       facetCatalog: { version: 2, revision: 1, facets: [], nodes: [] },
       classificationRules: [],
       organizerState: createDefaultOrganizerState(),
-      compoundCases: []
+      compoundCases: sanitizeCuratedCompoundCases(selected.compoundCases, entries)
     }
   };
 }
@@ -43,21 +43,22 @@ export function prepareCuratedSubmissionState(stateValue = {}, selection = {}) {
 export function sanitizeCuratedSubmissionEntry(entryValue = {}) {
   const entry = normalizeEntryMedia(entryValue);
   const contentAssets = entry.mediaAssets.filter((asset) => asset.usage !== "poster");
-  if (contentAssets.length !== 1 || !["image", "video"].includes(contentAssets[0]?.kind)) {
-    throw new Error(`“${clean(entry.title) || "未命名案例"}”投稿时必须只包含一个图片或视频主体`);
+  if (!contentAssets.length || contentAssets.some(asset => !["image", "video"].includes(asset.kind))) throw new Error(`“${clean(entry.title)}”包含不支持的媒体`);
+  const primary = contentAssets.find(asset => asset.id === entry.primaryMediaId);
+  if (!primary) throw new Error(`“${clean(entry.title)}”的主媒体关系无效`);
+  if (entry.mediaAssets.some(asset => asset.storageMode !== "managed")) throw new Error(`“${clean(entry.title)}”需要先把媒体保存到本地再投稿`);
+  const byId = new Map(entry.mediaAssets.map(asset => [asset.id, asset]));
+  const posterIds = new Set();
+  for (const asset of contentAssets.filter(asset => asset.kind === "video")) {
+    const poster = byId.get(asset.posterAssetId);
+    if (poster?.kind !== "image" || poster.usage !== "poster" || posterIds.has(poster.id)) throw new Error(`“${clean(entry.title)}”的视频缺少唯一封面或封面关系无效`);
+    posterIds.add(poster.id);
   }
-  const primary = contentAssets[0];
-  if (primary.storageMode !== "managed") throw new Error(`“${clean(entry.title) || "未命名案例"}”需要先把媒体保存到本地再投稿`);
-  const posters = entry.mediaAssets.filter((asset) => asset.usage === "poster");
-  if (primary.kind === "image" && posters.length) throw new Error(`“${clean(entry.title) || "未命名案例"}”包含多余封面`);
-  if (primary.kind === "video" && (posters.length !== 1 || primary.posterAssetId !== posters[0].id)) {
-    throw new Error(`“${clean(entry.title) || "未命名案例"}”的视频缺少唯一封面`);
-  }
+  if (entry.mediaAssets.some(asset => asset.usage === "poster" && !posterIds.has(asset.id))) throw new Error(`“${clean(entry.title)}”包含未关联封面`);
   const text = cleanPrompt(entry.text);
   if (!text) throw new Error(`“${clean(entry.title) || "未命名案例"}”缺少可公开的提示词`);
   const sourceUrl = firstHttpsUrl([entry.url, ...(entry.sourcePages ?? []).map((page) => page?.url)]);
-  const sourceTitle = clean(entry.sourcePages?.find((page) => firstHttpsUrl([page?.url]) === sourceUrl)?.title);
-  const allowedIds = new Set([primary.id, ...posters.map((asset) => asset.id)]);
+  const allowedIds = new Set(entry.mediaAssets.map(asset => asset.id));
   const mediaAssets = entry.mediaAssets
     .filter((asset) => allowedIds.has(asset.id))
     .map(sanitizeMediaAsset);
@@ -76,8 +77,9 @@ export function sanitizeCuratedSubmissionEntry(entryValue = {}) {
     customLabels: [],
     metadataLabels: (entry.metadataLabels ?? []).map(clean).filter((label) => /^(?:作者|权利)[:：]/u.test(label)),
     url: sourceUrl,
-    sourcePages: sourceUrl ? [{ title: sourceTitle || clean(entry.title), url: sourceUrl }] : [],
+    sourcePages: (entry.sourcePages ?? []).filter(page => firstHttpsUrl([page.url])).map(page => ({ title: clean(page.title), url: firstHttpsUrl([page.url]) })),
     mediaAssets,
+    mediaPrompts: sanitizeCuratedMediaPrompts(entry.mediaPrompts, mediaAssets),
     primaryMediaId: primary.id,
     timeNotes: []
   };
@@ -169,4 +171,18 @@ function sha256(value) {
 function validIso(value) {
   const text = clean(value);
   return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : new Date().toISOString();
+}
+
+export function sanitizeCuratedCompoundCases(values = [], entries = []) {
+  const ids = new Set(entries.map(entry => entry.id));
+  return (values ?? []).filter(item => item.memberEntryIds?.every(id => ids.has(id))).map(item => ({
+    id: clean(item.id), title: clean(item.title), memberEntryIds: [...item.memberEntryIds],
+    coverVisualId: clean(item.coverVisualId), customLabels: [], createdAt: validIso(item.createdAt), updatedAt: validIso(item.updatedAt)
+  }));
+}
+
+export function sanitizeCuratedMediaPrompts(values, mediaAssets) {
+  const ids = new Set(mediaAssets.map(asset => asset.id));
+  return (values ?? []).filter(value => ids.has(value.assetId) && ['manual', 'webpage', 'embedded'].includes(value.source) && String(value.text ?? '').trim())
+    .map(value => ({ assetId: value.assetId, text: value.text, source: value.source }));
 }

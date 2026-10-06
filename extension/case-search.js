@@ -53,7 +53,7 @@ export function filterCaseSearchEntries(entries, organizerState, input = {}) {
     if (members && !members.has(entry.id) && !entry.memberEntryIds?.some(id => members.has(id))) return false;
     const sources = caseSearchSources(entry, input);
     if (!sources.length) return false;
-    if (!input.mediaKind && input.hasOriginalPrompt === undefined && !hasDuration) return true;
+    if (!input.mediaKind && input.hasOriginalPrompt === undefined && input.hasPrompt === undefined && !hasDuration) return true;
     const matching = sources.flatMap(source => entryMediaAssets(source)
       .filter(asset => asset.usage !== 'poster' && (!input.mediaKind || asset.kind === input.mediaKind))
       .filter(asset => !hasDuration || ['video', 'audio'].includes(asset.kind) && Number.isFinite(asset.durationMs) && asset.durationMs > 0
@@ -66,6 +66,14 @@ export function filterCaseSearchEntries(entries, organizerState, input = {}) {
         ? matching.some(({ source, asset }) => Boolean(detailPromptSources(source, asset).original))
         : sources.some(source => Boolean(caseOriginalPromptText(source)));
       if (hasOriginal !== input.hasOriginalPrompt) return false;
+    }
+    if (input.hasPrompt !== undefined) {
+      const hasPrompt = (!input.mediaKind && !hasDuration && sources.some(source => Boolean(caseOriginalPromptText(source))))
+        || matching.some(({ source, asset }) => {
+          const prompt = detailPromptSources(source, asset);
+          return Boolean(prompt.original || prompt.ai);
+        });
+      if (hasPrompt !== input.hasPrompt) return false;
     }
     return true;
   });
@@ -101,7 +109,7 @@ export async function searchCaseResult(entries, index, organizerState, input = {
     .map(key => [key, input[key] ?? (key === 'query' ? '' : key === 'alternatives' ? [] : key === 'sort' ? 'relevance' : null)]));
   let durationCoverage;
   if (input.minDurationMs !== undefined || input.maxDurationMs !== undefined) {
-    const { minDurationMs, maxDurationMs, hasOriginalPrompt, ...withoutDuration } = input;
+    const { minDurationMs, maxDurationMs, hasOriginalPrompt, hasPrompt, ...withoutDuration } = input;
     const candidates = searchCaseEntries(entries, index, organizerState, withoutDuration);
     const durations = candidates.flatMap(entry => caseSearchSources(entry, input)
       .flatMap(source => entryMediaAssets(source).filter(a => a.usage !== 'poster' && ['video', 'audio'].includes(a.kind) && (!input.mediaKind || a.kind === input.mediaKind))));
@@ -136,8 +144,12 @@ export function caseSearchPage(result, input, limit, summarize) {
   const encoder = new TextEncoder();
   let pageBytes = encoder.encode(JSON.stringify(queryResult?.aggregates ?? {})).length;
   if (!input.countOnly) for (const entry of items.slice(offset, offset + limit)) {
+    const similarity = similarities?.get(entry.id);
+    const { excerpt: promptExcerpt, ...promptEvidence } = similarity?.promptEvidence ?? {};
     const row = grouped ? entry : input.select ? projectRow(entry) : {
-      ...summarize(entry), ...(similarities?.has(entry.id) ? { similarity: similarities.get(entry.id) } : {}) };
+      ...summarize(entry), ...(similarity ? { similarity: { ...similarity,
+        ...(similarity.promptEvidence ? { promptEvidence } : {}) } } : {}),
+      ...(promptExcerpt !== undefined ? { excerpt: promptExcerpt, excerptOnly: true } : {}) };
     const bytes = encoder.encode(JSON.stringify(row)).length;
     if (pageBytes + bytes > maxPageBytes) {
       if (!page.length) throw invalid('单条查询结果超过消息处理预算；减少select字段，正文/原词/AI词用read_case按同文版本分页读取，原文没有截断或删除。', 'query_page_too_large');

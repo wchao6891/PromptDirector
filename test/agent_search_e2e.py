@@ -92,8 +92,9 @@ def main():
             text_page = call('read_case', {'caseId': 'case-2', 'length': 2})
             assert 'media' not in text_page and 'sourcePages' not in text_page
             edited = call('edit_case', {'requestId': 'search-edit', 'caseId': 'case-2', 'expectedRevision': current['revision'],
+                                        'sourceCorrection': {'reason': 'Fixture author corrects the original text to verify search invalidation', 'fields': ['text']},
                                         'patch': {'text': '修改后的精确检索词'}})
-            assert edited['ok'], edited
+            assert edited.get('ok'), edited
             assert call('read_case', {'caseId': 'case-2', 'offset': text_page['nextOffset'], 'expectedRevision': text_page['revision']})['code'] == 'case_text_changed'
             assert call('read_case', {'caseId': 'case-2', 'offset': 2})['code'] == 'case_revision_required'
             assert call('search', {**filters, 'offset': 1, 'expectedRevision': first['revision']})['code'] == 'search_changed'
@@ -103,6 +104,31 @@ def main():
             refreshed = call('search', filters)
             assert refreshed['total'] == 3
             assert refreshed['revision'] != first['revision']
+            # A mixed reference must find pure videos by their video prompts.
+            entries[0]['mediaAssets'].append({'id': 'content-image', 'kind': 'image', 'usage': 'content'})
+            entries[0]['mediaPrompts'] = [
+                {'assetId': 'video-0', 'source': 'webpage', 'text': 'highway car chase'},
+                {'assetId': 'content-image', 'source': 'webpage', 'text': 'flowers'}]
+            entries[1]['text'] = 'highway car chase'
+            entries[2]['text'] = ''
+            entries[2]['sourceFacts']['originalPromptAvailable'] = False
+            entries[3]['text'] = ''
+            entries[3]['mediaPrompts'] = [{'assetId': 'video-3', 'source': 'ai-suggestion', 'text': 'highway car chase'}]
+            run.seed_storage(page, {'entries': entries})
+            prompt_input = {'similarTo': {'caseId': 'case-0'}, 'mediaKind': 'video', 'limit': 1}
+            prompt_result = call('search', prompt_input)
+            assert prompt_result['total'] == 2, prompt_result
+            assert prompt_result['cases'][0]['caseId'] == 'case-1', prompt_result
+            assert prompt_result['cases'][0]['excerpt'] == 'highway car chase'
+            assert prompt_result['similarityCoverage']['referencePrompt']['excerpt'] == 'highway car chase'
+            assert prompt_result['similarityCoverage']['unknownExcluded'] == 1
+            next_prompt = call('search', {**prompt_input, 'offset': prompt_result['nextOffset'], 'expectedRevision': prompt_result['revision']})
+            assert next_prompt['cases'][0]['similarity']['promptEvidence']['sources'] == ['ai'], next_prompt
+            assert [c['caseId'] for c in call('search', {'mediaKind': 'video', 'hasPrompt': False})['cases']] == ['case-2']
+            assert call('search', {**prompt_input, 'similarTo': {'caseId': 'case-0', 'method': 'local'}})['total'] == 0
+            page.reload()
+            assert call('search', prompt_input)['revision'] == prompt_result['revision']
+            print('PASS: prompt-first mixed/pure video search, original/AI provenance, missing-prompt expansion, local behavior unchanged, reload stable')
             print('PASS: actual internal/external same revision, duration/unknown coverage, protected pagination, edits invalidate cached search, reload preserves current results')
 
 

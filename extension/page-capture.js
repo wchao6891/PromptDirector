@@ -106,6 +106,8 @@ export function normalizePageCaptureBatch(value = {}) {
     adapter: clean(value.adapter) || "generic",
     captureMode: value.captureMode === "list" ? "list" : "single",
     articleSplit: value.articleSplit === true,
+    detailsRead: value.detailsRead === true,
+    genericGrouping: value.adapter === "generic" && ["whole", "sections", "media", "manual"].includes(value.genericGrouping) ? value.genericGrouping : "",
     saveMode: value.saveMode === "combined" ? "combined" : value.saveMode === "multiple" ? "multiple" : value.captureMode === "list" ? "" : "single",
     combinedTitle: clean(value.combinedTitle),
     targetCount: positiveInteger(value.targetCount, 0),
@@ -153,11 +155,14 @@ export function combinePageCaptureCandidates(values = [], options = {}) {
     contentText: textBlocks.map((item) => item.text).join("\n\n"),
     textBlocks,
     articleDocument: { version: 1, blocks: articleBlocks },
-    media: candidates.flatMap((candidate) => candidate.media.map((media) => ({
+    // Block IDs are renamed per source; detail links follow them, and each
+    // medium keeps provenance it already carries (e.g. read detail pages).
+    media: candidates.flatMap((candidate, index) => candidate.media.map((media) => ({
       ...media,
-      sourceTitle: candidate.title,
-      sourceAuthor: candidate.sourceFacts.author,
-      originalWorkUrl: candidate.canonicalUrl
+      ...(media.detailBlockIds ? { detailBlockIds: media.detailBlockIds.map(id => `combined:${index}:${id}`) } : {}),
+      sourceTitle: media.sourceTitle || candidate.title,
+      sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
+      originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl
     }))),
     sourceFacts: {
       provider: hostname(canonicalUrl),
@@ -689,7 +694,10 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (inlinePixelCharacters > maxInlinePixelDataCharacters) throw Object.assign(new Error('本次采集的像素传输超过工作预算；页面原件保留，请分批选择'), { code: 'RESOURCE_BUDGET_REACHED' });
     return dataUrl;
   }
-  const wholePage = options.mode === "whole";
+  let genericCapture = false;
+  let genericRoot = null;
+  let hiddenGenericNodes = new WeakMap();
+  let wholePage = options.mode === "whole";
   const originalScroll = { x: window.scrollX, y: window.scrollY };
   let xSourceScroll = null;
 
@@ -817,6 +825,22 @@ export async function collectPageCaptureSnapshot(options = {}) {
         return { id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id, candidates, capturedAt };
       }
     }
+    // Only unadapted pages use this document path. Dedicated adapters and manual
+    // selections retain their existing roots, visibility rules and loading flow.
+    genericCapture = adapter.id === "generic" && !siteData && !pageSelection && !editedRoot;
+    if (genericCapture && options.genericGroupingRequested) wholePage = true;
+    if (genericCapture && !options.listMode) {
+      const mains = [...document.querySelectorAll("main,[role=main]")]
+        .filter(node => !isPageChrome(node) && !genericNodeHidden(node));
+      const outer = mains.filter(node => !mains.some(other => other !== node && other.contains(node)));
+      if (outer.length === 1 && !outer[0].querySelector("article,[role=document]")
+        && outer[0].querySelector("h1,h2,p,img,video,iframe,canvas")
+        && ([...outer[0].querySelectorAll("h1")].some(heading => !heading.closest("a[href]"))
+          || !outer[0].querySelector("a[href]"))) {
+        genericRoot = outer[0];
+        contentRoot = genericRoot;
+      }
+    }
     // A single semantic article is a document, not a feed of its paragraphs.
     const semanticArticles = !contentRoot && !siteData && !pageSelection && adapter.id === "generic"
       ? [...document.querySelectorAll("main article,[role=main] article,article[role=document],[role=document]")]
@@ -884,6 +908,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       return current;
     };
     const collectVisibleWithFallbacks = async () => {
+      hiddenGenericNodes = new WeakMap();
       collectDocumentParts();
       const current = collectVisible();
       await attachViewportFallbacks(current);
@@ -1588,7 +1613,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const canonicalUrl = adapterFields.canonicalUrl || cardLink || safeHttpUrl(siteData?.canonicalUrl) || context.canonicalUrl;
     const structured = context.structured.find((item) => sameUrl(item.url || item.mainEntityOfPage, canonicalUrl)) || (isPageRoot ? context.structured[0] : null) || {};
     let title = cleanText(isPageRoot
-      ? options.feishuDocument?.title || siteData?.title || (context.contentRoot ? adapterFields.title : "") || context.article?.title || structured.headline || structured.name || (context.pageType === "post" ? "" : context.metadata.title)
+      ? options.feishuDocument?.title || siteData?.title || (genericCapture ? root.querySelector("h1")?.textContent || context.metadata.title : "") || (context.contentRoot ? adapterFields.title : "") || context.article?.title || structured.headline || structured.name || (context.pageType === "post" ? "" : context.metadata.title)
       : adapterFields.title || root.querySelector("h1,h2,h3,[role=heading]")?.textContent || structured.headline || structured.name || (context.pageType === "post" ? "" : root.querySelector("img[alt]")?.alt));
     const pageSelection = isPageRoot ? context.pageSelection : null;
     const articleText = context.pageType === "article" ? context.article?.textContent : "";
@@ -1675,7 +1700,12 @@ export async function collectPageCaptureSnapshot(options = {}) {
         media
       );
     }
-    const placed = reconcileArticlePlacement({ version: 1, blocks: article.blocks }, media, region?.contentTargets || []);
+    // Generic HTML already carries document order. Matching text in navigation
+    // or repeated captions must not relocate its headings or collapse references.
+    const placed = genericCapture ? {
+      articleDocument: { version: 1, blocks: article.blocks },
+      media: media.map(item => ({ ...item, placement: article.blocks.some(block => block.assetId === item.id) ? "inline" : "unplaced" }))
+    } : reconcileArticlePlacement({ version: 1, blocks: article.blocks }, media, region?.contentTargets || []);
     media = placed.media;
     return {
       id: `${context.adapter.id}:${itemId || index}:${hashText(`${canonicalUrl}\n${title}`)}`,
@@ -1683,8 +1713,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       title,
       canonicalUrl,
       contentHtml,
-      contentText: text,
-      textBlocks,
+      contentText: genericCapture ? textBlocks.map(block => block.text).join("\n\n") : text,
+      textBlocks: genericCapture ? textBlocks.map(block => ({ ...block, kind: "section" })) : textBlocks,
       articleDocument: placed.articleDocument,
       region,
       excerpt: cleanText(context.article?.excerpt || (isPageRoot ? context.metadata.description : "")),
@@ -1804,7 +1834,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
           classShape
         ].join(":");
         const group = bySignature.get(signature) || [];
-        group.push({ root: child, score: textLength + mediaCount * Math.max(120, textLength) });
+        group.push({ root: child, score: textLength + mediaCount * Math.max(120, textLength),
+          captioned: textLength >= 20 || Boolean(child.querySelector?.("h1,h2,h3,h4,h5,h6,[role=heading]")) });
         bySignature.set(signature, group);
       }
       for (const group of bySignature.values()) {
@@ -1814,6 +1845,17 @@ export async function collectPageCaptureSnapshot(options = {}) {
           score: group.reduce((total, item) => total + item.score, 0)
         });
       }
+    }
+    if (genericCapture) {
+      const captioned = new Map(groups.flatMap(group => group.items.map(item => [item.root, item.captioned])));
+      const roots = [...captioned.keys()];
+      // Innermost repeats are the cases, unless they are only uncaptioned
+      // thumbnails inside a captioned card: that card keeps its text and media together.
+      const inner = new Map(roots.map(root => [root, roots.filter(other => other !== root && root.contains(other))]));
+      const ownsThumbnails = root => captioned.get(root) && inner.get(root).length && inner.get(root).every(other => !captioned.get(other));
+      return roots.filter(root => (ownsThumbnails(root) || !inner.get(root).length)
+        && !roots.some(other => other !== root && other.contains(root) && ownsThumbnails(other)))
+        .sort((a, b) => a.compareDocumentPosition(b) & 4 ? -1 : 1).slice(0, limit);
     }
     const best = groups.sort((left, right) => right.score - left.score)[0];
     return best ? best.items.map((item) => item.root).slice(0, limit) : [];
@@ -1924,7 +1966,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const leaves = leafElements.flatMap((element, sourceOrder) => {
       const kind = kindFor(element);
       const text = kind === "text" ? readBlockText(element) : "";
-      const textIndex = kind === "text" ? remainingTextBlocks.findIndex((block) => cleanBlockText(block.text) === text) : -1;
+      const textIndex = kind === "text" ? remainingTextBlocks.findIndex((block) => cleanBlockText(block.text) === text
+        && (!genericCapture || (block.kind === "heading") === element.matches("h1,h2,h3,h4,h5,h6"))) : -1;
       const articleBlockIds = textIndex >= 0 ? [remainingTextBlocks.splice(textIndex, 1)[0].id] : [];
       const mediaIds = mediaIdsFor(element, kind);
       if (kind !== "text" && !mediaIds.length) return [];
@@ -1965,6 +2008,22 @@ export async function collectPageCaptureSnapshot(options = {}) {
   function contentRootHtml(root, parts = []) {
     const fragment = root.cloneNode(!parts.length);
     for (const part of parts) fragment.append(part.cloneNode(true));
+    if (genericCapture && root === genericRoot) {
+      const originals = [...root.querySelectorAll("*")];
+      const copies = [...fragment.querySelectorAll("*")];
+      originals.forEach((node, index) => {
+        if (node.matches("script,style,template,noscript") || isPageChrome(node) || genericNodeHidden(node)
+          || node.matches("img,video,iframe,canvas") && isExcludedMedia(node)) copies[index]?.remove();
+      });
+      // Plain in-page tables of contents are navigation even without a nav tag.
+      for (const list of fragment.querySelectorAll("ul,ol")) {
+        const links = [...list.querySelectorAll("a")];
+        if (links.length && !list.querySelector("img,video") && links.every(link => {
+          const id = link.getAttribute("data-target") || link.getAttribute("href")?.replace(/^#/, "");
+          return id && (link.getAttribute("href") || "").startsWith("#") && root.querySelector(`[id="${CSS.escape(id)}"]`);
+        }) && cleanText(list.textContent) === cleanText(links.map(link => link.textContent).join(" "))) list.remove();
+      }
+    }
     // Preserve editor paragraphs as semantic HTML for sectioning and saved reading order.
     for (const node of fragment.querySelectorAll("div.zone-container.text-editor")) {
       if (node.closest("h1,h2,h3,h4,h5,h6")) continue;
@@ -2134,7 +2193,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         } : null);
         if (!item) continue;
         if (!existing) media.push(item);
-        blocks.push({ id: `article:image-block:${hashText(item.id)}`, kind: "image", assetId: item.id, sourceUrl: item.url, label: cleanText(item.alt), sourceOrder: blocks.length });
+        blocks.push({ id: `article:image-block:${hashText(item.id)}${genericCapture ? ":" + blocks.length : ""}`, kind: "image", assetId: item.id, sourceUrl: item.url, label: cleanText(item.alt), sourceOrder: blocks.length });
         continue;
       }
       if (element.matches?.("video,iframe")) {
@@ -2153,7 +2212,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         } : null);
         if (!item) continue;
         if (!existing) media.push(item);
-        blocks.push({ id: `article:video-block:${hashText(item.id)}`, kind: "video", assetId: item.id, sourceUrl: item.url, posterUrl: item.posterUrl, label: cleanText(item.alt), sourceOrder: blocks.length });
+        blocks.push({ id: `article:video-block:${hashText(item.id)}${genericCapture ? ":" + blocks.length : ""}`, kind: "video", assetId: item.id, sourceUrl: item.url, posterUrl: item.posterUrl, label: cleanText(item.alt), sourceOrder: blocks.length });
         continue;
       }
       const parentContainer = element.parentElement?.closest?.(structuralContainers);
@@ -2391,6 +2450,22 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return [...new Set(urls.map(safeHttpUrl).filter(Boolean))].map(url => ({ url, sourceKind: "video-element" }));
   }
 
+  function genericDetailReferences(element) {
+    if (!genericCapture) return [];
+    const owner = element.closest("[hx-get],[data-hx-get],a[href]");
+    if (!owner || owner.closest("form,[hx-post],[hx-delete],[hx-put],[hx-patch],[hx-include],[hx-vals],[data-hx-vals]")) return [];
+    const fragment = owner.hasAttribute("hx-get") || owner.hasAttribute("data-hx-get");
+    const raw = fragment ? owner.getAttribute("hx-get") || owner.getAttribute("data-hx-get") : owner.getAttribute("href");
+    if (!raw || raw.startsWith("#") || owner.hasAttribute("download")) return [];
+    const detailUrl = safeHttpUrl(raw);
+    if (!detailUrl) return [];
+    const parsed = new URL(detailUrl);
+    if (parsed.origin !== location.origin || parsed.pathname === location.pathname && parsed.search === location.search
+      || /(?:^|[\/_?&=-])(?:logout|signout|delete|remove|unsubscribe|cart|checkout)(?:$|[\/_?&=-])/i.test(detailUrl)
+      || /\.(?:jpe?g|png|gif|webp|avif|svg|mp4|webm|pdf|zip)(?:$|[?#])/i.test(detailUrl)) return [];
+    return [{ url: detailUrl, fragment }];
+  }
+
   function collectMedia(root, limit) {
     const media = [];
     for (const [elementIndex, element] of [...root.querySelectorAll("img,video,iframe,canvas")].entries()) {
@@ -2418,10 +2493,11 @@ export async function collectPageCaptureSnapshot(options = {}) {
       const url = imageSource?.url || safeHttpUrl(element.currentSrc || element.src);
       const posterElement = kind === "video" ? companionPosterForPlayer(element, root) : null;
       const posterUrl = kind === "video" ? safeHttpUrl(element.poster || "") || (posterElement ? collectImageVariants(posterElement)[0]?.url : "") || "" : "";
-      const pixelFallback = kind === "image" ? visibleImagePixels(element) : "";
+      const deferredReveal = genericCapture && url && Number(getComputedStyle(element).opacity) === 0;
+      const pixelFallback = kind === "image" && !deferredReveal ? visibleImagePixels(element) : "";
       if (!url && !posterUrl && !pixelFallback) continue;
       const rect = element.getBoundingClientRect();
-      const fallbackRect = kind === "image" && rect.width >= 48 && rect.height >= 48 && rect.bottom >= 0 && rect.top <= (Number(window.innerHeight) || 720)
+      const fallbackRect = kind === "image" && !deferredReveal && rect.width >= 48 && rect.height >= 48 && rect.bottom >= 0 && rect.top <= (Number(window.innerHeight) || 720)
         ? { rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, viewportWidth: Number(window.innerWidth) || document.documentElement.clientWidth, viewportHeight: Number(window.innerHeight) || document.documentElement.clientHeight }
         : null;
       const responsiveCandidate = Boolean(imageSource?.declaredWidth || imageSource?.density > 1);
@@ -2432,6 +2508,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         posterUrl,
         ...(/\.m3u8(?:[?#]|$)/iu.test(url) ? { streamUrl: url } : {}),
         postMediaUrl: xPostMediaUrl(element), isQuoted: Boolean(xQuoteContainer(element)),
+        ...(genericCapture ? { detailRequests: genericDetailReferences(element) } : {}),
         alt: cleanText(element.alt),
         width: imageSource?.declaredWidth || (responsiveCandidate ? 0 : Number(element.naturalWidth || element.videoWidth || element.width) || 0),
         height: responsiveCandidate ? 0 : Number(element.naturalHeight || element.videoHeight || element.height) || 0,
@@ -2456,11 +2533,17 @@ export async function collectPageCaptureSnapshot(options = {}) {
         if (media.length >= limit) break;
       }
     }
-    const seen = new Set();
+    const seen = new Map();
     return media.filter((item) => {
       const key = item.url || item.posterUrl || item.dataUrl;
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
+      if (!key) return false;
+      const previous = seen.get(key);
+      if (previous) {
+        if (genericCapture && item.detailRequests?.length) previous.detailRequests = [...new Map(
+          [...(previous.detailRequests || []), ...item.detailRequests].map(request => [request.url, request])).values()];
+        return false;
+      }
+      seen.set(key, item);
       return true;
     });
   }
@@ -2697,6 +2780,16 @@ export async function collectPageCaptureSnapshot(options = {}) {
     return match ? new URL(`/${match[1]}/status/${match[2]}`, url).href : "";
   }
 
+  function genericNodeHidden(element) {
+    if (!element || element === document.body) return false;
+    if (hiddenGenericNodes.has(element)) return hiddenGenericNodes.get(element);
+    const style = getComputedStyle(element);
+    const hidden = element.matches?.('[hidden],[aria-hidden="true"],template,dialog:not([open])')
+      || style.display === "none" || style.visibility === "hidden" || genericNodeHidden(element.parentElement);
+    hiddenGenericNodes.set(element, Boolean(hidden));
+    return Boolean(hidden);
+  }
+
   function isExcludedMedia(element) {
     if (options.manualContentHtml) return false;
     if (options.siteData?.adapter === "krea" && options.siteData?.pageKind === "detail") {
@@ -2707,6 +2800,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
           && url.pathname.startsWith("/feed/") && url.pathname !== new URL(options.siteData.canonicalUrl).pathname) return true;
       } catch { /* This media is not a link to another Krea work. */ }
     }
+    if (genericCapture && (isPageChrome(element) || genericNodeHidden(element))) return true;
     const postPhoto = Boolean(xPostPhotoUrl(element));
     const postVideo = element.matches("video") && Boolean(xPostMediaUrl(element));
     if (!postPhoto && !postVideo && element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
@@ -2715,9 +2809,21 @@ export async function collectPageCaptureSnapshot(options = {}) {
     // photo link plus a real source identifies the asset without decoding it.
     const deferredPostPhoto = postPhoto && element.matches("img") && collectImageVariants(element).length > 0;
     const deferredPostVideo = postVideo && Boolean(safeHttpUrl(element.poster) || collectVideoVariants(element).length);
-    if (!deferredPostPhoto && !deferredPostVideo && (rect.width < 48 || rect.height < 48)) return true;
+    // A lazy image can have a real source before its reveal animation starts.
+    // Do not extend this exception to collapsed tabs, dialogs or hidden ancestors.
+    const deferredGenericImage = genericCapture && element.matches("img")
+      && (element.loading === "lazy" || element.hasAttribute("data-src") || element.hasAttribute("data-lazy-src"))
+      && collectImageVariants(element).length > 0
+      && (rect.width >= 48 && rect.height >= 48
+        || Number(element.getAttribute("width")) >= 48 && Number(element.getAttribute("height")) >= 48);
+    if (!deferredPostPhoto && !deferredPostVideo && !deferredGenericImage && (rect.width < 48 || rect.height < 48)) return true;
     const style = typeof globalThis.getComputedStyle === "function" ? globalThis.getComputedStyle(element) : null;
-    if (style?.display === "none" || style?.visibility === "hidden" || !postPhoto && Number(style?.opacity) === 0) return true;
+    if (style?.display === "none" || style?.visibility === "hidden" || !postPhoto && !deferredGenericImage && Number(style?.opacity) === 0) return true;
+    if (genericCapture) {
+      const decorative = `${element.className || ""} ${element.id || ""}`;
+      return /(?:^|[\s_-])(?:avatar|emoji|icon|logo|badge|advert|qrcode)(?:$|[\s_-])/i.test(decorative)
+        || /^(?:avatar|emoji|icon|logo|badge|advertisement|qr[-_ ]?code|二维码)$/i.test(cleanText(element.alt));
+    }
     const description = `${element.alt || ""} ${element.className || ""} ${element.id || ""} ${element.getAttribute?.("aria-label") || ""}`.toLowerCase();
     return !postPhoto && /avatar|emoji|icon|logo|badge|advert|qr[-_ ]?code|二维码/.test(description);
   }
@@ -2827,6 +2933,10 @@ function uniqueMedia(values) {
       mimeType: clean(value.mimeType).toLocaleLowerCase("en-US"),
       ...(["document", "attachment"].includes(kind) && /^data:(?:text\/[a-z0-9.+-]+|application\/(?:pdf|rtf|zip|gzip|x-gzip|octet-stream))(?:;charset=[a-z0-9-]+)?;base64,[a-z0-9+/=]+$/i.test(value.downloadDataUrl || "")
         && value.downloadDataUrl.length <= LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes ? { downloadDataUrl: value.downloadDataUrl } : {}),
+      ...(Array.isArray(value.detailRequests) ? { detailRequests: value.detailRequests.flatMap(request => {
+        const url = safeUrl(request?.url); return url ? [{ url, fragment: request.fragment === true }] : [];
+      }) } : {}),
+      ...(Array.isArray(value.detailBlockIds) ? { detailBlockIds: value.detailBlockIds.map(clean).filter(Boolean) } : {}),
       sourceTitle: cleanCaptureImageDescription(value.sourceTitle),
       sourceAuthor: clean(value.sourceAuthor),
       originalWorkUrl: safeUrl(value.originalWorkUrl),

@@ -45,6 +45,16 @@ test('SDK/stdio/native broker and CLI execute the same field query and statistic
     assert.deepEqual(await callFromCli('search_cases', query), expected);
     const groups = { provider: 'x', groupBy: ['source.handle'], aggregates: [{ name: 'total', op: 'count' }], query: '', offset: 0, limit: 24 };
     assert.deepEqual(await callFromCli('search_cases', groups), await library.search(groups));
+    entries[0].mediaAssets.push({ id: 'image', kind: 'image' });
+    const promptQuery = { similarTo: { caseId: 'c0' }, mediaKind: 'video', limit: 1 };
+    const promptResponse = await client.callTool({ name: 'promptdirector_search_cases', arguments: promptQuery });
+    assert(!promptResponse.isError, JSON.stringify(promptResponse));
+    const promptResult = JSON.parse(promptResponse.content[0].text);
+    assert.equal(promptResult.total, 2); assert.equal(promptResult.similarityCoverage.method, 'prompt');
+    assert.deepEqual(promptResult.cases[0].similarity.promptEvidence.sources, ['original']);
+    const missingResponse = await client.callTool({ name: 'promptdirector_search_cases', arguments: { mediaKind: 'video', hasPrompt: false } });
+    assert(!missingResponse.isError, JSON.stringify(missingResponse));
+    assert.equal(JSON.parse(missingResponse.content[0].text).total, 0);
   } finally {
     if (previousRoot === undefined) delete process.env.PROMPTDIRECTOR_CONNECTOR_HOME; else process.env.PROMPTDIRECTOR_CONNECTOR_HOME = previousRoot;
     await client.close(); await host.close(); input.destroy(); output.destroy(); await rm(root, { recursive: true, force: true });

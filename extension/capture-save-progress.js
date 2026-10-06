@@ -1,4 +1,5 @@
 import { formatBytes } from './resource-limits.js';
+import { startPhase } from './perf-trace.js';
 
 // Match the shared progress transition; never send one extension event per chunk.
 const PROGRESS_INTERVAL_MS = 160;
@@ -6,7 +7,12 @@ let sequence = 0;
 
 export function createCaptureSaveProgress({ requestId, send, now = Date.now,
   schedule = setTimeout, cancel = clearTimeout } = {}) {
-  let current = {}, pending = null, timer = null, lastSent = -Infinity, closed = false;
+  let current = {}, pending = null, timer = null, lastSent = -Infinity, closed = false, finishStage = null;
+  const timeStage = (phase) => {
+    finishStage?.();
+    // Downloads and page transfers wait on the source site; the other stages are local work.
+    finishStage = phase ? startPhase("capture", ["download", "transfer", "page"].includes(phase) ? `wait:${phase}` : phase) : null;
+  };
   const emit = () => {
     if (timer !== null) cancel(timer);
     timer = null;
@@ -18,6 +24,7 @@ export function createCaptureSaveProgress({ requestId, send, now = Date.now,
   };
   return {
     stage(phase, context = {}) {
+      timeStage(phase);
       current = { phase, ...context }; pending = current; emit();
     },
     update(value) {
@@ -27,7 +34,7 @@ export function createCaptureSaveProgress({ requestId, send, now = Date.now,
       if (remaining <= 0) emit();
       else if (timer === null) timer = schedule(emit, remaining);
     },
-    close() { closed = true; pending = null; if (timer !== null) cancel(timer); timer = null; }
+    close() { timeStage(null); closed = true; pending = null; if (timer !== null) cancel(timer); timer = null; }
   };
 }
 

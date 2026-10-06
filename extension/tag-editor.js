@@ -117,7 +117,7 @@ export function createTagEditor(options = {}) {
     const requested = [...next];
     const run = async () => {
       try {
-        const accepted = await options.onChange?.(requested, trigger);
+        const accepted = await options.onChange?.(requested, trigger, previous);
         if (accepted === false) {
           if (sameValues(values, requested)) {
             values = previous;

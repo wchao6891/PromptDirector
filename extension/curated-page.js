@@ -1,3 +1,4 @@
+import { groupCuratedPreview, mountCuratedMediaGallery } from "./curated-media-gallery.js";
 import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { getLibraryStorage } from './library-storage.js';
@@ -480,20 +481,16 @@ function renderCaseDetail(item, entry) {
   elements.caseDetailNext.disabled = index < 0 || index >= preview.entries.length - 1;
   const layout = element("article", "case-detail-layout");
   const figure = element("figure", "case-detail-figure");
-  if (entry.mediaKind === "video" && entry.videoUrl) {
-    const player = createRemoteVideoPlayer(entry);
-    figure.append(player.node);
-    caseDetailVideoCleanup = player.destroy;
-  } else {
-    figure.append(createRemoteImageViewer(entry, entry.previewImageUrl));
-    if (entry.mediaKind === "video") figure.append(element("span", "case-detail-video-label", t("视频暂不可播放")));
-  }
+  let selectedText = entry.text, promptNode;
+  caseDetailVideoCleanup = mountCuratedMediaGallery(figure, entry, { onSelect: asset => { selectedText = asset.text || entry.text; if (promptNode) promptNode.textContent = selectedText; }, image: asset => createRemoteImageViewer(asset, asset.previewImageUrl), video: createRemoteVideoPlayer });
   const body = element("div", "case-detail-body");
   const heading = element("header", "case-detail-heading");
   heading.append(element("h2", "", entry.title), element("p", "", entry.author));
   body.append(heading);
   const promptSection = element("section", "case-detail-section");
-  promptSection.append(element("h3", "", t("完整提示词")), element("pre", "case-detail-prompt", entry.text));
+  promptNode = element("pre", "case-detail-prompt", entry.text);
+  promptNode.textContent = selectedText;
+  promptSection.append(element("h3", "", t("完整提示词")), promptNode);
   body.append(promptSection);
   const source = element("div", "case-detail-source");
   source.append(element("span", "", rightsLabel(item, entry.rights)));
@@ -508,7 +505,7 @@ function renderCaseDetail(item, entry) {
   const actions = element("div", "case-detail-actions");
   const copy = actionButton("button-secondary", "copy", t("复制提示词"));
   copy.disabled = !entry.text;
-  copy.addEventListener("click", () => copyCasePrompt(entry, copy));
+  copy.addEventListener("click", () => copyCasePrompt({ ...entry, text: selectedText }, copy));
   const savedEntry = findSavedEntry(item, entry);
   const save = actionButton(savedEntry ? "case-save-action is-saved" : "case-save-action", savedEntry ? "check" : "save", t(savedEntry ? "查看已保存" : "保存到案例库"));
   save.disabled = !state.localStateAvailable;
@@ -531,6 +528,7 @@ async function loadPreview(item) {
     const response = await fetch(item.previewUrl, { cache: "no-cache", credentials: "omit", redirect: "error" });
     if (!response.ok) throw new Error(`精选预览返回 HTTP ${response.status}`);
     const preview = normalizeCuratedPreview(await response.json(), item);
+    preview.entries = groupCuratedPreview(preview.entries);
     state.previews.set(item.id, preview);
     return preview;
   } catch (error) {
@@ -611,14 +609,14 @@ async function savePreviewCase(item, previewEntry, button) {
   button.disabled = true;
   setProgressButton(button, { stage: "downloading", loaded: 0, total: 0, ratio: null });
   try {
-    const result = await saveCuratedSelection(item, [previewEntry.id], {
+    const result = await saveCuratedSelection(item, previewEntry.memberEntryIds ?? [previewEntry.id], {
       mode: "case",
       onProgress: (progress) => setProgressButton(button, progress)
     });
     await loadLocalState();
     const entryId = result.entriesBySourceEntryId?.[previewEntry.id];
-    if (!entryId || result.importedCount + result.existingCount !== 1) throw new Error("精选案例没有写入私人案例库");
-    setProgressButton(button, { stage: result.importedCount === 1 ? "saved" : "existing" });
+    if (!entryId || result.importedCount + result.existingCount !== (previewEntry.memberEntryIds?.length ?? 1)) throw new Error("精选案例没有写入私人案例库");
+    setProgressButton(button, { stage: result.importedCount > 0 ? "saved" : "existing" });
     markSavedCard(previewEntry.id);
     if (result.warnings?.length) showToast(result.warnings.join("；"));
     setTimeout(() => openSavedCase(entryId), 280);
@@ -673,6 +671,8 @@ async function saveCuratedSelection(item, sourceEntryIds, { mode, onProgress }) 
     const newSources = new Set(preview.importedSourceEntryIds ?? []);
     const newEntries = selectedLibrary.entries.filter((entry) => newSources.has(entry.curatedOrigin?.sourceEntryId));
     const totalAssets = newEntries.reduce((sum, entry) => sum + entry.mediaAssets.filter((asset) => asset.storageMode !== "reference").length, 0);
+    const createdVisualIds = new Set(preview.importedVisualIds ?? []);
+    const writtenVisualIds = new Set();
     let completedAssets = 0;
     for (const entry of newEntries) {
       const singleLibrary = prepareCuratedEntryPackage(selectedLibrary, entry.id);
@@ -684,10 +684,14 @@ async function saveCuratedSelection(item, sourceEntryIds, { mode, onProgress }) 
       for (const asset of parsed.entries.flatMap((parsedEntry) => parsedEntry.mediaAssets)) {
         if (asset.storageMode === "reference") continue;
         const targetId = preview.visualIdMap?.[asset.id] ?? asset.id;
+        if (!createdVisualIds.has(targetId)) throw new Error("精选案例媒体编号与本地已有媒体冲突，已停止保存以保护原有媒体");
         const blob = parsed.assets.get(asset.id);
         if (!blob) throw new Error("精选案例媒体缺失");
-        await stage.register([targetId]);
-        await saveMediaBlob(targetId, blob);
+        if (!writtenVisualIds.has(targetId)) {
+          writtenVisualIds.add(targetId);
+          await stage.register([targetId]);
+          await saveMediaBlob(targetId, blob);
+        }
         completedAssets += 1;
         emitProgress(item.id, { stage: "saving", completed: completedAssets, total: totalAssets });
       }
@@ -804,6 +808,7 @@ function isSaved(item, previewEntry) {
 }
 
 function findSavedEntry(item, previewEntry) {
+  if (previewEntry.memberEntryIds?.some(id => !findSavedEntry(item, { id }))) return null;
   const key = curatedSourceKey({
     curatedOrigin: { packageId: item.packageId, sourceEntryId: previewEntry.id }
   });

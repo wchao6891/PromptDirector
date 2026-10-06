@@ -65,7 +65,7 @@ test("page capture replaces failed remote thumbnails with an explicit unavailabl
     collectorSource.indexOf("function renderPageCapture"),
     collectorSource.indexOf("function updatePageCaptureSelection")
   );
-  assert.match(pageCaptureRenderer, /media\.previewDataUrl \|\| media\.dataUrl \|\| media\.url/);
+  assert.match(pageCaptureRenderer, /pageCapturePreviewSource\(candidate, media\)/);
   assert.match(pageCaptureRenderer, /image\.addEventListener\("error"/);
   assert.match(pageCaptureRenderer, /preview\.replaceChildren\(textNode\("span", t\("预览不可用"\)\)\)/);
   assert.match(pageCaptureRenderer, /pageCaptureMediaSourceLabel\(media\.sourceKind, media\.captureMethod\)/);
@@ -253,4 +253,18 @@ test("every captured draft exposes project and the shared multi-tag editor befor
   assert.match(collectorSource, /captureAddMoreActions\.before\(elements\.captureMetadata\)/);
   assert.match(draftSource, /collectionId: clean\(value\.collectionId\)/);
   assert.match(draftSource, /newCollectionName: clean\(value\.newCollectionName\)/);
+});
+
+
+test("generic motion previews try the original before a static fallback while specialist previews keep their order", async () => {
+  const {pageCapturePreviewSource,bindPageCapturePreviewFallback}=await import('../extension/collector-page-capture-view.js');
+  const media={kind:'image',url:'https://example.com/motion.webp',previewDataUrl:'data:image/png;base64,AA=='};
+  assert.equal(pageCapturePreviewSource({adapter:'generic'},media),media.url);
+  assert.equal(pageCapturePreviewSource({adapter:'jimeng'},media),media.previewDataUrl);
+  const image=new EventTarget();image.src=media.url;let errors=0;
+  bindPageCapturePreviewFallback(image,{adapter:'generic'},media);
+  image.addEventListener('error',()=>errors++);
+  image.dispatchEvent(new Event('error'));
+  assert.equal(image.src,media.previewDataUrl);assert.equal(errors,0);
+  image.dispatchEvent(new Event('error'));assert.equal(errors,1,'both sources failing still exposes unavailable status');
 });

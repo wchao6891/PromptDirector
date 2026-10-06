@@ -107,6 +107,9 @@ export function normalizeCuratedPreview(value, itemValue) {
       sourceUrl,
       mediaKind,
       previewImageUrl,
+      ...(Array.isArray(entry.media) ? { media: entry.media.map(asset => normalizeCuratedPreview({ format: value.format, version: value.version, catalogId: value.catalogId, packageId: value.packageId, packageVersion: value.packageVersion, entries: [{ ...entry, ...asset, media: undefined, compound: undefined }] }, { ...item, caseCount: 1 }).entries[0]) } : {}),
+      ...(entry.compound ? { compound: { id: clean(entry.compound.id), title: clean(entry.compound.title), memberEntryIds: Array.isArray(entry.compound.memberEntryIds) ? entry.compound.memberEntryIds.map(clean) : [] } } : {}),
+
       ...(hasVideoAsset ? { videoUrl, videoSha256, videoBytes, videoMimeType } : {}),
       width: positiveInteger(entry?.width),
       height: positiveInteger(entry?.height)
@@ -196,6 +199,7 @@ export function prepareCuratedPackageVersion(libraryValue = {}, itemValue) {
       });
       next.primaryVisualId = visualIds.get(next.primaryVisualId) ?? next.visuals[0]?.id ?? "";
     }
+    next.mediaPrompts = (next.mediaPrompts ?? []).map(prompt => ({ ...prompt, assetId: visualIds.get(prompt.assetId) ?? prompt.assetId }));
     next.facetAssignments = (next.facetAssignments ?? []).map((assignment) =>
       assignment.visualId && visualIds.has(assignment.visualId)
         ? { ...assignment, visualId: visualIds.get(assignment.visualId) }
@@ -205,6 +209,14 @@ export function prepareCuratedPackageVersion(libraryValue = {}, itemValue) {
       next.creationMeta.sourceEntryIds = next.creationMeta.sourceEntryIds.map((idValue) => entryIds.get(idValue) ?? idValue);
     }
     return next;
+  });
+  library.compoundCases = (library.compoundCases ?? []).map(compound => {
+    if (!Array.isArray(compound?.memberEntryIds)) throw new Error("精选案例包的组合案例格式无效");
+    return { ...compound,
+    id: `${prefix}:compound:${safeId(compound.id)}`,
+    memberEntryIds: compound.memberEntryIds.map(id => entryIds.get(id)).filter(Boolean),
+    coverVisualId: visualIds.get(compound.coverVisualId) ?? compound.coverVisualId
+    };
   });
   if (library.organizerState?.collections) {
     const collectionIds = new Map(library.organizerState.collections.map((collection, index) => [
@@ -275,8 +287,10 @@ export async function verifyCuratedPackageBlob(blob, expectedSha256, expectedByt
 export function validateCuratedPackageContents(itemValue, parsedValue = {}) {
   const item = normalizeItem(itemValue);
   const caseCount = Array.isArray(parsedValue.entries) ? parsedValue.entries.length : 0;
-  const imageCount = parsedValue.images instanceof Map ? parsedValue.images.size : 0;
-  const videoCount = parsedValue.assets instanceof Map
+  const media = (parsedValue.entries ?? []).flatMap(entry => entry.mediaAssets ?? []);
+  const pathsAvailable = media.length && media.every(asset => clean(asset.assetPath));
+  const imageCount = pathsAvailable ? new Set(media.filter(asset => asset.kind === 'image').map(asset => asset.assetPath)).size : parsedValue.images instanceof Map ? parsedValue.images.size : 0;
+  const videoCount = pathsAvailable ? new Set(media.filter(asset => asset.kind === 'video').map(asset => asset.assetPath)).size : parsedValue.assets instanceof Map
     ? [...parsedValue.assets.values()].filter((asset) => asset instanceof Blob && asset.type.startsWith("video/")).length
     : 0;
   if (caseCount !== item.caseCount) throw new Error("精选案例包的案例数量与目录不一致");
@@ -290,8 +304,8 @@ export function validateCuratedPackageIndex(itemValue, libraryValue = {}, fileNa
   const entries = Array.isArray(libraryValue.entries) ? libraryValue.entries : [];
   if (entries.length !== item.caseCount) throw new Error("精选案例包的案例数量与目录不一致");
   const fileNames = new Set(fileNamesValue);
-  const assetIds = new Set();
-  const assetPaths = new Set();
+  const assetIds = new Map();
+  const assetPaths = new Map();
   let imageCount = 0;
   let videoCount = 0;
   for (const entry of entries) {
@@ -299,12 +313,13 @@ export function validateCuratedPackageIndex(itemValue, libraryValue = {}, fileNa
       if (asset?.storageMode === "reference") continue;
       const id = clean(asset?.id);
       const path = clean(asset?.assetPath);
-      if (!id || assetIds.has(id) || !safeCuratedMediaPath(path, asset?.kind) || assetPaths.has(path)) {
+      if (!id || (assetIds.has(id) && assetIds.get(id) !== path) || !safeCuratedMediaPath(path, asset?.kind) || (assetPaths.has(path) && assetPaths.get(path) !== asset.kind)) {
         throw new Error("精选案例包包含无效或重复的媒体索引");
       }
       if (!fileNames.has(path)) throw new Error("精选案例包的媒体索引与 ZIP 不一致");
-      assetIds.add(id);
-      assetPaths.add(path);
+      assetIds.set(id, path);
+      if (assetPaths.has(path)) continue;
+      assetPaths.set(path, asset.kind);
       if (asset.kind === "image") imageCount += 1;
       if (asset.kind === "video") videoCount += 1;
     }

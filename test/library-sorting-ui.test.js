@@ -72,11 +72,16 @@ test("list headings expose sorting without an extra toolbar dropdown", () => {
   assert.doesNotMatch(html, /gallery-sort-field/);
 });
 
-test("saving project membership retains the existing manual order before appending new cases", () => {
+test("saving project membership sends only the toggled cases so concurrent additions and manual order survive", () => {
   const save = source.slice(source.indexOf("async function saveProjectSelection"), source.indexOf("async function shareProjectCollection"));
-  assert.match(save, /retainedOrder = \(collection\?\.entryIds \?\? \[\]\)\.filter/);
-  assert.match(save, /entryIds = \[\.\.\.retainedOrder, \.\.\.selectedEntryIds\.filter/);
-  assert.match(save, /type: "REPLACE_COLLECTION_ENTRIES"/);
+  const enter = source.slice(source.indexOf("async function enterProjectSelection"), source.indexOf("async function enterVisionSelection"));
+  // The baseline is what the user saw when entering; a stale whole-list replace
+  // would silently drop a case an agent or another tab added meanwhile.
+  assert.match(enter, /projectSelectionBaseline = \[\.\.\.selectedCaseIds\]/);
+  assert.match(save, /\["remove", expandLogicalCaseIds\(\[\.\.\.baseline\]\.filter\(\(id\) => !selectedCaseIds\.has\(id\)\)/);
+  assert.match(save, /\["move", expandLogicalCaseIds\(\[\.\.\.selectedCaseIds\]\.filter\(\(id\) => !baseline\.has\(id\)\)/);
+  assert.match(save, /type: "BATCH_SET_PROJECT", collectionId, entryIds, mode/);
+  assert.doesNotMatch(save, /REPLACE_COLLECTION_ENTRIES/);
 });
 
 test("library return snapshot saves persistent sorting but not transient management state", () => {

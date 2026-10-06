@@ -1,3 +1,6 @@
+import { createGalleryPreviewQueue, cardPreviewPriority, indexGalleryMedia } from './gallery-preview-queue.js';
+import { startPhase } from "./perf-trace.js";
+import { eagleDirectorySource, readEagleDirectory, readEaglePackage } from './eagle-import.js';
 import { createMediaStage } from './staged-media.js';
 import { mountShortcutSettings } from './shortcuts.js';
 import { mountReviewFeedback, feedbackIcon, mountAuthoredNotes } from './review-feedback.js';
@@ -9,7 +12,7 @@ import { createTransientFeedback } from "./transient-feedback.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
 const libraryStorage = getLibraryStorage();
-import { createLibraryViewReader } from './library-view-state.js';
+import { createLibraryViewReader, enrichContentMeanings } from './library-view-state.js';
 const readLibraryViewState = createLibraryViewReader({
   storage: libraryStorage,
   prepare: ({ summaryOnly, creativeSummary } = {}) => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
@@ -36,7 +39,7 @@ import { articleBlockIsMarkdown } from "./article-document.js";
 import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
 import { observeImageTransparency } from "./image-transparency.js";
 import { createDetailProjectSelector } from "./detail-project-selector.js";
-import { readImageDimensions } from "./image-metadata.js";
+import { readImageDimensions, imageNeedsOriginalPlayback } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { mediaFormatLabel, usesArticleReader, usesPostReader } from "./case-presentation.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
@@ -74,6 +77,7 @@ import { analysisDiagnosticSummary } from "./analysis-response.js";
 import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 import {
   ASSET_IMPORT_FAILURE_CODES,
+  PAGE_CAPTURE_LIMITS,
   LIBRARY_TRANSFER_LIMITS,
   assertImageDimensions,
   formatBytes,
@@ -286,7 +290,7 @@ const elements = Object.fromEntries([
   "library-drop-target", "import-dialog", "import-dialog-title", "import-close", "import-source", "import-choose-files", "import-last-job", "import-actions", "import-preparing", "import-confirmation", "import-supported-count", "import-skipped-count", "import-duplicate-count", "import-byte-size", "import-project", "import-project-hint", "import-auto-analyze", "import-label-editor", "import-file-list", "import-feedback", "import-job-panel", "import-job-title", "import-job-count", "import-job-progress", "import-job-feedback", "import-cancel", "import-retry", "import-undo", "import-view-project", "import-start"
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
-elements.mediaFile.accept = LOCAL_ASSET_FILE_ACCEPT;
+elements.mediaFile.accept = LOCAL_ASSET_FILE_ACCEPT + ",.zip,.eaglepack";
 elements.mediaFolder.accept = LOCAL_ASSET_FILE_ACCEPT;
 
 const managerTabs = [...document.querySelectorAll("[data-manager-tab]")];
@@ -304,12 +308,14 @@ const managerPanels = {
   vocabulary: elements.managerVocabulary
 };
 const workspace = document.querySelector(".workspace");
+const cardVideoPreviews = new WeakMap();
 let galleryMasonry = createVirtualGallery(elements.caseList, {
   mode: () => uiPreferences.galleryView,
   createCard: id => { const entry = visibleEntryById.get(id); return entry && caseCardForEntry(entry); },
   mountCard: card => { observePendingCardMedia([card]); scheduleVisibleMediaHydration(); },
   releaseCard: card => {
-    for (const image of card.querySelectorAll('img')) { imageObserver.unobserve(image); documentObserver.unobserve(image); }
+    cardVideoPreviews.get(card)?.stop();
+    for (const image of card.querySelectorAll('img')) { imageObserver.unobserve(image); documentObserver.unobserve(image); thumbnailLoader.release(image); }
     caseCardCache.delete(card.dataset.entryId);
   },
   protectedCard: card => card === mediaDragCard || card === caseOrderDragState?.card || card === caseSelectionSweep?.capture,
@@ -342,10 +348,15 @@ document.addEventListener('dragend', () => {
   mediaDragCard = null; mediaDragUrls.clear();
   for (const cache of [thumbnailUrls, originalUrls, documentPreviewUrls]) cache.trim();
 }, true);
-const loadingImages = new Map();
-const thumbnailQueue = [];
+const thumbnailRequests = new WeakMap();
+let galleryMediaById = new Map();
 const thumbnailConcurrency = Math.max(1, Math.min(2, Math.floor((navigator.hardwareConcurrency || 2) / 4)));
-let activeThumbnails = 0;
+const thumbnailLoader = createGalleryPreviewQueue({
+  concurrency: thumbnailConcurrency,
+  load: visualId => createThumbnailUrl(visualId),
+  cached: visualId => thumbnailUrls.get(visualId),
+  priority: image => cardPreviewPriority(image, window.innerHeight, 500)
+});
 const detailMediaUrls = new Set();
 const detailControllerCleanups = new Set();
 let activeDetailDiscovery = null;
@@ -465,6 +476,7 @@ let shortcutSettingsMounted = false;
 let activeAiRoutingTab = "tasks";
 let selectionMode = "";
 let projectSelectionId = "";
+let projectSelectionBaseline = [];
 const selectedCaseIds = new Set();
 let referenceSelectionInitialized = false;
 let applyingReferenceSelection = false;
@@ -519,6 +531,18 @@ let gallerySearchIndex = [];
 let librarySearchIndexById = new Map();
 let logicalIdByEntryId = new Map();
 let localSimilarityIndex = createSimilarityIndex([], facetCatalog);
+// Similar cases are shown only in the detail view: the index is rebuilt when the page is idle, or
+// when a detail needs it first, never as part of a library refresh.
+let localSimilarityIndexStale = false;
+let similarityWarmup = 0;
+function markSimilarityIndexStale() {
+  localSimilarityIndexStale = true;
+  if (similarityWarmup || typeof requestIdleCallback !== "function") return;
+  similarityWarmup = requestIdleCallback(() => {
+    similarityWarmup = 0;
+    currentSimilarityIndex();
+  }, { timeout: 3000 });
+}
 let documentCacheGeneration = 0;
 const caseCardCache = new ResourceCache({ maxEntries: previewCacheEntries, protectedValue: card => card.isConnected });
 let visibleEntryById = new Map();
@@ -545,6 +569,10 @@ let importPollTimer = 0;
 let importDragDepth = 0;
 let externalLibraryRefreshTimer = 0;
 let externalLibraryRefreshPending = false;
+// The newest case list delivered with a change that touched nothing else; null when the next
+// refresh must re-read everything (projects, combinations, batch state or an unknown change).
+let pendingEntriesChange = null;
+let pendingFullLibraryRefresh = false;
 let workspaceLibraryRevision = 0;
 let liveWorkspace = null;
 let extensionUpdateStatus = null;
@@ -579,6 +607,7 @@ mobileLayout.addEventListener("change", (event) => {
 });
 
 const imageObserver = new IntersectionObserver((records) => {
+  thumbnailLoader.refresh();
   for (const record of records) {
     if (record.isIntersecting) hydrateCardImage(record.target);
   }
@@ -599,7 +628,11 @@ window.addEventListener("scroll", () => {
 }, { passive: true });
 libraryStorage.subscribe((changes) => {
   if (changes[REFERENCE_SELECTION_KEY]?.newValue) void referenceSelectionWriter.observe(changes[REFERENCE_SELECTION_KEY].newValue);
-  if (!["entries", "organizerState", "compoundCases", "batchJob"].some((key) => changes[key])) return;
+  const changedKeys = ["entries", "organizerState", "compoundCases", "batchJob"].filter((key) => changes[key]);
+  if (!changedKeys.length) return;
+  if (changedKeys.length === 1 && changedKeys[0] === "entries" && Array.isArray(changes.entries.newValue)) {
+    pendingEntriesChange = changes.entries.newValue;
+  } else pendingFullLibraryRefresh = true;
   workspaceLibraryRevision++;
   liveWorkspace?.observe('library');
   externalLibraryRefreshPending = true;
@@ -727,12 +760,26 @@ function scheduleExternalLibraryRefresh() {
     externalLibraryRefreshTimer = 0;
     if (!externalLibraryRefreshPending) return;
     externalLibraryRefreshPending = false;
-    await refreshLibrary();
+    const entriesChange = pendingEntriesChange;
+    const full = pendingFullLibraryRefresh || !entriesChange || document.body.dataset.libraryState !== "ready";
+    pendingEntriesChange = null;
+    pendingFullLibraryRefresh = false;
+    if (full) await refreshLibrary();
+    else await applyLibraryEntriesChange(entriesChange);
   }, 80);
 }
 
-function consumePendingExternalLibraryRefresh() {
+function externalLibraryRefreshMark() {
+  return { revision: workspaceLibraryRevision, pending: externalLibraryRefreshPending };
+}
+
+// A local write produces exactly one storage notification. Only that one may be
+// skipped; an earlier pending or additional change still refreshes the page.
+function consumePendingExternalLibraryRefresh(mark) {
+  if (mark.pending || workspaceLibraryRevision - mark.revision > 1) return;
   externalLibraryRefreshPending = false;
+  pendingEntriesChange = null;
+  pendingFullLibraryRefresh = false;
   if (!externalLibraryRefreshTimer) return;
   clearTimeout(externalLibraryRefreshTimer);
   externalLibraryRefreshTimer = 0;
@@ -1238,6 +1285,8 @@ function bindEvents() {
 
 async function refreshLibrary() {
   const refreshGeneration = ++libraryRefreshGeneration;
+  const doneRefresh = startPhase("library", "refresh");
+  const doneReading = startPhase("library", "wait:read");
   let response;
   try {
     const [state, _derived, diagnosticState, dragIdentity] = await Promise.all([
@@ -1246,6 +1295,7 @@ async function refreshLibrary() {
       chrome.storage.local.get("analysisDiagnostics"),
       chrome.runtime.sendMessage({ type: 'GET_LIBRARY_IDENTITY' }).catch(error => ({ message: error.message }))
     ]);
+    doneReading();
     response = state;
     response.dragIdentity = dragIdentity;
     analysisDiagnostics = normalizeAnalysisDiagnostics(diagnosticState.analysisDiagnostics);
@@ -1330,12 +1380,18 @@ async function refreshLibrary() {
     showFeedback("项目不存在", true);
   }
   sanitizeSelections();
+  for (const card of caseCardCache.values()) cardVideoPreviews.get(card)?.stop();
   caseCardCache.clear();
   listMetadataCache = new WeakMap();
   listTagNames = null;
+  const doneDeriving = startPhase("library", "derive");
   rebuildLibraryDerivedState();
+  doneDeriving();
   updateSelectionBar();
+  const doneRendering = startPhase("library", "render");
   renderGallery();
+  doneRendering();
+  doneRefresh();
   libraryLoadingIssue = '';
   document.body.dataset.libraryState = "ready";
   if (!elements.searchInput.value.trim()) restoreLibraryScrollPosition();
@@ -1348,16 +1404,60 @@ async function refreshLibrary() {
     updateCachedDocumentCards();
     if (elements.searchInput.value.trim()) scheduleSearchRender();
   }).catch(() => undefined).finally(() => restoreLibraryScrollPosition());
-  if (elements.managerDialog.open) renderManager();
-  if (elements.visionBatchDialog.open) renderVisionBatchDialog();
-  if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
-  if (elements.textBatchDialog.open) renderAnalysisBatch();
-  if (currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty && !elements.detailContent.querySelector('.article-document-reader[data-editing="true"], [data-dirty="true"]')) await renderDetail();
+  await renderOpenLibraryPanels();
   scheduleMaintenanceStatusPoll();
   if (response.restoredArchivedFacetCount) {
     showFeedback(`已自动恢复 ${response.restoredArchivedFacetCount} 个误归档维度，原案例标签没有丢失`);
   }
   await maybeShowRestoreOnboarding();
+}
+
+async function renderOpenLibraryPanels({ detailChanged = true } = {}) {
+  if (elements.managerDialog.open) renderManager();
+  if (elements.visionBatchDialog.open) renderVisionBatchDialog();
+  if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
+  if (elements.textBatchDialog.open) renderAnalysisBatch();
+  if (detailChanged && currentDetailId && logicalCases.some((entry) => entry.id === currentDetailId) && !promptEditState?.dirty && !elements.detailContent.querySelector('.article-document-reader[data-editing="true"], [data-dirty="true"]')) await renderDetail();
+}
+
+// Another page or the background changed only cases. Apply the delivered list directly instead of
+// re-reading the library, and rebuild cards and search rows only for the cases that changed, so
+// unchanged cards keep their nodes and loaded images.
+async function applyLibraryEntriesChange(nextEntries) {
+  ++libraryRefreshGeneration;
+  const done = startPhase("library", "refreshIncremental");
+  // Compare stored fields only: page entries may or may not carry the derived content meaning.
+  const storedJson = (entry) => JSON.stringify({ ...entry, contentRole: undefined, contentTypeName: undefined });
+  const previous = new Map(entries.map((entry) => [entry.id, entry]));
+  const changedEntryIds = new Set();
+  for (const entry of nextEntries) {
+    const before = previous.get(entry.id);
+    if (!before || storedJson(before) !== storedJson(entry)) changedEntryIds.add(entry.id);
+    previous.delete(entry.id);
+  }
+  for (const id of previous.keys()) changedEntryIds.add(id);
+  if (!changedEntryIds.size) {
+    done();
+    return;
+  }
+  const affectedIds = new Set([...changedEntryIds].map((id) => logicalIdByEntryId.get(id) ?? id));
+  entries = enrichContentMeanings(nextEntries, taxonomy);
+  compoundCases = normalizeCompoundCases(compoundCases, entries);
+  sanitizeSelections();
+  listMetadataCache = new WeakMap();
+  listTagNames = null;
+  rebuildLibraryDerivedState({ changedEntryIds });
+  for (const id of changedEntryIds) affectedIds.add(logicalIdByEntryId.get(id) ?? id);
+  for (const id of affectedIds) {
+    const card = caseCardCache.get(id);
+    if (!card) continue;
+    cardVideoPreviews.get(card)?.stop();
+    caseCardCache.delete(id);
+  }
+  updateSelectionBar();
+  renderGallery();
+  await renderOpenLibraryPanels({ detailChanged: affectedIds.has(currentDetailId) });
+  done();
 }
 
 async function loadImageDerivedMetadata() {
@@ -1399,18 +1499,24 @@ function updateCachedDocumentCards() {
   }
 }
 
-function rebuildLibraryDerivedState() {
+function rebuildLibraryDerivedState({ changedEntryIds = null } = {}) {
+  galleryMediaById = indexGalleryMedia(entries, entryMediaAssets);
   logicalCases = materializeLogicalCases(entries, compoundCases)
     .toSorted((left, right) => String(right.savedAt).localeCompare(String(left.savedAt)));
   logicalIdByEntryId = new Map();
   for (const entry of logicalCases) {
     for (const entryId of entry.memberEntryIds ?? [entry.id]) logicalIdByEntryId.set(entryId, entry.id);
   }
-  rebuildLocalSimilarityIndex();
-  rebuildLibrarySearchIndex();
+  markSimilarityIndexStale();
+  const doneSearch = startPhase("library", "searchIndex");
+  rebuildLibrarySearchIndex(changedEntryIds && new Set([...changedEntryIds].map((id) => logicalIdByEntryId.get(id) ?? id)));
+  doneSearch();
 }
 
-function rebuildLocalSimilarityIndex() {
+function currentSimilarityIndex() {
+  if (!localSimilarityIndexStale) return localSimilarityIndex;
+  const done = startPhase("library", "similarityIndex");
+  localSimilarityIndexStale = false;
   localSimilarityIndex = createSimilarityIndex(logicalCases, facetCatalog, {
     previousIndex: localSimilarityIndex,
     visualForEntry: discoveryVisualId,
@@ -1418,11 +1524,18 @@ function rebuildLocalSimilarityIndex() {
     mediaForEntry: entryMediaAssets,
     contentTypesForEntry: entryContentTypeIds
   });
+  done();
+  return localSimilarityIndex;
 }
 
-function rebuildLibrarySearchIndex() {
-  librarySearchIndexById = new Map(buildSearchIndex(logicalCases, facetCatalog, documentSearchText(), imageDerivedMetadata)
+// With changed case ids, keep the rows of every other case: catalog, documents and derived metadata
+// did not change, so only those cases' searchable text can differ.
+function rebuildLibrarySearchIndex(changedLogicalIds = null) {
+  const reusable = changedLogicalIds ? librarySearchIndexById : new Map();
+  const stale = logicalCases.filter((entry) => !reusable.has(entry.id) || changedLogicalIds?.has(entry.id));
+  const rebuilt = new Map(buildSearchIndex(stale, facetCatalog, documentSearchText(), imageDerivedMetadata)
     .map((item) => [item.id, item]));
+  librarySearchIndexById = new Map(logicalCases.map((entry) => [entry.id, rebuilt.get(entry.id) ?? reusable.get(entry.id)]));
 }
 
 function searchIndexForEntries(entryValues) {
@@ -1663,7 +1776,11 @@ function reconcileInitialCaseCards() {
     const current = elements.caseList.children[index];
     if (current !== card) elements.caseList.insertBefore(card, current ?? null);
   }
-  while (elements.caseList.children.length > desired.length) elements.caseList.lastElementChild.remove();
+  while (elements.caseList.children.length > desired.length) {
+    const card = elements.caseList.lastElementChild;
+    cardVideoPreviews.get(card)?.stop();
+    card.remove();
+  }
 }
 
 function observePendingCardMedia(cards) {
@@ -1711,6 +1828,7 @@ function scheduleVisibleMediaHydration() {
   if (mediaHydrationFrame) return;
   mediaHydrationFrame = requestAnimationFrame(() => {
     mediaHydrationFrame = 0;
+    thumbnailLoader.refresh();
     hydrateVisiblePendingMedia("img[data-visual-id]:not([src])", 500, hydrateCardImage);
     hydrateVisiblePendingMedia("img[data-document-id]:not([src])", 400, hydrateDocumentPreview);
   });
@@ -1930,7 +2048,7 @@ function createCaseCard(entry) {
       wrap.append(image, cue);
       if (mainVisual.durationMs) wrap.append(rawTextEl("span", "case-video-duration", formatMediaTime(mainVisual.durationMs)));
       if (mainVisual.storageMode === "managed") {
-        bindVideoHoverPreview(wrap, { loadBlob: () => getMediaBlob(mainVisual.id) });
+        cardVideoPreviews.set(card, bindVideoHoverPreview(wrap, { loadBlob: () => getMediaBlob(mainVisual.id) }));
       }
       card.append(wrap);
     } else card.append(mainVisual.storageMode === "managed"
@@ -2639,6 +2757,7 @@ async function enterProjectSelection(collectionId) {
       selectedCaseIds.add(entry.id);
     }
   });
+  projectSelectionBaseline = [...selectedCaseIds];
   selectedContentId = "";
   selectedFacets.clear();
   elements.pendingFilter.checked = false;
@@ -3016,7 +3135,7 @@ async function updateSelectionProjectMembership(mode, button, collectionId = ele
     const response = await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || (mode === "remove" ? "移出项目失败" : "加入项目失败"));
     organizerState = response.organizerState ?? organizerState;
-    rebuildLocalSimilarityIndex();
+    markSimilarityIndexStale();
     if (mode === "copy") await refreshLibrary();
     showFeedback(response.message || (mode === "remove" ? `已移出项目“${collection.name}”` : `已加入项目“${collection.name}”`));
     exitSelectionMode();
@@ -3127,7 +3246,7 @@ async function createProjectFromSelection() {
   }, false);
   if (!response?.ok || !response.created?.id) return;
   organizerState = response.organizerState ?? organizerState;
-  rebuildLocalSimilarityIndex();
+  markSimilarityIndexStale();
   showFeedback(`已新建项目“${response.created.name}”并移动所选案例`);
   exitSelectionMode();
 }
@@ -3235,20 +3354,20 @@ async function saveCompoundSelection() {
 
 async function saveProjectSelection() {
   const collectionId = projectSelectionId;
-  const collection = organizerState.collections.find((item) => item.id === collectionId);
-  const selectedEntryIds = expandLogicalCaseIds([...selectedCaseIds], compoundCases);
-  const selected = new Set(selectedEntryIds);
-  const retainedOrder = (collection?.entryIds ?? []).filter((entryId) => selected.has(entryId));
-  const retained = new Set(retainedOrder);
-  const entryIds = [...retainedOrder, ...selectedEntryIds.filter((entryId) => !retained.has(entryId))];
+  const baseline = new Set(projectSelectionBaseline);
+  // Send only the cases toggled here: members added elsewhere meanwhile survive,
+  // and retained members keep their manual order while new ones are appended.
+  const changes = [
+    ["remove", expandLogicalCaseIds([...baseline].filter((id) => !selectedCaseIds.has(id)), compoundCases)],
+    ["move", expandLogicalCaseIds([...selectedCaseIds].filter((id) => !baseline.has(id)), compoundCases)]
+  ].filter(([, entryIds]) => entryIds.length);
   elements.projectSelectionSave.disabled = true;
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "REPLACE_COLLECTION_ENTRIES",
-      collectionId,
-      entryIds
-    });
-    if (!response?.ok) throw new Error(response?.message || "项目案例保存失败");
+    let response = { ok: true, message: "项目案例已更新" };
+    for (const [mode, entryIds] of changes) {
+      response = await chrome.runtime.sendMessage({ type: "BATCH_SET_PROJECT", collectionId, entryIds, mode, sourceCollectionId: null });
+      if (!response?.ok) throw new Error(response?.message || "项目案例保存失败");
+    }
     organizerState = response.organizerState ?? organizerState;
     selectionMode = "";
     projectSelectionId = "";
@@ -3901,17 +4020,62 @@ async function showExtensionAbout() {
   const result = await showAppDialog({
     title: "关于 PromptDirector",
     confirmLabel: "完成",
+    bodyClass: "about-dialog-body",
     renderBody: ({ body }) => {
       body.append(rawTextEl("p", "", `PromptDirector ${manifest.version}`));
       body.append(rawTextEl("p", "", t("免费、开源、本地优先 · Apache-2.0")));
       body.append(rawTextEl("p", "", t(status?.channel === "development" ? "本地版" : status?.channel === "store" ? "商店版 · Chrome 自动更新" : "安装方式暂不可用")));
       if (status?.checkedAt) body.append(rawTextEl("p", "", t("最近检查：{time}", { time: new Date(status.checkedAt).toLocaleString() })));
-      const link = document.createElement("a");
-      link.textContent = t("查看源码");
-      link.href = safeHttpUrl(manifest.homepage_url);
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      body.append(link);
+      const contacts = el("div", "about-contact-list");
+      const feedback = rawTextEl("p", "app-dialog-status", "");
+      feedback.setAttribute("role", "status");
+      feedback.setAttribute("aria-live", "polite");
+      const channels = [
+        { label: "GitHub Issue", href: `${safeHttpUrl(manifest.homepage_url).replace(/\/$/, "")}/issues/new`, action: "提交问题" },
+        { label: "邮箱", value: "Wchao6891@gmail.com", copyLabel: "复制邮箱", copied: "邮箱已复制", href: "mailto:Wchao6891@gmail.com", action: "发邮件" },
+        { label: "微信", value: "faceware", copyLabel: "复制微信号", copied: "微信号已复制" }
+      ];
+      for (const channel of channels) {
+        const row = el("div", "about-contact-row");
+        const details = el("div", "about-contact-details");
+        details.append(rawTextEl("span", "about-contact-label", t(channel.label)));
+        if (channel.value) details.append(rawTextEl("span", "about-contact-value", channel.value));
+        const actions = el("div", "about-contact-actions");
+        if (channel.href) {
+          const link = rawTextEl("a", "button-secondary", t(channel.action));
+          link.href = channel.href;
+          if (channel.label === "GitHub Issue") {
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.title = t("问题内容将公开");
+          }
+          actions.append(link);
+        }
+        if (channel.value) {
+          const copy = el("button", "icon-button");
+          copy.type = "button";
+          copy.title = t(channel.copyLabel);
+          copy.setAttribute("aria-label", t(channel.copyLabel));
+          copy.append(createUiIcon("copy"));
+          copy.addEventListener("click", async () => {
+            copy.disabled = true;
+            try {
+              await writeClipboardText(channel.value);
+              feedback.classList.remove("error");
+              feedback.textContent = t(channel.copied);
+            } catch {
+              feedback.classList.add("error");
+              feedback.textContent = t("无法复制，请手动选择并复制");
+            } finally {
+              copy.disabled = false;
+            }
+          });
+          actions.append(copy);
+        }
+        row.append(details, actions);
+        contacts.append(row);
+      }
+      body.append(contacts, feedback);
       if (status?.channel === "development") {
         const button = document.createElement("button");
         button.type = "button";
@@ -4576,6 +4740,7 @@ async function openLibraryPackageBatch(packageItems, ordinaryItems = []) {
     items: files.map((item) => ({
       id: crypto.randomUUID(),
       file: item.file,
+      sourceFiles: item.sourceFiles,
       relativePath: item.relativePath || item.file.name,
       status: "checking",
       error: "",
@@ -4607,25 +4772,37 @@ async function inspectLibraryPackageBatchItem(batch, item) {
   try {
     const file = item.file;
     const limits = { ...LIBRARY_TRANSFER_LIMITS };
-    const reader = await openZipBlob(file, limits);
-    if (!reader.names.includes("library.json")) throw new Error("缺少 library.json");
-    const files = await reader.read(["library.json"], { signal: batch.controller.signal });
-    const libraryFile = files.get("library.json");
-    if (!libraryFile) throw new Error("缺少 library.json");
-    if (libraryFile.size > LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes) {
-      throw new Error(`library.json 超过 ${formatBytes(LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes)}`);
+    let library, files, sourceReport;
+    const eagleProgress = ({ completed, total }) => updateLibraryPackageProgress(batch, item, t('读取 Eagle · {done}/{total}', { done: completed, total }));
+    if (item.sourceFiles) {
+      const converted = await readEagleDirectory(item.sourceFiles, { signal: batch.controller.signal, onProgress: eagleProgress });
+      ({ library, files, report: sourceReport } = converted);
+    } else {
+      const reader = await openZipBlob(file, limits);
+      if (!reader.names.includes('library.json')) {
+        const converted = await readEaglePackage(reader, { signal: batch.controller.signal, onProgress: eagleProgress });
+        ({ library, files, report: sourceReport } = converted);
+      } else {
+        files = await reader.read(["library.json"], { signal: batch.controller.signal });
+        const libraryFile = files.get("library.json");
+        if (!libraryFile) throw new Error("缺少 library.json");
+        if (libraryFile.size > LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes) {
+          throw new Error(`library.json 超过 ${formatBytes(LIBRARY_TRANSFER_LIMITS.maxLibraryJsonBytes)}`);
+        }
+
+        try { library = await readJsonWithResourceBudget(libraryFile, { signal: batch.controller.signal, label: 'library.json' }); }
+        catch (error) { if (error?.code === 'RESOURCE_BUDGET_REACHED' || error?.name === 'AbortError') throw error; throw new Error("library.json 已损坏"); }
+        const resources = await readZipResources(file, reader.names.filter((name) => name !== "library.json"), limits, {
+          signal: batch.controller.signal,
+          onProgress: ({ extractedBytes }) => updateLibraryPackageProgress(batch, item,
+            t("读取校验 · {done} / {total}", { done: formatBytes(extractedBytes), total: formatBytes(reader.expandedBytes - libraryFile.size) }))
+        });
+        for (const [name, blob] of resources) files.set(name, blob);
+      }
     }
-    let library;
-    try { library = await readJsonWithResourceBudget(libraryFile, { signal: batch.controller.signal, label: 'library.json' }); }
-    catch (error) { if (error?.code === 'RESOURCE_BUDGET_REACHED' || error?.name === 'AbortError') throw error; throw new Error("library.json 已损坏"); }
-    const resources = await readZipResources(file, reader.names.filter((name) => name !== "library.json"), limits, {
-      signal: batch.controller.signal,
-      onProgress: ({ extractedBytes }) => updateLibraryPackageProgress(batch, item,
-        t("读取校验 · {done} / {total}", { done: formatBytes(extractedBytes), total: formatBytes(reader.expandedBytes - libraryFile.size) }))
-    });
-    for (const [name, blob] of resources) files.set(name, blob);
     const inspection = await inspectLibraryTransfer({
       sourceType: LIBRARY_TRANSFER_SOURCES.SHARE_PACKAGE,
+      sourceReport,
       library,
       files,
       limits,
@@ -5177,67 +5354,75 @@ async function validateImportedImage(image) {
 async function hydrateCardImage(image) {
   const visualId = image.dataset.visualId;
   if (!visualId || image.src) return;
-  try {
-    let promise = loadingImages.get(visualId);
-    if (!promise) {
-      promise = scheduleThumbnail(() => createThumbnailUrl(visualId));
-      loadingImages.set(visualId, promise);
+  if (thumbnailRequests.has(image)) return thumbnailRequests.get(image);
+  const request = (async () => {
+    try {
+      applyCardImageDimensions(image, imageDimensions({ id: visualId }));
+      const url = await thumbnailLoader.request(visualId, image);
+      if (url && image.isConnected) {
+        applyCardImageDimensions(image, imageDimensions({ id: visualId }));
+        image.src = url;
+      } else if (url === "" && image.isConnected) showPreviewError(image);
+    } catch {
+      if (image.isConnected) showPreviewError(image);
+    } finally {
+      thumbnailRequests.delete(image);
     }
-    const url = await promise;
-    if (url && image.isConnected) {
-      const dimensions = imageDimensions({ id: visualId });
-      const wrap = image.closest(".case-image-wrap");
-      if (dimensions && wrap && !wrap.style.aspectRatio) {
-        wrap.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
-        wrap.classList.add("case-image-wrap-fixed");
-      }
-      image.src = url;
-    } else if (image.isConnected) showPreviewError(image);
-  } catch {
-    showPreviewError(image);
-  } finally {
-    loadingImages.delete(visualId);
-  }
+  })();
+  thumbnailRequests.set(image, request);
+  return request;
 }
 
-function scheduleThumbnail(task) {
-  return new Promise((resolve, reject) => {
-    thumbnailQueue.push({ task, resolve, reject });
-    runNextThumbnails();
-  });
-}
-
-function runNextThumbnails() {
-  while (activeThumbnails < thumbnailConcurrency && thumbnailQueue.length) {
-    const queued = thumbnailQueue.shift();
-    activeThumbnails += 1;
-    Promise.resolve()
-      .then(queued.task)
-      .then(queued.resolve, queued.reject)
-      .finally(() => {
-        activeThumbnails -= 1;
-        runNextThumbnails();
-      });
+function applyCardImageDimensions(image, dimensions) {
+  const wrap = image.closest(".case-image-wrap");
+  if (dimensions && wrap && !wrap.style.aspectRatio) {
+    wrap.style.aspectRatio = `${dimensions.width} / ${dimensions.height}`;
+    wrap.classList.add("case-image-wrap-fixed");
   }
 }
 
 async function createThumbnailUrl(visualId) {
   if (thumbnailUrls.has(visualId)) return thumbnailUrls.get(visualId);
-  const videoEntry = logicalCases.find((entry) => entry.mediaAssets?.some((asset) => asset.id === visualId && asset.kind === "video"));
-  if (videoEntry) {
-    const response = await chrome.runtime.sendMessage({ type: "ENSURE_VIDEO_POSTER", entryId: videoEntry.id, assetId: visualId });
-    if (!response?.ok || !response.poster?.id) throw new Error(response?.message || "视频封面暂不可用");
-    const url = await createThumbnailUrl(response.poster.id);
-    if (url) thumbnailUrls.set(visualId, url);
-    return url;
+  const maxWidth = 640;
+  const indexed = galleryMediaById.get(visualId);
+  if (indexed?.asset.kind === "video") {
+    // Browsing prepares disposable previews, never edits the case: a metadata
+    // write would refresh the whole gallery and detach other pending images.
+    const cached = await getDerivedMedia(visualId).catch(() => null);
+    let thumbnail = cached?.thumbnail;
+    if (!thumbnail) {
+      const blob = await getMediaBlob(visualId);
+      if (!blob) throw new Error("本地视频文件缺失");
+      const prepared = await readVideoMedia(blob, blob.type, visualId, { timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs, posterMaxWidth: maxWidth });
+      thumbnail = prepared.poster?.blob;
+      if (!thumbnail) throw new Error("视频封面暂不可用");
+      await cacheImageDimensions(visualId, thumbnail, prepared.metadata);
+      await saveDerivedMedia(visualId, { ...cached, thumbnail }).catch(() => undefined);
+    } else await cacheImageDimensions(visualId, thumbnail);
+    return thumbnailUrls.create(visualId, thumbnail);
   }
   const derived = await getDerivedMedia(visualId).catch(() => null);
+  // Old thumbnails may be a flattened frame. Inspect only visible originals
+  // once, remember the result, and let the browser play animated containers.
+  let blob = null;
+  let animated = derived?.animated;
+  if (animated === undefined) {
+    blob = await screenshotBlob(visualId);
+    if (!blob) return "";
+    animated = await imageNeedsOriginalPlayback(blob);
+    if (derived?.thumbnail || animated) await saveDerivedMedia(visualId, { ...derived, animated }).catch(() => undefined);
+  }
+  if (animated) {
+    blob ||= await screenshotBlob(visualId);
+    if (!blob) return "";
+    await cacheImageDimensions(visualId, blob);
+    return thumbnailUrls.create(visualId, blob);
+  }
   if (derived?.thumbnail) {
     await cacheImageDimensions(visualId, derived.thumbnail);
-    const url = thumbnailUrls.create(visualId, derived.thumbnail);
-    return url;
+    return thumbnailUrls.create(visualId, derived.thumbnail);
   }
-  const blob = await screenshotBlob(visualId);
+  blob ||= await screenshotBlob(visualId);
   if (!blob) return "";
   if (blob.size > LIBRARY_TRANSFER_LIMITS.maxImageBytes) {
     throw new Error(`图片超过 ${formatBytes(LIBRARY_TRANSFER_LIMITS.maxImageBytes)} 上限`);
@@ -5245,26 +5430,25 @@ async function createThumbnailUrl(visualId) {
   const metadata = await readImageDimensions(blob);
   assertImageDimensions(metadata.width, metadata.height);
   await cacheImageDimensions(visualId, blob, metadata);
+  if (metadata.width <= maxWidth) {
+    await saveDerivedMedia(visualId, { ...derived, animated: false }).catch(() => undefined);
+    return thumbnailUrls.create(visualId, blob);
+  }
   let bitmap;
   try {
-    bitmap = await createImageBitmap(blob);
+    bitmap = await createImageBitmap(blob, { resizeWidth: maxWidth, resizeQuality: "high" });
   } catch {
     const url = thumbnailUrls.create(visualId, blob);
     return url;
   }
   try {
     assertImageDimensions(bitmap.width, bitmap.height);
-    const maxWidth = 640;
-    if (bitmap.width <= maxWidth) {
-      const url = thumbnailUrls.create(visualId, blob);
-      return url;
-    }
     const canvas = document.createElement("canvas");
-    canvas.width = maxWidth;
-    canvas.height = Math.max(1, Math.round(bitmap.height * maxWidth / bitmap.width));
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
     canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const thumbnail = await canvasBlob(canvas, "image/webp", 0.76);
-    await saveDerivedMedia(visualId, { ...derived, thumbnail }).catch(() => undefined);
+    await saveDerivedMedia(visualId, { ...derived, thumbnail, animated: false }).catch(() => undefined);
     const url = thumbnailUrls.create(visualId, thumbnail);
     return url;
   } finally {
@@ -5274,8 +5458,9 @@ async function createThumbnailUrl(visualId) {
 
 async function cacheImageDimensions(visualId, blob, dimensionsValue = null) {
   if (imageDerivedMetadata.get(visualId)?.width && imageDerivedMetadata.get(visualId)?.height) return;
-  const dimensions = dimensionsValue ?? await readImageDimensions(blob);
+  const dimensions = dimensionsValue ?? imageDimensions({ id: visualId }) ?? await readImageDimensions(blob);
   assertImageDimensions(dimensions.width, dimensions.height);
+  thumbnailLoader.updateConsumers(visualId, image => applyCardImageDimensions(image, dimensions));
   const cached = imageDerivedMetadata.get(visualId) ?? await getDerivedMetadata(visualId).catch(() => null);
   const saved = await saveDerivedMetadata(visualId, {
     ...cached,
@@ -5804,7 +5989,10 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   if (breakdown) body.append(breakdown);
   primary.append(body);
   content.append(primary);
-  const discovery = createLocalDiscovery(entry);
+  // When cases changed since the similarity index was built, show the case first and add its
+  // similar cases right after, instead of holding the whole detail until the index is rebuilt.
+  const deferDiscovery = localSimilarityIndexStale;
+  const discovery = deferDiscovery ? null : createLocalDiscovery(entry);
   if (discovery) content.append(discovery.section);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
   mountAuthoredNotes(body, entry, t);
@@ -5813,6 +6001,13 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   elements.detailContent.replaceChildren(content);
   if (resetScroll) elements.detailContent.scrollTop = 0;
   discovery?.mount();
+  if (deferDiscovery) requestAnimationFrame(() => setTimeout(() => {
+    if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId || !content.isConnected) return;
+    const deferred = createLocalDiscovery(entry);
+    if (!deferred) return;
+    content.append(deferred.section);
+    deferred.mount();
+  }, 0));
   if (hasMediaStage) {
     const dispose = attachDetailSplit(primary, {
       label: t("调整图文分栏宽度"),
@@ -5867,7 +6062,8 @@ function refreshLocalDiscovery(entry) {
 }
 
 function createLocalDiscovery(entry) {
-  const ranked = rankSimilarEntries(localSimilarityIndex, entry.id, localSimilarityIndex.profiles.size);
+  const similarityIndex = currentSimilarityIndex();
+  const ranked = rankSimilarEntries(similarityIndex, entry.id, similarityIndex.profiles.size);
   if (!ranked.length) return null;
   const section = el("section", "detail-discovery");
   const heading = el("header", "detail-discovery-heading");
@@ -6021,7 +6217,7 @@ async function renderCompoundDetail(entry, content, body) {
     if (attributes) section.append(attributes);
     const metadata = createDetailMetadata(member);
     if (metadata) section.append(metadata);
-    section.append(createEntryEditor(member));
+    section.append(createEntryEditor(member, { compoundMember: true }));
     body.append(section);
   }
   body.append(createDetailQuickOrganization(entry));
@@ -6046,7 +6242,13 @@ function createCompoundOrganizer(entry) {
   const title = labeledInput("案例名称", entry.title);
   let memberIds = [...entry.memberEntryIds];
   const order = el("div", "compound-member-order");
+  // Unsaved organizing holds library refreshes off this detail until saved.
+  const syncDirty = () => {
+    details.dataset.dirty = String(title.input.value !== (entry.title || "") || memberIds.join("\n") !== entry.memberEntryIds.join("\n"));
+  };
+  title.input.addEventListener("input", syncDirty);
   const renderOrder = () => {
+    syncDirty();
     order.replaceChildren(...memberIds.map((id, index) => {
       const member = entries.find((item) => item.id === id);
       const row = el("div", "compound-member-row");
@@ -6069,13 +6271,15 @@ function createCompoundOrganizer(entry) {
   const actions = el("div", "compound-organizer-actions");
   const save = textEl("button", "", "保存整理");
   save.addEventListener("click", async () => {
+    details.dataset.dirty = "false";
     const response = await perform(save, {
       type: "UPDATE_COMPOUND_CASE",
       compoundCaseId: entry.id,
       title: title.input.value,
       memberEntryIds: memberIds
     });
-    if (response?.ok && !response.compoundCase) closeDetail();
+    if (!response?.ok) syncDirty();
+    else if (!response.compoundCase) closeDetail();
   });
   actions.append(save);
   body.append(title.label, textEl("span", "form-label", "部分顺序"), order, actions);
@@ -6368,9 +6572,11 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   gallery.classList.toggle("is-immersive", immersive);
   const stage = el("div", "detail-visual-stage ui-scrollbar");
   const rail = el("div", "detail-visual-rail");
+  rail.dataset.arrowKeys = "true";
   const notes = el("section", "time-notes");
   rail.setAttribute("aria-label", t("案例内媒体"));
   const mediaNavigation = el("nav", "detail-media-navigation");
+  mediaNavigation.dataset.arrowKeys = "true";
   mediaNavigation.setAttribute("aria-label", t("切换案例内媒体"));
   mediaNavigation.tabIndex = -1;
   const previousMedia = promptIconButton(t("上一项媒体"), "chevron-left");
@@ -7047,8 +7253,10 @@ async function createMediaViewer(asset, imageUrl, entry) {
     if (poster) video.poster = await originalScreenshotUrl(poster.id);
     video.controls = false;
     video.preparePlayback = () => { if (!video.getAttribute("src")) video.src = url; };
+    video.getPlaybackBlob = () => blob;
     wrap.releaseMedia = () => {
       video.pause();
+      video.reviewTransport?.destroy();
       URL.revokeObjectURL(url);
       detailMediaUrls.delete(url);
     };
@@ -7625,15 +7833,14 @@ function createDetailQuickOrganization(entry) {
   const selector = createDetailProjectSelector({
     getState: () => organizerState, entryIds, getChildren: indexProjectChildren,
     onChange: async (collectionId, checked, checkbox) => {
-      const collection = organizerState.collections.find(item => item.id === collectionId);
-      if (!collection) return;
-      const nextIds = new Set(collection.entryIds);
-      for (const id of entryIds) checked ? nextIds.add(id) : nextIds.delete(id);
+      if (!organizerState.collections.some(item => item.id === collectionId)) return;
+      const mark = externalLibraryRefreshMark();
+      // Only this case changes; other members may have been added elsewhere meanwhile.
       const response = await perform(checkbox, {
-        type: "REPLACE_COLLECTION_ENTRIES", collectionId, entryIds: [...nextIds]
+        type: "BATCH_SET_PROJECT", collectionId, entryIds, mode: checked ? "move" : "remove", sourceCollectionId: null
       }, false);
       if (!response) return;
-      consumePendingExternalLibraryRefresh();
+      consumePendingExternalLibraryRefresh(mark);
       organizerState = response.organizerState ?? organizerState;
       syncProjectSummary();
     }
@@ -7673,7 +7880,11 @@ function createDetailQuickOrganization(entry) {
   const customLabels = uniqueNames(entry.compoundCase?.customLabels ?? entry.customLabels);
   const editor = createTagEditor({
     values: customLabels, compact: true,
-    onChange: (values, trigger) => saveDetailCustomLabels(entry, trigger, values)
+    onChange: async (values, trigger, previous) => {
+      const saved = await saveDetailCustomLabels(entry, trigger, values, previous);
+      if (saved && JSON.stringify(editor.values) === JSON.stringify(values)) editor.setValues(saved);
+      return Boolean(saved);
+    }
   });
   labels.append(editor.element);
 
@@ -7704,27 +7915,35 @@ function createDetailDeleteAction(entry) {
   return deleteButton;
 }
 
-async function saveDetailCustomLabels(entry, button, customLabels) {
+// The editor may show labels from an earlier render; send only this edit so the background applies
+// it to the latest labels and a batch or agent addition made meanwhile is kept.
+async function saveDetailCustomLabels(entry, button, requested, previous) {
+  const before = new Set(previous), after = new Set(requested);
+  const addLabels = requested.filter((label) => !before.has(label));
+  const removeLabels = [...before].filter((label) => !after.has(label));
+  const mark = externalLibraryRefreshMark();
   const response = entry.compoundCase
     ? await perform(button, {
       type: "UPDATE_COMPOUND_CASE",
       compoundCaseId: entry.id,
-      customLabels: uniqueNames(customLabels)
+      addLabels,
+      removeLabels
     }, false)
     : await perform(button, {
       type: "UPDATE_ENTRY_CUSTOM_LABELS",
       entryId: entry.id,
-      customLabels: uniqueNames(customLabels)
+      addLabels,
+      removeLabels
     }, false);
-  if (!response?.ok) return false;
-  consumePendingExternalLibraryRefresh();
+  if (!response?.ok) return null;
+  consumePendingExternalLibraryRefresh(mark);
   if (entry.compoundCase && response.compoundCase) {
     compoundCases = compoundCases.map((item) => item.id === response.compoundCase.id ? response.compoundCase : item);
   } else if (Array.isArray(response.entries)) {
     entries = response.entries;
   }
   rebuildLibraryDerivedState();
-  return true;
+  return entry.compoundCase ? response.compoundCase?.customLabels ?? requested : response.entry?.customLabels ?? requested;
 }
 
 function createComposerAction(entry) {
@@ -8091,6 +8310,13 @@ async function prepareLocalImport(fileItems, { source = "files" } = {}) {
     if (!elements.importDialog.open) elements.importDialog.showModal();
     return;
   }
+  const eagle = eagleDirectorySource(fileItems);
+  if (eagle) {
+    const consumed = new Set(eagle.sourceFiles);
+    return openLibraryPackageBatch([eagle], fileItems.filter(item => !consumed.has(item)));
+  }
+  const packages = fileItems.filter(item => importContainerKindForFile(item.file) === 'share-package');
+  if (packages.length) return openLibraryPackageBatch(packages, fileItems.filter(item => !packages.includes(item)));
   activeImportJob = null;
   await discardPendingLocalImport();
   const browsingScrollY = window.scrollY;
@@ -9542,9 +9768,15 @@ function createEntryEditor(entry, options = {}) {
   titleInput.value = entry.title || "";
   titleField.append(textEl("span", "sr-only", "案例标题"), titleInput);
   const saveTitle = textEl("button", "button-secondary", "保存");
-  saveTitle.addEventListener("click", () => {
+  // Compound details rebuild on refresh, so an unsaved member title holds that refresh.
+  const syncTitleDirty = () => { if (options.compoundMember) titleField.dataset.dirty = String(titleInput.value !== (entry.title || "")); };
+  titleInput.addEventListener("input", syncTitleDirty);
+  saveTitle.addEventListener("click", async () => {
     const title = titleInput.value;
-    return perform(saveTitle, { type: "UPDATE_ENTRY_TITLE", entryId: entry.id, title: title.trim() });
+    titleField.dataset.dirty = "false";
+    const response = await perform(saveTitle, { type: "UPDATE_ENTRY_TITLE", entryId: entry.id, title: title.trim() });
+    if (!response) syncTitleDirty();
+    return response;
   });
   const titleRow = el("div", "entry-edit-row");
   titleRow.append(titleField, saveTitle);
@@ -11261,7 +11493,7 @@ function handleLibraryMaintenanceMessage(message) {
       void getAllDerivedMetadata().then((metadata) => {
         imageDerivedMetadata = metadata;
         imageDerivedMetadataLoaded = true;
-        rebuildLocalSimilarityIndex();
+        markSimilarityIndexStale();
         rebuildLibrarySearchIndex();
         gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
       }).catch(() => undefined);
@@ -11984,8 +12216,9 @@ function releaseDetailControllers() {
 }
 
 function imageDimensions(asset) {
-  const width = Math.max(0, Number(asset?.width) || Number(imageDerivedMetadata.get(asset?.id)?.width) || 0);
-  const height = Math.max(0, Number(asset?.height) || Number(imageDerivedMetadata.get(asset?.id)?.height) || 0);
+  const indexed = galleryMediaById.get(asset?.id)?.asset;
+  const width = Math.max(0, Number(asset?.width) || Number(indexed?.width) || Number(imageDerivedMetadata.get(asset?.id)?.width) || 0);
+  const height = Math.max(0, Number(asset?.height) || Number(indexed?.height) || Number(imageDerivedMetadata.get(asset?.id)?.height) || 0);
   return width && height ? { width, height } : null;
 }
 
@@ -12218,10 +12451,14 @@ function showFeedback(message, isError = false) {
   transientFeedback.show(target, translateUiMessage(message || ""), { error: isError, hideWhenEmpty: true });
 }
 
+function writeClipboardText(value) {
+  return navigator.clipboard.writeText(String(value ?? ""));
+}
+
 async function copyTextWithFeedback(button, value, successMessage, failureMessage) {
   const original = [...button.childNodes].map(node => node.cloneNode(true));
   try {
-    await navigator.clipboard.writeText(String(value ?? ""));
+    await writeClipboardText(value);
     if (button.classList.contains("prompt-icon-action")) button.replaceChildren(createUiIcon("check"));
     else button.textContent = t("已复制");
     showFeedback(successMessage);

@@ -45,6 +45,16 @@ function snapshot(value) {
   return JSON.stringify(value, (_key, item) => item instanceof Set ? [...item].sort() : item);
 }
 
+// A frozen case object cannot change, so its snapshot is computed once per object. The shared
+// case library snapshot is frozen and reused while unchanged, which keeps repeated queries cheap.
+const frozenSnapshots = new WeakMap();
+function entrySnapshot(entry) {
+  if (!Object.isFrozen(entry)) return snapshot(entry);
+  let value = frozenSnapshots.get(entry);
+  if (value === undefined) frozenSnapshots.set(entry, value = snapshot(entry));
+  return value;
+}
+
 // Cache only derived search rows, never library truth. Fresh document text and
 // metadata participate in the signature even when the case timestamp is unchanged.
 export function createSearchIndexCache() {
@@ -64,7 +74,7 @@ export function createSearchIndexCache() {
       const selected = new WeakMap();
       const index = entries.map(entry => {
         const assets = entryMediaAssets(entry);
-        const signature = snapshot([entry, assets.map(asset => [asset.id, documents.get(asset.id), derived.get(asset.id)])]);
+        const signature = `[${entrySnapshot(entry)},${snapshot(assets.map(asset => [asset.id, documents.get(asset.id), derived.get(asset.id)]))}]`;
         let row = rows.get(entry.id);
         const same = row && (row.signature === signature ||
           (row.canonical ??= serializeSearchValue(JSON.parse(row.signature))) === serializeSearchValue(JSON.parse(signature)));

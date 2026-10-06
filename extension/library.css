@@ -107,6 +107,14 @@ details:not([open]) > .detail-project-popover { display: none; }
 .share-dialog { width: min(460px, calc(100vw - 28px)); }
 .share-dialog-body { display: grid; gap: 14px; }
 .share-dialog-meta { margin: 0; color: var(--muted); font-size: var(--ui-meta-size); }
+.about-contact-list { display: grid; gap: 12px; }
+.about-dialog-body > p { margin: 0; }
+.about-dialog-body > .app-dialog-status:empty { display: none; }
+.about-contact-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.about-contact-details { display: grid; min-width: 0; gap: 3px; }
+.about-contact-label { color: var(--muted); font-size: var(--ui-meta-size); }
+.about-contact-value { overflow-wrap: anywhere; user-select: text; }
+.about-contact-actions { display: flex; align-items: center; gap: 6px; }
 .share-dialog-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .share-dialog-options button { display: inline-flex; min-width: 0; align-items: center; justify-content: center; gap: 7px; }
 .share-dialog-options .ui-icon { width: 16px; height: 16px; }

@@ -2,7 +2,7 @@ import { observeImageTransparency } from "./image-transparency.js";
 import { mountReviewFeedback, feedbackIcon, reviewTime } from './review-feedback.js';
 import { prepareReviewFile, captureReviewFrame } from './review-file-transfer.js';
 import { installReviewPlayerControls } from './review-player-controls.js';
-import { installShortcutRouter, shortcutBindings, shortcutForEvent } from './keyboard-shortcuts.js';
+import { installShortcutRouter, shortcutBindings, shortcutForEvent, formatShortcut } from './keyboard-shortcuts.js';
 import { saveMediaBlob } from './media-store.js';
 import { sha256Blob } from './blob-digest.js';
 import { agentDownloadChunkBytes, bytesToBase64 } from './agent-protocol.js';
@@ -30,6 +30,12 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   let intent = 0, mediaIdentity = '', rangeStart = null, rangeEnd = null;
   for (const name of ['pointerdown', 'keydown', 'input', 'change']) document.addEventListener(name, event => { if (event.isTrusted) intent++; }, true);
   const video = () => temporary ? (temporaryDialog.open ? temporaryMedia.querySelector('video') : null) : drawer.querySelector('.detail-visual-stage video');
+  let loopPlayer = null, loopPlaying = false;
+  function setLoop(value) {
+    if (loopPlayer) loopPlayer.loop = false;
+    loop = value; loopPlayer = value ? video() : null; loopPlaying = false;
+    if (loopPlayer) loopPlayer.loop = value.startMs === 0 && value.endMs === loopPlayer.duration * 1000;
+  }
   function waitForMedia(player, eventName, ready) {
     if (ready()) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -50,7 +56,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   function readState() {
     const context = readContext();
     const identity = temporary?.id || `${context.viewedCaseId}:${context.viewedAssetId}`;
-    if (identity !== mediaIdentity) { mediaIdentity = identity; loop = null; rangeStart = null; rangeEnd = null; }
+    if (identity !== mediaIdentity) { mediaIdentity = identity; setLoop(null); rangeStart = null; rangeEnd = null; syncRangeControls(); }
     if (!context.viewedCaseId && review) { review = false; updateReviewButton(); }
     const selection = window.getSelection();
     const textSelected = selection?.toString() || '';
@@ -130,7 +136,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
           if (!gallery?.selectAsset) throw agentError('no_detail', '请先打开媒体详情');
           await gallery.selectAsset(requireValue('assetId'));
           if (readContext().viewedAssetId !== input.assetId) throw agentError('display_failed', '指定素材未显示');
-          loop = null; break;
+          setLoop(null); break;
         }
         case 'set_selection': await selectCases(requireValue('caseIds')); break;
         case 'set_review': await setReview(requireValue('enabled')); break;
@@ -172,9 +178,9 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
               if (requireValue('enabled')) {
                 const startMs = requireValue('startMs'), endMs = requireValue('endMs');
                 if (endMs <= startMs || !Number.isFinite(player.duration) || endMs > player.duration * 1000) throw agentError('invalid_range', '审片区间无效或时长未知');
-                rangeStart = startMs; rangeEnd = endMs; loop = { startMs, endMs }; player.currentTime = startMs / 1000;
+                rangeStart = startMs; rangeEnd = endMs; setLoop({ startMs, endMs }); player.currentTime = startMs / 1000;
                 await player.play(); assertIntent();
-              } else loop = null;
+              } else setLoop(null);
             }
           }
           if (input.action === 'play' && player.paused) throw agentError('playback_failed', '播放器未开始播放');
@@ -235,13 +241,23 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
     document.addEventListener(name, scheduleObserve, true);
   }
   document.addEventListener('timeupdate', event => {
-    if (event.target === video() && loop && event.target.currentTime * 1000 >= loop.endMs) event.target.currentTime = loop.startMs / 1000;
+    if (event.target === loopPlayer && loop && !loopPlayer.loop && !loopPlayer.paused && loopPlayer.currentTime * 1000 >= loop.endMs) loopPlayer.currentTime = loop.startMs / 1000;
   }, true);
-  function clearRange() { rangeStart = null; rangeEnd = null; loop = null; currentFeedback()?.useCurrentTime(); }
+  document.addEventListener('ended', event => {
+    if (event.target !== loopPlayer || !loop || loopPlayer.loop || !loopPlaying) return;
+    loopPlayer.currentTime = loop.startMs / 1000;
+    void loopPlayer.play().catch(error => showReviewFeedback(error.message, true));
+  }, true);
+  document.addEventListener('play', event => { if (event.target === loopPlayer) loopPlaying = true; }, true);
+  document.addEventListener('pause', event => { if (event.target === loopPlayer && !loopPlayer.ended) loopPlaying = false; }, true);
+  function clearRange() { rangeStart = null; rangeEnd = null; setLoop(null); currentFeedback()?.useCurrentTime(); }
   function syncRangeControls() {
     const text = rangeStart !== null && rangeEnd !== null ? `${reviewTime(rangeStart)} – ${reviewTime(rangeEnd)}` : '';
     video()?.reviewTransport?.update();
-    for (const button of document.querySelectorAll('[data-review-loop]')) button.setAttribute('aria-pressed', String(Boolean(loop)));
+    for (const button of document.querySelectorAll('[data-review-loop]')) {
+      button.setAttribute('aria-pressed', String(Boolean(loop)));
+      button.title = t(rangeStart !== null && rangeEnd !== null ? '循环入出点区间' : '循环整段视频');
+    }
     for (const button of document.querySelectorAll('[data-review-clear]')) button.disabled = rangeStart === null && rangeEnd === null;
     for (const bar of document.querySelectorAll('.review-range-controls')) {
       bar.title = text;
@@ -253,15 +269,15 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   function installRangeControls() {
     const player = video();
     if (!player) return;
-    installReviewPlayerControls(player, { range: () => ({ startMs: rangeStart, endMs: rangeEnd }), review: () => setReview(!review), t, failed: error => showReviewFeedback(error.message, true) });
+    installReviewPlayerControls(player, { range: () => ({ startMs: rangeStart, endMs: rangeEnd }), review: () => setReview(!review), current: () => player === video() && player.isConnected, t, failed: error => showReviewFeedback(error.message, true) });
     const gallery = player.closest('.detail-visual-gallery');
     if (gallery) gallery.reviewRange = () => ({ startMs: rangeStart, endMs: rangeEnd });
     const toolbar = temporary ? temporaryActions : player.closest('.detail-visual-item')?.querySelector('.detail-visual-caption');
     if (!toolbar || toolbar.querySelector('.review-range-controls')) return;
     const bar = document.createElement('div'); bar.className = 'review-range-controls';
     for (const [name, icon, action] of [
-      ['入点', 'mark-in', async () => { rangeStart = player.currentTime * 1000; loop = null; }],
-      ['出点', 'mark-out', async () => { rangeEnd = player.currentTime * 1000; loop = null; }],
+      ['入点', 'mark-in', async () => { rangeStart = player.currentTime * 1000; setLoop(null); }],
+      ['出点', 'mark-out', async () => { rangeEnd = player.currentTime * 1000; setLoop(null); }],
       ['清除入出点', 'eraser', async () => clearRange()],
       ['保存截图', 'camera', async () => {
         await preparePlayer(player); await waitForMedia(player, 'loadeddata', () => player.readyState >= 2); await waitForMedia(player, 'seeked', () => !player.seeking);
@@ -269,12 +285,14 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
         return temporaryDialog.open ? captureTemporaryFrame() : gallery.captureFrame();
       }],
       ['循环', 'repeat-2', async () => {
-        if (loop) { loop = null; return; }
-        if (rangeStart === null || rangeEnd === null || rangeEnd <= rangeStart) throw agentError('invalid_range', t('请先设置有效的入点和出点'));
+        if (loop) { setLoop(null); return; }
         await preparePlayer(player);
         if (player !== video()) throw agentError('review_changed', '设置循环期间媒体已切换');
-        loop = { startMs: rangeStart, endMs: rangeEnd }; player.currentTime = rangeStart / 1000;
-        await player.play();
+        const marked = rangeStart !== null && rangeEnd !== null;
+        const startMs = marked ? rangeStart : 0, endMs = marked ? rangeEnd : player.duration * 1000;
+        if (!Number.isFinite(endMs) || endMs <= startMs || endMs > player.duration * 1000) throw agentError('invalid_range', t('请先设置有效的入点和出点'));
+        setLoop({ startMs, endMs }); player.currentTime = startMs / 1000;
+        try { await player.play(); } catch (error) { if (loopPlayer === player) setLoop(null); throw error; }
       }]
     ]) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'icon-button';
@@ -334,9 +352,9 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   function currentFeedback() { return temporaryDialog.open ? temporaryFeedback : drawer.querySelector('.detail-visual-gallery')?.reviewFeedback; }
   bindings = shortcutBindings((await chromeApi.storage.local.get('uiPreferences')).uiPreferences?.shortcuts);
   function updateShortcutHints() {
-    for (const [selector, key, label] of [['[data-review-point=in]', 'markIn', '入点'], ['[data-review-point=out]', 'markOut', '出点'], ['[data-review-feedback]', 'addFeedback', '创作备注'], ['[data-review-capture]', 'captureFrame', '保存截图'], ['[data-review-clear]', 'clearRange', '清除入出点']]) {
+    for (const [selector, key, label] of [['[data-review-point=in]', 'markIn', '入点'], ['[data-review-point=out]', 'markOut', '出点'], ['[data-review-feedback]', 'addFeedback', '创作备注'], ['[data-review-capture]', 'captureFrame', '保存截图'], ['[data-review-clear]', 'clearRange', '清除入出点'], ['[data-review-frame=previous]', 'previousFrame', '前一帧'], ['[data-review-frame=next]', 'nextFrame', '后一帧']]) {
       for (const button of document.querySelectorAll(selector)) {
-        button.title = `${t(label)}${bindings[key] ? ` · ${bindings[key]}` : ''}`;
+        if (!button.disabled) button.title = `${t(label)}${bindings[key] ? ` · ${formatShortcut(bindings[key])}` : ''}`;
         bindings[key] ? button.setAttribute('aria-keyshortcuts', bindings[key]) : button.removeAttribute('aria-keyshortcuts');
       }
     }
@@ -369,6 +387,8 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
       nextMedia: () => activeToolbar()?.querySelector('[data-review-media=next]')?.click(),
       refreshFeedbackTime: () => currentFeedback()?.refreshTime(),
       playPause: () => video()?.reviewTransport?.play.click(),
+      previousFrame: event => stepFrame(event, 'previousFrame'),
+      nextFrame: event => stepFrame(event, 'nextFrame'),
       addFeedback: () => { void currentFeedback()?.open(); updateShortcutHints(); },
       saveFeedback: () => { void currentFeedback()?.save(); }, closeFeedback: () => currentFeedback()?.hide(),
       newlineFeedback: () => currentFeedback()?.newline(),
@@ -378,6 +398,15 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
     }
   });
   const activeToolbar = () => temporaryDialog.open ? temporaryActions : drawer.querySelector('.detail-visual-caption');
+  // A held arrow keeps at most one frame step in flight; repeats wait for it to land.
+  let steppingPlayer = null;
+  function stepFrame(event, key) {
+    const player = video(), button = player?.reviewTransport?.[key];
+    if (!button || event.repeat && steppingPlayer === player) return;
+    steppingPlayer = player;
+    player.addEventListener('seeked', () => { if (steppingPlayer === player) steppingPlayer = null; }, { once: true });
+    button.click();
+  }
   async function closeTemporary() {
     if (saving || frameSaving || temporaryFeedback?.getState().saving) return showReviewFeedback(t('正在保存…'));
     if (temporaryFeedback?.getState().dirty && !await confirmDiscard()) return;
@@ -505,7 +534,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   function openTemporary(blob, name, descriptor = {}, keepGroup = false) {
     temporaryFeedback?.dispose();
     temporaryMedia.querySelector('video')?.pause();
-    const oldMedia = temporaryMedia.querySelector('video,img'); if (oldMedia) URL.revokeObjectURL(oldMedia.src);
+    const oldMedia = temporaryMedia.querySelector('video,img'); if (oldMedia) { oldMedia.reviewTransport?.destroy(); URL.revokeObjectURL(oldMedia.src); }
     for (const image of temporaryDialog.querySelectorAll('.temporary-review-frames img')) URL.revokeObjectURL(image.src);
     temporaryActions.querySelector('.review-range-controls')?.remove(); temporaryActions.querySelector('[role=status]')?.remove();
     setUiIcon(temporarySave, 'save'); temporarySave.disabled = false; temporarySave.title = t('保存入库'); temporarySave.setAttribute('aria-label', t('保存入库'));
@@ -514,7 +543,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
     temporary = temporaryGroup.items[temporaryGroup.index];
     Object.assign(temporary, { id: crypto.randomUUID(), name, byteSize: blob.size, mimeType: blob.type });
     const player = document.createElement(descriptor.kind === 'video' || blob.type.startsWith('video/') ? 'video' : 'img');
-    if (player instanceof HTMLVideoElement) player.controls = false;
+    if (player instanceof HTMLVideoElement) { player.controls = false; player.getPlaybackBlob = () => blob; }
     else observeImageTransparency(player, transparent => player.classList.toggle('has-alpha-channel', transparent));
     player.src = URL.createObjectURL(blob); temporaryMedia.replaceChildren(player);
     const previousPosition = temporary.positionMs;
@@ -525,7 +554,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
     installTemporaryNavigation();
     temporaryDialog.querySelector('.temporary-review-frames')?.remove(); temporaryActions.querySelector('[data-review-frames]')?.remove();
     void renderTemporaryFrames();
-    if (!temporaryDialog.open) temporaryDialog.showModal(); loop = null; session.observe(source);
+    if (!temporaryDialog.open) temporaryDialog.showModal(); setLoop(null); session.observe(source);
   }
   async function switchTemporary(index, assertCurrent) {
     if (switchingTemporary || saving || frameSaving || temporaryFeedback?.getState().saving) return;
@@ -567,7 +596,8 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
     temporaryMedia.querySelector('video')?.pause();
     const oldMedia = temporaryMedia.querySelector('video,img'); if (oldMedia) URL.revokeObjectURL(oldMedia.src);
     for (const image of temporaryDialog.querySelectorAll('.temporary-review-frames img')) URL.revokeObjectURL(image.src);
-    temporaryMedia.replaceChildren(); temporaryDialog.querySelector('.temporary-review-frames')?.remove(); temporary = null; temporaryGroup = null; temporaryBlob = null; temporaryDigest = null; temporaryFeedback = null; document.querySelector('#temporary-review-notes').replaceChildren(); loop = null; session.observe();
+    temporaryMedia.querySelector('video')?.reviewTransport?.destroy();
+    temporaryMedia.replaceChildren(); temporaryDialog.querySelector('.temporary-review-frames')?.remove(); temporary = null; temporaryGroup = null; temporaryBlob = null; temporaryDigest = null; temporaryFeedback = null; document.querySelector('#temporary-review-notes').replaceChildren(); setLoop(null); session.observe();
   });
   return { observe: scheduleObserve };
 }

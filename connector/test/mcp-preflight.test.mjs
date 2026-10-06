@@ -60,6 +60,20 @@ test('structured query and field discovery refuse an older backend before any ig
   } finally { await server.close(); }
 });
 
+test('missing-prompt expansion cannot silently become an unfiltered search on an older extension', async () => {
+  const calls = [];
+  const server = createServer(async operation => {
+    calls.push(operation);
+    assert.equal(operation, 'status');
+    return { caseQueryVersion: 1, searchFilters: ['query', 'mediaKind', 'similarTo'] };
+  });
+  try {
+    const result = await server._registeredTools.promptdirector_search_cases.handler({ mediaKind: 'video', hasPrompt: false });
+    assert.equal(JSON.parse(result.content[0].text).code, 'unsupported_search_filters');
+    assert.deepEqual(calls, ['status']);
+  } finally { await server.close(); }
+});
+
 test('actual declared text parsing budget is checked across package references before uploading any bytes', async t => {
   const root = await mkdtemp(join(tmpdir(), 'pd-text-preflight-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -115,4 +129,37 @@ test('stale temporary preview rejects before reading or uploading a local file; 
     const result=await server._registeredTools.promptdirector_control_workspace.handler({tabId:1,requestId:'preview',expectedRevision:'old',action:'open_temporary',file:{path:'/not-read/sample.webm'}});
     assert(result.isError);assert.equal(JSON.parse(result.content[0].text).code,'workspace_changed');assert.deepEqual(calls,['read_live_workspace']);
   } finally {await server.close();}
+});
+
+test('one extension session checks capabilities once and re-checks after an upgrade or reload before sending work', async () => {
+  const calls = [];
+  let status = { caseQueryVersion: 1, searchFilters: ['query'] };
+  let hostSession = 'host-a';
+  const server = createServer(async (operation, _input, options = {}) => {
+    if (options.expectedHostSession && options.expectedHostSession !== hostSession) {
+      calls.push(`refused:${operation}`);
+      throw Object.assign(new Error('reloaded'), { code: 'connector_session_changed' });
+    }
+    options.onHostSession?.(hostSession);
+    calls.push(operation);
+    return operation === 'status' ? status : { items: [] };
+  });
+  try {
+    const describe = server._registeredTools.promptdirector_describe_case_query.handler;
+    const search = server._registeredTools.promptdirector_search_cases.handler;
+    await describe({}); await describe({});
+    assert.deepEqual(calls, ['status', 'describe_case_query', 'describe_case_query'], 'a supported capability is not re-queried');
+
+    status = { ...status, searchFilters: ['query', 'authorHandle'] };
+    calls.length = 0;
+    assert(!(await search({ query: '', authorHandle: 'a' })).isError, 'a newly needed filter is found by re-reading status once');
+    assert.deepEqual(calls, ['status', 'search']);
+
+    hostSession = 'host-b';
+    status = { caseQueryVersion: 0, searchFilters: ['query'] };
+    calls.length = 0;
+    const downgraded = await search({ query: '', authorHandle: 'a' });
+    assert.equal(JSON.parse(downgraded.content[0].text).code, 'unsupported_search_filters');
+    assert.deepEqual(calls, ['refused:search', 'status'], 'a reloaded older extension never receives a search it would silently ignore');
+  } finally { await server.close(); }
 });

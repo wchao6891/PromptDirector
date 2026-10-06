@@ -10,7 +10,7 @@ const iconNames = [
   "download", "ellipsis", "external-link", "file-text", "audio-lines", "file-box", "folder", "image", "library", "clapperboard",
   "list-checks", "maximize-2", "minimize-2", "menu", "moon", "panel-left", "panel-left-close", "grip-vertical", "layers", "paperclip", "pencil", "play", "plus",
   "refresh-cw", "repeat-2", "mark-in", "mark-out", "camera", "brackets", "eraser", "images", "message-square", "pause", "volume-2", "volume-x", "keyboard", "save", "search", "send", "settings", "sliders-horizontal", "sparkles", "square-check-big",
-  "square", "sun", "tag", "trash-2", "undo-2", "upload", "video", "wand-sparkles", "x"
+  "square", "step-back", "step-forward", "sun", "tag", "trash-2", "undo-2", "upload", "video", "wand-sparkles", "x"
 ];
 
 const iconNodes = JSON.parse(await readFile(sourcePath, "utf8"));

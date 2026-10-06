@@ -225,6 +225,7 @@ export function normalizeDerivedMedia(value = {}) {
     pageCount: Math.max(0, Math.floor(Number(value.pageCount) || 0)),
     searchText: String(value.searchText ?? "").trim(),
     ...(thumbnail ? { thumbnail } : {}),
+    ...(typeof value.animated === "boolean" ? { animated: value.animated } : {}),
     ...(remoteImages.length ? { remoteImages } : {})
   };
 }

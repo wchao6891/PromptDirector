@@ -51,7 +51,11 @@ export function createVirtualGallery(container, options) {
         record.height = record.card.getBoundingClientRect().height;
       }
       if (geometry.list && Number.isFinite(geometry.rowHeight)) record.height = geometry.rowHeight;
-      record.column = heights.indexOf(Math.min(...heights));
+      // Image readiness changes heights, not the user's existing columns.
+      // Reassign only when a viewport/zoom change actually changes the grid.
+      if (!previous || previous.count !== geometry.count || previous.list !== geometry.list || record.column == null) {
+        record.column = heights.indexOf(Math.min(...heights));
+      }
       record.top = heights[record.column];
       heights[record.column] += record.height + geometry.gap;
       columns[record.column].push(record);

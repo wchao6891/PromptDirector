@@ -2,6 +2,7 @@ import { createCaseQueryContext, normalizeQueryDate } from './case-query-fields.
 import { createSimilarityIndex, rankSimilarEntries } from './local-similarity.js';
 import { entryMediaAssets, caseCoverAsset } from './media.js';
 import { CASE_QUERY_PROPERTIES } from './case-query-specs.js';
+import { caseQueryPrompt } from './case-query-prompts.js';
 import { serializeSearchValue } from './search-index.js';
 import { operationBudget, resourceBudgetError } from './resource-policy.js';
 
@@ -25,11 +26,20 @@ export function prepareCaseQuery(entries, input, options = {}) {
   let similarityCoverage;
   let similarityOrder;
   if (input.similarTo) {
-    const { caseId, method } = input.similarTo;
+    const { caseId, method = 'prompt' } = input.similarTo;
     const reference = entries.find(entry => entry.id === caseId);
     if (!reference) fail('参考案例不存在，请重新选择已知caseId。');
+    // Only the Agent's prompt query scopes mixed cases to the requested media.
+    // The library's exploratory local recommendation engine remains unchanged.
+    const promptMode = method === 'prompt';
+    const prompts = new Map();
+    const promptData = entry => {
+      if (!prompts.has(entry.id)) prompts.set(entry.id, caseQueryPrompt(entry, input.mediaKind));
+      return prompts.get(entry.id);
+    };
     const index = createSimilarityIndex(entries, options.facetCatalog, {
-      mediaForEntry: entryMediaAssets,
+      mediaForEntry: entry => entryMediaAssets(entry).filter(asset => !promptMode || !input.mediaKind || asset.kind === input.mediaKind),
+      ...(promptMode ? { promptForEntry: entry => promptData(entry).text } : {}),
       visualForEntry: entry => caseCoverAsset(entry)?.id,
       colorsForEntry: entry => {
         const visual = caseCoverAsset(entry);
@@ -41,10 +51,13 @@ export function prepareCaseQuery(entries, input, options = {}) {
       prompt: item.promptAvailable === false ? null : item.promptSimilarity,
       palette: item.paletteAvailable === false ? null : item.paletteSimilarity,
       tags: item.tagsAvailable === false ? null : item.tagSimilarity,
-      method, fallback: item.fallback, reason: item.reason, sameContentType: item.sameContentType });
+      method, fallback: item.fallback, reason: promptMode ? '提示词文字重合；需按任务判断内容差异，非画面相似度' : item.reason, sameContentType: item.sameContentType,
+      ...(promptMode ? { promptEvidence: promptData(item.entry).evidence } : {}) });
     const domain = index.profiles.get(caseId)?.domain;
     const comparable = (index.domains.get(domain) ?? []).filter(profile => profile.entry.id !== caseId);
-    similarityCoverage = { referenceCaseId: caseId, method, scope: '当前库同媒体域；不包含参考自身，未做视觉识别',
+    similarityCoverage = { referenceCaseId: caseId, method,
+      scope: promptMode && input.mediaKind ? `当前库含${input.mediaKind}的案例，仅比较该类素材提示词；不包含参考自身，未做视觉识别` : '当前库同媒体域；不包含参考自身，未做视觉识别',
+      ...(promptMode ? { referencePrompt: promptData(reference).evidence } : {}),
       sameDomainCases: comparable.length, comparedCases: ranked.length, unknownExcluded: comparable.length - ranked.length,
       differentDomainCases: entries.length - comparable.length - 1,
       knownPromptPairs: comparable.filter(profile => index.profiles.get(caseId).prompt.size && profile.prompt.size).length,

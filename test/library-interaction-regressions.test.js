@@ -53,7 +53,9 @@ test("library refresh waits for detail rebuilding before returning control", () 
     library.indexOf("async function refreshLibrary"),
     library.indexOf("async function loadImageDerivedMetadata")
   );
-  assert.match(refreshLibrary, /if \(currentDetailId[\s\S]*await renderDetail\(\)/);
+  assert.match(refreshLibrary, /await renderOpenLibraryPanels\(\)/);
+  const panels = library.slice(library.indexOf("async function renderOpenLibraryPanels"), library.indexOf("async function applyLibraryEntriesChange"));
+  assert.match(panels, /if \(detailChanged && currentDetailId[\s\S]*await renderDetail\(\)/);
 });
 
 test("vision batch dialog only revives running or paused jobs and otherwise shows the fresh preview", () => {

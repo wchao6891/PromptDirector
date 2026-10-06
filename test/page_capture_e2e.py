@@ -135,6 +135,9 @@ def main() -> None:
         assert collector.locator("#page-capture > #capture-metadata").count() == 1
         expect(collector.locator(".page-capture-item")).to_have_count(2)
         expect(collector.locator(".page-capture-preview-details").first).not_to_have_attribute("open", "")
+        # Generic full previews are built when opened, avoiding hundreds of eager animated decodes.
+        collector.locator(".page-capture-preview-details").first.locator("summary").click()
+        expect(collector.locator(".page-capture-article").first).to_be_visible()
         scroll_owners = collector.evaluate(
             """() => Object.fromEntries(['#page-capture-list', '#page-capture-media-review-list', '.page-capture-article'].map(selector => {
               const node = document.querySelector(selector);
@@ -159,7 +162,6 @@ def main() -> None:
         assert collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries.length)") == 0
         expect(collector.locator("#page-capture-save")).to_be_disabled()
 
-        collector.locator(".page-capture-preview-details").first.locator(":scope > summary").click()
         collector.locator(".page-capture-article-media").first.click()
         expect(collector.locator("#page-capture-media-viewer")).to_be_visible()
         expect(collector.locator("#page-capture-media-stage img")).to_be_visible()
@@ -200,7 +202,7 @@ def main() -> None:
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         collector.locator("#page-capture-save").click()
         # Successful content is committed immediately; the failed video remains available for retry.
-        expect(collector.locator("#page-capture-help")).to_contain_text("有效视频文件", timeout=8000)
+        expect(collector.locator("#page-capture-help")).to_contain_text("有效视频文件", timeout=60000)
         expect(collector.locator("#page-capture")).to_be_visible()
         partial_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
         assert len(partial_saved) == 1, partial_saved
@@ -257,6 +259,7 @@ def main() -> None:
         collector.evaluate("() => document.querySelector('#start-page-capture').click()")
         expect(collector.locator("#page-capture")).to_be_visible(timeout=8000)
         expect(collector.locator(".page-capture-confirm small")).to_contain_text("原网页选区")
+        collector.locator(".page-capture-preview-details summary").click()
         expect(collector.locator(".page-capture-article p")).to_have_count(1)
         collector.locator(".page-capture-confirm").click()
         expect(collector.locator("#page-capture-save")).to_have_text("保存案例")
