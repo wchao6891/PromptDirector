@@ -41,7 +41,7 @@ test('the current and older versions still write normally, including the upgrade
   const { data, storage } = memoryStorage({ schemaVersion: SCHEMA_VERSION - 1, entries: [] });
   await storage.set({ schemaVersion: SCHEMA_VERSION, entries: [{ id: 'a' }] });
   await storage.update(['entries'], stored => ({ entries: [...stored.entries, { id: 'b' }] }));
-  assert.deepEqual(data.entries.map(entry => entry.id), ['a', 'b']);
+  assert.deepEqual((await storage.get('entries')).entries.map(entry => entry.id), ['a', 'b']);
 });
 
 test('a migration that would drop a case is detected; a case moved to the recycle bin is not a loss', () => {

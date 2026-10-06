@@ -17,6 +17,16 @@
       "activeEntryIds": ["fixture:schema-28:active"],
       "trashedEntryIds": ["fixture:schema-28:trash"],
       "projectIds": ["fixture:schema-28:project"]
+    },
+    {
+      "schemaVersion": 29,
+      "sourceRelease": null,
+      "provenanceType": "schema-28-fixture-upgraded-and-written-by-the-per-case-storage-layer",
+      "originalUserArchive": false,
+      "fixture": "storage/schema-29.json",
+      "activeEntryIds": ["fixture:schema-29:active"],
+      "trashedEntryIds": ["fixture:schema-29:trash"],
+      "projectIds": ["fixture:schema-29:project"]
     }
   ]
 }

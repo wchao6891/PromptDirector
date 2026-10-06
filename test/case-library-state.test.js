@@ -63,7 +63,7 @@ test('an unchanged case library is reused without re-reading records; any page w
   const backend = {
     async get(keys) {
       const list = typeof keys === 'string' ? [keys] : keys;
-      if (list.includes('entries') && list.includes('caseLibraryRevision')) recordReads++;
+      if (list.includes('entries') && list.includes('taxonomy')) recordReads++;
       return structuredClone(Object.fromEntries(list.filter(key => key in data).map(key => [key, data[key]])));
     },
     async set(values) { Object.assign(data, structuredClone(values)); },
@@ -79,7 +79,7 @@ test('an unchanged case library is reused without re-reading records; any page w
   assert.equal(recordReads, 1);
   assert.throws(() => { first.entries[0].title = 'mutated'; }, TypeError, 'shared snapshots cannot be changed by one caller');
 
-  await page.set({ entries: [{ ...data.entries[0], title: 'page edit' }] });
+  await page.set({ entries: [{ ...first.entries[0], title: 'page edit' }] });
   assert.equal((await read()).entries[0].title, 'page edit');
   await page.update(['entries'], stored => ({ entries: [...stored.entries, { ...stored.entries[0], id: 'second' }] }));
   assert.equal((await read()).entries.length, 2);

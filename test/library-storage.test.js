@@ -41,7 +41,7 @@ test('browser metadata reads do not pass a directory option in the Chrome callba
   const storage = createLibraryStorage({ lock: fn => fn(), backend: {
     get(...args) {
       assert.equal(args.length, 1, 'Chrome rejects an explicit second argument that is not a callback');
-      assert.deepEqual(args[0], keys);
+      assert.deepEqual(args[0].slice(0, keys.length), keys);
       return Promise.resolve({ entries: [{ id: 'kept', text: '完整正文' }] });
     },
     set() {}, remove() {}

@@ -1,0 +1,1471 @@
+{
+  "schemaVersion": 29,
+  "taxonomy": {
+    "version": 29,
+    "revision": 1,
+    "nodes": [
+      {
+        "id": "content:tutorial",
+        "name": "攻略教程",
+        "role": "tutorial",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 0,
+        "aliases": []
+      },
+      {
+        "id": "content:prompt:image",
+        "name": "图片提示词",
+        "role": "prompt_image",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 1,
+        "aliases": []
+      },
+      {
+        "id": "content:prompt:video",
+        "name": "视频提示词",
+        "role": "prompt_video",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 2,
+        "aliases": []
+      },
+      {
+        "id": "content:image-case",
+        "name": "图片案例",
+        "role": "image_case",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 3,
+        "aliases": []
+      },
+      {
+        "id": "content:video-case",
+        "name": "视频案例",
+        "role": "video_case",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 4,
+        "aliases": []
+      },
+      {
+        "id": "content:reference",
+        "name": "资料文档",
+        "role": "reference",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 5,
+        "aliases": []
+      },
+      {
+        "id": "content:audio",
+        "name": "声音",
+        "role": "audio",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 6,
+        "aliases": []
+      },
+      {
+        "id": "content:source-file",
+        "name": "源文件",
+        "role": "source_file",
+        "axis": "content",
+        "parentId": null,
+        "system": true,
+        "status": "active",
+        "visibility": "library",
+        "customized": false,
+        "order": 7,
+        "aliases": []
+      }
+    ]
+  },
+  "facetCatalog": {
+    "version": 3,
+    "taxonomyVersion": 1,
+    "revision": 1,
+    "facets": [
+      {
+        "id": "subject",
+        "name": "主体与角色",
+        "names": {
+          "zh-CN": "主体与角色",
+          "en": "Subjects & characters"
+        },
+        "color": "#8b5d47",
+        "order": 0,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "scene",
+        "name": "场景与环境",
+        "names": {
+          "zh-CN": "场景与环境",
+          "en": "Scenes & environments"
+        },
+        "color": "#497266",
+        "order": 1,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "action",
+        "name": "动作与物理",
+        "names": {
+          "zh-CN": "动作与物理",
+          "en": "Action & physics"
+        },
+        "color": "#a04d46",
+        "order": 2,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "style",
+        "name": "视觉风格",
+        "names": {
+          "zh-CN": "视觉风格",
+          "en": "Visual style"
+        },
+        "color": "#725b9a",
+        "order": 3,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "camera",
+        "name": "镜头与构图",
+        "names": {
+          "zh-CN": "镜头与构图",
+          "en": "Camera & composition"
+        },
+        "color": "#426b8a",
+        "order": 4,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "light",
+        "name": "光线与色彩",
+        "names": {
+          "zh-CN": "光线与色彩",
+          "en": "Light & color"
+        },
+        "color": "#a2772f",
+        "order": 5,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "mood",
+        "name": "情绪与氛围",
+        "names": {
+          "zh-CN": "情绪与氛围",
+          "en": "Emotion & atmosphere"
+        },
+        "color": "#8b536f",
+        "order": 6,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "sound",
+        "name": "声音",
+        "names": {
+          "zh-CN": "声音",
+          "en": "Sound"
+        },
+        "color": "#4e7180",
+        "order": 7,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "output",
+        "name": "输出规格",
+        "names": {
+          "zh-CN": "输出规格",
+          "en": "Output specifications"
+        },
+        "color": "#66705a",
+        "order": 8,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      },
+      {
+        "id": "workflow",
+        "name": "方法与工作流",
+        "names": {
+          "zh-CN": "方法与工作流",
+          "en": "Methods & workflow"
+        },
+        "color": "#59616f",
+        "order": 9,
+        "aliases": [],
+        "status": "active",
+        "kind": "facet",
+        "origin": "system",
+        "fixed": true
+      }
+    ],
+    "nodes": [
+      {
+        "id": "subject.character",
+        "name": "人物与角色类型",
+        "names": {
+          "zh-CN": "人物与角色类型",
+          "en": "People & character types"
+        },
+        "facetId": "subject",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "subject.appearance",
+        "name": "外观特征",
+        "names": {
+          "zh-CN": "外观特征",
+          "en": "Appearance"
+        },
+        "facetId": "subject",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "subject.costume",
+        "name": "服装造型",
+        "names": {
+          "zh-CN": "服装造型",
+          "en": "Costume & styling"
+        },
+        "facetId": "subject",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "subject.object",
+        "name": "生物与物体",
+        "names": {
+          "zh-CN": "生物与物体",
+          "en": "Creatures & objects"
+        },
+        "facetId": "subject",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "subject.consistency",
+        "name": "一致性",
+        "names": {
+          "zh-CN": "一致性",
+          "en": "Consistency"
+        },
+        "facetId": "subject",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "subject.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "subject",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "scene.place",
+        "name": "场所类型",
+        "names": {
+          "zh-CN": "场所类型",
+          "en": "Place types"
+        },
+        "facetId": "scene",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "scene.space",
+        "name": "空间属性",
+        "names": {
+          "zh-CN": "空间属性",
+          "en": "Spatial properties"
+        },
+        "facetId": "scene",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "scene.era",
+        "name": "时代与地域",
+        "names": {
+          "zh-CN": "时代与地域",
+          "en": "Era & region"
+        },
+        "facetId": "scene",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "scene.weather",
+        "name": "时间与天气",
+        "names": {
+          "zh-CN": "时间与天气",
+          "en": "Time & weather"
+        },
+        "facetId": "scene",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "scene.world",
+        "name": "世界设定",
+        "names": {
+          "zh-CN": "世界设定",
+          "en": "Worldbuilding"
+        },
+        "facetId": "scene",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "scene.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "scene",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "action.person",
+        "name": "人物动作",
+        "names": {
+          "zh-CN": "人物动作",
+          "en": "Character actions"
+        },
+        "facetId": "action",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "action.interaction",
+        "name": "交互关系",
+        "names": {
+          "zh-CN": "交互关系",
+          "en": "Interactions"
+        },
+        "facetId": "action",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "action.combat",
+        "name": "战斗与运动",
+        "names": {
+          "zh-CN": "战斗与运动",
+          "en": "Combat & movement"
+        },
+        "facetId": "action",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "action.change",
+        "name": "状态变化",
+        "names": {
+          "zh-CN": "状态变化",
+          "en": "State changes"
+        },
+        "facetId": "action",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "action.physics",
+        "name": "物理效果",
+        "names": {
+          "zh-CN": "物理效果",
+          "en": "Physical effects"
+        },
+        "facetId": "action",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "action.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "action",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "style.medium",
+        "name": "媒介形式",
+        "names": {
+          "zh-CN": "媒介形式",
+          "en": "Medium"
+        },
+        "facetId": "style",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "style.render",
+        "name": "渲染方式",
+        "names": {
+          "zh-CN": "渲染方式",
+          "en": "Rendering"
+        },
+        "facetId": "style",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "style.art",
+        "name": "艺术流派",
+        "names": {
+          "zh-CN": "艺术流派",
+          "en": "Art movements"
+        },
+        "facetId": "style",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "style.era",
+        "name": "年代美学",
+        "names": {
+          "zh-CN": "年代美学",
+          "en": "Period aesthetics"
+        },
+        "facetId": "style",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "style.reference",
+        "name": "作者与作品参考",
+        "names": {
+          "zh-CN": "作者与作品参考",
+          "en": "Artist & work references"
+        },
+        "facetId": "style",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "style.texture",
+        "name": "材质与画面质感",
+        "names": {
+          "zh-CN": "材质与画面质感",
+          "en": "Material & image texture"
+        },
+        "facetId": "style",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "style.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "style",
+        "parentId": null,
+        "order": 6,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "camera.shot",
+        "name": "景别",
+        "names": {
+          "zh-CN": "景别",
+          "en": "Shot size"
+        },
+        "facetId": "camera",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "camera.angle",
+        "name": "机位与视角",
+        "names": {
+          "zh-CN": "机位与视角",
+          "en": "Camera angle & viewpoint"
+        },
+        "facetId": "camera",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "camera.lens",
+        "name": "镜头与焦段",
+        "names": {
+          "zh-CN": "镜头与焦段",
+          "en": "Lens & focal length"
+        },
+        "facetId": "camera",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "camera.motion",
+        "name": "运镜方式",
+        "names": {
+          "zh-CN": "运镜方式",
+          "en": "Camera movement"
+        },
+        "facetId": "camera",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "camera.composition",
+        "name": "构图",
+        "names": {
+          "zh-CN": "构图",
+          "en": "Composition"
+        },
+        "facetId": "camera",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "camera.focus",
+        "name": "景深与焦点",
+        "names": {
+          "zh-CN": "景深与焦点",
+          "en": "Depth of field & focus"
+        },
+        "facetId": "camera",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "camera.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "camera",
+        "parentId": null,
+        "order": 6,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "light.source",
+        "name": "光源",
+        "names": {
+          "zh-CN": "光源",
+          "en": "Light sources"
+        },
+        "facetId": "light",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "light.direction",
+        "name": "光线方向",
+        "names": {
+          "zh-CN": "光线方向",
+          "en": "Light direction"
+        },
+        "facetId": "light",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "light.quality",
+        "name": "光质与明暗",
+        "names": {
+          "zh-CN": "光质与明暗",
+          "en": "Light quality & contrast"
+        },
+        "facetId": "light",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "light.palette",
+        "name": "色彩方案",
+        "names": {
+          "zh-CN": "色彩方案",
+          "en": "Color schemes"
+        },
+        "facetId": "light",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "light.tone",
+        "name": "色调与饱和度",
+        "names": {
+          "zh-CN": "色调与饱和度",
+          "en": "Tone & saturation"
+        },
+        "facetId": "light",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "light.grade",
+        "name": "调色效果",
+        "names": {
+          "zh-CN": "调色效果",
+          "en": "Color grading"
+        },
+        "facetId": "light",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "light.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "light",
+        "parentId": null,
+        "order": 6,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "mood.emotion",
+        "name": "情绪",
+        "names": {
+          "zh-CN": "情绪",
+          "en": "Emotion"
+        },
+        "facetId": "mood",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "mood.atmosphere",
+        "name": "氛围",
+        "names": {
+          "zh-CN": "氛围",
+          "en": "Atmosphere"
+        },
+        "facetId": "mood",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "mood.pacing",
+        "name": "叙事节奏",
+        "names": {
+          "zh-CN": "叙事节奏",
+          "en": "Narrative pacing"
+        },
+        "facetId": "mood",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "mood.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "mood",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "sound.music",
+        "name": "音乐",
+        "names": {
+          "zh-CN": "音乐",
+          "en": "Music"
+        },
+        "facetId": "sound",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "sound.ambient",
+        "name": "环境音",
+        "names": {
+          "zh-CN": "环境音",
+          "en": "Ambient sound"
+        },
+        "facetId": "sound",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "sound.effect",
+        "name": "音效",
+        "names": {
+          "zh-CN": "音效",
+          "en": "Sound effects"
+        },
+        "facetId": "sound",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "sound.voice",
+        "name": "对白与人声",
+        "names": {
+          "zh-CN": "对白与人声",
+          "en": "Dialogue & voice"
+        },
+        "facetId": "sound",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "sound.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "sound",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "output.aspect",
+        "name": "画幅比例",
+        "names": {
+          "zh-CN": "画幅比例",
+          "en": "Aspect ratio"
+        },
+        "facetId": "output",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "output.duration",
+        "name": "时长",
+        "names": {
+          "zh-CN": "时长",
+          "en": "Duration"
+        },
+        "facetId": "output",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "output.fps",
+        "name": "帧率",
+        "names": {
+          "zh-CN": "帧率",
+          "en": "Frame rate"
+        },
+        "facetId": "output",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "output.resolution",
+        "name": "分辨率",
+        "names": {
+          "zh-CN": "分辨率",
+          "en": "Resolution"
+        },
+        "facetId": "output",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "output.structure",
+        "name": "镜头与段落结构",
+        "names": {
+          "zh-CN": "镜头与段落结构",
+          "en": "Shot & segment structure"
+        },
+        "facetId": "output",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "output.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "output",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      },
+      {
+        "id": "workflow.model",
+        "name": "模型与工具",
+        "names": {
+          "zh-CN": "模型与工具",
+          "en": "Models & tools"
+        },
+        "facetId": "workflow",
+        "parentId": null,
+        "order": 0,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "workflow.prompt",
+        "name": "提示词结构",
+        "names": {
+          "zh-CN": "提示词结构",
+          "en": "Prompt structure"
+        },
+        "facetId": "workflow",
+        "parentId": null,
+        "order": 1,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "workflow.storyboard",
+        "name": "故事板",
+        "names": {
+          "zh-CN": "故事板",
+          "en": "Storyboard"
+        },
+        "facetId": "workflow",
+        "parentId": null,
+        "order": 2,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "workflow.consistency",
+        "name": "一致性方法",
+        "names": {
+          "zh-CN": "一致性方法",
+          "en": "Consistency methods"
+        },
+        "facetId": "workflow",
+        "parentId": null,
+        "order": 3,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "workflow.post",
+        "name": "后期处理",
+        "names": {
+          "zh-CN": "后期处理",
+          "en": "Post-production"
+        },
+        "facetId": "workflow",
+        "parentId": null,
+        "order": 4,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": false
+      },
+      {
+        "id": "workflow.other",
+        "name": "其他",
+        "names": {
+          "zh-CN": "其他",
+          "en": "Other"
+        },
+        "facetId": "workflow",
+        "parentId": null,
+        "order": 5,
+        "aliases": [],
+        "patterns": [],
+        "status": "active",
+        "kind": "group",
+        "origin": "system",
+        "fixed": true,
+        "protected": true
+      }
+    ]
+  },
+  "classificationRules": [],
+  "organizerState": {
+    "version": 7,
+    "collections": [
+      {
+        "id": "fixture:schema-29:project",
+        "name": "Schema 29 project",
+        "parentId": null,
+        "order": 0,
+        "entryIds": [
+          "fixture:schema-29:active"
+        ],
+        "visibility": "library"
+      }
+    ]
+  },
+  "compoundCases": [],
+  "trashState": {
+    "version": 1,
+    "items": [
+      {
+        "id": "trash:entry:fixture-schema-29",
+        "kind": "entry",
+        "targetId": "fixture:schema-29:trash",
+        "deletedAt": "2026-08-26T00:00:00.000Z",
+        "snapshot": {
+          "id": "fixture:schema-29:trash",
+          "schemaVersion": 28,
+          "title": "Schema 29 trashed case",
+          "text": "trashed prompt",
+          "savedAt": "2026-08-25T00:00:00.000Z",
+          "classification": {
+            "pathIds": [
+              "content:prompt:image"
+            ],
+            "status": "confirmed",
+            "source": "manual"
+          },
+          "facetAssignments": [],
+          "analysisCandidates": [],
+          "analysisBreakdown": [],
+          "customLabels": [
+            "user-trash-tag"
+          ],
+          "mediaAssets": []
+        },
+        "relationships": {
+          "collections": []
+        }
+      }
+    ]
+  },
+  "caseLibraryRevision": "fixture-revision",
+  "libraryViewSummary": {
+    "version": 1,
+    "trashCount": 1,
+    "trashInitialized": true
+  },
+  "caseIndex": {
+    "layout": 1,
+    "ids": [
+      "fixture:schema-29:active"
+    ]
+  },
+  "case:fixture:schema-29:active": {
+    "id": "fixture:schema-29:active",
+    "schemaVersion": 29,
+    "title": "Schema 29 active case",
+    "text": "active prompt",
+    "savedAt": "2026-08-25T00:00:00.000Z",
+    "classification": {
+      "pathIds": [
+        "content:prompt:image"
+      ],
+      "status": "confirmed",
+      "source": "manual",
+      "reason": "保留原有主分类",
+      "classifierVersion": 7
+    },
+    "facetAssignments": [],
+    "analysisCandidates": [],
+    "analysisBreakdown": [],
+    "customLabels": [
+      "user-active-tag"
+    ],
+    "mediaAssets": [],
+    "rejectedCandidateKeys": [],
+    "negativeTerms": [],
+    "metadataLabels": [],
+    "analysisMeta": null,
+    "primaryMediaId": "",
+    "timeNotes": [],
+    "mediaPrompts": [],
+    "visualSetAnalyses": [],
+    "videoAnalyses": []
+  },
+  "legacyEntries": [
+    {
+      "id": "fixture:schema-29:active",
+      "schemaVersion": 28,
+      "title": "Schema 29 active case",
+      "text": "active prompt",
+      "savedAt": "2026-08-25T00:00:00.000Z",
+      "classification": {
+        "pathIds": [
+          "content:prompt:image"
+        ],
+        "status": "confirmed",
+        "source": "manual"
+      },
+      "facetAssignments": [],
+      "analysisCandidates": [],
+      "analysisBreakdown": [],
+      "customLabels": [
+        "user-active-tag"
+      ],
+      "mediaAssets": []
+    }
+  ]
+}
