@@ -1112,7 +1112,7 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .is-article-detail .detail-header-section > .detail-meta { grid-column: 1; }
 .is-article-detail .detail-header-section > .palette { grid-column: 1 / -1; }
 .article-document-reader pre { overflow: auto; border-radius: 8px; padding: 12px; background: var(--raised); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.article-document-media { display: grid; gap: 7px; margin: 0; }
+.article-document-media { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; margin: 0; } /* an unloaded image with its recorded size must not widen the reading column */
 .article-document-image { display: block; max-width: 100%; max-height: 78dvh; margin: 0 auto; border-radius: 8px; object-fit: contain; cursor: zoom-in; }
 .article-document-media figcaption { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .article-document-video .detail-video-wrap, .article-document-video .detail-video { width: 100%; }

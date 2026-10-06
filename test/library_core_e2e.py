@@ -65,12 +65,19 @@ def main() -> None:
         library.locator(".case-card").click()
         expect(library.locator("#detail-drawer")).to_have_class("detail-drawer open")
         expect(library.locator("#detail-content")).to_contain_text("低饱和庭院")
-        expect(library.locator(".metadata-row")).to_have_count(4)
-        expect(library.locator(".metadata-list")).to_contain_text("来源")
-        expect(library.locator(".metadata-list")).to_contain_text("即梦灵感")
-        expect(library.locator(".metadata-list")).to_contain_text("点赞")
-        expect(library.locator(".metadata-list")).to_contain_text("3154")
-        expect(library.locator(".metadata-section .attribute-pill")).to_have_count(0)
+        # Detail "plan B" (user-approved 2026-10-04) removed the standalone source-info section; source facts now
+        # live on one icon action in the compact organization bar. With a source URL it is a link whose
+        # accessible description lists every source metadata row, so all four facts must still be present there.
+        source_action = library.locator("#detail-content .source-open-action")
+        expect(source_action).to_have_count(1)
+        expect(source_action).to_have_attribute("href", "https://fixture.invalid/library-image-one")
+        source_facts = source_action.get_attribute("aria-description") or ""
+        assert source_facts.count("\n") == 3, source_facts
+        for fact in ["来源", "即梦灵感", "作者", "creator", "点赞", "3154", "使用", "29"]:
+            assert fact in source_facts, (fact, source_facts)
+        # Source metadata must never be rendered as AI tag pills.
+        expect(library.locator("#detail-content .attribute-pill", has_text="即梦灵感")).to_have_count(0)
+        expect(library.locator("#detail-content .attribute-pill", has_text="3154")).to_have_count(0)
         expect(library.locator(".attribute-section .attribute-pill")).to_have_count(7)
         expect(library.locator(".attribute-section")).to_contain_text("渲染6")
         library.get_by_role("button", name="分析文字标签").click()

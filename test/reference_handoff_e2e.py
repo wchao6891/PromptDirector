@@ -112,7 +112,9 @@ def main():
             page.locator('.case-card[data-entry-id="a"]').click()
             page.locator('.case-card[data-entry-id="b"]').click()
             selection(['a','b'])
-            page.evaluate("entries => chrome.storage.local.set({entries})", entries[:1])
+            # Case-library readers reuse a snapshot until caseLibraryRevision changes; every product write
+            # (library-storage.js) rewrites it together with entries, so the raw fixture deletion does too.
+            page.evaluate("entries => chrome.storage.local.set({entries, caseLibraryRevision: crypto.randomUUID()})", entries[:1])
             partial = call('read_workspace_context')
             assert partial['completeness'] == 'partial' and partial['selectedCaseCount'] == 2
             assert partial['availableCaseCount'] == 1 and partial['issues'][0]['caseId'] == 'b', partial

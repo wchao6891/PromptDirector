@@ -4812,6 +4812,9 @@ async function inspectLibraryPackageBatchItem(batch, item) {
       ({ library, files, report: sourceReport } = converted);
     } else {
       const reader = await openZipBlob(file, limits);
+      // Only a ZIP that carries an Eagle manifest is read as Eagle; any other ZIP without
+      // library.json (such as a damaged backup) reports the missing library file.
+      if (!reader.names.includes('library.json') && !reader.names.some(path => /(?:^|\/)pack\.json$/i.test(path))) throw new Error("缺少 library.json");
       if (!reader.names.includes('library.json')) {
         const converted = await readEaglePackage(reader, { signal: batch.controller.signal, onProgress: eagleProgress });
         ({ library, files, report: sourceReport } = converted);
@@ -6990,7 +6993,9 @@ function handleVideoAnalysisProgress(message) {
   const task = message.task;
   const key = videoAnalysisAssetKey(task.request.entryId, task.request.assetId);
   videoAnalysisTaskStateByAsset.set(key, task);
-  if (task.status === "completed") void refreshLibrary();
+  // A detail with an unsaved draft is not redrawn by the refresh, so the finished task's progress is
+  // cleared through the same in-place update that running progress uses.
+  if (task.status === "completed") void refreshLibrary().then(() => refreshVideoTaskFeedback(task.request.entryId));
   else refreshVideoTaskFeedback(task.request.entryId);
 }
 

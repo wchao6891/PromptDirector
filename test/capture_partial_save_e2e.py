@@ -17,7 +17,9 @@ def main():
           chrome.permissions.contains=async()=>true;chrome.permissions.request=async()=>true;
           chrome.tabs.query=async()=>[{id:999,url:'https://x.com/director/status/123'}];
           chrome.runtime.sendMessage=async m=>{
-            if(m.type==='COMMIT_PAGE_CAPTURE' && window.forceSaveFailure)return {ok:false,message:'模拟保存失败'};
+            // Saves now run through the background save-task pipeline: the collector sends
+            // START_CAPTURE_SAVE{input:COMMIT_PAGE_CAPTURE} and reads the finished task back.
+            if(m.type==='START_CAPTURE_SAVE' && m.input?.type==='COMMIT_PAGE_CAPTURE' && window.forceSaveFailure)return {ok:false,message:'模拟保存失败'};
             if(m.type==='START_PAGE_CAPTURE') return {ok:true,batch:{sourceUrl:'https://x.com/director/status/123',candidates:[{
               id:'partial-video',title:'Video prompt fixture',canonicalUrl:'https://x.com/director/status/123',pageType:'post',
               contentText:'Prompt: a cinematic martial arts scene.',textBlocks:[{id:'text',kind:'section',text:'Prompt: a cinematic martial arts scene.'}],
@@ -27,7 +29,8 @@ def main():
             }]}};
             if(['PREVIEW_PAGE_CAPTURE_REGION','CLEAR_PAGE_CAPTURE_MARKERS'].includes(m.type)) return {ok:true};
             const result=await send(m);
-            if(m.type==='COMMIT_PAGE_CAPTURE')window.saveResult=result;
+            const task=m.type==='GET_CAPTURE_SAVE_TASK'?result?.task:null;
+            if(task?.input?.type==='COMMIT_PAGE_CAPTURE' && ['completed','failed','confirmation'].includes(task.status))window.saveResult=task.result;
             return result;
           };
         }""")

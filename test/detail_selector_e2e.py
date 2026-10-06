@@ -47,8 +47,11 @@ def main():
         leaf.locator('input').uncheck()
         p.wait_for_function("()=>chrome.storage.local.get('organizerState').then(s=>!s.organizerState.collections.find(c=>c.id==='leaf').entryIds.includes('case'))")
         leaf=tree.locator('[data-collection-id=leaf]');expect(leaf).to_have_attribute('aria-checked','false')
-        p.evaluate("()=>{window.realSend=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=msg=>msg.type==='REPLACE_COLLECTION_ENTRIES'?Promise.resolve({ok:false,message:'测试保存失败'}):window.realSend(msg)}")
+        # The tree now saves only this case's membership change (BATCH_SET_PROJECT) instead of rewriting the
+        # whole project member list (REPLACE_COLLECTION_ENTRIES), so concurrent additions survive; fail that write.
+        p.evaluate("()=>{window.realSend=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=msg=>msg.type==='BATCH_SET_PROJECT'?Promise.resolve({ok:false,message:'测试保存失败'}):window.realSend(msg)}")
         leaf.locator('input').click();expect(leaf.locator('input')).to_be_enabled();expect(leaf).to_have_attribute('aria-checked','false')
+        assert p.evaluate("()=>chrome.storage.local.get('organizerState').then(s=>s.organizerState.collections.find(c=>c.id==='leaf').entryIds.includes('case'))") is False
         p.evaluate('()=>chrome.runtime.sendMessage=window.realSend')
         leaf.locator('input').check();expect(leaf).to_have_attribute('aria-checked','true')
         leaf.focus();leaf.press('Escape');expect(menu).not_to_have_attribute('open','')
@@ -75,6 +78,18 @@ def main():
         assert stored['text']==single['text'] and stored['sourceFacts']==single['sourceFacts']
         assert next(x for x in stored['mediaPrompts'] if x['source']=='webpage')['text']=='单图来源原词'
         assert next(x for x in stored['mediaPrompts'] if x['source']=='manual')['text']=='单图人工修订'
+        # Projects follow the folder model the user confirmed on 2026-09-23 (default move, a case lives in one
+        # project; copying makes an independent case): ticking another project moves the case there.
+        p.get_by_role('button',name='关闭详情',exact=True).click();p.locator('.case-card[data-entry-id=case]').click()
+        menu=p.locator('.detail-project-menu');menu.locator('summary').click();tree=menu.get_by_role('tree')
+        expect(tree.locator('[data-collection-id=leaf]')).to_have_attribute('aria-checked','true')
+        second=tree.locator('[data-collection-id=p1]');second.locator('input').check();expect(second).to_have_attribute('aria-checked','true')
+        p.wait_for_function("()=>chrome.storage.local.get('organizerState').then(s=>s.organizerState.collections.find(c=>c.id==='p1').entryIds.includes('case'))")
+        memberships=p.evaluate("()=>chrome.storage.local.get('organizerState').then(s=>s.organizerState.collections.filter(c=>c.entryIds.includes('case')).map(c=>c.id).sort())")
+        assert memberships==['p1'], ('勾选另一个项目是移动，案例只在一个项目里', memberships)
+        expect(tree.locator('[data-collection-id=leaf]')).to_have_attribute('aria-checked','false')
+        entry_count=p.evaluate("()=>chrome.storage.local.get('entries').then(s=>s.entries.filter(e=>e.id==='case').length)")
+        assert entry_count==1, '移动不复制也不丢失案例'
         print(json.dumps({'actualAlphaOnly':True,'solidFootersBothThemes':True,'conditionalTabs':True,'treeKeyboardSearchSaveRollback':True,'tagEditorAnchorStable':[1440,900,390],'singleSourceEvidencePreserved':True,'evidence':str(out)}))
 
 if __name__=='__main__':main()

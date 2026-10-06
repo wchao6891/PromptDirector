@@ -20,9 +20,19 @@ def main():
           const {prepareAgentFile} = await import('./agent-file-preparation.js');
           const {sha256Blob} = await import('./blob-digest.js');
           const assert = (ok, reason) => { if (!ok) throw Error(reason); };
-          const originalStream = Blob.prototype.stream;
+          // A "scan" is any full read of the original bytes. Small originals are now hashed with
+          // native crypto.subtle via arrayBuffer() (blob-digest.js, RESOURCE_POLICY.nativeDigestFraction);
+          // larger ones stream. Both read paths are counted so the once-only budget stays as strict.
+          const originalStream = Blob.prototype.stream, originalArrayBuffer = Blob.prototype.arrayBuffer;
+          let counted = () => true;
+          const restoreReads = () => { Blob.prototype.stream = originalStream; Blob.prototype.arrayBuffer = originalArrayBuffer; };
+          const countReads = (filter, onRead) => {
+            counted = filter;
+            Blob.prototype.stream = function() { if (counted(this)) onRead(); return originalStream.call(this); };
+            Blob.prototype.arrayBuffer = function() { if (counted(this)) onRead(); return originalArrayBuffer.call(this); };
+          };
           let scans = 0;
-          Blob.prototype.stream = function() { scans++; return originalStream.call(this); };
+          countReads(() => true, () => scans++);
           try {
             const original = new Blob(['verified transfer text'], {type:'text/plain'});
             const hash = await sha256Blob(original);
@@ -40,7 +50,7 @@ def main():
             const reader = createSkillOperations({loadState:async()=>({creativeSkills:skill.state}), readBlob:getMediaBlob});
             const {revision} = await reader.execute('read_skill', {skillId:skill.skill.id});
             let fileScans = 0;
-            Blob.prototype.stream = function() { if(this.size === bytes.length) fileScans++; return originalStream.call(this); };
+            countReads(blob => blob.size === bytes.length, () => fileScans++);
             let part, pages = 0, length = 0;
             do {
               part = await reader.execute('read_skill_file', {skillId:skill.skill.id, source:'package', path:'references/original.bin',
@@ -57,25 +67,27 @@ def main():
             const session = createComposerSession({messages:[{id:'user', role:'user', content:'使用案例a的图片'}]});
             const host = createLocalComposerLibraryTools({session, vision:true, maxCharacters:750000});
             let imageScans = 0;
-            Blob.prototype.stream = function() { if(this.type === 'image/png') imageScans++; return originalStream.call(this); };
+            countReads(blob => blob.type === 'image/png', () => imageScans++);
             const use = async () => {
               const value = await host.execute('use_case_images', {caseId:'a',imageIds:['original-image']}, {callId:crypto.randomUUID()});
               assert(!value.data.error, JSON.stringify(value.data)); return value;
             };
             const first = await use();
-            assert(first.images.length === 1 && imageScans === 1, 'First image delivery scans once');
+            // Full reads per delivery: one native-digest read plus one data-URL encode read (vision.js blobToDataUrl).
+            assert(first.images.length === 1 && imageScans === 2, 'First image delivery hashes once and encodes once');
             const same = await use();
-            assert(same.images.length === 0 && imageScans === 2, 'Unchanged image is checked once without re-encoding/re-sending');
+            assert(same.images.length === 0 && imageScans === 3, 'Unchanged image is checked once without re-encoding/re-sending');
             await saveMediaBlob('original-image', await image('blue'));
             const changed = await use();
-            assert(changed.images.length === 1 && imageScans === 3, 'Changed image must not be hashed twice');
+            assert(changed.images.length === 1 && imageScans === 5, 'Changed image must not be hashed or encoded twice');
+            const composerFileScans = imageScans;
             const delivered = await (await fetch(changed.images[0].dataUrl)).blob();
             const deliveredHash = await sha256Blob(delivered);
             assert(deliveredHash === changed.data.media[0].sha256, 'Receipt must describe the delivered bytes');
             assert(first.data.media[0].sha256 !== deliveredHash, 'Replacement must be delivered');
             return {preparationExtraScans:0, skillBytes:length, skillPages:pages, skillFileScans:fileScans,
-              composerRequests:3, composerFileScans:3};
-          } finally { Blob.prototype.stream = originalStream; }
+              composerRequests:3, composerFileScans};
+          } finally { restoreReads(); }
         }''')
         print('PASS: real storage and host performance counters ' + json.dumps(result))
 

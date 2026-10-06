@@ -202,7 +202,13 @@ def main() -> None:
         }""", broken)
         library.reload(wait_until="networkidle")
         damaged_card = library.locator('.case-card[data-entry-id="broken-video-layout"]')
-        expect(damaged_card).to_contain_text("封面暂不可用，打开查看视频", timeout=35000)
+        # Confirmed 2026-10-05 (视觉规范「浏览会话占位与布局分页」): a failed cover keeps the card's
+        # media frame and shows the image-icon placeholder instead of swapping in fallback text.
+        damaged_image = damaged_card.locator('.case-image-wrap img[data-visual-id]')
+        expect(damaged_image).to_have_attribute('data-preview-ready', 'false', timeout=35000)
+        damaged_placeholder = damaged_card.locator('.case-image-wrap .preview-placeholder')
+        expect(damaged_placeholder).to_be_visible()
+        expect(damaged_placeholder).to_have_attribute('title', '预览暂不可用')
         damaged_card.click()
         library.get_by_role('button',name='播放视频',exact=True).click()
         expect(library.locator('.media-playback-error')).to_be_visible()

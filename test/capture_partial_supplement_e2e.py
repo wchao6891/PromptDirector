@@ -38,7 +38,11 @@ def main():
               textBlocks:[{id:'body',kind:'section',text:'原始正文'}],media:[],sourceFacts:{provider:'example.com',pageType:'post'}
             }]}};
             if(['PREVIEW_PAGE_CAPTURE_REGION','CLEAR_PAGE_CAPTURE_MARKERS'].includes(m.type))return {ok:true};
-            const result=await send(m);if(m.type==='COMMIT_PAGE_CAPTURE')window.lastSave=result;return result;
+            // Saves run through the background save-task pipeline (START_CAPTURE_SAVE); record the
+            // finished task's result as read back by the collector.
+            const result=await send(m);const task=m.type==='GET_CAPTURE_SAVE_TASK'?result?.task:null;
+            if(task?.input?.type==='COMMIT_PAGE_CAPTURE' && ['completed','failed','confirmation'].includes(task.status))window.lastSave=task.result;
+            return result;
           };
           window.dispatchEvent(new Event('focus'));
         }''')

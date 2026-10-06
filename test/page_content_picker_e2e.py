@@ -34,6 +34,9 @@ def main():
         expect(page.locator('#promptdirector-content-picker')).to_be_attached()
         page.locator('#comments p').first.click()
         expect(setup.locator('.page-capture-item.confirmed')).to_have_count(1)
+        # Generic candidates now build the full article preview lazily, only once the user opens
+        # "预览完整内容"; open it the way a user does before checking the immediate preview text.
+        setup.locator('.page-capture-preview-details > summary').click()
         expect(setup.locator('.page-capture-article')).to_contain_text('用户指定')
         expect(setup.locator('#add-selection')).to_be_visible()
         expect(setup.locator('#add-selection')).to_be_enabled()

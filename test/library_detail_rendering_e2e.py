@@ -183,12 +183,50 @@ def main() -> None:
         assert dark_checker["backgroundImage"] != "none" and dark_checker["viewer"] == "#000000", dark_checker
         assert dark_checker["checker"] != checker["checker"], {"light": checker, "dark": dark_checker}
 
-        library.evaluate("window.__detailIdbDelayMs = 180")
-        library.locator('.detail-visual-thumb[aria-label="查看第 2 项媒体"]').click()
-        expect(library.locator(".detail-media-loading")).to_be_visible()
+        # Media switching inside one case changed intentionally (user feedback "多图、不同形式内容案例在一个案例中
+        # 应该切换无抖动", 2026-10-04): the current viewer stays on stage until the next one is ready and is then
+        # swapped in one step, instead of blanking to a loading placeholder. Check every frame of a slow switch:
+        # the pending asset is tracked, the stage is never empty or a placeholder, and old/new media never coexist.
+        media_switch = library.evaluate(
+            """async () => {
+              window.__detailIdbDelayMs = 180;
+              const gallery = document.querySelector('#detail-content .detail-visual-gallery');
+              const stage = gallery.querySelector('.detail-visual-stage');
+              const before = gallery.dataset.displayedAssetId;
+              document.querySelector('.detail-visual-thumb[aria-label="查看第 2 项媒体"]').click();
+              const frames = [];
+              await new Promise((resolve, reject) => {
+                const tick = () => {
+                  const image = Boolean(stage.querySelector('.detail-image'));
+                  const video = Boolean(stage.querySelector('video'));
+                  frames.push({
+                    image, video,
+                    placeholder: Boolean(stage.querySelector('.detail-media-loading')),
+                    pending: gallery.dataset.pendingAssetId || '',
+                    displayed: gallery.dataset.displayedAssetId || '',
+                    stageHeight: Math.round(stage.getBoundingClientRect().height)
+                  });
+                  if (gallery.dataset.displayedAssetId === 'detail-video-b') return resolve();
+                  if (frames.length >= 600) return reject(new Error('媒体切换超时'));
+                  requestAnimationFrame(tick);
+                };
+                tick();
+              });
+              window.__detailIdbDelayMs = 0;
+              return {before, frames};
+            }"""
+        )
+        switch_frames = media_switch["frames"]
+        assert media_switch["before"] == "detail-image-b", media_switch["before"]
+        waiting = [frame for frame in switch_frames if frame["displayed"] != "detail-video-b"]
+        assert waiting and all(frame["pending"] == "detail-video-b" and frame["image"] and not frame["video"] for frame in waiting), switch_frames
+        assert not any(frame["placeholder"] for frame in switch_frames), switch_frames
+        assert all(frame["image"] or frame["video"] for frame in switch_frames), switch_frames
+        assert not any(frame["image"] and frame["video"] for frame in switch_frames), switch_frames
+        assert all(frame["stageHeight"] > 0 for frame in switch_frames), switch_frames
         expect(library.locator(".detail-visual-stage .detail-image")).to_have_count(0)
         expect(library.locator(".detail-visual-stage video")).to_be_visible(timeout=10_000)
-        library.evaluate("window.__detailIdbDelayMs = 0")
+        assert library.locator("#detail-content .detail-visual-gallery").get_attribute("data-pending-asset-id") is None
 
         library.locator("#detail-mode-toggle").click()
         expect(library.locator("#detail-drawer")).to_have_class("detail-drawer open detail-sidebar-mode")
@@ -235,7 +273,7 @@ def main() -> None:
         print({
             "stale_frames": len(reopened["staleFrames"]),
             "rapid_switch_stale_frames": len(back_to_a["staleFrames"]) + len(again_b["staleFrames"]),
-            "media_invalidated_before_load": True,
+            "media_switch_waiting_frames": len(waiting),
             "sidebar_width": sidebar_width,
             "saved_sidebar_width": saved_width,
             "medium_sidebar": medium_layout,

@@ -111,14 +111,20 @@ def main() -> None:
               const primaryRect = primary.getBoundingClientRect();
               const titleRect = primary.querySelector('.detail-body h2').getBoundingClientRect();
               const navigationRect = document.querySelector('#detail-navigation').getBoundingClientRect();
+              const toolbarBottom = Math.max(...[...document.querySelectorAll('#detail-drawer .drawer-toolbar > .icon-button')]
+                .map(button => button.getBoundingClientRect()).filter(rect => rect.height > 0).map(rect => rect.bottom));
               return {
                 titleOffset: titleRect.top - primaryRect.top,
+                titleGapBelowToolbar: titleRect.top - toolbarBottom,
                 navigationInDrawer: document.querySelector('#detail-navigation').parentElement.id === 'detail-drawer',
                 navigationCenterY: (navigationRect.top + navigationRect.bottom) / 2
               };
             }"""
         )
-        assert detail_geometry["titleOffset"] < 40, detail_geometry
+        # The drawer toolbar gained a review toggle and the title now sits in the row below it (f7a4fdb,
+        # padding-top 62px). Keep the intent: title never under the toolbar, and no wasted gap above it.
+        assert 0 <= detail_geometry["titleGapBelowToolbar"] < 24, detail_geometry
+        assert detail_geometry["titleOffset"] < 72, detail_geometry
         assert detail_geometry["navigationInDrawer"], detail_geometry
         expect(library.locator("#detail-prev")).to_be_disabled()
         expect(library.locator("#detail-next")).to_be_enabled()

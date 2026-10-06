@@ -34,24 +34,25 @@ def video_entry(entry_id: str, title: str, minute: int) -> dict:
 def sidebar_geometry(page) -> dict:
     return page.evaluate(
         """() => {
-          const rect = selector => document.querySelector(selector).getBoundingClientRect();
+          const node = selector => document.querySelector(selector);
+          const rect = selector => node(selector).getBoundingClientRect();
+          const shown = element => Boolean(element?.checkVisibility?.({visibilityProperty: true}))
+            && element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0;
           const drawer = rect('#detail-drawer');
-          const gallery = rect('.detail-visual-gallery');
           const body = rect('.detail-primary > .detail-body');
-          const item = rect('.detail-visual-item');
-          const video = rect('.detail-video');
-          const title = document.querySelector('.detail-title');
+          const title = node('.detail-title');
           const titleStyle = getComputedStyle(title);
           const navigationButtons = [...document.querySelectorAll('.detail-navigation .icon-button')]
-            .map(button => button.getBoundingClientRect());
-          const next = rect('#detail-next');
+            .filter(shown).map(button => button.getBoundingClientRect());
+          const toolbarButtons = [...document.querySelectorAll('.drawer-toolbar > .icon-button')]
+            .filter(shown).map(button => button.getBoundingClientRect());
+          const next = node('#detail-next');
+          const nextRect = next.getBoundingClientRect();
+          const video = node('.detail-video');
+          // Only controls the user can actually see/hit; content of a closed <details> is excluded.
           const protectedControls = [...document.querySelectorAll(
-            '.detail-visual-caption button, .time-notes button, .detail-body button, .detail-body summary'
-          )].filter(control => {
-            const style = getComputedStyle(control);
-            const controlRect = control.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden' && controlRect.width > 0 && controlRect.height > 0;
-          }).map(control => control.getBoundingClientRect());
+            '.detail-visual-caption button, .time-notes button, .detail-body button, .detail-body summary, .detail-body a, .detail-body select, .detail-title'
+          )].filter(shown).map(control => control.getBoundingClientRect());
           const overlaps = (left, right) => !(
             left.right <= right.left || left.left >= right.right ||
             left.bottom <= right.top || left.top >= right.bottom
@@ -61,28 +62,35 @@ def sidebar_geometry(page) -> dict:
             drawerRight: drawer.right,
             drawerCenterY: (drawer.top + drawer.bottom) / 2,
             contentWidth: rect("#detail-content").width,
-            galleryWidth: gallery.width,
+            galleryVisible: shown(node('.detail-visual-gallery')),
+            navigationVisible: shown(node('#detail-navigation')),
+            videoVisible: shown(video),
             bodyWidth: body.width,
-            itemRight: item.right,
-            nextRight: next.right,
-            nextCenterY: (next.top + next.bottom) / 2,
-            videoTop: video.top,
-            videoBottom: video.bottom,
+            nextRight: nextRect.right,
+            nextCenterY: (nextRect.top + nextRect.bottom) / 2,
+            toolbarRight: Math.max(...toolbarButtons.map(button => button.right)),
+            toolbarContained: toolbarButtons.length > 0 && toolbarButtons.every(button => button.left >= drawer.left && button.right <= drawer.right),
             titleUsableWidth: title.clientWidth - Number.parseFloat(titleStyle.paddingRight || '0'),
             navigationOverlapsControls: navigationButtons.some(button => protectedControls.some(control => overlaps(button, control))),
-            detailOverflow: document.querySelector('#detail-content').scrollWidth > document.querySelector('#detail-content').clientWidth,
+            toolbarOverlapsControls: toolbarButtons.some(button => protectedControls.some(control => overlaps(button, control))),
+            detailOverflow: node('#detail-content').scrollWidth > node('#detail-content').clientWidth,
           };
         }"""
     )
 
 
 def assert_sidebar_geometry(value: dict) -> None:
+    # The sidebar became an information panel (user-approved "采用信息面板方案", 2026-10-04): media gallery and
+    # case navigation arrows are hidden there, cases are switched from the still-browsable grid, and the full
+    # detail keeps media plus navigation. The layout-stability intent is kept: the info body fills the panel,
+    # the top toolbar stays inside it and never covers any visible control, the title keeps room, no overflow.
+    assert value["galleryVisible"] is False and value["videoVisible"] is False, value
+    assert value["navigationVisible"] is False, value
     assert value["bodyWidth"] >= value["contentWidth"] - 2, value
-    assert value["galleryWidth"] >= value["contentWidth"] - 2, value
-    assert 4 <= value["drawerRight"] - value["nextRight"] <= 16, value
-    assert abs(value["nextCenterY"] - value["drawerCenterY"]) < 1, value
+    assert value["toolbarContained"] is True, value
+    assert 4 <= value["drawerRight"] - value["toolbarRight"] <= 16, value
+    assert value["toolbarOverlapsControls"] is False, value
     assert value["titleUsableWidth"] >= 220, value
-    assert value["navigationOverlapsControls"] is False, value
     assert value["detailOverflow"] is False, value
 
 
@@ -117,9 +125,7 @@ def main() -> None:
         library = session.open_page("library.html", wait_until="networkidle")
         library.locator('.case-card[data-entry-id="sidebar-video-a"]').click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-detail-mode", "sidebar")
-        expect(library.locator("#detail-navigation")).to_be_visible()
-        library.get_by_role("button",name="播放视频",exact=True).click()
-        library.wait_for_function("() => document.querySelector('.detail-video')?.readyState>=2")
+        expect(library.locator(".detail-title")).to_have_text("courier-chase-multi-reference")
 
         snapshots = []
         screenshot = Path(tempfile.gettempdir()) / "promptdirector-detail-sidebar-responsive.png"
@@ -147,14 +153,25 @@ def main() -> None:
 
         library.locator("#detail-mode-toggle").click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-detail-mode", "fullscreen")
+        # Media playback and case navigation are checked in full detail, where they now live.
+        expect(library.locator("#detail-navigation")).to_be_visible()
+        library.get_by_role("button", name="播放视频", exact=True).click()
+        library.wait_for_function("() => document.querySelector('.detail-video')?.readyState >= 2")
         fullscreen = sidebar_geometry(library)
+        assert fullscreen["galleryVisible"] is True and fullscreen["videoVisible"] is True, fullscreen
+        assert fullscreen["navigationVisible"] is True, fullscreen
         assert 4 <= fullscreen["drawerRight"] - fullscreen["nextRight"] <= 16, fullscreen
         assert abs(fullscreen["nextCenterY"] - fullscreen["drawerCenterY"]) < 1, fullscreen
+        assert fullscreen["navigationOverlapsControls"] is False, fullscreen
         assert fullscreen["titleUsableWidth"] >= 180, fullscreen
+        assert fullscreen["detailOverflow"] is False, fullscreen
         fullscreen_editor = library.locator(".entry-editor-body").evaluate(
             "node => ({clientWidth: node.clientWidth, scrollWidth: node.scrollWidth})"
         )
         assert fullscreen_editor["scrollWidth"] <= fullscreen_editor["clientWidth"] + 1, fullscreen_editor
+        library.locator("#detail-prev").click()  # cards are newest-first, so case B precedes A
+        expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", "sidebar-video-b")
+        expect(library.locator(".detail-title")).to_have_text("第二个视频案例")
 
         print({"sidebar_widths": len(snapshots), "snapshots": snapshots, "editor": editor, "fullscreen": fullscreen, "fullscreen_editor": fullscreen_editor, "screenshot": str(screenshot)})
 
