@@ -14,7 +14,7 @@ import {
 import { CURATED_SKILL_CATALOG_URL } from "./curated-config.js";
 import { fetchCuratedPackage, readResponseBlobWithProgress } from "./curated-download.js";
 import { installCuratedSkillTransaction, planCuratedSkillInstall } from "./curated-skill-install.js";
-import { initializeUi, t } from "./i18n.js";
+import { initializeUi, t, translateUiMessage } from "./i18n.js";
 import { saveSkillPackageBlob } from "./media-store.js";
 import { renderMarkdownDocument } from "./markdown-renderer.js";
 
@@ -116,7 +116,7 @@ async function openDetail(item) {
     const parsed = await loadParsed(item);
     renderDetail(item, parsed);
   } catch (error) {
-    elements.skillDetailContent.replaceChildren(element("div", "curated-skill-detail", error.message || t("Skill 读取失败")));
+    elements.skillDetailContent.replaceChildren(element("div", "curated-skill-detail", translateUiMessage(error.message) || t("Skill 读取失败")));
   }
 }
 
@@ -196,7 +196,7 @@ async function install(item, parsed, button) {
     button.disabled = planCuratedSkillInstall(state.creativeSkills, item).action === "already-installed";
     button.removeAttribute("aria-busy");
     button.textContent = installLabel(item);
-    showToast(error.message || t("精选 Skill 保存失败"));
+    showToast(translateUiMessage(error.message) || t("精选 Skill 保存失败"));
   } finally {
     stage.release();
     button.classList.remove("is-progressing");

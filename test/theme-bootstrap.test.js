@@ -46,3 +46,28 @@ test("every first-party shell loads bootstrap, shared foundation, then page styl
     assert.ok(stylesheetIndex > foundationIndex, `${page} 应在共享视觉基础后加载页面样式`);
   }
 });
+
+test("pages opened after English use stay hidden until translated, so Chinese markup never flashes", async () => {
+  const { runInNewContext } = await import("node:vm");
+  const run = locale => {
+    const appended = [];
+    const timers = [];
+    const document = {
+      documentElement: { dataset: {}, style: {} },
+      head: { append: node => appended.push(node) },
+      createElement: () => ({ remove() { this.removed = true; } }),
+      addEventListener() {}
+    };
+    const localStorage = { getItem: key => (key === "promptDirectorLocale" ? locale : null), setItem() {} };
+    runInNewContext(bootstrap, { document, localStorage, setTimeout: (callback, delay) => timers.push({ callback, delay }) });
+    return { appended, timers };
+  };
+  const english = run("en");
+  assert.equal(english.appended.length, 1);
+  assert.match(english.appended[0].textContent, /visibility: hidden/);
+  english.timers[0].callback();
+  assert.equal(english.appended[0].removed, true, "a page whose script fails must still become visible");
+  assert.equal(run("zh-CN").appended.length, 0);
+  assert.equal(run(null).appended.length, 0);
+  assert.match(uiRuntime, /setItem\("promptDirectorLocale", activeLocale\)[\s\S]*?applyDocumentTranslations\(document\);\s*document\.getElementById\("promptdirector-locale-pending"\)\?\.remove\(\)/);
+});

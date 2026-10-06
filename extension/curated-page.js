@@ -20,7 +20,7 @@ import {
   CURATED_PUBLIC_SITE_URL
 } from "./curated-config.js";
 import { fetchCuratedPackage, readResponseBlobWithProgress } from "./curated-download.js";
-import { initializeUi, t } from "./i18n.js";
+import { initializeUi, t, translateUiMessage } from "./i18n.js";
 import { parseLibraryPackage } from "./library-package.js";
 import { saveMediaBlob } from "./media-store.js";
 import { createStableMasonry } from "./stable-masonry.js";
@@ -167,7 +167,7 @@ async function refreshCatalog() {
   elements.retryCatalog.disabled = true;
   try {
     const response = await fetch(CURATED_CATALOG_URL, { cache: "no-store", credentials: "omit", redirect: "error" });
-    if (!response.ok) throw new Error(`精选目录返回 HTTP ${response.status}`);
+    if (!response.ok) throw new Error(t("精选目录返回 HTTP {status}", { status: response.status }));
     state.catalog = normalizeCuratedCatalog(await response.json());
     await chrome.storage.local.set({ [CATALOG_CACHE_KEY]: state.catalog });
     state.previews.clear();
@@ -526,7 +526,7 @@ async function loadPreview(item) {
   if (state.previewFailures.has(item.id)) throw new Error(t("预览加载失败"));
   try {
     const response = await fetch(item.previewUrl, { cache: "no-cache", credentials: "omit", redirect: "error" });
-    if (!response.ok) throw new Error(`精选预览返回 HTTP ${response.status}`);
+    if (!response.ok) throw new Error(t("精选预览返回 HTTP {status}", { status: response.status }));
     const preview = normalizeCuratedPreview(await response.json(), item);
     preview.entries = groupCuratedPreview(preview.entries);
     state.previews.set(item.id, preview);
@@ -562,7 +562,7 @@ async function loadVerifiedArchive(item, onProgress = () => undefined) {
       archivePromises.set(item.id, (async () => {
         emitProgress(item.id, { stage: "downloading", loaded: 0, total: 0, ratio: null });
         const response = await fetchCuratedPackage(item.downloadUrl);
-        if (!response.ok || !isTrustedCuratedResponseUrl(response.url)) throw new Error(`精选案例包下载失败（HTTP ${response.status}）`);
+        if (!response.ok || !isTrustedCuratedResponseUrl(response.url)) throw new Error(t("精选案例包下载失败（HTTP {status}）", { status: response.status }));
         const archive = await readResponseBlobWithProgress(response, {
           onProgress: (progress) => emitProgress(item.id, { stage: "downloading", ...progress })
         });
@@ -987,7 +987,7 @@ async function copyText(value, button, successLabel) {
 function friendlyError(error, fallback) {
   const message = String(error?.message || "");
   if (/failed to fetch|networkerror|load failed/i.test(message)) return t("无法下载案例包，请检查网络后重试");
-  return message || fallback;
+  return translateUiMessage(message) || fallback;
 }
 
 function showStatus(message, { error = false, retry = false } = {}) {

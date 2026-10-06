@@ -50,7 +50,7 @@ def main():
         page.get_by_role('button',name='编辑原始提示词',exact=True).click()
         editor.fill('')
         page.locator('.original-prompt-panel').get_by_role('button',name='保存',exact=True).click()
-        expect(page.locator('.original-prompt-panel .prompt-read-body')).to_have_text('暂无提示词')
+        expect(page.locator('.original-prompt-panel .prompt-read-body')).to_be_hidden()
         state=page.evaluate("async () => chrome.runtime.sendMessage({type:'GET_STATE'})")
         entry=next(e for e in state['entries'] if e['id']==entry_id)
         assert entry['mediaPrompts']==[]
@@ -69,7 +69,7 @@ def main():
         }""")
         page.goto(f'chrome-extension://{session.extension_id}/library.html?case={entry_id}', wait_until='networkidle')
         expect(page.get_by_role('button', name='来源信息', exact=True)).to_have_attribute('aria-description', re.compile('.*18446744073709551615.*', re.S))
-        expect(page.locator('.original-prompt-panel .prompt-read-body')).to_have_text('暂无提示词')
+        expect(page.locator('.original-prompt-panel .prompt-read-body')).to_be_hidden()
         assert page.evaluate("async () => (await chrome.storage.local.get('entries')).entries") == stored
         # The existing confirmation dialog resolves before any new case commit.
         for action in ['跳过','覆盖']:

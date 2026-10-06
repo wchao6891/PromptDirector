@@ -30,6 +30,9 @@ export function createPromptPanel({ key, title, text, className = "", actions = 
   heading.append(label, toolbar);
   const body = markdown ? renderMarkdownDocument(text) : document.createElement("pre");
   if (!markdown) body.textContent = text || emptyLabel;
+  // A panel without any text keeps only its heading and add action.
+  const emptyBody = !markdown && !body.textContent;
+  body.hidden = emptyBody;
   body.classList.add("prompt-text", "prompt-read-body");
   const fold = document.createElement("button");
   fold.type = "button";
@@ -72,7 +75,7 @@ export function createPromptPanel({ key, title, text, className = "", actions = 
   const setEditing = editing => {
     const restore = preserveElementPosition(label, { reveal: true });
     panel.dataset.editing = String(editing);
-    body.hidden = editing;
+    body.hidden = editing || emptyBody;
     editor.hidden = !editing;
     editActions.hidden = !editing;
     toolbar.hidden = editing;

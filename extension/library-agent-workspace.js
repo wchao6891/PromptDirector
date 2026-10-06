@@ -216,7 +216,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
     if (sender.id !== chromeApi.runtime.id || sender.url !== chromeApi.runtime.getURL('background.js')) return false;
     if (message?.type === 'AGENT_WORKSPACE_ACTIVITY') {
       activity.hidden = false;
-      activity.textContent = `Agent：${t(message.label)}` + (message.state === 'running' ? '…' : message.state === 'accepted' ? ` · ${t('已接收')}` : message.state === 'failed' ? ` · ${t('失败')}` : ` · ${t('完成')}`);
+      activity.textContent = t('{label}：{value}', { label: 'Agent', value: t(message.label) }) + (message.state === 'running' ? '…' : message.state === 'accepted' ? ` · ${t('已接收')}` : message.state === 'failed' ? ` · ${t('失败')}` : ` · ${t('完成')}`);
       activity.title = message.message || activity.textContent; return false;
     }
     if (message?.type !== 'AGENT_LIVE_WORKSPACE' || message.tabId !== tab?.id) return false;

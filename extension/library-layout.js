@@ -11,11 +11,14 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
   const modules = new Map();
   let layout = normalizeSidebarLayout(preferences.sidebarLayout);
   const mobile = matchMedia("(max-width: 640px)");
+  // Narrow windows collapse the sidebar without changing the saved choice, which returns when widened.
+  let preferredCollapsed = layout.collapsed;
   if (mobile.matches) layout.collapsed = true;
   const names = { projects: "项目", types: "内容类型", tags: "标签筛选" };
   const icons = { projects: "folder", types: "layers", tags: "tag" };
   let saving = Promise.resolve();
   function save(keys = ["collapsed", "open", "order"]) {
+    if (keys.includes("collapsed") && !mobile.matches) preferredCollapsed = layout.collapsed;
     const snapshot = structuredClone(Object.fromEntries(keys.map(key => [key, layout[key]])));
     saving = saving.catch(() => {}).then(() => persist(snapshot));
     return saving;
@@ -67,7 +70,7 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
     grip.className = "module-grip icon-button";
     grip.draggable = true;
     grip.title = t("拖动排序，方向键调整位置");
-    grip.setAttribute("aria-label", `${t(names[key])}：${grip.title}`);
+    grip.setAttribute("aria-label", t("{label}：{value}", { label: t(names[key]), value: grip.title }));
     grip.append(createUiIcon("grip-vertical"));
     heading.prepend(grip);
     const move = offset => {
@@ -126,7 +129,7 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
     item.title = item.textContent.trim(); item.setAttribute("aria-label", item.title);
   }
   toggle.addEventListener("click", () => { layout.collapsed = !layout.collapsed; apply(); void save(["collapsed"]); });
-  mobile.addEventListener("change", event => { if (event.matches) { layout.collapsed = true; apply(); } });
+  mobile.addEventListener("change", event => { layout.collapsed = event.matches || preferredCollapsed; apply(); });
   apply();
   setupCompactToolbar();
   return {

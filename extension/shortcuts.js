@@ -37,7 +37,7 @@ root.querySelector('#shortcut-reset').addEventListener('click', () => { values =
 root.querySelector('#shortcut-form').addEventListener('submit', async event => {
   event.preventDefault();
   const conflict = shortcutConflict(values);
-  if (conflict) { status.textContent = `${t(conflict[0].label)} / ${t(conflict[1].label)}：${t('按键重复')}`; status.classList.add('is-error'); return; }
+  if (conflict) { status.textContent = t('{label}：{value}', { label: `${t(conflict[0].label)} / ${t(conflict[1].label)}`, value: t('按键重复') }); status.classList.add('is-error'); return; }
   const button = root.querySelector('button[type=submit]'); button.disabled = true;
   try {
     const result = await chromeApi.runtime.sendMessage({ type: 'UPDATE_KEYBOARD_SHORTCUTS', shortcuts: values });

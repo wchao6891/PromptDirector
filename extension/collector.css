@@ -131,10 +131,12 @@ main {
   background: transparent;
 }
 .normal-start .capture-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.normal-start .capture-actions > button { min-height: 40px; padding: 8px; font-size: 11px; }
+.normal-start .capture-actions > button { min-width: 0; min-height: 40px; padding: 8px 4px; gap: 4px; font-size: 11px; }
+/* Long translations end with an ellipsis instead of running into the next button; the title keeps the full name. */
+.normal-start .capture-actions button strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .normal-start .capture-actions > #start-page-capture { grid-column: 1 / -1; min-height: 46px; font-size: 13px; }
 .normal-start .other-capture-methods { grid-column: auto; }
-.normal-start .other-capture-methods button { width: 100%; min-height: 40px; padding: 8px; font-size: 11px; }
+.normal-start .other-capture-methods button { width: 100%; min-width: 0; min-height: 40px; padding: 8px 4px; gap: 4px; font-size: 11px; }
 .normal-start .capture-actions button .ui-icon { width: 17px; height: 17px; }
 .capture-icon-button { display: inline-grid; place-items: center; width: 34px; min-width: 34px; min-height: 34px; padding: 7px; }
 .capture-icon-button .ui-icon { width: 17px; height: 17px; }

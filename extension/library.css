@@ -358,7 +358,7 @@ details:not([open]) > .selection-menu-panel { display: none; }
 
 .project-menu-panel.selection-project-panel { width: min(430px, calc(100vw - 32px)); }
 .selection-project-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; }
-.selection-project-actions button { min-width: 0; overflow-wrap: normal; white-space: nowrap; }
+.selection-project-actions button { min-width: 0; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; }
 .filter-heading { display: flex; align-items: center; justify-content: space-between; font-size: 11px; }
 .filter-heading > span { display: flex; gap: 2px; }
 .filter-heading button { min-height: 30px; padding: 3px 6px; color: var(--muted); background: transparent; font-size: 11px; }
@@ -866,6 +866,8 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .compact-general .share-package-import { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 36px; }
 .share-package-import > span { font-size: 12px; }
 .share-package-import button { min-height: 30px; padding: 5px 10px; font-size: 11px; }
+.share-package-import > .recovery-actions > summary { display: inline-block; }
+.share-package-import > .recovery-actions > button { margin: 0 0 0 8px; }
 .compact-general .sync-settings { margin-top: 8px; padding: 0; border: 0; }
 .compact-general .sync-settings summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 36px; padding: 0; color: var(--ink); font-size: 12px; font-weight: 500; }
 .compact-general .sync-settings summary::-webkit-details-marker { display: none; }
@@ -924,6 +926,9 @@ details:not([open]) > .selection-menu-panel { display: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   button, .case-card, .project-filter, .filter-option, .detail-visual-thumb { transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease, transform 120ms ease; }
+  /* Pointer feedback fades in and is a touch stronger unless the reduced motion setting is on. */
+  .case-card::after { transition: border-color 140ms ease, box-shadow 140ms ease; }
+  html:not([data-motion="reduced"]) .case-card:hover::after { box-shadow: inset 0 0 0 1px var(--selection-edge); }
   .analysis-kind-tabs button, .manager-tabs button::after { transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease; }
 }
 

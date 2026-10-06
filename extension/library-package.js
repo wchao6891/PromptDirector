@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { libraryStoredAssets, libraryStoredAssetIds } from "./library-asset-inventory.js";
 import { syncStateHasContent } from "./sync-model.js";
@@ -69,10 +70,10 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
   const packageVersion = prepared.sourceVersion;
   value = prepared.draft;
   if (value.entries.length > limits.maxEntries) {
-    throw new Error(`案例数量超过 ${limits.maxEntries} 条上限`);
+    throw new Error(t("案例数量超过 {limit} 条上限", { limit: limits.maxEntries }));
   }
   if (Array.isArray(value.organizerState?.collections) && value.organizerState.collections.length > limits.maxCollections) {
-    throw new Error(`项目数量超过 ${limits.maxCollections} 个上限`);
+    throw new Error(t("项目数量超过 {limit} 个上限", { limit: limits.maxCollections }));
   }
   const data = structuredClone(value);
   data.settings = normalizeSettings(data.settings);
@@ -85,7 +86,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
     const missingAssignment = (Array.isArray(entry?.facetAssignments) ? entry.facetAssignments : [])
       .find((item) => !packageFacetIds.has(String(item?.facetId ?? "")) || !packageNodeIds.has(String(item?.nodeId ?? "")));
     if (missingAssignment) {
-      throw new Error(`分享包中的案例“${clean(entry?.title) || clean(entry?.id) || "未命名案例"}”引用了缺失的 AI 标签词表，导入已取消`);
+      throw new Error(t("分享包中的案例“{title}”引用了缺失的 AI 标签词表，导入已取消", { title: clean(entry?.title) || clean(entry?.id) || t("未命名案例") }));
     }
   }
   const ids = new Set();
@@ -286,7 +287,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
       const blob = files.get(path);
       const failure = portableMediaFileFailure(entry, asset, blob, format, packageVersion, limits, skipMediaByteValidation);
       if (failure) {
-        if (!salvageInvalidMedia) throw new Error(`回收站中的“${entry.title || "未命名案例"}”${failure.message}`);
+        if (!salvageInvalidMedia) throw new Error(t("回收站中的“{title}”{reason}", { title: entry.title || t("未命名案例"), reason: failure.message }));
         droppedAssetIds.push(asset.id);
         importStats.droppedMediaFiles += 1;
         importStats.droppedTrashMedia += 1;
@@ -368,7 +369,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
       for (const asset of reference.assetRefs) {
         const path = clean(asset.archivePath);
         if (!validTemporaryAssetPath(path)) {
-          if (!salvageInvalidMedia) throw new Error(`临时附件路径无效：${asset.name || asset.assetId}`);
+          if (!salvageInvalidMedia) throw new Error(t("临时附件路径无效：{name}", { name: asset.name || asset.assetId }));
           droppedAssetIds.add(asset.assetId);
           importStats.droppedTemporaryAssets += 1;
           importDiagnostics.push(privateResourceDiagnostic("temporary_asset_dropped", asset, path, "invalid_descriptor"));
@@ -376,7 +377,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         }
         const blob = files.get(path);
         if (!(blob instanceof Blob) || !blobMatchesKind(blob, asset.kind)) {
-          if (!salvageInvalidMedia) throw new Error(`临时附件缺失或类型不符：${asset.name || asset.assetId}`);
+          if (!salvageInvalidMedia) throw new Error(t("临时附件缺失或类型不符：{name}", { name: asset.name || asset.assetId }));
           droppedAssetIds.add(asset.assetId);
           importStats.droppedMediaFiles += 1;
           importStats.droppedTemporaryAssets += 1;
@@ -387,7 +388,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
         }
         const byteLimit = portableAssetByteLimit(asset.kind, limits);
         if (blob.size > byteLimit) {
-          if (!salvageInvalidMedia) throw new Error(`临时附件超过 ${formatBytes(byteLimit)} 上限：${asset.name || asset.assetId}`);
+          if (!salvageInvalidMedia) throw new Error(t("临时附件超过 {limit} 上限：{name}", { limit: formatBytes(byteLimit), name: asset.name || asset.assetId }));
           droppedAssetIds.add(asset.assetId);
           importStats.droppedMediaFiles += 1;
           importStats.droppedTemporaryAssets += 1;
@@ -395,7 +396,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
           continue;
         }
         if (!skipMediaByteValidation && asset.byteSize && asset.byteSize !== blob.size) {
-          if (!salvageInvalidMedia) throw new Error(`临时附件大小校验失败：${asset.name || asset.assetId}`);
+          if (!salvageInvalidMedia) throw new Error(t("临时附件大小校验失败：{name}", { name: asset.name || asset.assetId }));
           droppedAssetIds.add(asset.assetId);
           importStats.droppedMediaFiles += 1;
           importStats.droppedTemporaryAssets += 1;
@@ -434,7 +435,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
       }
       const asset = files.get(path);
       if (!(asset instanceof Blob) || !blobMatchesKind(asset, video ? "video" : "image")) {
-        if (!salvageInvalidMedia) throw new Error(`创作实验包缺少结果${video ? "视频" : "图片"}`);
+        if (!salvageInvalidMedia) throw new Error(t(video ? "创作实验包缺少结果视频" : "创作实验包缺少结果图片"));
         importStats.droppedMediaFiles += 1;
         importStats.droppedCreativeOutputs += 1;
         importDiagnostics.push(privateResourceDiagnostic(
@@ -444,7 +445,7 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
       }
       const byteLimit = portableAssetByteLimit(video ? "video" : "image", limits);
       if (asset.size > byteLimit) {
-        if (!salvageInvalidMedia) throw new Error(`创作结果媒体超过 ${formatBytes(byteLimit)} 上限`);
+        if (!salvageInvalidMedia) throw new Error(t("创作结果媒体超过 {limit} 上限", { limit: formatBytes(byteLimit) }));
         importStats.droppedMediaFiles += 1;
         importStats.droppedCreativeOutputs += 1;
         importDiagnostics.push(privateResourceDiagnostic("creative_output_dropped", visual, path, "size_limit"));
@@ -469,35 +470,35 @@ export function parseLibraryPackage(value, files = new Map(), limitsValue = {}) 
     for (const file of owner.packageFiles ?? []) {
       const path = clean(file.archivePath);
       if (!/^skills\/[A-Za-z0-9._/-]+$/i.test(path) || path.includes("..")) {
-        if (!salvageInvalidMedia) throw new Error(`外部 Skill 原包路径无效：${file.path}`);
+        if (!salvageInvalidMedia) throw new Error(t("外部 Skill 原包路径无效：{path}", { path: file.path }));
         importStats.droppedSkillFiles += 1;
         importDiagnostics.push(privateResourceDiagnostic("skill_file_dropped", file, path, "invalid_descriptor"));
         continue;
       }
       const blob = files.get(path);
       if (!(blob instanceof Blob)) {
-        if (!salvageInvalidMedia) throw new Error(`外部 Skill 原包文件缺失：${file.path}`);
+        if (!salvageInvalidMedia) throw new Error(t("外部 Skill 原包文件缺失：{path}", { path: file.path }));
         importStats.droppedMediaFiles += 1;
         importStats.droppedSkillFiles += 1;
         importDiagnostics.push(privateResourceDiagnostic("skill_file_dropped", file, path, "missing_file"));
         continue;
       }
       if (blob.size > limits.maxFileBytes) {
-        if (!salvageInvalidMedia) throw new Error(`外部 Skill 文件超过 ${formatBytes(limits.maxFileBytes)} 上限`);
+        if (!salvageInvalidMedia) throw new Error(t("外部 Skill 文件超过 {limit} 上限", { limit: formatBytes(limits.maxFileBytes) }));
         importStats.droppedMediaFiles += 1;
         importStats.droppedSkillFiles += 1;
         importDiagnostics.push(privateResourceDiagnostic("skill_file_dropped", file, path, "size_limit"));
         continue;
       }
       if (!skipMediaByteValidation && file.byteSize && file.byteSize !== blob.size) {
-        if (!salvageInvalidMedia) throw new Error(`外部 Skill 文件大小校验失败：${file.path}`);
+        if (!salvageInvalidMedia) throw new Error(t("外部 Skill 文件大小校验失败：{path}", { path: file.path }));
         importStats.droppedMediaFiles += 1;
         importStats.droppedSkillFiles += 1;
         importDiagnostics.push(privateResourceDiagnostic("skill_file_dropped", file, path, "byte_size_mismatch"));
         continue;
       }
       if (!claimMedia({ id: file.assetId, kind: 'skill-file' }, blob)) {
-        if (!salvageInvalidMedia) throw new Error(`Skill版本包含冲突的文件编号：${file.path}`);
+        if (!salvageInvalidMedia) throw new Error(t("Skill版本包含冲突的文件编号：{path}", { path: file.path }));
         importStats.droppedSkillFiles += 1;
         importDiagnostics.push(privateResourceDiagnostic('skill_file_dropped', file, path, 'duplicate_asset_id'));
         continue;
@@ -863,7 +864,7 @@ export function mergeLibraryPackage(current = {}, importedValue = {}, options = 
       const facetId = facetIds.get(item.facetId);
       const nodeId = nodeIds.get(item.nodeId);
       if (!facetId || !nodeId) {
-        throw new Error(`分享包中的案例“${clean(entry.title) || source.id}”引用了缺失的 AI 标签词表，导入已取消且没有写入案例`);
+        throw new Error(t("分享包中的案例“{title}”引用了缺失的 AI 标签词表，导入已取消且没有写入案例", { title: clean(entry.title) || source.id }));
       }
       return {
         ...item,
@@ -1486,27 +1487,27 @@ function validCreativeResultPath(path, kind) {
 }
 
 function portableMediaFileFailure(entry, asset, blob, format, packageVersion, limits, skipMediaByteValidation) {
-  const title = entry.title || "未命名案例";
+  const title = entry.title || t("未命名案例");
   if (!(blob instanceof Blob)) {
     return {
       reason: "missing_file",
-      message: asset.kind === "image" ? `“${title}”的截图缺失` : `“${title}”的媒体文件缺失或类型不符`
+      message: t(asset.kind === "image" ? "“{title}”的截图缺失" : "“{title}”的媒体文件缺失或类型不符", { title })
     };
   }
   if (!blobMatchesKind(blob, asset, format, packageVersion)) {
-    return { reason: "type_mismatch", message: `“${title}”的媒体文件缺失或类型不符` };
+    return { reason: "type_mismatch", message: t("“{title}”的媒体文件缺失或类型不符", { title }) };
   }
   const byteLimit = portableAssetByteLimit(asset.kind, limits);
   if (blob.size > byteLimit) {
     return {
       reason: "too_large",
-      message: `“${title}”的${asset.kind === "image" ? "图片" : "媒体"}超过 ${formatBytes(byteLimit)} 分享包上限，请使用完整资料夹备份`
+      message: t(asset.kind === "image" ? "“{title}”的图片超过 {limit} 分享包上限，请使用完整资料夹备份" : "“{title}”的媒体超过 {limit} 分享包上限，请使用完整资料夹备份", { title, limit: formatBytes(byteLimit) })
     };
   }
   if (!skipMediaByteValidation && packageVersion >= 3 && asset.byteSize && asset.byteSize !== blob.size) {
     return {
       reason: "byte_size_mismatch",
-      message: `“${title}”的媒体大小校验失败：期望 ${asset.byteSize} bytes，实际 ${blob.size} bytes（${clean(asset.assetPath)}）`
+      message: t("“{title}”的媒体大小校验失败：期望 {expected} bytes，实际 {actual} bytes（{path}）", { title, expected: asset.byteSize, actual: blob.size, path: clean(asset.assetPath) })
     };
   }
   return null;

@@ -243,6 +243,7 @@ test("emptying trash closes only after successful cleanup with no outstanding wa
     const feedback = [], errors = [], sent = [];
     const ctx = vm.createContext({
       trashItems: [{ id: "trash" }], elements: { trashDialog: dialog, trashEmpty: {} },
+      t: (text, values = {}) => text.replace(/\{(\w+)\}/g, (_, key) => values[key]),
       confirmAppAction: async () => outcome !== "declined",
       performTrashAction: async (_button, message) => {
         sent.push(message);
@@ -274,6 +275,7 @@ test("case switches clear stale content without flashing the new title in the lo
   content.append(el("h2", "detail-title", "Previous case"));
   const ctx = vm.createContext({
     el, rawTextEl: el, logicalCases: [{ id: "a", title: "Case A" }, { id: "b", title: "Case B" }],
+    t: (text, values = {}) => text.replace(/\{(\w+)\}/g, (_, key) => values[key]),
     elements: { detailDrawer: drawer, detailContent: content, drawerToolbar: el("div") }
   });
   vm.runInContext(source.slice(source.indexOf("function invalidateDetailContent("), source.indexOf("function createLocalDiscovery(")), ctx);

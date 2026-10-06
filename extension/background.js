@@ -312,6 +312,7 @@ import {
   restoreTrashItems
 } from "./trash.js";
 import { normalizeUiPreferences, resolveLocale, updateLayoutPreferences } from "./preferences.js";
+import { translateForLocale } from "./i18n.js";
 import { normalizeShortcutOverrides, shortcutBindings, shortcutConflict } from './keyboard-shortcuts.js';
 import { CHROME_WEB_STORE_URL } from "./product-links.js";
 import { PALETTE_VERSION, hasCurrentPalette } from "./palette.js";
@@ -1086,7 +1087,8 @@ async function handleMessage(message, interaction = {}) {
     case "PICK_PAGE_CONTENT": {
       const tab = await chrome.tabs.get(Number(message.tabId));
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: clearPageCapturePageState, args: [{ removeRegionMarkers: false, removePreview: true, removeEditor: true }] });
-      const [picked] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPageContent, args: [{ commentLimit: 30, timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs }] });
+      const [picked] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPageContent, args: [{ commentLimit: 30, timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
+        cancelLabel: translateForLocale("取消选取", resolveLocale((await libraryStorage.get("uiPreferences")).uiPreferences, chrome.i18n.getUILanguage())) }] });
       if (!picked?.result?.html) return { ok: false, cancelled: true };
       const [captured] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageCaptureSnapshot,
         args: [{ serializeErrors: true, sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
@@ -8321,7 +8323,7 @@ async function exportArchive(state, requestedEntryIds) {
   try {
     const downloadId = await chrome.downloads.download({
       url: archive.url,
-      filename: sharedArchivePath(state.settings.outputPath),
+      filename: sharedArchivePath(state.settings.outputPath, archiveLocale(state)),
       conflictAction: "uniquify",
       saveAs: false
     });
@@ -8349,7 +8351,7 @@ async function exportProjectArchive(state, collectionId) {
   try {
     const downloadId = await chrome.downloads.download({
       url: archive.url,
-      filename: projectArchivePath(state.settings.outputPath, project.name),
+      filename: projectArchivePath(state.settings.outputPath, project.name, archiveLocale(state)),
       conflictAction: "uniquify",
       saveAs: false
     });
@@ -8379,7 +8381,8 @@ async function exportCuratedSubmission(state, message = {}) {
   const result = await chrome.runtime.sendMessage({
     target: "offscreen",
     type: "CREATE_CURATED_SUBMISSION_URLS",
-    ...prepared.state
+    ...prepared.state,
+    locale: archiveLocale(state)
   });
   if (!result?.ok || !Array.isArray(result.outputs) || !result.outputs.length) {
     throw new Error(result?.message || "无法生成精选投稿包");
@@ -8434,7 +8437,7 @@ async function exportCreativeExperiments(state) {
   try {
     const downloadId = await chrome.downloads.download({
       url: archive.url,
-      filename: experimentArchivePath(state.settings.outputPath),
+      filename: experimentArchivePath(state.settings.outputPath, archiveLocale(state)),
       conflictAction: "uniquify",
       saveAs: false
     });
@@ -8845,27 +8848,40 @@ function curatedImportResponse(result) {
   };
 }
 
-function sharedArchivePath(outputPath) {
-  const normalized = normalizeSettings({ outputPath }).outputPath;
-  const separator = normalized.lastIndexOf("/");
-  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
-  const filename = separator >= 0 ? normalized.slice(separator + 1) : normalized;
-  return `${directory}${filename.replace(/\.zip$/i, "")}-分享.zip`;
+function archiveLocale(state) {
+  return resolveLocale(state.uiPreferences, chrome.i18n.getUILanguage()) === "en" ? "en" : "zh-CN";
 }
 
-function projectArchivePath(outputPath, projectName) {
-  const normalized = normalizeSettings({ outputPath }).outputPath;
-  const separator = normalized.lastIndexOf("/");
-  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
-  const safeName = String(projectName ?? "项目").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() || "项目";
-  return `${directory}PromptDirector-${safeName}-分享.zip`;
+// Export names follow the interface language and carry the local date, so repeated exports
+// stay distinguishable without relying on the browser's "(1)" suffix.
+function archiveName(locale, zh, en) {
+  const now = new Date();
+  const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(part => String(part).padStart(2, "0")).join("-");
+  return `${locale === "en" ? en : zh}-${date}.zip`;
 }
 
-function experimentArchivePath(outputPath) {
+function sharedArchivePath(outputPath, locale) {
   const normalized = normalizeSettings({ outputPath }).outputPath;
   const separator = normalized.lastIndexOf("/");
   const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
-  return `${directory}PromptDirector-创作实验.zip`;
+  const filename = (separator >= 0 ? normalized.slice(separator + 1) : normalized).replace(/\.zip$/i, "");
+  return `${directory}${archiveName(locale, `${filename}-分享`, `${filename}-Share`)}`;
+}
+
+function projectArchivePath(outputPath, projectName, locale) {
+  const normalized = normalizeSettings({ outputPath }).outputPath;
+  const separator = normalized.lastIndexOf("/");
+  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  const fallback = locale === "en" ? "Project" : "项目";
+  const safeName = String(projectName ?? fallback).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() || fallback;
+  return `${directory}${archiveName(locale, `PromptDirector-${safeName}-分享`, `PromptDirector-${safeName}-Share`)}`;
+}
+
+function experimentArchivePath(outputPath, locale) {
+  const normalized = normalizeSettings({ outputPath }).outputPath;
+  const separator = normalized.lastIndexOf("/");
+  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  return `${directory}${archiveName(locale, "PromptDirector-创作实验", "PromptDirector-Creative-Experiment")}`;
 }
 
 async function createArchiveUrl(state, sharing = false) {

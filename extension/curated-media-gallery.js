@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 export function groupCuratedPreview(entries = []) {
   const byId = new Map(entries.map(entry => [entry.id, entry]));
   const claimed = new Set();
@@ -22,8 +24,8 @@ export function mountCuratedMediaGallery(container, entry, { image, video, onSel
   const viewport = document.createElement('div'); viewport.className = 'curated-media-viewport';
   const controls = document.createElement('div'); controls.className = 'curated-media-navigation';
   const previous = document.createElement('button'), next = document.createElement('button'), count = document.createElement('span');
-  previous.textContent = '‹'; previous.setAttribute('aria-label', '上一份媒体');
-  next.textContent = '›'; next.setAttribute('aria-label', '下一份媒体');
+  previous.textContent = '‹'; previous.setAttribute('aria-label', t('上一份媒体'));
+  next.textContent = '›'; next.setAttribute('aria-label', t('下一份媒体'));
   let index = 0, cleanup;
   const show = () => {
     cleanup?.(); viewport.replaceChildren();

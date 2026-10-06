@@ -1,5 +1,6 @@
 import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
+import { normalizeCreativeRuns } from "./creative-runs.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
 const libraryStorage = getLibraryStorage();
@@ -84,6 +85,10 @@ const elements = Object.fromEntries([
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 
 let entries = [];
+// Cases are read on first use; see readLibraryEntries.
+let libraryEntriesRead = null;
+let libraryEntriesReady = false;
+let requestedRoute = null;
 let organizerState = { collections: [] };
 let creativeSkills = normalizeCreativeSkillsState();
 let creativeRuns = [];
@@ -176,15 +181,29 @@ function bindEvents() {
   addEventListener("beforeunload", () => { activeSkillRun?.controller.abort(); releaseThumbnails(); releaseSourceVideos(); });
 }
 
+// The Skill list only needs Skills. The whole case library (the slow part of opening this page)
+// is read once, when a view that picks or shows cases is first opened.
 async function refreshState() {
-  const response = await readWorkspaceLibraryState();
-  if (!response?.ok) throw new Error(response?.message || t("无法读取 Skill 资料"));
-  entries = Array.isArray(response.entries) ? response.entries : [];
-  organizerState = response.organizerState ?? organizerState;
-  creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
-  creativeRuns = Array.isArray(response.creativeRuns) ? response.creativeRuns : [];
+  const stored = await getLibraryStorage().get(["creativeSkills", "creativeRuns"]);
+  creativeSkills = normalizeCreativeSkillsState(stored.creativeSkills);
+  creativeRuns = normalizeCreativeRuns(stored.creativeRuns);
   if (activeView === "list") renderSkillList();
   else renderRoute({ view: activeView, skillId: activeSkillId });
+}
+
+function readLibraryEntries() {
+  libraryEntriesRead ??= readWorkspaceLibraryState().then(response => {
+    if (!response?.ok) throw new Error(response?.message || t("无法读取 Skill 资料"));
+    entries = Array.isArray(response.entries) ? response.entries : [];
+    organizerState = response.organizerState ?? organizerState;
+    creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
+    creativeRuns = Array.isArray(response.creativeRuns) ? response.creativeRuns : [];
+    libraryEntriesReady = true;
+  }).catch(error => {
+    libraryEntriesRead = null;
+    throw error;
+  });
+  return libraryEntriesRead;
 }
 
 function renderSkillList() {
@@ -311,6 +330,19 @@ function routeUrl(route) {
 }
 
 function renderRoute(route) {
+  requestedRoute = route;
+  if (route.view !== "list" && !libraryEntriesReady) {
+    document.body.dataset.skillLoading = "true";
+    void readLibraryEntries().then(() => {
+      delete document.body.dataset.skillLoading;
+      // Only the route the user is still on is drawn once the cases arrive.
+      if (requestedRoute === route) renderRoute(route);
+    }).catch(error => {
+      delete document.body.dataset.skillLoading;
+      setFeedback(elements.skillFeedback, error.message, true);
+    });
+    return;
+  }
   finishSkillRun();
   activeView = route.view;
   activeSkillId = route.skillId;
@@ -444,7 +476,7 @@ function renderRunEvidence(view = activeView) {
     const copy = el("span");
     copy.append(
       textEl("strong", item.title || t("未命名创作运行")),
-      textEl("small", [item.keep ? `${t("值得保留")}：${item.keep}` : "", item.improve ? `${t("需要改进")}：${item.improve}` : ""].filter(Boolean).join(" · "))
+      textEl("small", [item.keep ? t("{label}：{value}", { label: t("值得保留"), value: item.keep }) : "", item.improve ? t("{label}：{value}", { label: t("需要改进"), value: item.improve }) : ""].filter(Boolean).join(" · "))
     );
     input.addEventListener("change", () => {
       input.checked ? selectedEvidenceIds.add(item.id) : selectedEvidenceIds.delete(item.id);
@@ -1712,6 +1744,8 @@ function versionNumber(skill, versionId) {
 }
 
 function reasonLabel(reason) {
+  // "恢复" and "导入" are also button actions; version history names them as past events.
+  if (currentLocale() === "en" && ["restored", "imported"].includes(reason)) return reason === "restored" ? "Restored" : "Imported";
   return t(({ created: "创建", improved: "改进", repaired: "修复", restored: "恢复", imported: "导入" })[reason] || "更新");
 }
 

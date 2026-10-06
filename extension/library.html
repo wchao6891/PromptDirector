@@ -52,8 +52,8 @@
                     <label><span data-i18n="选择目标项目">选择目标项目</span><select id="selection-project-target" aria-label="选择目标项目" data-i18n-aria-label="选择目标项目"><option value="" data-i18n="选择项目…">选择项目…</option></select></label>
                     <div class="selection-project-actions">
                       <button id="selection-move-project" class="project-menu-primary" type="button" disabled data-i18n="移动">移动</button>
-                      <button id="selection-copy-project" class="button-secondary" type="button" disabled data-i18n="复制到项目">复制到项目</button>
-                      <button id="selection-remove-project" class="button-secondary" type="button" disabled data-i18n="移出当前项目">移出当前项目</button>
+                      <button id="selection-copy-project" class="button-secondary" type="button" disabled title="复制到项目" data-i18n="复制到项目" data-i18n-title="复制到项目">复制到项目</button>
+                      <button id="selection-remove-project" class="button-secondary" type="button" disabled title="移出当前项目" data-i18n="移出当前项目" data-i18n-title="移出当前项目">移出当前项目</button>
                     </div>
                     <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目并移动">新建项目并移动</button>
                   </div>
@@ -384,8 +384,8 @@
             </div></div>
             <p id="data-safety-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
             <progress id="data-safety-progress" class="ui-task-progress" aria-label="备份与同步进度" data-i18n-aria-label="备份与同步进度" hidden></progress>
-            <div class="share-package-import"><span data-i18n="导入分享包">导入分享包</span><button id="import-library-package" class="button-secondary" type="button" data-i18n="选择 ZIP">选择 ZIP</button><input id="library-package-file" type="file" accept=".zip,.eaglepack,application/zip" multiple hidden /></div>
-            <details id="library-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="restore-library-replacement-point" class="button-secondary" type="button" hidden data-i18n="回退上次精确恢复">回退上次精确恢复</button></details>
+            <div class="share-package-import"><span data-i18n="导入分享包">导入分享包</span><button id="import-library-package" class="button-secondary" type="button" data-i18n="选择 ZIP">选择 ZIP</button><input id="library-package-file" type="file" accept=".zip,.eaglepack,application/zip" multiple hidden />
+              <details id="library-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="restore-library-replacement-point" class="button-secondary" type="button" hidden data-i18n="回退上次精确恢复">回退上次精确恢复</button></details></div>
             <details id="sync-settings" class="sync-settings">
               <summary><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg><span data-i18n="跨设备同步">跨设备同步</span><small id="data-safety-status"></small></summary>
               <div class="sync-settings-body">

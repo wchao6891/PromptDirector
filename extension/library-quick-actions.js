@@ -6,7 +6,10 @@ import { LOCAL_ASSET_REFERENCE_RECORD_TYPE } from './local-media.js';
 
 export function copyFilename(asset, title, index, blob = {}) {
   const extension = resolvePortableAssetFormat(asset, blob).extension;
-  let name = String(blob.name || asset.sourceTitle || `${title}-${index + 1}`)
+  // Only a real file name is kept; descriptive titles such as alt text or "video cover" give way to
+  // the case title, which is also what an Agent searches the library by.
+  const sourceName = /\.[a-z0-9]{2,5}$/iu.test(String(asset.sourceTitle ?? '').trim()) ? asset.sourceTitle : '';
+  let name = String(blob.name || sourceName || `${title}-${index + 1}`)
     .split(/[\\/]/u).pop().replace(/[<>:"|?*\u0000-\u001f]/gu, '_').replace(/[. ]+$/u, '');
   if (!name || /^\.+$/u.test(name)) name = `${asset.id}.${extension}`;
   if (extension && !name.toLowerCase().endsWith(`.${extension}`)) name += `.${extension}`;

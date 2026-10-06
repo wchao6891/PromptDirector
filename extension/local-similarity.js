@@ -5,6 +5,14 @@ const VISUAL_FACETS = new Set(["subject", "scene", "action", "style", "camera", 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
 export function createSimilarityIndex(entries = [], catalogValue, options = {}) {
+  const steps = similarityIndexSteps(entries, catalogValue, options);
+  let step;
+  do step = steps.next(); while (!step.done);
+  return step.value;
+}
+
+// The same build, pausing after every case, so a page can spread it over idle time.
+export function* similarityIndexSteps(entries = [], catalogValue, options = {}) {
   const catalog = normalizeFacetCatalog(catalogValue);
   const facets = new Set(catalog.facets.filter(item => item.status === "active").map(item => item.id));
   const nodes = new Map(catalog.nodes.filter(node => node.status === "active" && node.parentId
@@ -32,6 +40,7 @@ export function createSimilarityIndex(entries = [], catalogValue, options = {}) 
   });
 
   for (const entry of entries) {
+    yield;
     const members = entry.memberEntries?.length ? entry.memberEntries : [entry];
     const media = (mediaForEntry(entry) ?? []).filter(asset => asset && asset.usage !== "poster");
     const kinds = new Set(media.map(asset => asset.kind));

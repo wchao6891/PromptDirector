@@ -27,7 +27,7 @@ export function mountLayoutSettings(root, { apply, back }) {
   }
   function render(value) {
     preferences = normalizeUiPreferences(value);
-    configs.replaceChildren(...preferences.layoutPresets.map(item => new Option(item.id === 'default' ? t('默认') : item.name, item.id)));
+    configs.replaceChildren(...preferences.layoutPresets.map(item => new Option(item.id === 'default' ? t('默认') : presetLabel(item.name), item.id)));
     configs.value = preferences.activeLayoutId;
     for (const key of ['galleryView', 'detailMode', 'sidebarWidth', 'detailSidebarWidth']) field(key).value = preferences[key];
     renderSize(preferences.galleryZoom);
@@ -72,7 +72,7 @@ export function mountLayoutSettings(root, { apply, back }) {
   root.querySelector('#layout-create').addEventListener('click', async () => {
     if (!form.reportValidity()) return;
     let number = 1;
-    while (preferences.layoutPresets.some(item => item.name === t('配置{number}', { number }))) number++;
+    while (preferences.layoutPresets.some(item => presetLabel(item.name) === t('配置{number}', { number }))) number++;
     const name = await promptAppText({ title: '新建布局配置', label: '配置名称', value: t('配置{number}', { number }), selectFirst: true, confirmLabel: '保存' });
     if (name !== null) await run('create', { name, preferences: changedValues() });
   });
@@ -93,4 +93,10 @@ export function mountLayoutSettings(root, { apply, back }) {
     if (generation !== loadGeneration) return;
     render(stored.uiPreferences); status.textContent = '';
   } };
+}
+
+// Default names were stored in the language active when they were created; show them in the current one.
+function presetLabel(name) {
+  const number = /^(?:配置|Configuration )(\d+)$/.exec(name)?.[1];
+  return number ? t('配置{number}', { number }) : name;
 }

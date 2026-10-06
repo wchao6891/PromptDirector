@@ -407,7 +407,7 @@ async function confirmCapturePermissionOnboarding(event) {
     permissionGranted = true;
     pendingCaptureAction = null;
   } catch (error) {
-    elements.capturePermissionStatus.textContent = error?.message || "权限申请失败，待保存内容没有改变。";
+    elements.capturePermissionStatus.textContent = translateUiMessage(error?.message) || t("权限申请失败，待保存内容没有改变。");
     elements.capturePermissionStatus.classList.add("error");
   } finally {
     elements.capturePermissionConfirm.disabled = false;
@@ -1520,7 +1520,7 @@ function createQuickPreview() {
     draft.visuals.forEach((visual, index) => {
       const item = div("quick-image-item");
       const image = document.createElement("img");
-      image.alt = visual.sourceTitle || `截图 ${index + 1}`;
+      image.alt = visual.sourceTitle || t("截图 {index}", { index: index + 1 });
       loadVisual(image, visual.id);
       const remove = createQuickRemoveButton(`删除第 ${index + 1} 张图片`, (button) =>
         sendDraftAction(button, "REMOVE_CAPTURE_VISUAL", { visualId: visual.id }));
@@ -1537,7 +1537,7 @@ function createQuickPreview() {
 
 function createQuickRemoveButton(ariaLabel, handler) {
   const button = action("", handler, false, "quick-remove", ariaLabel);
-  button.title = ariaLabel;
+  button.title = translateUiMessage(ariaLabel);
   button.append(createUiIcon("x"));
   return button;
 }
@@ -1547,7 +1547,7 @@ function createFragmentCard(fragment, index, canReorder) {
   card.className = "fragment-card";
   const textarea = document.createElement("textarea");
   textarea.value = fragment.text;
-  textarea.setAttribute("aria-label", `文字内容 ${index + 1}`);
+  textarea.setAttribute("aria-label", t("文字内容 {index}", { index: index + 1 }));
   textarea.addEventListener("change", () =>
     sendDraftAction(null, "UPDATE_CAPTURE_FRAGMENT", { fragmentId: fragment.id, text: textarea.value }));
   const meta = div("item-meta");
@@ -1573,7 +1573,7 @@ function createVisualCard(visual, index, view) {
   const card = document.createElement("article");
   card.className = `visual-card${draft.primaryVisualId === visual.id ? " primary" : ""}`;
   const image = document.createElement("img");
-  image.alt = visual.sourceTitle || `截图 ${index + 1}`;
+  image.alt = visual.sourceTitle || t("截图 {index}", { index: index + 1 });
   loadVisual(image, visual.id);
   const copy = div("visual-copy");
   copy.append(

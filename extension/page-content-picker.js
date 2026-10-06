@@ -9,7 +9,7 @@ export function pickPageContent(options = {}) {
   overlay.id = id;
   Object.assign(overlay.style, { position: "fixed", pointerEvents: "none", zIndex: "2147483647", border: "2px solid #bafa00", background: "rgba(186,250,0,.08)", display: "none" });
   const cancel = document.createElement("button");
-  cancel.textContent = "取消选取";
+  cancel.textContent = options.cancelLabel || "取消选取";
   Object.assign(cancel.style, { position: "fixed", top: "16px", right: "16px", zIndex: "2147483647", padding: "10px 16px", borderRadius: "8px", border: "1px solid #777", background: "#161719", color: "white", cursor: "pointer" });
   document.documentElement.append(overlay, cancel);
   let selected;
