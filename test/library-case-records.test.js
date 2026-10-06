@@ -183,3 +183,29 @@ test('reads keep the requested keys and defaults whichever way cases are stored'
   assert.deepEqual(Object.keys(await run.storage.get(['entries', 'keep'])).sort(), ['entries', 'keep']);
   assert.deepEqual(await run.storage.get(['keep']), { keep: 'other' });
 });
+
+test('a page applies changed, removed and reordered cases without reading the library again', async () => {
+  const { applyCaseChanges } = await import('../extension/library-case-records.js');
+  const shown = cases('a', 'b', 'c');
+  const edited = { ...shown[1], text: '新' };
+  assert.deepEqual(applyCaseChanges(shown, { cases: { b: edited }, removedCaseIds: [] }), [shown[0], edited, shown[2]]);
+  assert.deepEqual(applyCaseChanges(shown, { cases: {}, removedCaseIds: ['a'], caseIds: ['c', 'b'] }), [shown[2], shown[1]]);
+  assert.deepEqual(applyCaseChanges(shown, { cases: { d: cases('d')[0] }, removedCaseIds: [], caseIds: ['d', 'a', 'b', 'c'] }).map(entry => entry.id), ['d', 'a', 'b', 'c']);
+  assert.equal(applyCaseChanges(shown, { cases: { d: cases('d')[0] }, removedCaseIds: [] }), null, 'a new case without its position needs a full read');
+  assert.equal(applyCaseChanges(shown, { cases: {}, removedCaseIds: [], caseIds: ['a', 'unknown'] }), null);
+});
+
+test('browser storage that returns object fields in its own order still verifies and writes only real changes', async () => {
+  const run = memory(legacy(['a', 'b'], SCHEMA_VERSION - 1));
+  // Chrome returns stored objects with their fields reordered.
+  const sorted = value => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : Array.isArray(value) ? value.map(sorted) : value;
+  const get = run.backend.get;
+  run.backend.get = async keys => sorted(await get(keys));
+  const written = cases('a', 'b').map(entry => ({ text: entry.text, id: entry.id, schemaVersion: entry.schemaVersion }));
+  await run.storage.set({ schemaVersion: SCHEMA_VERSION, entries: written });
+  assert.deepEqual(run.data[CASE_INDEX_KEY].ids, ['a', 'b']);
+  run.sets.length = 0;
+  await run.open().set({ entries: written });
+  assert.deepEqual(Object.keys(run.sets[0]).filter(key => key.startsWith('case:')), [], 'reordered fields are not a change');
+});

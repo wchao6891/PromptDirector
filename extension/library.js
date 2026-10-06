@@ -11,6 +11,7 @@ import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { createTransientFeedback } from "./transient-feedback.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
+import { applyCaseChanges } from "./library-case-records.js";
 const libraryStorage = getLibraryStorage();
 import { createLibraryViewReader, enrichContentMeanings } from './library-view-state.js';
 const readLibraryViewState = createLibraryViewReader({
@@ -660,6 +661,10 @@ libraryStorage.subscribe((changes) => {
   if (!changedKeys.length) return;
   if (changedKeys.length === 1 && changedKeys[0] === "entries" && Array.isArray(changes.entries.newValue)) {
     pendingEntriesChange = changes.entries.newValue;
+  } else if (changedKeys.length === 1 && changes.entries.caseLayout && document.body.dataset.libraryState === "ready") {
+    // Per-case storage names only the changed cases; changes arriving together build on each other.
+    pendingEntriesChange = applyCaseChanges(pendingEntriesChange ?? entries, changes.entries);
+    if (!pendingEntriesChange) pendingFullLibraryRefresh = true;
   } else pendingFullLibraryRefresh = true;
   workspaceLibraryRevision++;
   liveWorkspace?.observe('library');

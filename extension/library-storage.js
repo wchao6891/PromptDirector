@@ -3,7 +3,7 @@ import { jsonBytes, startPhase } from "./perf-trace.js";
 import { assertLibraryWritable } from "./library-version-guard.js";
 import { SCHEMA_VERSION } from "./taxonomy.js";
 import { CASE_INDEX_KEY, ENTRIES_KEY, LEGACY_ENTRIES_KEY, assembleEntries, caseIdFromRecordKey, caseIndexFor, caseRecordKey,
-  indexedCaseIds, isCaseRecordKey, keyableEntries, planCaseWrite, translateCaseChanges } from "./library-case-records.js";
+  caseText, indexedCaseIds, isCaseRecordKey, keyableEntries, planCaseWrite, translateCaseChanges } from "./library-case-records.js";
 
 // The case library records a reader needs to find, show and edit cases.
 export const CASE_LIBRARY_KEYS = Object.freeze(['schemaVersion', 'entries', 'trashState', 'compoundCases',
@@ -80,7 +80,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
   const storedCaseText = async (ids, revision) => {
     if (caseCache && revision && caseCache.revision === revision) return caseCache;
     const found = await records(ids);
-    const text = new Map(Object.entries(found).map(([id, value]) => [id, JSON.stringify(value)]));
+    const text = new Map(Object.entries(found).map(([id, value]) => [id, caseText(value)]));
     // Records left by an interrupted removal are not part of the library; clear them with this write.
     const orphanKeys = typeof backend.getKeys === 'function'
       ? (await backend.getKeys()).filter(key => isCaseRecordKey(key) && !text.has(caseIdFromRecordKey(key))) : [];
@@ -96,9 +96,9 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     if (Array.isArray(plainEntries) && !hadLegacyCopy) payload[LEGACY_ENTRIES_KEY] = plainEntries;
     await backend.set(payload);
     const back = await backend.get([CASE_INDEX_KEY, ...entries.map(entry => caseRecordKey(entry.id))]);
-    const text = new Map(entries.map(entry => [entry.id, JSON.stringify(entry)]));
+    const text = new Map(entries.map(entry => [entry.id, caseText(entry)]));
     const intact = JSON.stringify(indexedCaseIds(back[CASE_INDEX_KEY])) === JSON.stringify(entries.map(entry => entry.id))
-      && entries.every(entry => JSON.stringify(back[caseRecordKey(entry.id)]) === text.get(entry.id));
+      && entries.every(entry => caseText(back[caseRecordKey(entry.id)]) === text.get(entry.id));
     if (!intact) {
       // Put the library back exactly as the single list it was; the records are discarded.
       if (Array.isArray(plainEntries)) await backend.set({ [ENTRIES_KEY]: plainEntries });

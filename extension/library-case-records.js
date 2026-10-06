@@ -48,13 +48,20 @@ export function caseIndexFor(entries) {
   return { layout: CASE_INDEX_LAYOUT, ids: entries.map(entry => entry.id) };
 }
 
+// Browser storage keeps object fields in its own order, so stored and written cases are compared by
+// content: object fields sorted, everything else as JSON itself serializes it.
+export function caseText(value) {
+  return JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+}
+
 const sameIds = (left, right) => left.length === right.length && left.every((id, index) => id === right[index]);
 
 // Compares against the last stored text of each case and returns only what must be written.
 export function planCaseWrite(entries, storedIds, storedText) {
   const records = {}, text = new Map();
   for (const entry of entries) {
-    const serialized = JSON.stringify(entry);
+    const serialized = caseText(entry);
     text.set(entry.id, serialized);
     if (storedText.get(entry.id) !== serialized) records[caseRecordKey(entry.id)] = entry;
   }
@@ -88,4 +95,16 @@ export function translateCaseChanges(changes) {
     ...(caseIds ? { caseIds } : {}) };
   delete translated[ENTRIES_KEY].newValue;
   return translated;
+}
+
+// Applies a translated case change to the list a page already shows. Returns null when the change
+// cannot be applied on its own (a case whose position the page does not know), so the caller reads again.
+export function applyCaseChanges(currentEntries, change) {
+  const byId = new Map(currentEntries.map(entry => [entry.id, entry]));
+  const changed = Object.entries(change.cases ?? {});
+  if (!change.caseIds && changed.some(([id]) => !byId.has(id))) return null;
+  for (const id of change.removedCaseIds ?? []) byId.delete(id);
+  for (const [id, entry] of changed) byId.set(id, entry);
+  const ids = change.caseIds ?? currentEntries.map(entry => entry.id).filter(id => byId.has(id));
+  return ids.every(id => byId.has(id)) ? ids.map(id => byId.get(id)) : null;
 }
