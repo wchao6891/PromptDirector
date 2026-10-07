@@ -47,14 +47,41 @@ def main():
             }""")
             assert own_ready.get('supplement',{}).get('text') == full, 'An unrelated community-loading spinner must not consume the selected comment’s entire read deadline'
             source.evaluate("()=>document.querySelector('#unrelated-loading').remove()")
-            before_pages = len(run.context.pages)
-            selected = collector.evaluate("""async()=>{
-              const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-              return chrome.runtime.sendMessage({type:'READ_PAGE_CAPTURE_SUPPLEMENT',sourceTabId:tab.id,sourceUrl:tab.url,supplement:{id:'selected',sourceUrl:'https://x.com/director/status/124'}});
+            # The previous probe expands a short preview into a long document. Finish
+            # that fixture layout before testing preservation of an explicit top position.
+            source.evaluate("""async()=>{
+              await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+              window.scrollTo({top:0,left:0,behavior:'instant'});
+              await new Promise(resolve=>requestAnimationFrame(resolve));
             }""")
+            assert source.evaluate('window.scrollY') == 0
+            before_pages = len(run.context.pages)
+            selected_read = collector.evaluate("""async()=>{
+              const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+              const events=[];
+              const created=next=>events.push({type:'created',tabId:next.id});
+              const activated=info=>events.push({type:'activated',tabId:info.tabId});
+              const updated=(tabId,change)=>{
+                if(tabId===tab.id&&(change.url||change.status==='loading')) events.push({type:'navigation',tabId,change});
+              };
+              chrome.tabs.onCreated.addListener(created);
+              chrome.tabs.onActivated.addListener(activated);
+              chrome.tabs.onUpdated.addListener(updated);
+              try {
+                const response=await chrome.runtime.sendMessage({type:'READ_PAGE_CAPTURE_SUPPLEMENT',sourceTabId:tab.id,sourceUrl:tab.url,supplement:{id:'selected',sourceUrl:'https://x.com/director/status/124'}});
+                return {response,events};
+              } finally {
+                chrome.tabs.onCreated.removeListener(created);
+                chrome.tabs.onActivated.removeListener(activated);
+                chrome.tabs.onUpdated.removeListener(updated);
+              }
+            }""")
+            selected = selected_read['response']
             assert selected.get('ok') and selected['supplement']['text'] == full, selected
             assert selected['supplement']['media'][0]['kind'] == 'video' and selected['supplement']['media'][0]['url'] == 'https://video.twimg.com/own.mp4'
-            assert len(run.context.pages) == before_pages and source.url == MAIN and source.evaluate('window.scrollY') == 0, 'A mounted selected reply must finish without opening, activating or reloading another tab'
+            selected_state = {'pagesBefore':before_pages,'pagesAfter':len(run.context.pages),'url':source.url,
+                              'scrollY':source.evaluate('window.scrollY'),'tabEvents':selected_read['events']}
+            assert len(run.context.pages) == before_pages and source.url == MAIN and selected_state['scrollY'] == 0 and not selected_state['tabEvents'], ('A mounted selected reply must finish without opening, activating or reloading another tab',selected_state)
             source.evaluate("""markup=>{
               const column=document.querySelector('[data-testid=primaryColumn]');const root=column.querySelector('article');
               column.insertAdjacentHTML('beforeend','<div style="height:3000px"></div><div id=offscreen-loading role=progressbar style="height:20px"></div>');

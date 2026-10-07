@@ -30,7 +30,8 @@ def main(on_download=None):
             'uiPreferences': {'locale':'zh-CN','theme':'dark','motion':'reduced'},
             'capturePermissionOnboarding': {'version':1,'acknowledgedAt':'2026-10-05T00:00:00Z','clipboardIncluded':True}})
         worker = next(w for w in run.context.service_workers if w.url.startswith(f'chrome-extension://{run.extension_id}/'))
-        worker.evaluate('''encoded=>{
+        case_record_prefix = p.evaluate("async()=>(await import('./library-case-records.js')).CASE_RECORD_PREFIX")
+        worker.evaluate('''({encoded,caseRecordPrefix})=>{
           const binary=atob(encoded), bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
           const nativeFetch=globalThis.fetch.bind(globalThis); const gates=new Map();
           globalThis.captureFixture={gates, failImage:true, holdCommit:true, requests:[]};
@@ -52,13 +53,16 @@ def main(on_download=None):
           };
           const originalSet=chrome.storage.local.set.bind(chrome.storage.local);
           chrome.storage.local.set=async values=>{
-            if(globalThis.captureFixture.holdCommit&&values.entries?.some(entry=>entry.mediaAssets?.some(asset=>asset.kind==='video'))){
+            // Pause the actual case record write, before its index is published.
+            const videoCase=Object.entries(values).some(([key,entry])=>
+              key.startsWith(caseRecordPrefix)&&entry.mediaAssets?.some(asset=>asset.kind==='video'));
+            if(globalThis.captureFixture.holdCommit&&videoCase){
               globalThis.captureFixture.holdCommit=false;
               await new Promise(resolve=>gates.set('commit',resolve));
             }
             return originalSet(values);
           };
-        }''', base64.b64encode(video).decode())
+        }''', {'encoded':base64.b64encode(video).decode(),'caseRecordPrefix':case_record_prefix})
         image = p.evaluate('''async()=>{
           const c=document.createElement('canvas');c.width=320;c.height=180;
           const x=c.getContext('2d');x.fillStyle='#355e72';x.fillRect(0,0,320,180);

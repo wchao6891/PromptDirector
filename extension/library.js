@@ -1590,7 +1590,7 @@ async function refreshLibrary({ response: suppliedResponse, progressive = false 
     rebuildLibrarySearchIndex();
     gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
     updateCachedDocumentCards();
-    if (elements.searchInput.value.trim()) scheduleSearchRender();
+    if (elements.searchInput.value.trim()) scheduleSearchRender({ preserveViewport: true });
   }).catch(() => undefined).finally(() => restoreLibraryScrollPosition());
   await renderOpenLibraryPanels({ detailChanged: !progressive && !preserveCards });
   scheduleMaintenanceStatusPoll();
@@ -1675,7 +1675,7 @@ async function loadImageDerivedMetadata({ refresh = false } = {}) {
     markSimilarityIndexStale();
     rebuildLibrarySearchIndex();
     gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
-    if (document.body.dataset.libraryState === "ready" && elements.searchInput.value.trim()) scheduleSearchRender();
+    if (document.body.dataset.libraryState === "ready" && elements.searchInput.value.trim()) scheduleSearchRender({ preserveViewport: true });
     return metadata;
   }).finally(() => {
     imageDerivedMetadataLoadPromise = null;
@@ -1821,11 +1821,15 @@ function renderGallery({ preserveViewport = false, preserveCards = false } = {})
   renderGalleryResults({ refreshNavigation: true, preserveViewport, preserveCards });
 }
 
-function scheduleSearchRender() {
-  if (searchRenderFrame) cancelAnimationFrame(searchRenderFrame);
+function scheduleSearchRender({ preserveViewport = false } = {}) {
+  if (searchRenderFrame) {
+    // A passive metadata refresh must not override a pending user query change.
+    if (preserveViewport) return;
+    cancelAnimationFrame(searchRenderFrame);
+  }
   searchRenderFrame = requestAnimationFrame(() => {
     searchRenderFrame = 0;
-    renderGalleryResults({ refreshNavigation: false });
+    renderGalleryResults({ refreshNavigation: false, preserveViewport });
     restoreLibraryScrollPosition();
   });
 }
@@ -6207,7 +6211,10 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     for (const child of [...mountedBody.children]) {
       if (child.matches(".prompt-section, .review-authored-notes")) continue;
       const next = nextSections.find(node => node.className === child.className);
-      if (next) replaceDetailSection(child, next);
+      if (next && child.matches(".detail-quick-organization")) {
+        child.updateEntry(entry);
+        nextSections[nextSections.indexOf(next)] = child;
+      } else if (next) replaceDetailSection(child, next);
       else child.remove();
     }
     for (let index = nextSections.length - 1; index >= 0; index -= 1) {
@@ -8190,11 +8197,12 @@ function createDetailQuickOrganization(entry) {
     const created = await perform(createProject, { type: "CREATE_COLLECTION", name }, false);
     if (!created?.created?.id) return;
     organizerState = created.organizerState ?? organizerState;
-    await perform(createProject, {
+    const assigned = await perform(createProject, {
       type: "REPLACE_COLLECTION_ENTRIES",
       collectionId: created.created.id,
       entryIds
     });
+    if (assigned?.ok && newProjectName.value.trim() === name) newProjectName.value = "";
   };
   createProject.addEventListener("click", submitProject);
   newProjectName.addEventListener("keydown", (event) => {
@@ -8224,6 +8232,18 @@ function createDetailQuickOrganization(entry) {
   if (source) actions.append(source);
   actions.append(createDetailDeleteAction(entry));
   section.append(projects, labels, actions);
+  // Background refreshes update saved values without discarding the open tag or
+  // project editor, its draft, or the control receiving the current click.
+  section.updateEntry = latest => {
+    entry = latest;
+    syncProjectSummary();
+    selector.render();
+    if (editor.element.getAttribute("aria-busy") !== "true") {
+      editor.setValues(uniqueNames(entry.compoundCase?.customLabels ?? entry.customLabels));
+    }
+    const source = createDetailSourceAction(entry);
+    actions.replaceChildren(...(source ? [source] : []), createDetailDeleteAction(entry));
+  };
   return section;
 }
 
