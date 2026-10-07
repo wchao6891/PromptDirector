@@ -5,11 +5,12 @@ import { readFile } from "node:fs/promises";
 const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
 
-test("finishing a compound selection exits selection mode before the gallery refreshes", () => {
+test("finishing a compound selection clears its saved reference selection before the gallery refreshes", () => {
   const block = functionBlock("async function saveCompoundSelection()", "async function saveProjectSelection()");
   assert.match(block, /perform\(elements\.projectSelectionSave, message, false\)/);
-  assert.ok(block.indexOf('selectionMode = ""') < block.indexOf("await refreshLibrary()"));
-  assert.ok(block.indexOf("selectedCaseIds.clear()") < block.indexOf("await refreshLibrary()"));
+  assert.ok(block.indexOf('exitSelectionMode()') > block.indexOf('if (!response?.ok) return;'));
+  assert.ok(block.indexOf('await referenceSelectionWriter.flush()') > block.indexOf('exitSelectionMode()'));
+  assert.ok(block.indexOf('await referenceSelectionWriter.flush()') < block.indexOf('await refreshLibrary()'));
 });
 
 test("compound details expose direct primary-case and cover-image actions", () => {
@@ -48,3 +49,18 @@ function functionBlock(start, end) {
   assert.ok(startIndex >= 0 && endIndex > startIndex, `missing source block: ${start}`);
   return source.slice(startIndex, endIndex);
 }
+
+test("unsaved compound organizing holds library refreshes instead of being rebuilt away", () => {
+  const organizer = functionBlock("function createCompoundOrganizer", "async function createDetailMediaGallery");
+  const editor = functionBlock("function createEntryEditor", "function renderManager");
+  const refresh = functionBlock("async function refreshLibrary", "async function loadImageDerivedMetadata");
+  // Compound details always fully re-render, so the shared dirty marker is the only guard.
+  assert.match(refresh, /\[data-dirty="true"\]'\)\) await renderDetail\(\)/);
+  assert.match(organizer, /details\.dataset\.dirty = String\(title\.input\.value !== \(entry\.title \|\| ""\) \|\| memberIds\.join/);
+  assert.match(organizer, /const renderOrder = \(\) => \{\n    syncDirty\(\);/);
+  assert.match(organizer, /details\.dataset\.dirty = "false";\n    const response = await perform/);
+  assert.match(organizer, /if \(!response\?\.ok\) syncDirty\(\);/);
+  assert.match(source, /createEntryEditor\(member, \{ compoundMember: true \}\)/);
+  assert.match(editor, /if \(options\.compoundMember\) titleField\.dataset\.dirty = String\(titleInput\.value !== \(entry\.title \|\| ""\)\)/);
+  assert.match(editor, /titleField\.dataset\.dirty = "false";[\s\S]*if \(!response\) syncTitleDirty\(\);/);
+});

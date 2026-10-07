@@ -16,6 +16,7 @@ import {
 } from "./sync-model.js";
 import { assetFormatsForMimeType } from "./asset-formats.js";
 import { readJsonWithResourceBudget } from './resource-policy.js';
+import { validatePortableAssetRecord } from './media-store.js';
 
 export const SYNC_DIRECTORY_NAME = "PromptDirector-Sync";
 const HEADER_FILENAME = "vault.json";
@@ -125,7 +126,7 @@ export async function writeSyncSnapshot(vault, snapshot, options = {}) {
 
 export async function writeSyncObject(vault, blob, options = {}) {
   validateVault(vault);
-  validateSyncMedia(blob);
+  validateSyncMedia(blob, options.assetId);
   throwIfAborted(options.signal);
   const objects = await vault.directory.getDirectoryHandle("objects", { create: true });
   const chunkBytes = Math.max(1, Number(options.chunkBytes) || DEFAULT_OBJECT_CHUNK_BYTES);
@@ -178,17 +179,21 @@ export async function readSyncObject(vault, objectId, options = {}) {
     }
     if (byteSize !== manifest.byteSize) throw new Error("同步媒体分块不完整");
     const restored = new Blob(chunks, { type: manifest.contentType });
-    validateSyncMedia(restored);
+    validateSyncMedia(restored, options.assetId);
     return restored;
   } catch (error) {
     if (!isNotFound(error)) throw error;
     const blob = await decryptVaultBlob(await readJsonFile(objects, `${objectId}.pdo`), vault.key);
-    validateSyncMedia(blob);
+    validateSyncMedia(blob, options.assetId);
     return blob;
   }
 }
 
-function validateSyncMedia(blob) {
+function validateSyncMedia(blob, assetId) {
+  if (String(assetId).startsWith('skill-file:')) {
+    validatePortableAssetRecord(assetId, blob);
+    return;
+  }
   if (!(blob instanceof Blob) || !blob.size) throw new Error("同步媒体无效");
   const type = String(blob.type || "application/octet-stream").toLocaleLowerCase("en-US");
   if (type !== "application/octet-stream" && !assetFormatsForMimeType(type).length) {

@@ -279,7 +279,7 @@
 .composer-skill-card code { color: var(--accent-ink); font-size: 12px; }
 .composer-skill-card small { color: var(--muted); font-size: 11px; }
 .composer-skill-card .composer-project-active { border-color: var(--selection-edge); color: var(--ink); background: var(--selection); box-shadow: inset 2px 0 var(--accent-emphasis); }
-.composer-case-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); align-content: start; gap: 14px; }
+.composer-case-list { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); align-content: start; gap: 14px; }
 .composer-case-option { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
 .composer-case-option:hover { border-color: color-mix(in srgb, var(--ink) 25%, var(--line)); box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 10%, transparent); }
 .composer-case-option[data-selected="true"] { border-color: var(--selection-edge); background: var(--selection); box-shadow: inset 0 0 0 1px var(--selection-edge); }

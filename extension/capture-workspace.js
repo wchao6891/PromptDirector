@@ -346,7 +346,7 @@ export function createCaptureWorkspace({
         wasEmpty: !draftBefore.fragments.length && !draftBefore.visuals.length,
         textCount: draft.fragments.length,
         imageCount: draft.visuals.length,
-        message: `${visualIds.length} 张图片已加入草稿 · 共 ${draft.visuals.length} 张`,
+        message: await localizedMessage("{count} 张图片已加入草稿 · 共 {total} 张", { count: visualIds.length, total: draft.visuals.length }),
         draft
       };
     } catch (error) {
@@ -503,7 +503,7 @@ export function createCaptureWorkspace({
         wasEmpty: !before.fragments.length && !before.visuals.length,
         textCount: draft.fragments.length,
         imageCount: draft.visuals.length,
-        message: `截图已加入草稿 · 共 ${draft.visuals.length} 张`,
+        message: await localizedMessage("截图已加入草稿 · 共 {total} 张", { total: draft.visuals.length }),
         draft
       };
     } catch (error) {
@@ -723,9 +723,14 @@ export function createCaptureWorkspace({
     const draft = createCaptureDraft({ visuals: failedVisuals });
     await storage.set({ [captureDraftStorageKey]: draft });
     if (failedVisuals.length) {
-      throw new Error(`草稿文字已清除，但有 ${failedVisuals.length} 张截图未能删除；已保留在草稿中，可再次丢弃`);
+      throw new Error(await localizedMessage("草稿文字已清除，但有 {count} 张截图未能删除；已保留在草稿中，可再次丢弃", { count: failedVisuals.length }));
     }
     return { ok: true, message: "采集草稿已丢弃", draft };
+  }
+
+  async function localizedMessage(source, values) {
+    const template = translateForLocale(source, await currentLocale());
+    return Object.entries(values).reduce((text, [key, value]) => text.replaceAll(`{${key}}`, String(value)), template);
   }
 
   async function currentLocale() {

@@ -18,6 +18,32 @@ function storage(initial = {}) {
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const createAgentTasks = options => createTasks({ getLibraryId: async () => 'test-library', ...options });
 
+test('local screening files share transfer ownership and exact digest without message chunk copies', async () => {
+  const original=new Blob(['local video bytes'],{type:'video/mp4'}), store=storage(), blobs=new Map([['agent-file:local',original]]);
+  let prepared=0;
+  const transfers=createAgentTransfers({storage:store,readBlob:async id=>blobs.get(id),writeBlob:async()=>assert.fail('local original must not be copied into chunks'),deleteBlob:async()=>{},prepare:async record=>{prepared++;return{asset:{id:record.assetId,kind:'video'}};}});
+  const record=await transfers.stageLocal({id:'local',name:'sample.mp4'});
+  assert.equal(record.sha256,await sha256Blob(original));assert.equal(record.byteSize,original.size);assert.equal(record.state,'ready');assert.equal(record.chunks,0);
+  assert((await transfers.retainedIds()).includes(record.assetId));
+  await transfers.stageLocal({id:'local',name:'sample.mp4'});assert.equal(prepared,1);
+  await assert.rejects(transfers.stageLocal({id:'local',name:'other.mp4'}),{code:'transfer_conflict'});
+});
+
+test('saved screening feedback protects its original and frame from idle cleanup and stale overwrites', async () => {
+  const ready = (id, kind) => ({ id, assetId: `agent-file:${id}`, state: 'ready', createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), prepared: { asset: { id: `agent-file:${id}`, kind } } });
+  const store = storage({ 'agentUpload:sample': ready('sample', 'video'), 'agentUpload:frame': ready('frame', 'image'), 'agentUpload:unused': ready('unused', 'image') });
+  const deleted = [];
+  const transfers = createAgentTransfers({ storage: store, readBlob: async () => null, writeBlob: async () => {}, deleteBlob: async id => deleted.push(id), now: () => 1000, idleMs: 1 });
+  const feedback = await transfers.updateReview({ id: 'sample', note: { id: 'note:one', startMs: 200, endMs: 900, text: '表演很好' }, frameTransferId: 'frame' });
+  assert.equal(feedback.notes[0].frameAssetId, 'agent-file:frame');
+  await assert.rejects(transfers.updateReview({ id: 'sample', expectedRevision: 0, removeId: 'note:one' }), { code: 'review_conflict' });
+  await assert.rejects(transfers.abort({ id: 'sample' }), { code: 'review_has_feedback' });
+  await assert.rejects(transfers.abort({ id: 'frame' }), { code: 'review_has_feedback' });
+  assert.equal((await transfers.prune()).discarded, 1);
+  assert.deepEqual(deleted, ['agent-file:unused']);
+  assert.equal((await transfers.get('sample')).reviewFeedback.notes[0].text, '表演很好');
+});
+
 test('retrying a write request does not run it twice and cannot change its meaning', async () => {
   const store = storage(); let count = 0; let finish;
   const tasks = createAgentTasks({ storage: store, execute: async () => { count++; await new Promise(resolve => { finish = resolve; }); return { ok: true }; } });
@@ -96,6 +122,24 @@ test('creation saves sources and project with receipt in one commit, and lost ac
   assert.deepEqual(restored.entries[0].agentProvenance, state.entries[1].agentProvenance);
 
   assert.equal((await saveAgentMaterial(input, 'creation-1', deps)).results[0].status, 'duplicate'); assert.equal(commits, 1);
+});
+
+test('mixed review saves every member note timestamp and rejects a changed later member before committing', async () => {
+  const state = { entries: [], organizerState: { collections: [] } }; let commits = 0;
+  const records = new Map(['video', 'image'].map((kind, index) => [kind, { id: kind, state: 'ready', assetId: kind,
+    prepared: { asset: { id: kind, kind, storageMode: 'managed', mimeType: kind === 'video' ? 'video/mp4' : 'image/png' } },
+    reviewFeedback: { revision: index + 1, notes: [{ id: 'note:' + kind, assetId: kind, startMs: kind === 'video' ? 100 : 0,
+      text: kind, createdAt: `2026-10-04T0${index}:00:00.000Z` }] } }]));
+  const deps = { loadState: async () => state, transfers: { get: async id => records.get(id), key: id => id }, buildEntry,
+    classify: () => ({}), place: () => ({ collections: [] }), commit: async update => { commits++; Object.assign(state, update); }, notify: async () => {}, schemaVersion: 1 };
+  const input = { title: '审片组', text: '', transferIds: ['video','image'], reviewRevisions: { video: 1, image: 1 },
+    timeNotes: [...records.values()].flatMap(record => record.reviewFeedback.notes.map(({ createdAt, ...note }) => note)) };
+  await assert.rejects(saveAgentMaterial(input, 'stale-review', deps), { code: 'review_conflict' });
+  assert.equal(commits, 0); assert.deepEqual(state.entries, []);
+  input.reviewRevisions.image = 2;
+  await saveAgentMaterial(input, 'current-review', deps);
+  assert.equal(commits, 1); assert.equal(state.entries[0].mediaAssets.length, 2);
+  assert.deepEqual(state.entries[0].timeNotes.map(note => note.createdAt).sort(), ['2026-10-04T00:00:00.000Z','2026-10-04T01:00:00.000Z']);
 });
 
 function event() {
@@ -223,4 +267,45 @@ test('a failed save remains failed when waiting, and worker restart cannot inven
   await tasks.submit('save_material', {}, 'failed-wait');
   const receipt = await tasks.inspect('failed-wait', { waitMs: 1000 });
   assert.equal(receipt.state, 'failed'); assert.match(receipt.error.message, /storage unavailable/);
+});
+
+test('standalone screening frames persist without fabricated notes, protect originals and support removal', async () => {
+  const ready = (id, kind) => ({ id, assetId: `agent-file:${id}`, state: 'ready', createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), prepared: { asset: { id: `agent-file:${id}`, kind } } });
+  const store = storage({ 'agentUpload:sample': ready('sample', 'video'), 'agentUpload:frame': ready('frame', 'image') });
+  const deleted = [];
+  const transfers = createAgentTransfers({ storage: store, readBlob: async () => null, deleteBlob: async id => deleted.push(id), now: () => 1000, idleMs: 1 });
+  const feedback = await transfers.updateReview({ id: 'sample', frameTransferId: 'frame', positionMs: 1543.13 });
+  assert.deepEqual(feedback.notes, []);
+  assert.equal(feedback.frames[0].positionMs, 1543);
+  assert.equal((await transfers.get('frame')).prepared.asset.derivedFromAssetId, 'agent-file:sample');
+  assert.equal((await transfers.get('frame')).prepared.asset.frameTimeMs, 1543);
+  assert.equal((await transfers.prune()).discarded, 0);
+  await assert.rejects(transfers.abort({ id: 'sample' }), { code: 'review_has_feedback' });
+  await assert.rejects(transfers.updateReview({ id: 'sample', expectedRevision: 0, removeFrameId: 'agent-file:frame' }), { code: 'review_conflict' });
+  const without = await transfers.updateReview({ id: 'sample', expectedRevision: feedback.revision, removeFrameId: 'agent-file:frame' });
+  assert.deepEqual(without.frames, []); assert.deepEqual(without.notes, []); assert.deepEqual(deleted, []);
+});
+
+for (const change of ['feedback', 'committed']) test(`delayed screening reads cannot roll back ${change} after another writer`, async () => {
+  const key = 'agentUpload:sample';
+  const store = storage({ [key]: { id:'sample', assetId:'sample-asset', state:'ready', chunks:0,
+    prepared:{asset:{id:'sample-asset',kind:'video'}}, reviewFeedback:{revision:0,notes:[],frames:[]}, createdAt:new Date(0).toISOString() } });
+  const readOriginal = store.get; let release, started; const pending = new Promise(resolve => { started=resolve; }); let first=true;
+  store.get = async id => { const result=await readOriginal(id); if(first){first=false;started();await new Promise(resolve=>{release=resolve;});}return result; };
+  const transfers=createAgentTransfers({storage:store, now:()=>1000});
+  const reading=transfers.get('sample'); await pending;
+  const writing=change==='feedback'
+    ? transfers.updateReview({id:'sample',note:{id:'note-1',text:'新保存的人工备注',startMs:0}})
+    : transfers.lock(async()=>store.set({[key]:{...store.data[key],state:'committed',prepared:null,entryId:'saved-case'}}));
+  await turn(); release(); await Promise.all([reading,writing]);
+  if(change==='feedback') { assert.equal(store.data[key].reviewFeedback.revision,1);assert.equal(store.data[key].reviewFeedback.notes[0].text,'新保存的人工备注'); }
+  else { assert.equal(store.data[key].state,'committed');assert.equal(store.data[key].prepared,null);assert.equal(store.data[key].entryId,'saved-case'); }
+});
+
+test('a save holding transfer ownership can read without renewing or nesting the write lock', {timeout:1000}, async()=>{
+  const store=storage({'agentUpload:sample':{id:'sample',assetId:'asset',state:'ready',createdAt:new Date(0).toISOString()}});
+  let writes=0;const set=store.set;store.set=async values=>{writes++;return set(values);};
+  const transfers=createAgentTransfers({storage:store});
+  const record=await transfers.lock(()=>transfers.get('sample',{touch:false}));
+  assert.equal(record.state,'ready');assert.equal(writes,0);
 });

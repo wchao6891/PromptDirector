@@ -70,7 +70,14 @@ def main():
             expect(page.get_by_role('dialog',name='下载副本')).to_have_count(0)
             expect(page.locator('#detail-drawer')).not_to_have_class(__import__('re').compile(r'.*open.*'))
             card.click(); page.locator('.detail-visual-thumb').nth(1).click()
-            expect(page.locator('.detail-visual-actions button')).to_have_text(['下载副本','设为主图','移除媒体'])
+            # Image media actions are icon buttons now (f7a4fdb); the visible label moved to title / accessible name.
+            visual_actions=page.locator('.detail-visual-actions button')
+            expect(visual_actions).to_have_count(3)
+            for i,label in enumerate(['下载副本','设为主图','移除媒体']):
+                expect(visual_actions.nth(i)).to_have_attribute('title',label)
+            expect(visual_actions.nth(0)).to_have_accessible_name('下载副本')
+            expect(visual_actions.nth(1)).to_have_accessible_name('设为主图')
+            expect(visual_actions.nth(2)).to_have_accessible_name('此媒体移入回收站')
             page.locator('.detail-visual-actions').get_by_role('button',name='下载副本').click()
             verify(5,fixtures[1][3])
             page.locator('.detail-visual-actions').get_by_role('button',name='下载副本').click()

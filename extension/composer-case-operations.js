@@ -2,6 +2,7 @@ import {ANALYSIS_BATCH_SPECS} from './analysis-batch-specs.js';
 import {validate} from './case-operation-specs.js';
 import { PROJECT_OPERATION_SPECS, SAVE_TEXT_MATERIAL_SPEC, validateProjectOperation } from "./project-operation-specs.js";
 import { CASE_OPERATION_SPECS, validateCaseOperation } from './case-operation-specs.js';
+import { AGENT_CASE_ACTION_SPECS } from './agent-case-action-specs.js';
 
 function analysisResultLabel(result) {
   const items=result.items??(result.item?[result.item]:[]);
@@ -11,7 +12,7 @@ function analysisResultLabel(result) {
 
 export function withComposerCaseOperations({ tools, session, invoke, onEvent = async () => {} }) {
   const projectSpecs = [...PROJECT_OPERATION_SPECS, SAVE_TEXT_MATERIAL_SPEC];
-  const specs = [...CASE_OPERATION_SPECS, ...projectSpecs, ...ANALYSIS_BATCH_SPECS];
+  const specs = [...CASE_OPERATION_SPECS, ...AGENT_CASE_ACTION_SPECS, ...projectSpecs, ...ANALYSIS_BATCH_SPECS];
   const enabled = session.libraryRetrievalEnabled !== false;
   const known = new Set([
     ...(session.referenceSnapshots || []).map(r => r.entryId),
@@ -36,7 +37,8 @@ export function withComposerCaseOperations({ tools, session, invoke, onEvent = a
         if (!enabled) throw new Error('本会话案例库能力已关闭');
         const isProject = projectSpecs.some(s => s.name === name);
         const batchSpec=ANALYSIS_BATCH_SPECS.find(spec=>spec.name===name);
-        if(batchSpec) validate(batchSpec.parameters,args,name);
+        const actionSpec = AGENT_CASE_ACTION_SPECS.find(spec => spec.name === name);
+        if(batchSpec || actionSpec) validate((batchSpec || actionSpec).parameters,args,name);
         else (isProject ? validateProjectOperation : validateCaseOperation)(name, args);
         const caseIds = batchSpec ? [...(args.items??[]).map(item=>item.caseId),args.caseId].filter(Boolean) : isProject ? [...(args.sourceCaseIds || []), ...(args.sourceReferences || []).map(r => r.caseId), args.previousCreation?.caseId].filter(Boolean) : [args.caseId, args.targetCaseId, ...(args.additionalCases || []).map(item => item.caseId)].filter(Boolean);
         if (caseIds.some(id => !known.has(id))) throw new Error('请先查询或选择要操作的案例');
@@ -48,7 +50,7 @@ export function withComposerCaseOperations({ tools, session, invoke, onEvent = a
         for (const item of result.results || []) if (item.entryId) known.add(item.entryId);
         if(name==='read_analysis_batch') for(const item of result.items??[]) known.add(item.caseId);
         // A committed write must still be reported when the user stops generation.
-        await onEvent({ ...event, status: 'completed', label: reading ? '已读取资料' : batchSpec ? analysisResultLabel(result) : result.replayed ? '已读取原操作回执' : result.results?.some(item => item.status === 'partial') ? '已保存，部分资料需补齐' : '资料已保存',
+        await onEvent({ ...event, status: 'completed', label: reading ? '已读取资料' : batchSpec ? analysisResultLabel(result) : result.replayed ? '已读取原操作回执' : name === 'trash_case' ? '已移入回收站' : result.results?.some(item => item.status === 'partial') ? '已保存，部分资料需补齐' : '资料已保存',
           candidates: [...(result.cases || []).map(item => ({ caseId: item.caseId, title: item.title })), ...(result.results || []).filter(item => item.entryId).map(item => ({ caseId: item.entryId, title: item.title }))] });
         return { data: result };
       } catch (error) {

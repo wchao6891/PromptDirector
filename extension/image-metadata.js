@@ -168,3 +168,31 @@ function matches(bytes, offset, values) {
 function invalidDimensions() {
   return new Error("无法读取图片尺寸");
 }
+
+// Container flags only: never decode pixels or scan animation frames just to
+// choose a preview. PNG's animation control precedes its first image payload.
+export async function imageNeedsOriginalPlayback(blob) {
+  if (!(blob instanceof Blob)) return false;
+  if (blob.type === 'image/gif') return true;
+  if (!['image/webp', 'image/png', 'image/avif'].includes(blob.type)) return false;
+  const bytes = new Uint8Array(await blob.slice(0, 32).arrayBuffer());
+  if (blob.type === 'image/webp') return bytes.length >= 30 && text(bytes, 0, 4) === 'RIFF'
+    && text(bytes, 8, 4) === 'WEBP' && text(bytes, 12, 4) === 'VP8X' && Boolean(bytes[20] & 2);
+  if (blob.type === 'image/avif') {
+    if (text(bytes, 4, 4) !== 'ftyp') return false;
+    const size = new DataView(bytes.buffer).getUint32(0);
+    const brands = new Uint8Array(await blob.slice(8, Math.min(size, HEADER_SCAN_BYTES)).arrayBuffer());
+    for (let at = 0; at + 4 <= brands.length; at += 4) if (at !== 4 && text(brands, at, 4) === 'avis') return true;
+    return false;
+  }
+  if (!matches(bytes, 0, [137,80,78,71,13,10,26,10])) return false;
+  let at = 8, scanned = 0;
+  while (at + 8 <= blob.size && scanned < HEADER_SCAN_BYTES) {
+    const header = new Uint8Array(await blob.slice(at, at + 8).arrayBuffer()); scanned += 8;
+    const length = new DataView(header.buffer).getUint32(0), kind = text(header, 4, 4);
+    if (kind === 'acTL') return true;
+    if (kind === 'IDAT' || kind === 'IEND') return false;
+    at += length + 12;
+  }
+  return false;
+}

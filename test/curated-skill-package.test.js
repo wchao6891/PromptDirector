@@ -70,7 +70,7 @@ test("submission archive contains a manifest and the reviewed method and cover p
   assert.deepEqual([...outer.keys()], ["submission.json", "payload.zip"]);
   const manifest = JSON.parse(await outer.get("submission.json").text());
   assert.equal(manifest.format, "prompt-director-curated-skill-submission");
-  assert.equal(manifest.version, 2);
+  assert.equal(manifest.version, 3);
   assert.equal(manifest.license, "CC BY 4.0");
   assert.equal("authorId" in manifest, false);
   assert.equal("skillVersion" in manifest, false);

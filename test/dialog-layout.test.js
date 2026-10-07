@@ -67,13 +67,14 @@ test("every model catalog refresh applies the complete AI configuration response
   assert.doesNotMatch(refreshSession, /aiProviderRegistry\s*=\s*response/);
 });
 
-test("video detail sizes from media dimensions and separates native controls from app actions", async () => {
+test("video content preserves its dimensions inside the shared stage and separates playback from case actions", async () => {
   const [source, css] = await Promise.all([
     readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/library.css", import.meta.url), "utf8")
   ]);
   assert.match(source, /localVideo\.videoWidth/);
-  assert.match(css, /is-video-detail\.is-immersive \{ height: auto/);
+  assert.doesNotMatch(css, /is-video-detail\.is-immersive \{ height: auto/);
+  assert.match(css, /\.detail-visual-gallery\.is-immersive \{ height: 100dvh/);
   assert.match(css, /\.detail-visual-gallery\.is-video-detail \.detail-visual-caption \{[^}]*position: static;[^}]*border-top: 1px solid var\(--line\)/);
   assert.match(css, /detail-visual-actions :is\(button, a\.button-secondary\) \{ min-height: 36px/);
   const mobile = css.slice(css.lastIndexOf("@media (max-width: 390px)"));

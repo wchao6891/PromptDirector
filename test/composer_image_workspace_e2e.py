@@ -148,7 +148,7 @@ def main() -> None:
 
         workspace.get_by_role("button", name="保存到灵感库", exact=True).click()
         expect(composer.locator("#composer-feedback")).to_contain_text("保存")
-        stored_after_save = composer.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries)")
+        stored_after_save = composer.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(value => value.entries)")
         assert any(item.get("creationMeta", {}).get("creativeRunId") == "creative-run-one" for item in stored_after_save)
 
         workspace.get_by_role("button", name="作为参考继续", exact=True).click()

@@ -602,6 +602,38 @@ test("authentication failures pause the whole batch", async () => {
   assert.equal(job.items[0].status, "failed");
 });
 
+test("rate limits and service errors after exhausted retries pause text, vision and video batches before more paid requests", async () => {
+  const visionEntries = [{ id: "a", mediaAssets: [{ id: "a-img", kind: "image", usage: "content" }, { id: "a-img-2", kind: "image", usage: "content" }] }];
+  const videoEntries = [{ id: "v", mediaAssets: [
+    { id: "v-one", kind: "video", usage: "content", storageMode: "managed" },
+    { id: "v-two", kind: "video", usage: "content", storageMode: "managed" }
+  ] }];
+  const jobs = [
+    await createAnalysisBatchJob([{ id: "a", text: "one" }, { id: "b", text: "two" }], { id: "text" }),
+    createVisionBatchJob(visionEntries, { id: "vision", entryIds: ["a"], includeAllImages: true, providerType: "openai", model: "vision-model" }),
+    createVideoBatchJob(videoEntries, { id: "video", entryIds: ["v"], includeAllVideos: true, sendableAssetIds: ["v-one", "v-two"] })
+  ];
+  for (const status of [429, 500, 502, 503, 504]) {
+    for (const created of jobs) {
+      const claimed = claimAnalysisItems(structuredClone(created), 1, () => "claim");
+      const [claim] = claimed.claims;
+      const failed = failAnalysisItem(claimed.job, claim.entryId, "claim", { message: "busy", status });
+      assert.equal(failed.status, "paused", `${created.kind} ${status}`);
+      assert.equal(claimAnalysisItems(failed, 5, () => "next").claims.length, 0, "a paused batch must not claim another paid item");
+      const resumed = resumeAnalysisBatch(failed);
+      assert.equal(resumed.status, "running");
+      assert.equal(claimAnalysisItems(resumed, 5, () => "next").claims.length, 1);
+    }
+  }
+});
+
+test("a final rate-limited item settles the batch instead of leaving an empty paused job", async () => {
+  let job = await createAnalysisBatchJob([{ id: "a", text: "one" }], { id: "last" });
+  job = claimAnalysisItems(job, 1, () => "claim").job;
+  job = failAnalysisItem(job, "a", "claim", { message: "busy", status: 429 });
+  assert.equal(job.status, "failed");
+});
+
 test("settled batch status distinguishes complete, partial, and failed outcomes", async () => {
   let mixed = await createAnalysisBatchJob([{ id: "a", text: "one" }, { id: "b", text: "two" }], { id: "mixed" });
   let claims = claimAnalysisItems(mixed, 2, (() => { let index = 0; return () => `mixed-${++index}`; })());

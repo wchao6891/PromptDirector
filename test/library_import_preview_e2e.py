@@ -49,7 +49,7 @@ with extension_session('pd-import-preview-') as session:
           importReport:inspection.report, resourceIndex:inspection.resourceIndex}]};
       const result = await chrome.runtime.sendMessage(request);
       const replay = await chrome.runtime.sendMessage(request);
-      const entries = (await chrome.storage.local.get('entries')).entries;
+      const entries = (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries;
       return {result,replay,count:entries.length,original:entries.find(e=>e.id==='local').text};
     }''')
     assert result['result']['ok'] and result['replay'] == result['result'], result
@@ -58,12 +58,12 @@ with extension_session('pd-import-preview-') as session:
       const {previewLibraryImportInWorker} = await import('./library-import-preview.js');
       previewInput.currentState = await chrome.runtime.sendMessage({type:'GET_FOLDER_BACKUP_STATE'});
       const preview = await previewLibraryImportInWorker(previewInput);
-      const entries = (await chrome.storage.local.get('entries')).entries;
+      const entries = (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries;
       entries.find(e=>e.id==='local').text = '核对之后的用户编辑';
-      await chrome.storage.local.set({entries});
+      await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries}));
       const result = await chrome.runtime.sendMessage({...request, operationId:crypto.randomUUID(),
         planToken:preview.planToken, plan:preview.plan});
-      return {result,text:(await chrome.storage.local.get('entries')).entries.find(e=>e.id==='local').text};
+      return {result,text:(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.find(e=>e.id==='local').text};
     }''')
     assert not stale['result']['ok'] and '预览后' in stale['result']['message'], stale
     assert stale['text'] == '核对之后的用户编辑', stale

@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, isAbsolute, join } from 'node:path';
 import { connectorRoot, ensurePrivateRoot } from './paths.mjs';
+import { readablePath } from './sensitive-paths.mjs';
 
 async function digest(handle) {
   const hash = createHash('sha256');
@@ -14,19 +15,26 @@ export async function stageFiles(files, bodyFile, requestId, call, { purpose, li
   if (limits) {
     if (files.length > limits.maxFileCount) throw new Error('Skill包文件数量超过插件导入上限，未开始上传。');
     let totalBytes = 0;
-    for (const file of files) {
+    let textBytes = 0;
+    const packagePaths = files.map(file => file.packagePath?.replace(/\\/g, '/') || '');
+    const skillPath = purpose === 'skill-file' && packagePaths.find(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'));
+    const skillRoot = (skillPath || '').slice(0, -'SKILL.md'.length);
+    for (const [index, file] of files.entries()) {
       if (!isAbsolute(file.path)) throw new Error('附件必须使用绝对路径。');
-      const info = await stat(file.path);
+      const info = await stat(await readablePath(file.path));
       if (!info.isFile()) throw new Error('Skill附件必须是普通文件。');
       if (info.size > limits.maxFileBytes) throw new Error('Skill单文件超过插件导入上限，未开始上传。');
       totalBytes += info.size;
+      const relativePath = packagePaths[index].startsWith(skillRoot) ? packagePaths[index].slice(skillRoot.length) : '';
+      if (purpose === 'skill-file' && (relativePath === 'SKILL.md' || /^references\/.+\.md$/iu.test(relativePath))) textBytes += info.size;
     }
     if (totalBytes > limits.maxArchiveBytes) throw new Error('Skill包总大小超过插件导入上限，未开始上传。');
+    if (Number.isSafeInteger(limits.maxTextBytes) && textBytes > limits.maxTextBytes) throw Object.assign(new Error('Skill正文与引用超过插件本次解析预算，未开始上传；保留完整文件，请分批整理，不要删减原文。'), { code: 'RESOURCE_BUDGET_REACHED' });
   }
   const transferIds = []; const filePrompts = {}; let bodyTransferId;
   for (const [index, file] of files.entries()) {
     if (!isAbsolute(file.path)) throw new Error('附件必须使用绝对路径。');
-    const handle = await open(file.path, 'r');
+    const handle = await open(await readablePath(file.path), constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
     try {
       const stat = await handle.stat();
       if (!stat.isFile() || (!stat.size && purpose !== 'skill-file')) throw new Error('附件必须是普通文件；案例附件不能为空。');
@@ -88,4 +96,42 @@ export async function receiveMedia(input, call, root = connectorRoot()) {
     await rename(temp, path);
     return result;
   } catch (error) { await handle.close().catch(() => {}); await unlink(temp).catch(() => {}); throw error; }
+}
+
+// A viewport capture is ephemeral, unlike a case original. Its opaque capture identity fixes
+// all chunks to one browser frame; no original-media cache or repeated digest is involved.
+export async function receiveWorkspaceScreenshot(input, call, root = connectorRoot()) {
+  const first = await call('capture_workspace', input);
+  if (first.state !== 'captured') return first;
+  if (first.offset !== 0 || typeof first.screenshotId !== 'string' || !first.screenshotId
+    || first.mimeType !== 'image/png' || !Number.isSafeInteger(first.byteSize) || first.byteSize <= 0) {
+    throw new Error('插件截图回包无效。');
+  }
+  const parts = [];
+  let offset = 0, part = first;
+  while (true) {
+    if (part.screenshotId !== first.screenshotId || part.offset !== offset || part.byteSize !== first.byteSize
+      || part.tabId !== first.tabId || part.surface !== first.surface || part.capturedAt !== first.capturedAt
+      || part.mimeType !== first.mimeType || typeof part.data !== 'string') throw new Error('插件截图分块不一致。');
+    const bytes = Buffer.from(part.data, 'base64');
+    if (!bytes.length || offset + bytes.length > first.byteSize) throw new Error('插件截图分块长度无效。');
+    parts.push(bytes);
+    offset += bytes.length;
+    if (part.nextOffset === null) break;
+    if (part.nextOffset !== offset) throw new Error('插件截图分块位置无效。');
+    part = await call('capture_workspace', { screenshotId: first.screenshotId, offset });
+  }
+  if (offset !== first.byteSize) throw new Error('插件截图未完整接收。');
+  const bytes = Buffer.concat(parts);
+  if (!bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('插件截图不是PNG图像。');
+  await ensurePrivateRoot(root);
+  const directory = join(root, 'files');
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const path = join(directory, `workspace-${randomUUID()}.png`);
+  const handle = await open(path, 'wx', 0o600);
+  try { await handle.writeFile(bytes); }
+  catch (error) { await handle.close(); await unlink(path).catch(() => {}); throw error; }
+  await handle.close();
+  const { data, nextOffset, offset: _offset, ...metadata } = first;
+  return { ...metadata, path, image: { data: bytes.toString('base64'), mimeType: 'image/png' } };
 }

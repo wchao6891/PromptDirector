@@ -19,7 +19,8 @@ with extension_session('pd-quick-cleanup-', viewport={'width':1440,'height':900}
       const entries=state.entries.map(e=>({...e,facetAssignments:[{facetId:facet.id,nodeId:node.id,source:'manual',status:'confirmed',confidence:1,evidence:'人工确认'}]}));
       const {normalizeCompoundCases}=await import('./compound-cases.js');
       const compoundCases=normalizeCompoundCases([{id:'group',title:'验收组合',memberEntryIds:['a','b'],customLabels:['组合专属'],createdAt:'2026-10-01T00:00:00.000Z'}],entries);
-      await chrome.storage.local.set({entries,facetCatalog:catalog,compoundCases});
+      const {getLibraryStorage}=await import('./library-storage.js');
+      await getLibraryStorage().set({entries,facetCatalog:catalog,compoundCases});
     }""")
     before=setup.evaluate("()=>chrome.runtime.sendMessage({type:'GET_STATE'})")
     page=s.open_page('library.html',wait_until='networkidle')
@@ -49,7 +50,7 @@ with extension_session('pd-quick-cleanup-', viewport={'width':1440,'height':900}
     # Later material must survive undo from the visible recovery control.
     later=base_entry('later','后来新增','后来新增的完整原词','content:prompt:image')
     later['schemaVersion']=before['schemaVersion']
-    setup.evaluate("async e=>{const s=await chrome.storage.local.get('entries');await chrome.storage.local.set({entries:[...s.entries,e]})}",later)
+    setup.evaluate("async e=>{const {getLibraryStorage}=await import('./library-storage.js');const storage=getLibraryStorage();await storage.update('entries',s=>({entries:[...s.entries,e]}));}",later)
     page.locator('#manage-facets').click()
     page.locator('[data-manager-tab="vocabulary"]').click()
     page.locator('#facet-recovery-actions summary').click()

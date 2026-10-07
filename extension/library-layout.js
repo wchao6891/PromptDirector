@@ -11,12 +11,15 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
   const modules = new Map();
   let layout = normalizeSidebarLayout(preferences.sidebarLayout);
   const mobile = matchMedia("(max-width: 640px)");
+  // Narrow windows collapse the sidebar without changing the saved choice, which returns when widened.
+  let preferredCollapsed = layout.collapsed;
   if (mobile.matches) layout.collapsed = true;
   const names = { projects: "项目", types: "内容类型", tags: "标签筛选" };
   const icons = { projects: "folder", types: "layers", tags: "tag" };
   let saving = Promise.resolve();
-  function save() {
-    const snapshot = structuredClone(layout);
+  function save(keys = ["collapsed", "open", "order"]) {
+    if (keys.includes("collapsed") && !mobile.matches) preferredCollapsed = layout.collapsed;
+    const snapshot = structuredClone(Object.fromEntries(keys.map(key => [key, layout[key]])));
     saving = saving.catch(() => {}).then(() => persist(snapshot));
     return saving;
   }
@@ -38,7 +41,7 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
     else if (!layout.open.includes(key)) layout.open.push(key);
     layout.collapsed = false;
     apply();
-    void save();
+    void save(["collapsed", "open"]);
   }
   for (const section of dock.querySelectorAll("[data-sidebar-module]")) {
     const key = section.dataset.sidebarModule;
@@ -60,21 +63,21 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
     title.replaceWith(button);
     button.addEventListener("click", () => {
       if (layout.collapsed || !layout.open.includes(key)) openModule(key);
-      else { layout.open = layout.open.filter(id => id !== key); apply(); void save(); }
+      else { layout.open = layout.open.filter(id => id !== key); apply(); void save(["open"]); }
     });
     const grip = document.createElement("button");
     grip.type = "button";
     grip.className = "module-grip icon-button";
     grip.draggable = true;
     grip.title = t("拖动排序，方向键调整位置");
-    grip.setAttribute("aria-label", `${t(names[key])}：${grip.title}`);
+    grip.setAttribute("aria-label", t("{label}：{value}", { label: t(names[key]), value: grip.title }));
     grip.append(createUiIcon("grip-vertical"));
     heading.prepend(grip);
     const move = offset => {
       const from = layout.order.indexOf(key);
       const to = Math.max(0, Math.min(layout.order.length - 1, from + offset));
       layout.order.splice(from, 1); layout.order.splice(to, 0, key);
-      apply(); void save(); grip.focus();
+      apply(); void save(["order"]); grip.focus();
     };
     grip.addEventListener("keydown", event => {
       if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
@@ -98,7 +101,7 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
       const targetIndex = layout.order.indexOf(key);
       layout.order = layout.order.filter(id => id !== source);
       layout.order.splice(targetIndex, 0, source);
-      apply(); void save();
+      apply(); void save(["order"]);
     });
     modules.set(key, { section, button, body: section.querySelector(".sidebar-module-body"), count });
   }
@@ -111,13 +114,13 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
   summary.append(createUiIcon("ellipsis"));
   const panel = document.createElement("div");
   panel.className = "package-menu-panel";
-  for (const [label, action] of [
-    ["全部展开", () => { layout.collapsed = false; layout.open = [...layout.order]; }],
+  for (const [label, action, keys] of [
+    ["全部展开", () => { layout.collapsed = false; layout.open = [...layout.order]; }, ["collapsed", "open"]],
     ["恢复默认布局", () => { layout = normalizeSidebarLayout(); }]
   ]) {
     const button = document.createElement("button");
     button.type = "button"; button.className = "button-secondary"; button.textContent = t(label);
-    button.addEventListener("click", () => { action(); menu.open = false; apply(); void save(); });
+    button.addEventListener("click", () => { action(); menu.open = false; apply(); void save(keys); });
     panel.append(button);
   }
   menu.append(summary, panel);
@@ -125,11 +128,12 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
   for (const item of sidebar.querySelectorAll(".workspace-navigation-item")) {
     item.title = item.textContent.trim(); item.setAttribute("aria-label", item.title);
   }
-  toggle.addEventListener("click", () => { layout.collapsed = !layout.collapsed; apply(); void save(); });
-  mobile.addEventListener("change", event => { if (event.matches) { layout.collapsed = true; apply(); } });
+  toggle.addEventListener("click", () => { layout.collapsed = !layout.collapsed; apply(); void save(["collapsed"]); });
+  mobile.addEventListener("change", event => { layout.collapsed = event.matches || preferredCollapsed; apply(); });
   apply();
   setupCompactToolbar();
   return {
+    update(value) { layout = normalizeSidebarLayout(value); apply(); },
     openModule,
     updateCounts({ types = 0, tags = 0 }) {
       for (const [key, count] of Object.entries({ types, tags })) {

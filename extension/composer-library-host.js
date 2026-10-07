@@ -35,22 +35,19 @@ export function createLocalComposerLibraryTools(options) {
       const ids = [...new Set(documentEntries.flatMap(entry => entryMediaAssets(entry)).filter(asset => asset.kind === 'document').map(asset => asset.id))];
       const documents = new Map(await Promise.all(ids.map(async id => [id, (await getDerivedMedia(id))?.searchText || ''])));
       const documentTextByEntryId = new Map(documentEntries.map(entry => [entry.id, entryMediaAssets(entry).map(asset => documents.get(asset.id)).filter(Boolean).join('\n')]));
-      const search = needsIndex ? searchCache.build(scoped, state.facetCatalog, documents, await getAllDerivedMetadata(), new Set(entries.map(e => e.id))) : null;
-      return { entries, documentTextByEntryId, organizerState: state.organizerState, facetCatalog: state.facetCatalog,
+      const derivedMetadataByAsset = needsIndex ? await getAllDerivedMetadata() : new Map();
+      const search = needsIndex ? searchCache.build(scoped, state.facetCatalog, documents, derivedMetadataByAsset, new Set(entries.map(e => e.id))) : null;
+      return { entries, documentTextByEntryId, documentTextByAsset: documents, derivedMetadataByAsset, taxonomy: state.taxonomy, organizerState: state.organizerState, facetCatalog: state.facetCatalog,
         searchIndex: search?.index, searchResultVersion: search?.resultVersion };
     },
-    readImage: async (id, signal) => {
+    readImage: async (id, signal, expectedHash) => {
       signal?.throwIfAborted();
       const blob = await getMediaBlob(id) ?? await getScreenshotBlob(id);
       if (!blob) throw new Error('指定图片已不存在');
+      const sha256 = await sha256Blob(blob);
+      if (sha256 === expectedHash) return { sha256 };
       if (blob.size * 4 > operationBudget(options.budget).workingBytes) throw resourceBudgetError('原图超过本次模型内联读取预算；原件保留，请使用文件分块读取');
-      return { dataUrl: await blobToDataUrl(blob), mimeType: blob.type, sha256: await sha256Blob(blob) };
-    },
-    readImageDigest: async (id,signal) => {
-      signal?.throwIfAborted();
-      const blob=await getMediaBlob(id)??await getScreenshotBlob(id);
-      if(!blob) throw new Error('指定图片已不存在');
-      return sha256Blob(blob);
+      return { dataUrl: await blobToDataUrl(blob), mimeType: blob.type, sha256 };
     }
   });
   const workspace = createComposerWorkspaceTools({ ...options, caseTools, invokeSkill: async (operation,input) => {

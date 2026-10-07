@@ -384,7 +384,8 @@ def main() -> None:
                 scroll_to_case(library, "case-098")
                 library.locator(".case-card[data-entry-id='case-098']").click()
                 library.locator("#project-selection-save").click()
-                expect(library.locator("#feedback")).to_contain_text("项目案例已更新")
+                # Saving now sends only the toggled cases (0b2048c), so feedback reports the two newly moved cases.
+                expect(library.locator("#feedback")).to_contain_text("已将 2 个案例移动到项目")
                 expect(library.locator(".case-card")).to_have_count(2)
 
                 project_row = library.locator(".project-row", has_text="Campaign 132")

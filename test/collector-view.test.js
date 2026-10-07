@@ -65,7 +65,7 @@ test("page capture replaces failed remote thumbnails with an explicit unavailabl
     collectorSource.indexOf("function renderPageCapture"),
     collectorSource.indexOf("function updatePageCaptureSelection")
   );
-  assert.match(pageCaptureRenderer, /media\.previewDataUrl \|\| media\.dataUrl \|\| media\.url/);
+  assert.match(pageCaptureRenderer, /pageCapturePreviewSource\(candidate, media\)/);
   assert.match(pageCaptureRenderer, /image\.addEventListener\("error"/);
   assert.match(pageCaptureRenderer, /preview\.replaceChildren\(textNode\("span", t\("预览不可用"\)\)\)/);
   assert.match(pageCaptureRenderer, /pageCaptureMediaSourceLabel\(media\.sourceKind, media\.captureMethod\)/);
@@ -233,16 +233,18 @@ test("every captured draft exposes project and the shared multi-tag editor befor
     collectorHtml.indexOf('<div id="capture-add-more-actions"')
   );
   assert.match(metadata, /id="capture-collection"/);
-  assert.match(metadata, /id="capture-new-collection-name"/);
-  assert.match(metadata, /data-i18n="标签"/);
+  const projects = await readFile(new URL('../extension/capture-organization.js', import.meta.url), 'utf8');
+  assert.match(projects, /name\.id = 'capture-new-collection-name'/);
+  assert.match(projects, /createDetailProjectSelector/);
+  assert.match(collectorSource, /compact: true/);
   assert.doesNotMatch(metadata, /自由标签|可选|不用预先创建|输入任意新标签/);
   assert.match(metadata, /id="custom-labels"/);
   assert.doesNotMatch(metadata, /id="capture-extra-metadata"[^>]*open/);
   assert.ok(metadata.indexOf("</details>") < metadata.indexOf('id="custom-labels"'));
   assert.doesNotMatch(collectorSource, /captureExtraMetadata\.open = !pageCaptureBatch/);
   assert.match(collectorSource, /collections = response\.collections \?\? \[\]/);
-  assert.match(collectorSource, /const selectedCollection = elements\.captureCollection\.value/);
-  assert.match(collectorSource, /newCollectionName: selectedCollection === NEW_COLLECTION_OPTION_VALUE/);
+  assert.match(collectorSource, /collectionId: draft\.collectionId/);
+  assert.match(collectorSource, /newCollectionName: draft\.newCollectionName/);
   assert.match(collectorSource, /const customLabelEditor = createTagEditor/);
   assert.match(collectorSource, /customLabels: customLabelEditor\.values/);
   assert.match(collectorSource, /type: "COMMIT_CAPTURE_DRAFT",[\s\S]*\.\.\.metadata/);
@@ -251,4 +253,18 @@ test("every captured draft exposes project and the shared multi-tag editor befor
   assert.match(collectorSource, /captureAddMoreActions\.before\(elements\.captureMetadata\)/);
   assert.match(draftSource, /collectionId: clean\(value\.collectionId\)/);
   assert.match(draftSource, /newCollectionName: clean\(value\.newCollectionName\)/);
+});
+
+
+test("generic motion previews try the original before a static fallback while specialist previews keep their order", async () => {
+  const {pageCapturePreviewSource,bindPageCapturePreviewFallback}=await import('../extension/collector-page-capture-view.js');
+  const media={kind:'image',url:'https://example.com/motion.webp',previewDataUrl:'data:image/png;base64,AA=='};
+  assert.equal(pageCapturePreviewSource({adapter:'generic'},media),media.url);
+  assert.equal(pageCapturePreviewSource({adapter:'jimeng'},media),media.previewDataUrl);
+  const image=new EventTarget();image.src=media.url;let errors=0;
+  bindPageCapturePreviewFallback(image,{adapter:'generic'},media);
+  image.addEventListener('error',()=>errors++);
+  image.dispatchEvent(new Event('error'));
+  assert.equal(image.src,media.previewDataUrl);assert.equal(errors,0);
+  image.dispatchEvent(new Event('error'));assert.equal(errors,1,'both sources failing still exposes unavailable status');
 });

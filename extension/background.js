@@ -1,3 +1,9 @@
+import { createCaptureSaveTasks, CAPTURE_SAVE_TASK_KEY, rebaseCaptureEntries } from './capture-save-tasks.js';
+import { jsonBytes, startPhase, timingEnabled } from "./perf-trace.js";
+import { editedLabels } from "./label-edits.js";
+import { manageLayoutPreset } from './layout-presets.js';
+import { createCaptureSaveProgress } from './capture-save-progress.js';
+import { WORKSPACE_OPERATION_SPECS } from './workspace-operation-specs.js';
 import { applyCompletedImageResult, applyCompletedVideoResult } from './media-analysis-results.js';
 import { handleComposerLibraryHost } from './composer-library-host.js';
 import { createOriginalFileDragHost } from './original-file-drag.js';
@@ -20,6 +26,8 @@ import { planImageGenerationPrompts, generationPromptConfirmation } from "./imag
 import { readImageGenerationInfo, embeddedMediaPrompts } from "./image-generation-info.js";
 import { waitForDownload } from "./download-completion.js";
 import { splitArticleCases } from "./article-case-groups.js";
+import { collectGenericCaptureDetails } from "./generic-capture-details.js";
+import { groupGenericCapture } from "./generic-capture-groups.js";
 import { createAgentConnection } from "./agent-connection.js";
 import { createAgentTasks } from "./agent-tasks.js";
 import { createAgentLibrary } from "./agent-library.js";
@@ -27,9 +35,12 @@ import { createCaseLibraryReader } from "./case-library-state.js";
 import { projectLibraryViewState, enrichContentMeanings } from "./library-view-state.js";
 import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, completeLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
 import { createAgentWorkspace } from "./agent-workspace.js";
+import { createWorkspaceScreenshot, WORKSPACE_SCREENSHOT_SPEC } from './workspace-screenshot.js';
+import { createCaseTrashOperations } from './case-trash-operations.js';
+import { AGENT_CASE_ACTION_SPECS } from './agent-case-action-specs.js';
 import { createReferenceSelection } from "./reference-selection.js";
 import { createCaseOperations } from "./case-operations.js";
-import { CASE_OPERATION_SPECS } from './case-operation-specs.js';
+import { CASE_OPERATION_SPECS, CASE_SEARCH_PROPERTIES } from './case-operation-specs.js';
 import { createAgentTransfers } from "./agent-transfers.js";
 import { reusableAgentFile } from './agent-transfer-reuse.js';
 import { discardComposerToolProgress } from './composer-tool-progress.js';
@@ -40,7 +51,7 @@ import { collectFeishuDocument } from "./feishu-document-capture.js";
 import { saveComposerToolDraft, preserveSavedToolDrafts } from './composer-tool-drafts.js';
 import { renderPageCaptureRegionPreview, clearPageCapturePageState } from "./page-capture-highlight.js";
 import { collectLibTvPublicPayload, normalizeLibTvPublicPayload } from "./libtv-capture.js";
-import { updateArticleText } from "./article-edit.js";
+import { createCaseEditor, touchEntry, stringListsEqual, userVisibleEntryEqual } from "./case-editor.js";
 import { showPageToast } from "./capture-region.js";
 import { analysisRequestCounts } from "./analysis-retry-policy.js";
 import { articleDocumentText, finalizeArticleDocumentAssets } from "./article-document.js";
@@ -51,8 +62,8 @@ import {
   confirmClassification,
   createSourceRule
 } from "./classifier.js";
-import { migrateLibraryState, needsMigration } from "./migration.js";
-import { planCaseCopies, assertCompoundProjectScope } from "./library-folder-ownership.js";
+import { casesLostByMigration, migrateLibraryState, needsMigration } from "./migration.js";
+import { planCaseCopies } from "./library-folder-ownership.js";
 import { remapEntryMediaIds } from "./library-portable-media.js";
 import {
   CONTENT_TYPE_VISIBILITY,
@@ -83,7 +94,6 @@ import {
   applyAnalysisCandidates,
   applyAnalysisImport,
   applyTextAnalysisTags,
-  editVisionReconstructionPrompt,
   rejectAnalysisCandidate,
   undoVisionAnalysis,
   setManualAssignment
@@ -156,8 +166,7 @@ import { findPersistedVisionAnalysis } from "./vision-analysis-cache.js";
 import {
   analysisRevisionMeta,
   entryTextRevision,
-  markEntryTextChanged,
-  updateEntryText
+  markEntryTextChanged
 } from "./analysis-revision.js";
 import { applyDetailOrganizationMappings, applyFixedAnalysisTags } from "./tag-taxonomy.js";
 import {
@@ -193,6 +202,8 @@ import {
   sha256Blob
 } from "./local-media.js";
 import { tempReferenceAssetIds, unreadReferenceImageAssets } from "./temp-references.js";
+import { planTrashCleanup, retainedTrashCleanupAssets, TRASH_HISTORY_KEYS, TRASH_CLEANUP_KEY } from './trash-cleanup.js';
+import { createStagedMediaRegistry } from './staged-media.js';
 import {
   addStagedAsset,
   collectRetainedLocalAssetIds,
@@ -225,12 +236,11 @@ import {
   addEntryMedia,
   addTimeNote,
   currentVideoReconstruction,
-  editCurrentVideoReconstruction,
   entryMediaAssets,
   normalizeEntryMedia,
   setCaseCover,
+  removeEntryMedia,
   removeTimeNote,
-  setEntryMediaPrompt,
   setPrimaryMedia,
   updateLocalAssetReferenceMetadata
 } from "./media.js";
@@ -280,7 +290,6 @@ import {
   createCollection,
   collectionEntryIds,
   collectionPathLabel,
-  collectionSelectorLabelsById,
   moveCollection,
   assertCollectionStructureCurrent,
   moveEntriesBetweenCollections,
@@ -293,17 +302,18 @@ import {
   setCollectionVisibility
 } from "./organizer.js";
 import {
-  emptyTrash,
   listTrashItems,
   moveCollectionWithEntriesToTrash,
   moveCollectionsToTrash,
   moveEntriesToTrash,
   moveMediaToTrash,
   normalizeTrashState,
-  restoreTrashItems,
-  takeTrashItems
+  restoreTrashItems
 } from "./trash.js";
-import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
+import { normalizeUiPreferences, resolveLocale, updateLayoutPreferences } from "./preferences.js";
+import { translateForLocale } from "./i18n.js";
+import { libraryFromNewerVersion, newerLibraryError } from "./library-version-guard.js";
+import { normalizeShortcutOverrides, shortcutBindings, shortcutConflict } from './keyboard-shortcuts.js';
 import { CHROME_WEB_STORE_URL } from "./product-links.js";
 import { PALETTE_VERSION, hasCurrentPalette } from "./palette.js";
 import {
@@ -363,6 +373,8 @@ import {
 import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
 import { enrichPinterestCandidates, readPinterestHtml } from "./pinterest-capture.js";
 import { downloadPageCaptureVideo } from "./page-capture-video.js";
+import { createDownloadAhead } from "./capture-download-ahead.js";
+import { createCaptureAssetIndex } from "./capture-asset-index.js";
 import { resolveXVideoSources } from "./x-video-capture.js";
 import { readPageCaptureSupplement } from "./capture-supplement.js";
 import { PAGE_CAPTURE_VIDEO_FRAME_RULES, resolvePageCaptureVideoFrames } from "./page-capture-frames.js";
@@ -471,6 +483,7 @@ const STORAGE_KEYS = Object.freeze({
   facetCatalog: "facetCatalog",
   classificationRules: "classificationRules",
   migrationBackup: "migrationBackup",
+  upgradeBackup: "upgradeBackup",
   folderOwnershipBackup: "folderOwnershipBackup",
   classificationResetBackup: "classificationResetBackup",
   facetMigrationBackup: "creativeFacetMigrationBackupV5",
@@ -541,6 +554,17 @@ let activePageCapture = null;
 let syncApplyInProgress = false;
 const commitLocalChanges = createLibraryCommitter({ storage: libraryStorage, syncedKeys: SYNCED_STORAGE_KEYS,
   syncMetaKey: STORAGE_KEYS.syncMeta, markDirty: markSyncMetaDirty, isSyncApplying: () => syncApplyInProgress });
+const caseEditor = createCaseEditor({ commitCase: (entryId, transform) => commitLocalChanges.updateCase(entryId, transform) });
+const stagedMedia = createStagedMediaRegistry({
+  storage: libraryStorage,
+  activeDocuments: async () => (await chrome.runtime.getContexts({})).map(context => context.documentId),
+  cleanup: async (assetIds, protectedIds, localReferenceIds) => {
+    const retained = retainedTrashCleanupAssets(await readTrashCleanupState(),
+      [...protectedIds, ...activeCaptureAssetIds, ...await agentTransfers.retainedIds()]);
+    await deleteMediaBlobs(assetIds.filter(id => !retained.has(id)));
+    await Promise.all(localReferenceIds.filter(id => !retained.has(id)).map(deleteLocalAssetHandle));
+  }
+});
 const manualSyncController = createManualSyncController({
   readState,
   readMeta: async () => {
@@ -548,7 +572,7 @@ const manualSyncController = createManualSyncController({
     return stored[STORAGE_KEYS.syncMeta];
   },
   readMedia: getMediaBlob,
-  writeMedia: saveMediaBlob,
+  writeMedia: savePortableAssetBlob,
   deleteMedia: deleteMediaBlob,
   commit: commitManualSyncResult,
   onProgress: notifySyncProgress,
@@ -580,6 +604,13 @@ const captureRuntime = createCaptureWorkspace({
   resolveSourceContext: resolveCaptureSourceContext
 });
 
+const activeCaptureAssetIds = new Set();
+const captureSaveTasks = createCaptureSaveTasks({ storage: libraryStorage,
+  cleanup: ids => enqueue(() => deleteUnreferencedMedia(ids)),
+  notify: message => chrome.runtime.sendMessage(message),
+  execute: (message, progress) => runCaptureSave(message, progress)
+});
+
 const readCaseLibraryState = createCaseLibraryReader({ storage: libraryStorage, readFullState: readState });
 const skillOperations = createSkillOperations({ loadState: () => enqueue(() => libraryStorage.get(STORAGE_KEYS.creativeSkills)), readBlob: getMediaBlob });
 const agentLibrary = createAgentLibrary({
@@ -590,6 +621,8 @@ const agentLibrary = createAgentLibrary({
 });
 const projectOperations = createProjectOperations({ loadState: readState, loadReadState: readCaseLibraryState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
 const caseOperations = createCaseOperations({ loadState: readState, loadReadState: readCaseLibraryState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const workspaceScreenshot = createWorkspaceScreenshot({ chromeApi: chrome });
+const caseTrashOperations = createCaseTrashOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
 const libraryIdentity = createBrowserLibraryIdentity({ storage: libraryStorage,
   getLegacyId: async () => (await agentConnection.prepare()).instanceId });
 const externalAnalysisBatches = createExternalAnalysisBatches({storage:libraryStorage,loadState:readState,
@@ -598,7 +631,13 @@ const externalAnalysisBatches = createExternalAnalysisBatches({storage:librarySt
 const referenceSelection = createReferenceSelection({ storage: libraryStorage, loadState: readCaseLibraryState,
   readDerived: getDerivedMedia, getLibraryId: async () => (await libraryIdentity.read()).libraryId, enqueue });
 const agentWorkspace = createAgentWorkspace({ chromeApi: chrome, readCase: input => caseOperations.read(input),
-  readSelection: input => referenceSelection.read(input) });
+  readSelection: input => referenceSelection.read(input),
+  readTemporary: async id => {
+    const record = await agentTransfers.get(id);
+    if (record.state !== 'ready' || !['video', 'image'].includes(record.prepared?.asset?.kind)) throw agentError('invalid_review_media', '请先传入可审阅的图片或视频');
+    return { assetId: record.assetId, name: record.name, kind: record.prepared.asset.kind,
+      byteSize: record.byteSize, sha256: record.sha256, mimeType: record.mimeType, transferId: record.id, feedback: record.reviewFeedback || { revision: 0, notes: [], frames: [] } };
+  } });
 const agentTransfers = createAgentTransfers({
   storage: libraryStorage, readBlob: getMediaBlob, writeBlob: savePortableAssetBlob, deleteBlob: deleteMediaBlob,
   cleanup: deleteUnreferencedMedia,
@@ -621,13 +660,15 @@ const agentTasks = createAgentTasks({ storage: libraryStorage,
     await scope.assertCurrent();
     if (operation === "capture") return enqueueCapture(async () => {
       await scope.assertCurrent();
-      return captureAgentUrl(input, requestId, {
-        chromeApi: chrome, loadState: readState, collect: collectPageCaptureTab,
-        commit: (batch, metadata) => enqueue(async () => {
-          await scope.assertCurrent();
-          return commitPageCapture(batch, metadata);
-        })
-      });
+      try {
+        return await captureAgentUrl(input, requestId, {
+          chromeApi: chrome, loadState: readState, collect: collectPageCaptureTab,
+          commit: async (batch, metadata) => {
+            await scope.assertCurrent();
+            return commitPageCapture(batch, metadata);
+          }
+        });
+      } finally { activeCaptureAssetIds.clear(); }
     });
     if (operation === "save_material") return saveMaterial(input, requestId, scope);
     throw agentError("unknown_operation", "未知写入操作。");
@@ -650,12 +691,41 @@ function saveMaterial(input, requestId, scope) {
 const agentConnection = createAgentConnection({ chromeApi: chrome, execute: dispatchAgentOperation });
 void agentConnection.start();
 
-async function dispatchAgentOperation(operation, input) {
+const workspaceActivityLabels = {
+  search: '查询案例', read_case: '读取案例', read_case_details: '读取案例详情', read_media: '读取原件',
+  edit_case: '修改案例', organize_case: '整理案例', save_material: '回存成果', show_case: '打开案例',
+  control_workspace: '操作工作页面', read_workspace_context: '读取选择', read_workspace_content: '读取参考',
+  capture: '采集资料', save_skill: '保存创作方法', create_project: '创建项目', update_project: '修改项目'
+};
+async function publishWorkspaceActivity(operation, state, error) {
+  const label = workspaceActivityLabels[operation];
+  if (!label) return;
+  try { await chrome.runtime.sendMessage({ type: 'AGENT_WORKSPACE_ACTIVITY', label, state, message: error?.message }); }
+  catch { /* No library page is open; the operation's own receipt is authoritative. */ }
+}
+async function dispatchAgentOperation(operation, input = {}) {
+  await publishWorkspaceActivity(operation, 'running');
+  try {
+    const result = await executeAgentOperation(operation, input);
+    await publishWorkspaceActivity(operation, ['queued', 'running', 'opening'].includes(result?.state) ? 'accepted' : 'completed');
+    if (operation === 'get_task' && ['completed', 'failed'].includes(result.state)) await publishWorkspaceActivity(result.operation, result.state);
+    return result;
+  } catch (error) { await publishWorkspaceActivity(operation, 'failed', error); throw error; }
+}
+// Developer timing only: an isolated test browser can time read-only Agent queries without a connector.
+const AGENT_PROBE_OPERATIONS = new Set(["search", "describe_case_query", "read_case_details"]);
+globalThis.promptDirectorAgentProbe = async (operation, input = {}) => {
+  if (!timingEnabled() || !AGENT_PROBE_OPERATIONS.has(operation)) throw new Error("Agent 计时探针仅在开发计时开启时用于只读查询");
+  const done = startPhase("agent", `probe:${operation}`);
+  try { return await executeAgentOperation(operation, input); } finally { done(); }
+};
+
+async function executeAgentOperation(operation, input) {
   switch (operation) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
       extensionVersion: chrome.runtime.getManifest().version, analysisResultVersion: 2, analysisResultFields: ANALYSIS_RESULT_FIELDS, skillPackageLimits: skillPackageLimits(),
       caseOperationFeatures: Object.fromEntries(CASE_OPERATION_SPECS.filter(spec => spec.name !== 'read_case_details').map(spec => [spec.name, spec.name === 'edit_case' ? Object.keys(spec.parameters.properties.patch.properties) : spec.parameters.properties.action.enum])),
-      capabilities: [...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, searchFilters: ["minDurationMs", "maxDurationMs", "expectedRevision", "mediaKind", "hasOriginalPrompt", "alternatives", "sort", "countOnly"] };
+      workspaceSyncVersion: 6, sourceProtectionVersion: 1, capabilities: [WORKSPACE_SCREENSHOT_SPEC.name, ...AGENT_CASE_ACTION_SPECS.map(spec => spec.name), ...WORKSPACE_OPERATION_SPECS.map(spec => spec.name), ...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "describe_case_query", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation", "creative", "customLabels", "classificationPathIds", "sourceFacts", "timeNotes"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, caseTextReadVersion: 2, caseQueryVersion: 1, searchFilters: Object.keys(CASE_SEARCH_PROPERTIES) };
     case "manage_analysis_batch":
     case "list_analysis_batches":
     case "read_analysis_batch":
@@ -673,9 +743,16 @@ async function dispatchAgentOperation(operation, input) {
     case "read_workspace_context":
     case "read_workspace_content": return agentWorkspace.read(input);
     case "show_case": return agentWorkspace.show(input);
+    case "capture_workspace": return workspaceScreenshot.capture(input);
+    case 'read_review_media':
+    case 'read_live_workspace':
+    case 'wait_workspace_changes':
+    case 'control_workspace': return agentWorkspace.live(operation, input);
     case "read_case_details": return caseOperations.read(input);
+    case "trash_case": return caseTrashOperations.execute(input);
     case "edit_case":
     case "organize_case": return caseOperations.execute(operation, input);
+    case "describe_case_query": return agentLibrary.describeQuery();
     case "search": return agentLibrary.search(input);
     case "read_case": return agentLibrary.read(input);
     case "read_media": return agentLibrary.media(input);
@@ -725,7 +802,11 @@ restrictLocalStorageAccess().catch((error) => console.error("PromptDirector stor
 syncContextMenus().catch((error) => console.error("PromptDirector context menu sync failed", error));
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => console.error("PromptDirector side panel setup failed", error));
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'agent-temporary-maintenance') enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
+  if (alarm.name === 'agent-temporary-maintenance') {
+    enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
+    enqueue(resumeTrashCleanup).catch(error => console.warn('永久删除文件清理未完成', error));
+    enqueue(() => stagedMedia.sweep()).catch(error => console.warn('临时文件清理未完成', error));
+  }
   if (alarm.name === LIBRARY_MAINTENANCE_ALARM) scheduleLibraryMaintenanceRunner();
   if (alarm.name === AUTOMATIC_VISION_ALARM) scheduleAutomaticVisionRunner();
   if (alarm.name === ANALYSIS_BATCH_ALARM) scheduleAnalysisBatchRunner();
@@ -737,6 +818,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 scheduleLibraryMaintenanceRunner();
 chrome.alarms.create('agent-temporary-maintenance', { periodInMinutes: RESOURCE_POLICY.temporaryIdleMs / (24 * 60_000) }).catch(error => console.warn('临时传输维护未安排', error));
 enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
+enqueue(resumeTrashCleanup).catch(error => console.warn('永久删除文件清理未完成', error));
+enqueue(() => stagedMedia.sweep()).catch(error => console.warn('临时文件清理未完成', error));
+chrome.tabs.onRemoved.addListener(() => { enqueue(() => stagedMedia.sweep()).catch(error => console.warn('临时文件清理未完成', error)); });
+chrome.tabs.onUpdated.addListener((_tabId, change) => {
+  if (change.status === 'complete') enqueue(() => stagedMedia.sweep()).catch(error => console.warn('临时文件清理未完成', error));
+});
 scheduleAutomaticVisionRunner();
 recoverCreativeJobs().catch((error) => console.error("PromptDirector creative job recovery failed", error));
 enqueue(recoverImportJobs).catch((error) => console.error("PromptDirector local import recovery failed", error));
@@ -786,15 +873,17 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "AGENT_READ_WORKSPACE") return false;
+  if (['AGENT_READ_WORKSPACE', 'AGENT_LIVE_WORKSPACE', 'AGENT_WORKSPACE_ACTIVITY'].includes(message?.type)) return false;
   if (message?.target === "offscreen") return false;
   const interaction = {
     sidePanelOpening: openCreativeResultSidePanel(message, sender),
     sender
   };
+  const done = startPhase("background", `message:${String(message?.type || "unknown")}`);
   handleMessage(message, interaction)
     .then(sendResponse)
-    .catch((error) => sendResponse({ ok: false, message: userMessage(error) }));
+    .catch((error) => sendResponse({ ok: false, message: userMessage(error) }))
+    .finally(done);
   return true;
 });
 
@@ -812,6 +901,17 @@ function openCreativeResultSidePanel(message, sender) {
 
 async function handleMessage(message, interaction = {}) {
   switch (message?.type) {
+    case 'REGISTER_STAGED_MEDIA':
+    case 'RELEASE_STAGED_MEDIA': {
+      const sender = interaction.sender;
+      if (sender?.id !== chrome.runtime.id || !sender?.url?.startsWith(chrome.runtime.getURL('')) || !sender.documentId) throw new Error('文件准备只能从插件页面操作');
+      return enqueue(async () => {
+        if (message.type === 'REGISTER_STAGED_MEDIA') await stagedMedia.register(message.operationId, sender.documentId, message.assetIds, message.localReferenceIds);
+        else await stagedMedia.release(message.operationId, sender.documentId);
+        return { ok: true };
+      });
+    }
+
     case 'GET_LIBRARY_IDENTITY': {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(''))) throw new Error('资料库身份只能从插件工作空间读取');
       return { ok: true, identity: await libraryIdentity.read() };
@@ -831,6 +931,42 @@ async function handleMessage(message, interaction = {}) {
       return { ok: true, data: await (["save_skill", "restore_skill"].includes(message.operation)
         ? skillWriter.execute(message.operation, message.input) : skillOperations.execute(message.operation, message.input)) };
     }
+    case 'REVIEW_TRANSFER': {
+      if (interaction.sender?.id !== chrome.runtime.id || interaction.sender?.url?.split(/[?#]/u)[0] !== chrome.runtime.getURL('library.html')) throw agentError('unauthorized', '审片操作只能从案例库调用');
+      if (!['begin_transfer', 'append_transfer', 'finish_transfer', 'abort_transfer'].includes(message.operation)) throw agentError('invalid_input', '未知审片文件操作');
+      const result = await dispatchAgentOperation(message.operation, message.input);
+      if (message.operation !== 'finish_transfer') return result;
+      const record = await agentTransfers.get(message.input.id);
+      if (!['video', 'image'].includes(record.prepared?.asset?.kind)) throw agentError('invalid_review_media', '请选择图片或视频');
+      return { assetId: record.assetId, name: record.name, kind: record.prepared.asset.kind, byteSize: record.byteSize,
+        sha256: record.sha256, mimeType: record.mimeType, transferId: record.id, feedback: record.reviewFeedback || { revision: 0, notes: [], frames: [] } };
+    }
+    case 'REVIEW_LOCAL_FILE': {
+      if (interaction.sender?.id !== chrome.runtime.id || interaction.sender?.url?.split(/[?#]/u)[0] !== chrome.runtime.getURL('library.html')) throw agentError('unauthorized', '审片操作只能从案例库调用');
+      const record = await agentTransfers.stageLocal(message.input || {});
+      if (!['video', 'image'].includes(record.prepared?.asset?.kind)) throw agentError('invalid_review_media', '请选择图片或视频');
+      return { assetId: record.assetId, name: record.name, kind: record.prepared.asset.kind, byteSize: record.byteSize,
+        sha256: record.sha256, mimeType: record.mimeType, transferId: record.id, feedback: record.reviewFeedback || { revision: 0, notes: [], frames: [] } };
+    }
+    case 'REVIEW_FEEDBACK': {
+      if (interaction.sender?.id !== chrome.runtime.id || interaction.sender?.url?.split(/[?#]/u)[0] !== chrome.runtime.getURL('library.html')) throw agentError('unauthorized', '审片备注只能从案例库调用');
+      return { ok: true, feedback: await agentTransfers.updateReview(message.input) };
+    }
+    case "SAVE_REVIEW_MATERIAL": {
+      if (interaction.sender?.id !== chrome.runtime.id || interaction.sender?.url?.split(/[?#]/u)[0] !== chrome.runtime.getURL('library.html')) throw agentError('unauthorized', '审片保存只能从案例库页面调用');
+      const { requestId, transferId, transferIds, reviewRevisions, title, project } = message.input || {};
+      validateProjectOperation('save_material', { requestId, title, text: '', ...(project ? { project } : {}) });
+      const ids = transferIds ?? [transferId];
+      if (!Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) throw agentError('invalid_input', '缺少有效临时样片身份');
+      const records = await Promise.all(ids.map(id => agentTransfers.get(id)));
+      for (const record of records) {
+        if (record.purpose || !['image', 'video'].includes(record.prepared?.asset?.kind) && record.state !== 'committed') throw agentError('invalid_review_media', '只能保存已准备好的审片媒体');
+        if (reviewRevisions && reviewRevisions[record.id] !== (record.reviewFeedback?.revision || 0)) throw agentError('review_conflict', '审阅反馈已变化，请重新读取');
+      }
+      return saveMaterial({ title, text: '', kind: 'collected', transferIds: [...ids, ...records.flatMap(record => (record.reviewFeedback?.frames || []).map(frame => frame.transferId))],
+        timeNotes: records.flatMap(record => (record.reviewFeedback?.notes || []).map(({ createdAt, ...note }) => note)),
+        reviewRevisions: Object.fromEntries(records.map(record => [record.id, record.reviewFeedback?.revision || 0])), ...(project ? { project } : {}) }, requestId);
+    }
     case "CASE_OPERATION": {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(""))) {
         throw new Error("案例操作只能从插件工作空间调用");
@@ -844,6 +980,7 @@ async function handleMessage(message, interaction = {}) {
         return saveMaterial(input, requestId);
       }
       if (message.operation === "read_case_details") return caseOperations.read(message.input);
+      if (message.operation === "trash_case") return caseTrashOperations.execute(message.input);
       if (!["edit_case", "organize_case"].includes(message.operation)) throw new Error("未知案例操作");
       return caseOperations.execute(message.operation, message.input);
     }
@@ -885,7 +1022,7 @@ async function handleMessage(message, interaction = {}) {
     case "GET_FOLDER_BACKUP_STATE":
       return enqueue(async () => ({ ok: true, ...folderBackupState(await readState()) }));
     case "GET_CAPTURE_WORKSPACE":
-      return enqueueCapture(async () => captureWorkspace());
+      return captureWorkspace();
     case "GET_LIBRARY_ASSET_RETENTION":
       return enqueue(async () => {
         const ids = Array.isArray(message.assetIds) ? message.assetIds : [];
@@ -894,7 +1031,7 @@ async function handleMessage(message, interaction = {}) {
         if (transactions.items.some(item => item.status === "pending")) {
           return { ok: true, assetIds: ids };
         }
-        const retained = collectRetainedLocalAssetIds(await readState());
+        const retained = referencedMediaAssetIds(await readState());
         for (const id of await agentTransfers.retainedIds()) retained.add(id);
         return { ok: true, assetIds: ids.filter(id => retained.has(id)) };
       });
@@ -957,14 +1094,18 @@ async function handleMessage(message, interaction = {}) {
     case "PICK_PAGE_CONTENT": {
       const tab = await chrome.tabs.get(Number(message.tabId));
       await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: clearPageCapturePageState, args: [{ removeRegionMarkers: false, removePreview: true, removeEditor: true }] });
-      const [picked] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPageContent, args: [{ commentLimit: 30, timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs }] });
+      const [picked] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pickPageContent, args: [{ commentLimit: 30, timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
+        cancelLabel: translateForLocale("取消选取", resolveLocale((await libraryStorage.get("uiPreferences")).uiPreferences, chrome.i18n.getUILanguage())) }] });
       if (!picked?.result?.html) return { ok: false, cancelled: true };
       const [captured] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageCaptureSnapshot,
-        args: [{ serializeErrors: true, sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
+        args: [{ serializeErrors: true, sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html,
+          selectionTemplate: picked.result.selectionTemplate, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
       return { ok: true, supplement: picked.result.supplement, batch: { ...readPageCaptureInjectionResult(captured), tabId: tab.id } };
     }
+    case "READ_PAGE_CAPTURE_DETAILS":
+      return enqueueCapture(() => readGenericPageCaptureDetails(message));
     case "START_PAGE_CAPTURE":
-      return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount, message.requestId));
+      return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount, message.requestId, message.selectionTemplate));
     case "READ_PAGE_CAPTURE_SUPPLEMENT":
       return { ok: true, supplement: await readPageCaptureSupplement(message.supplement, chrome, { sourceTabId: message.sourceTabId, sourceUrl: message.sourceUrl }) };
     case "CANCEL_PAGE_CAPTURE":
@@ -973,8 +1114,18 @@ async function handleMessage(message, interaction = {}) {
       return previewPageCaptureRegion(message.tabId, message.preview);
     case "CLEAR_PAGE_CAPTURE_MARKERS":
       return clearPageCaptureMarkers(message.tabId, message.removeRegionMarkers !== false);
+    case 'START_CAPTURE_SAVE':
+      if (!['COMMIT_PAGE_CAPTURE', 'COMMIT_CAPTURE_DRAFT'].includes(message.input?.type)) throw new Error('不支持的保存任务');
+      return captureSaveTasks.start(message.input);
+    case 'GET_CAPTURE_SAVE_TASK': return { ok: true, task: await captureSaveTasks.get() };
+    case 'CANCEL_CAPTURE_SAVE': return captureSaveTasks.cancel(message.id);
+    case 'DISCARD_CAPTURE_SAVE':
+      if (typeof message.id !== 'string' || !message.id) throw new Error('缺少保存任务');
+      await captureSaveTasks.discard(message.id);
+      return { ok: true };
+    case 'ACK_CAPTURE_SAVE': await captureSaveTasks.acknowledge(message.id, message.remainingBatch); return { ok: true };
     case "COMMIT_PAGE_CAPTURE":
-      return enqueueCapture(async () => enqueue(async () => commitPageCapture(message.batch, message)));
+      return captureSaveTasks.run(message);
     case "PAGE_CAPTURE_VIEWPORT_FALLBACKS":
       return capturePageCaptureViewportFallbacks(message, interaction.sender);
     case "SMART_VISUAL_SELECTION_CHANGED":
@@ -1001,12 +1152,9 @@ async function handleMessage(message, interaction = {}) {
     case "SET_CAPTURE_PRIMARY_VISUAL":
       return enqueueCapture(async () => captureRuntime.dispatch("set-primary-visual", { visualId: message.visualId }));
     case "CANCEL_CAPTURE_DRAFT":
-      return enqueueCapture(async () => captureRuntime.dispatch("cancel"));
+      return enqueueCapture(async () => { await captureSaveTasks.discard(); return captureRuntime.dispatch("cancel"); });
     case "COMMIT_CAPTURE_DRAFT":
-      return enqueueCapture(async () => enqueue(async () => commitCaptureDraft(message.duplicateAction, {
-        collectionId: message.collectionId,
-        newCollectionName: message.newCollectionName
-      })));
+      return captureSaveTasks.run(message);
     case "START_CAPTURE_FOR_CASE":
       return enqueueCapture(async () => startCaptureForCase(message.caseId, message.partEntryId));
     case "CREATE_COMPOUND_CASE":
@@ -1031,8 +1179,6 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => addUploadedMedia(message.entryId, message.asset, message.posterAsset, message.generationPromptChoices));
     case "DISCARD_UNREFERENCED_MEDIA":
       return enqueue(async () => { await deleteUnreferencedMedia(message.assetIds); return { ok: true }; });
-    case "ENSURE_VIDEO_POSTER":
-      return enqueue(async () => ensureEntryVideoPoster(message.entryId, message.assetId));
     case "CREATE_MEDIA_CASE":
       return enqueue(async () => createMediaCase(message.asset, message.posterAsset, message.title, message.text, message.generationPromptChoices));
     case "CREATE_MEDIA_REFERENCE":
@@ -1089,9 +1235,47 @@ async function handleMessage(message, interaction = {}) {
           settings
         };
       });
+    case 'UPDATE_KEYBOARD_SHORTCUTS':
+      return enqueue(async () => {
+        const shortcuts = normalizeShortcutOverrides(message.shortcuts);
+        if (shortcutConflict(shortcutBindings(shortcuts))) throw new Error('按键重复，请调整后保存');
+        const stored = await libraryStorage.get(STORAGE_KEYS.uiPreferences);
+        const uiPreferences = normalizeUiPreferences({ ...stored[STORAGE_KEYS.uiPreferences], shortcuts });
+        await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
+        return { ok: true };
+      });
     case "UPDATE_UI_PREFERENCES":
       return enqueue(async () => {
-        const uiPreferences = normalizeUiPreferences(message.preferences);
+        const stored = await libraryStorage.get(STORAGE_KEYS.uiPreferences);
+        const uiPreferences = normalizeUiPreferences({ ...stored[STORAGE_KEYS.uiPreferences], ...message.preferences,
+          sidebarLayout: { ...stored[STORAGE_KEYS.uiPreferences]?.sidebarLayout, ...message.preferences?.sidebarLayout },
+          layoutPresets: stored[STORAGE_KEYS.uiPreferences]?.layoutPresets,
+          activeLayoutId: stored[STORAGE_KEYS.uiPreferences]?.activeLayoutId,
+          floatingPanelPositions: stored[STORAGE_KEYS.uiPreferences]?.floatingPanelPositions ?? message.preferences?.floatingPanelPositions,
+          shortcuts: stored[STORAGE_KEYS.uiPreferences]?.shortcuts ?? message.preferences?.shortcuts });
+        await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
+        return { ok: true, uiPreferences };
+      });
+    case 'UPDATE_LAYOUT_PREFERENCES':
+      return enqueue(async () => {
+        const stored = await libraryStorage.get(STORAGE_KEYS.uiPreferences);
+        const previous = stored[STORAGE_KEYS.uiPreferences];
+        const uiPreferences = message.action
+          ? manageLayoutPreset(previous, { ...message, id: message.action === 'create' ? crypto.randomUUID() : message.id })
+          : updateLayoutPreferences(previous, message.preferences, message.reset === true);
+        await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
+        return { ok: true, uiPreferences };
+      });
+    case 'UPDATE_FLOATING_PANEL_POSITION':
+      return enqueue(async () => {
+        const stored = await libraryStorage.get(STORAGE_KEYS.uiPreferences);
+        const uiPreferences = normalizeUiPreferences(stored[STORAGE_KEYS.uiPreferences]);
+        if (message.position === null && /^[a-z][a-zA-Z0-9]*$/.test(message.key)) delete uiPreferences.floatingPanelPositions[message.key];
+        else {
+          const next = normalizeUiPreferences({ floatingPanelPositions: { [message.key]: message.position } }).floatingPanelPositions;
+          if (!Object.hasOwn(next, message.key)) throw new Error('浮层位置无效');
+          uiPreferences.floatingPanelPositions[message.key] = next[message.key];
+        }
         await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
         return { ok: true, uiPreferences };
       });
@@ -1313,16 +1497,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => previewDeepSeekBatch(message.outputLocale, message.mode, message.entryIds));
     case "CREATE_ANALYSIS_BATCH":
       return enqueue(async () => createDeepSeekBatch(message.outputLocale, message.mode, message.entryIds, message.expectedEntryIds));
-    case "CLAIM_ANALYSIS_ITEMS":
-      return enqueue(async () => claimDeepSeekBatchItems(message.jobId));
     case "GET_ANALYSIS_BATCH_STATUS":
       return getDeepSeekBatchStatus(message.jobId);
-    case "COMMIT_ANALYSIS_ITEM":
-      return enqueue(async () => commitDeepSeekBatchItem(message));
-    case "COMMIT_ANALYSIS_ITEMS":
-      return enqueue(async () => commitDeepSeekBatchItems(message));
-    case "FAIL_ANALYSIS_ITEM":
-      return enqueue(async () => failDeepSeekBatchItem(message));
     case "PAUSE_ANALYSIS_BATCH":
       return enqueue(async () => updateDeepSeekBatch("pause", message.jobId));
     case "RESUME_ANALYSIS_BATCH":
@@ -1333,8 +1509,6 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => updateDeepSeekBatch("retry", message.jobId));
     case "APPLY_STAGED_ANALYSIS_REBUILD":
       return enqueue(async () => applyStagedAnalysisRebuild(message.jobId));
-    case "RECOVER_ANALYSIS_BATCH":
-      return enqueue(async () => recoverDeepSeekBatch());
     case "UNDO_ANALYSIS_BATCH":
       return enqueue(async () => undoDeepSeekBatch(message.jobId));
     case "PREVIEW_VISION_BATCH":
@@ -1345,12 +1519,6 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => previewVideoBatchTask(message));
     case "CREATE_VIDEO_BATCH":
       return enqueue(async () => createVideoBatchTask(message));
-    case "CLAIM_VISION_BATCH_ITEM":
-      return enqueue(async () => claimVisionBatchItem(message.jobId));
-    case "COMPLETE_VISION_BATCH_ITEM":
-      return enqueue(async () => completeVisionBatchItem(message));
-    case "FAIL_VISION_BATCH_ITEM":
-      return enqueue(async () => failVisionBatchItem(message));
     case "PAUSE_VISION_BATCH":
       return enqueue(async () => updateVisionBatch("pause", message.jobId));
     case "RESUME_VISION_BATCH":
@@ -1433,7 +1601,6 @@ async function captureWorkspace() {
     const name = contentType?.name || "待确认";
     return [part.sourceUrl || "source:unknown", { id, name, customized: contentType?.customized === true }];
   }));
-  const selectorLabelsByProject = collectionSelectorLabelsById(state.organizerState);
   return {
     ok: true,
     draft,
@@ -1443,9 +1610,11 @@ async function captureWorkspace() {
     contentTypes: state.taxonomy.nodes.map((item) => ({ id: item.id, name: item.name, customized: item.customized === true })),
     collections: state.organizerState.collections.map((item) => ({
       id: item.id,
-      name: selectorLabelsByProject.get(item.id),
-      parentId: item.parentId
+      name: item.name,
+      parentId: item.parentId,
+      order: item.order
     })),
+    saveTask: await captureSaveTasks.get(),
     partContentTypes,
     activeCreativeResult: state.activeCreativeResult,
     activeCreativePrompt: activeCreativePromptSummary(state.activeCreativeResult, state.composerSessions),
@@ -1453,7 +1622,7 @@ async function captureWorkspace() {
   };
 }
 
-async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId = "") {
+async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId = "", selectionTemplate = null) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) {
     return { ok: false, message: RESTRICTED_PAGE_MESSAGE };
@@ -1475,8 +1644,9 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
   try {
     if (!listMode) {
       result = { result: await collectPageCaptureTab(tab, {
-        sessionId,
+        sessionId, requestId,
         mode: mode === "whole" ? "whole" : "loaded",
+        genericGroupingRequested: mode === "article" || mode === "media",
         maxCandidates: mode === "loaded" ? PAGE_CAPTURE_QUALITY_LIMITS.maxRegionCandidates : PAGE_CAPTURE_LIMITS.maxCandidates
       }) };
     } else {
@@ -1486,7 +1656,7 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
       const visitedUrls = new Set();
       for (let pageIndex = 0; pageIndex < targetCount && !activePageCapture?.cancelled; pageIndex += 1) {
         visitedUrls.add(currentTab.url);
-        const snapshot = await collectPageCaptureTab(currentTab, { sessionId, mode: "whole", maxCandidates: targetCount, listMode: true });
+        const snapshot = await collectPageCaptureTab(currentTab, { sessionId, requestId, mode: "whole", maxCandidates: targetCount, listMode: true, selectionTemplate });
         if (!adapter) adapter = snapshot.adapter;
         else if (snapshot.adapter !== adapter) {
           stopReason = "layout-changed";
@@ -1504,6 +1674,12 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
         }
         if (candidates.size >= targetCount) {
           stopReason = "target-reached";
+          break;
+        }
+        // A manual template belongs to the selected live document. Keep its successful
+        // candidates instead of navigating away and invalidating the selection.
+        if (selectionTemplate) {
+          stopReason = "manual-template-page";
           break;
         }
         const nextUrl = await findNextPageCaptureListUrl(currentTab.id, currentTab.url);
@@ -1546,7 +1722,11 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
     }
     if (activePageCapture?.sessionId === sessionId) activePageCapture = null;
   }
-  if (mode === "article") {
+  if ((mode === "article" || mode === "media") && result?.result?.adapter === "generic") {
+    const grouping = mode === "media" ? "media" : "sections";
+    const groups = (result.result.candidates || []).flatMap(candidate => groupGenericCapture(candidate, grouping));
+    result.result = { ...result.result, candidates: groups, captureMode: "list", saveMode: "multiple", genericGrouping: grouping };
+  } else if (mode === "article") {
     const groups = (result?.result?.candidates || []).flatMap(splitArticleCases);
     if (!groups.length) return { ok: false, message: "未识别到可靠的多个案例边界，请保留整篇文章或手动选择内容" };
     result.result = {...result.result, candidates:groups, captureMode:"list", saveMode:"multiple", articleSplit:true};
@@ -1574,9 +1754,26 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
   }
   return {
     ok: true,
-    message: `已识别 ${batch.candidates.length} 项网页内容，请确认后保存`,
+    message: batch.stopReason === "manual-template-page"
+      ? `已按手选范围识别本页 ${batch.candidates.length} 项内容，请确认后保存；其他页面需重新选取`
+      : `已识别 ${batch.candidates.length} 项网页内容，请确认后保存`,
     batch
   };
+}
+
+async function readGenericPageCaptureDetails(message) {
+  const tab = await chrome.tabs.get(message.tabId);
+  const sessionId = crypto.randomUUID(), requestId = message.requestId;
+  const requests = Array.isArray(message.requests) ? message.requests : [];
+  if (!requests.length) return { ok: true, details: [] };
+  activePageCapture = { sessionId, tabId: tab.id, cancelled: false };
+  await chrome.runtime.sendMessage({ type: "PAGE_CAPTURE_CHANGED", sessionId, requestId, phase: "details", detailDone: 0, detailTotal: requests.length }).catch(() => undefined);
+  try {
+    const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectGenericCaptureDetails,
+      args: [requests, { sessionId, requestId, concurrency: RESOURCE_POLICY.mediaDownloadConcurrency,
+        timeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs, maxBytes: operationBudget().maxTextBytes }] });
+    return { ok: true, details: result?.result || requests.map(request => ({ url: request.url, error: "详情尚未读取" })) };
+  } finally { if (activePageCapture?.sessionId === sessionId) activePageCapture = null; }
 }
 
 async function collectPageCaptureTab(tab, options) {
@@ -1623,6 +1820,8 @@ async function collectPageCaptureTab(tab, options) {
       maxMedia: Math.max(PAGE_CAPTURE_LIMITS.maxMediaPerCandidate, feishuDocument?.mediaCount || 0),
       maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
       listMode: options.listMode === true,
+      genericGroupingRequested: options.genericGroupingRequested === true,
+      selectionTemplate: options.selectionTemplate,
       mediaTimeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
       maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
       maxCanvasPixels: operationBudget().maxImagePixels,
@@ -1856,7 +2055,77 @@ async function clearPageCaptureMarkers(tabIdValue, removeRegionMarkers = true) {
   }
 }
 
-async function commitPageCapture(batchValue, metadata = {}) {
+async function runCaptureSave(message, progress) {
+  return enqueueCapture(async () => {
+    const retain = progress.retain, release = progress.release;
+    progress.retain = async ids => { ids.forEach(id => activeCaptureAssetIds.add(id)); await retain(ids); };
+    progress.release = async ids => { ids.forEach(id => activeCaptureAssetIds.delete(id)); await release(ids); };
+    try {
+      progress.stage('preparing');
+      if (message.type === 'COMMIT_PAGE_CAPTURE') return await commitPageCapture(message.batch, message, progress);
+      return await enqueue(() => commitCaptureDraft(message.duplicateAction, message, progress));
+    } finally { activeCaptureAssetIds.clear(); }
+  });
+}
+
+// A capture may reuse an identical original owned by another case. Protect it
+// (and its poster) for the rest of this save, before confirming it still exists,
+// so trash emptying during the remaining downloads cannot delete it. Only the
+// in-memory guard is used: crash recovery deletes persisted capture IDs.
+async function reusableCaptureAsset(asset) {
+  activeCaptureAssetIds.add(asset.id);
+  if (asset.posterAssetId) activeCaptureAssetIds.add(asset.posterAssetId);
+  return Boolean(await getMediaBlob(asset.id));
+}
+
+function pageCaptureDocumentDownloadOptions(media) {
+  return {
+    kind: media.kind,
+    expectedMimeType: media.mimeType,
+    maxBytes: LIBRARY_TRANSFER_LIMITS.maxFileBytes,
+    timeoutMs: 60_000,
+    accept: "application/zip,application/pdf,text/markdown,text/plain,text/html,application/rtf,text/rtf,application/x-rtf"
+  };
+}
+
+async function fetchPageCaptureImage(url, { onProgress, signal }) {
+  let metadata = null;
+  const blob = await fetchBoundedMedia(url, {
+    onProgress, signal,
+    kind: "image",
+    revalidateCache: true,
+    maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes,
+    maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels,
+    timeoutMs: 60_000,
+    accept: "image/avif,image/webp,image/png,image/jpeg,image/gif",
+    onMetadata: (value) => { metadata = value; }
+  });
+  return { blob, metadata };
+}
+
+// The plain network download each item would start first, so it can begin while earlier items are
+// written. Items restored from a save checkpoint, local files and page-session fallbacks are not
+// fetched ahead; they keep their existing path.
+function pageCaptureDownloadPlan(media, candidate, progress) {
+  const cached = key => progress.mediaCached?.(key) === true;
+  if (["document", "attachment"].includes(media.kind)) {
+    const supported = media.kind === "attachment"
+      ? /\.skill$/iu.test(media.filename) && media.mimeType === "application/zip"
+      : isSupportedDocumentMimeType(media.mimeType);
+    if (!supported || media.downloadDataUrl || !media.url || cached(`document:${candidate.id}:${media.id}:${media.url}`)) return null;
+    return { key: `document:${media.url}`, start: options => fetchBoundedMedia(media.url, { ...pageCaptureDocumentDownloadOptions(media), ...options }) };
+  }
+  if (media.kind === "video") {
+    if (!media.url || cached(`video:${candidate.id}:${media.id}:${media.url}`)) return null;
+    return { key: `video:${media.url}`, start: options => downloadPageCaptureVideo(media.url, {
+      ...options, declaredVideo: ["site-original", "video-element"].includes(media.sourceKind) }) };
+  }
+  if (media.localAssetId || cached(`image:${candidate.id}:${media.id}:${media.url || "pixels"}`)) return null;
+  const [url] = pageCaptureMediaFetchCandidates(media);
+  return url ? { key: `image:${url}`, start: options => fetchPageCaptureImage(url, options) } : null;
+}
+
+async function commitPageCapture(batchValue, metadata = {}, progress = createCaptureSaveProgress()) {
   const captureMetadata = createCaptureDraft(metadata);
   let batch = normalizePageCaptureBatch(batchValue);
   if (Number.isInteger(batch.tabId) && batch.candidates.some((candidate) => candidate.media.some((media) => media.fallbackRect && !media.dataUrl))) {
@@ -1875,13 +2144,18 @@ async function commitPageCapture(batchValue, metadata = {}) {
     selected = combined ? [combined] : [];
   }
   if (!selected.length) return { ok: false, message: "请至少选择一项网页内容" };
-  const state = await readState();
+  const mediaCount = selected.reduce((count, candidate) => count + candidate.media.length, 0);
+  let mediaOffset = 0;
+  const state = await enqueue(() => readState());
+  const loadMedia = (key, load) => progress.media ? progress.media(key, load) : load();
   const results = [];
   let entries = [...state.entries];
+  const savedAssets = createCaptureAssetIndex();
   const savedAssetIds = [];
   let metadataCommitted = false;
   try {
     for (const candidate of selected) {
+      progress.signal?.throwIfAborted();
       const duplicate = entries.find(entry => samePageCaptureSource(entry, candidate));
       const repair = duplicate ? await planPageCaptureRepair(duplicate, candidate, async id => Boolean(await getMediaBlob(id))) : null;
       const refreshedClassification = duplicate ? classifyCapturedContent({ ...duplicate, sourceFacts: candidate.sourceFacts }, state.classificationRules, state.taxonomy) : null;
@@ -1889,6 +2163,7 @@ async function commitPageCapture(batchValue, metadata = {}) {
       if (duplicate && !repair.pending.length && !repair.obsoleteReferences.size && !repair.promptsChanged && !repair.textAdditions.length && duplicate.sourceFacts?.pageType === candidate.pageType && !classificationChanged) {
         results.push({ candidateId: candidate.id, status: "duplicate", entryId: duplicate.id, title: duplicate.title,
           ...pageCaptureMediaReceipt(candidate, repair.assetIds) });
+        mediaOffset += candidate.media.length;
         continue;
       }
       const mediaAssets = [];
@@ -1898,7 +2173,16 @@ async function commitPageCapture(batchValue, metadata = {}) {
       if (candidate.extraction?.pendingMediaCount) {
         warnings.push(`正文仍有 ${candidate.extraction.pendingMediaCount} 项媒体未加载，已保存当前可用内容，请回到来源页面核对`);
       }
-      for (const media of repair?.pending || candidate.media) {
+      const candidateMedia = repair?.pending || candidate.media;
+      const downloadAhead = createDownloadAhead({ signal: progress.signal });
+      downloadAhead.plan(candidateMedia.map(media => pageCaptureDownloadPlan(media, candidate, progress)));
+      try {
+      for (const [mediaIndex, media] of candidateMedia.entries()) {
+        progress.signal?.throwIfAborted();
+        downloadAhead.advance(mediaIndex);
+        const context = { kind: media.kind, index: mediaOffset + candidate.media.findIndex(item => item.id === media.id) + 1, count: mediaCount };
+        const onProgress = value => progress.update(value);
+        progress.stage('preparing', context);
         if (["document", "attachment"].includes(media.kind)) {
           if (!(media.kind === "attachment" ? /\.skill$/iu.test(media.filename) && media.mimeType === "application/zip" : isSupportedDocumentMimeType(media.mimeType))) {
             warnings.push(`${media.filename || media.alt || media.url}：已保留来源链接，未知或高风险文件不会自动下载`);
@@ -1906,19 +2190,15 @@ async function commitPageCapture(batchValue, metadata = {}) {
           }
           const assetId = repair?.matched.get(media.id)?.id || crypto.randomUUID();
           try {
-            const documentOptions = {
-              kind: media.kind,
-              expectedMimeType: media.mimeType,
-              maxBytes: LIBRARY_TRANSFER_LIMITS.maxFileBytes,
-              timeoutMs: 60_000,
-              accept: "application/zip,application/pdf,text/markdown,text/plain,text/html,application/rtf,text/rtf,application/x-rtf"
-            };
-            const blob = media.downloadDataUrl
+            const documentOptions = { ...pageCaptureDocumentDownloadOptions(media), onProgress, signal: progress.signal };
+            progress.stage(media.downloadDataUrl ? 'transfer' : 'download', context);
+            const blob = await loadMedia(`document:${candidate.id}:${media.id}:${media.url}`, async () => media.downloadDataUrl
               ? await boundedMediaBlobFromResponse(await fetch(media.downloadDataUrl), documentOptions)
-              : await fetchBoundedMedia(media.url, documentOptions);
+              : await (downloadAhead.take(`document:${media.url}`, onProgress) ?? fetchBoundedMedia(media.url, documentOptions)));
+            progress.stage('verify', context);
             const contentHash = await sha256Blob(blob);
-            const existing = entries.flatMap(entryMediaAssets).find((asset) => asset.contentHash === contentHash);
-            if (existing && await getMediaBlob(existing.id)) {
+            const [existing] = savedAssets.withHash(entries, contentHash);
+            if (existing && await reusableCaptureAsset(existing)) {
               if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push({ ...existing,
                 sourceUrl: media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
                 sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
@@ -1927,6 +2207,8 @@ async function commitPageCapture(batchValue, metadata = {}) {
               articleAssetIds.set(media.id, existing.id);
               continue;
             }
+            progress.stage('writing', context);
+            await progress.retain?.([assetId]);
             await (media.kind === "attachment" ? savePortableAssetBlob : saveMediaBlob)(assetId, blob);
             savedAssetIds.push(assetId);
             const documentAsset = {
@@ -1948,6 +2230,8 @@ async function commitPageCapture(batchValue, metadata = {}) {
             mediaAssets.push(documentAsset);
             articleAssetIds.set(media.id, documentAsset.id);
           } catch (error) {
+          progress.signal?.throwIfAborted();
+            progress.signal?.throwIfAborted();
             failedMediaIds.add(media.id);
             warnings.push(`${media.filename || media.alt || media.url}：本地副本未保存，已保留来源链接（${userMessage(error)}）`);
           }
@@ -1978,29 +2262,35 @@ async function commitPageCapture(batchValue, metadata = {}) {
             reviewStatus: "verified"
           };
           try {
-            const blob = await downloadPageCaptureVideo(media.url, {
+            progress.stage('download', context);
+            const blob = await loadMedia(`video:${candidate.id}:${media.id}:${media.url}`, () => (downloadAhead.take(`video:${media.url}`, onProgress) ?? downloadPageCaptureVideo(media.url, {
+              onProgress, signal: progress.signal,
               declaredVideo: ["site-original", "video-element"].includes(media.sourceKind)
-            }).catch(async error => {
+            })).catch(async error => {
+              progress.signal?.throwIfAborted();
               if (batch.sessionMediaAllowed === false) throw error;
-              try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.url, "video")).blob; }
+              try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.url, "video", progress, context)).blob; }
               catch (sessionError) { throw new Error(`${userMessage(error)}；${userMessage(sessionError)}`); }
-            });
+            }));
             if (blob) {
+              progress.stage('verify', context);
               const contentHash = await sha256Blob(blob);
-              const existing = [...entries.flatMap(entryMediaAssets), ...mediaAssets]
-                .find((asset) => asset.kind === "video" && asset.storageMode === "managed" && asset.contentHash === contentHash);
-              if (existing && await getMediaBlob(existing.id)) {
+              const managedVideo = (asset) => asset.kind === "video" && asset.storageMode === "managed" && asset.contentHash === contentHash;
+              const existing = savedAssets.withHash(entries, contentHash).find(managedVideo) ?? mediaAssets.find(managedVideo);
+              if (existing && await reusableCaptureAsset(existing)) {
                 if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push({ ...existing,
                 sourceUrl: media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
                 sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
                 originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl
               });
-                const poster = entries.flatMap(entryMediaAssets).find(asset => asset.id === existing.posterAssetId);
+                const poster = savedAssets.withId(entries, existing.posterAssetId);
                 if (poster && !mediaAssets.some(asset => asset.id === poster.id)) mediaAssets.push({ ...poster,
                   usage: 'poster', derivedFromAssetId: existing.id });
                 articleAssetIds.set(media.id, existing.id);
                 continue;
               }
+              progress.stage('writing', context);
+              await progress.retain?.([videoAsset.id]);
               await saveMediaBlob(videoAsset.id, blob);
               savedAssetIds.push(videoAsset.id);
               Object.assign(videoAsset, {
@@ -2009,35 +2299,47 @@ async function commitPageCapture(batchValue, metadata = {}) {
               });
               delete videoAsset.reference;
               try {
-                const prepared = await prepareStoredVideoPoster(videoAsset);
+                progress.stage('poster', context);
+                const prepared = await enqueue(() => prepareStoredVideoPoster(videoAsset));
                 Object.assign(videoAsset, prepared.metadata);
                 if (prepared.poster) {
+                  await progress.retain?.([prepared.poster.id]);
                   savedAssetIds.push(prepared.poster.id);
                   mediaAssets.push(prepared.poster);
                   videoAsset.posterAssetId = prepared.poster.id;
                 } else warnings.push(`${media.alt || candidate.title}：视频已保存，封面暂未生成`);
               } catch (error) {
+          progress.signal?.throwIfAborted();
+            progress.signal?.throwIfAborted();
                 warnings.push(`${media.alt || candidate.title}：视频已保存，封面生成失败（${userMessage(error)}）`);
               }
             } else if (playbackMode === "source") {
               warnings.push(`${media.alt || candidate.title}：来源未提供直接视频文件，已保留在线来源`);
             }
           } catch (error) {
+          progress.signal?.throwIfAborted();
+            progress.signal?.throwIfAborted();
             failedMediaIds.add(media.id);
             warnings.push(`${media.alt || candidate.title}：视频本地副本未保存，已保留来源链接（${userMessage(error)}）`);
           }
           if (!videoAsset.posterAssetId && media.posterUrl) {
             try {
-              const posterBlob = await fetchBoundedMedia(media.posterUrl, {
+              const posterContext = { ...context, kind: 'poster' };
+              progress.stage('download', posterContext);
+              const posterBlob = await loadMedia(`poster:${candidate.id}:${media.id}:${media.posterUrl}`, () => fetchBoundedMedia(media.posterUrl, {
+                onProgress, signal: progress.signal,
                 kind: "image", maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes,
                 revalidateCache: true,
                 maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels, timeoutMs: 60_000
               }).catch(async error => {
-                if (batch.sessionMediaAllowed === false) throw error;
-                try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.posterUrl)).blob; }
+                progress.signal?.throwIfAborted();
+              if (batch.sessionMediaAllowed === false) throw error;
+                try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.posterUrl, 'image', progress, posterContext)).blob; }
                 catch (sessionError) { throw new Error(`${userMessage(error)}；${userMessage(sessionError)}`); }
-              });
+              }));
               const posterId = crypto.randomUUID();
+              progress.stage('writing', posterContext);
+              await progress.retain?.([posterId]);
               await saveMediaBlob(posterId, posterBlob);
               savedAssetIds.push(posterId);
               mediaAssets.push({ id: posterId, kind: "image", usage: "poster", storageMode: "managed",
@@ -2046,6 +2348,8 @@ async function commitPageCapture(batchValue, metadata = {}) {
                 capturedAt: videoAsset.capturedAt, reviewStatus: "verified" });
               videoAsset.posterAssetId = posterId;
             } catch (error) {
+          progress.signal?.throwIfAborted();
+            progress.signal?.throwIfAborted();
               warnings.push(`${media.alt || candidate.title}：来源封面未保存（${userMessage(error)}）`);
             }
           }
@@ -2057,29 +2361,21 @@ async function commitPageCapture(batchValue, metadata = {}) {
         try {
           const localBlob = media.localAssetId ? await getScreenshotBlob(media.localAssetId) : null;
           if (media.localAssetId && !localBlob) throw new Error("待补充的本地图片已不可用，请重新选择");
-          const resolved = localBlob ? { blob: localBlob, sourceUrl: media.url, captureMethod: "source" }
+          const resolved = await loadMedia(`image:${candidate.id}:${media.id}:${media.url || media.localAssetId || "pixels"}`, async () => localBlob ? { blob: localBlob, sourceUrl: media.url, captureMethod: "source" }
             : await resolvePageCaptureImage(media, {
-            sessionMediaAllowed: batch.sessionMediaAllowed,
+            signal: progress.signal, sessionMediaAllowed: batch.sessionMediaAllowed,
             fetchMedia: async (url) => {
-              let metadata = null;
-              const blob = await fetchBoundedMedia(url, {
-                kind: "image",
-                revalidateCache: true,
-                maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes,
-                maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels,
-                timeoutMs: 60_000,
-                accept: "image/avif,image/webp,image/png,image/jpeg,image/gif",
-                onMetadata: (value) => { metadata = value; }
-              });
-              return { blob, metadata };
+              progress.stage('download', context);
+              return downloadAhead.take(`image:${url}`, onProgress) ?? fetchPageCaptureImage(url, { onProgress, signal: progress.signal });
             },
-            fetchSessionMedia: async (url) => fetchSelectedPageSessionMedia(batch, candidate, url),
+            fetchSessionMedia: async (url) => fetchSelectedPageSessionMedia(batch, candidate, url, 'image', progress, context),
             decodeDataUrl: dataUrlToImageBlob
-          });
+          }));
           const blob = resolved.blob;
+          progress.stage('verify', context);
           const contentHash = await sha256Blob(blob);
-          const existing = [...mediaAssets, ...entries.flatMap(entryMediaAssets)].find((asset) => asset.contentHash === contentHash);
-          if (existing && await getMediaBlob(existing.id)) {
+          const existing = mediaAssets.find((asset) => asset.contentHash === contentHash) ?? savedAssets.withHash(entries, contentHash)[0];
+          if (existing && await reusableCaptureAsset(existing)) {
             if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push({ ...existing,
                 sourceUrl: media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
                 sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
@@ -2088,6 +2384,8 @@ async function commitPageCapture(batchValue, metadata = {}) {
             articleAssetIds.set(media.id, existing.id);
             continue;
           }
+          progress.stage('writing', context);
+          await progress.retain?.([assetId]);
           await saveMediaBlob(assetId, blob);
           savedAssetIds.push(assetId);
           const generationInfo = await readImageGenerationInfo(blob);
@@ -2114,10 +2412,15 @@ async function commitPageCapture(batchValue, metadata = {}) {
           articleAssetIds.set(media.id, imageAsset.id);
           if (resolved.usedPixelFallback) warnings.push(`${media.alt || candidate.title}：原图不可用，已保存页面可见画面`);
         } catch (error) {
+          progress.signal?.throwIfAborted();
           failedMediaIds.add(media.id);
           warnings.push(`${media.alt || media.url || candidate.title}：${userMessage(error)}`);
         }
       }
+      } finally {
+        downloadAhead.close();
+      }
+      mediaOffset += candidate.media.length;
       if (warnings.length) console.debug("PromptDirector capture diagnostics", { candidateId: candidate.id, warnings: [...new Set(warnings)] });
       const captureFacts = { ...candidate.sourceFacts,
         status: warnings.length ? "partial" : candidate.sourceFacts.status };
@@ -2189,11 +2492,25 @@ async function commitPageCapture(batchValue, metadata = {}) {
       promptConflicts.push(...promptPlan.conflicts);
     }
     if (promptConflicts.length) {
+      progress.stage('confirm');
+      await progress.release?.(savedAssetIds);
       await deleteUnreferencedMedia(savedAssetIds);
       return generationPromptConfirmation(promptConflicts);
     }
-    const organizerState = organizerAfterCapturePlacement(state.organizerState, entries, affectedIds, captureMetadata);
-    await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState });
+    let organizerState;
+    await enqueue(async () => {
+      progress.signal?.throwIfAborted();
+      const latest = await readState();
+      entries = rebaseCaptureEntries(state.entries, entries, latest.entries, affectedIds,
+        (existing, entry) => samePageCaptureSource(existing, { canonicalUrl: entry.url, sourceFacts: entry.sourceFacts }));
+      if (captureMetadata.contentTypeExplicit && !isValidContentPath(latest.taxonomy, [captureMetadata.contentTypeId])) {
+        throw new Error('分类在下载期间已变化，请重新选择');
+      }
+      organizerState = organizerAfterCapturePlacement(latest.organizerState, entries, affectedIds, captureMetadata);
+      await progress.commit?.();
+      progress.stage('writing');
+      await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState });
+    });
     metadataCommitted = true;
     const postCommitWarnings = [];
     try { await notifySaved(entries.length); }
@@ -2209,16 +2526,19 @@ async function commitPageCapture(batchValue, metadata = {}) {
       warnings: postCommitWarnings
     };
   } catch (error) {
-    if (!metadataCommitted) await deleteUnreferencedMedia(savedAssetIds).catch(() => undefined);
+    if (!metadataCommitted) {
+      await progress.release?.(savedAssetIds);
+      await deleteUnreferencedMedia(savedAssetIds).catch(() => undefined);
+    }
     throw error;
   }
 }
 
-async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "image") {
+async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "image", progress, context = {}) {
   if (batch.sessionMediaAllowed === false) throw new Error("没有获得页面媒体读取权限");
   const maxBytes = await stagingByteBudget();
   const timeoutMs = operationBudget().maxDurationMs;
-  const signal = AbortSignal.timeout(timeoutMs);
+  const signal = progress?.signal ? AbortSignal.any([progress.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
   if (!Number.isInteger(batch?.tabId)) throw new Error("原网页标签页已经不可用");
   const tab = await chrome.tabs.get(batch.tabId);
   let currentOrigin;
@@ -2233,7 +2553,12 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
   const allowedUrls = pageCaptureMediaFetchCandidatesForSession(candidate, value);
   if (!allowedUrls.includes(value)) throw new Error("页面媒体地址不在已选择内容中");
   const token = crypto.randomUUID();
+  const discard = () => chrome.scripting.executeScript({ target: { tabId: batch.tabId }, world: 'MAIN',
+    func: discardPageSessionMedia, args: [{ token }] }).catch(() => undefined);
+  signal.throwIfAborted();
+  signal.addEventListener('abort', discard, { once: true });
   try {
+    progress?.stage('page', context);
     const [preparedResult] = await chrome.scripting.executeScript({
       target: { tabId: batch.tabId },
       world: "MAIN",
@@ -2253,6 +2578,7 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
     }
     const chunks = [];
     let totalBytes = 0;
+    progress?.stage('transfer', { ...context, receivedBytes: 0, totalBytes: prepared.totalBytes });
     for (let index = 0; index < prepared.chunkCount; index += 1) {
       signal.throwIfAborted();
       const [chunkResult] = await chrome.scripting.executeScript({
@@ -2266,9 +2592,11 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
       totalBytes += bytes.byteLength;
       if (totalBytes > maxBytes) throw new Error("页面媒体超过本次暂存预算");
       chunks.push(new Blob([bytes]));
+      progress?.update({ receivedBytes: totalBytes, totalBytes: prepared.totalBytes });
     }
     if (totalBytes !== prepared.totalBytes) throw new Error("页面媒体传输不完整");
     let metadata = null;
+    progress?.stage('verify', context);
     const blob = await boundedMediaBlobFromResponse(new Response(new Blob(chunks), {
       headers: { "content-type": String(prepared.contentType || "application/octet-stream") }
     }), {
@@ -2280,12 +2608,8 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
     });
     return { blob, metadata };
   } finally {
-    await chrome.scripting.executeScript({
-      target: { tabId: batch.tabId },
-      world: "MAIN",
-      func: discardPageSessionMedia,
-      args: [{ token }]
-    }).catch(() => undefined);
+    signal.removeEventListener('abort', discard);
+    await discard();
   }
 }
 
@@ -2319,7 +2643,6 @@ async function startCaptureForCase(caseId, partEntryId = "") {
 
 async function createCompoundCaseAction(message) {
   const state = await readState();
-  assertCompoundProjectScope(state, message.memberEntryIds || []);
   const result = createCompoundCase(state.compoundCases, state.entries, {
     id: message.compoundCaseId,
     title: message.title,
@@ -2332,13 +2655,14 @@ async function createCompoundCaseAction(message) {
 }
 
 async function updateCompoundCaseAction(message) {
-  const state = await readState();
-  if (message.memberEntryIds) assertCompoundProjectScope(state, message.memberEntryIds);
+  const state = await readCaseLibraryState();
+  const labelsEdited = message.customLabels !== undefined || Array.isArray(message.addLabels) || Array.isArray(message.removeLabels);
+  const current = state.compoundCases.find(item => item.id === message.compoundCaseId);
   const result = updateCompoundCase(state.compoundCases, state.entries, message.compoundCaseId, {
     title: message.title,
     memberEntryIds: message.memberEntryIds,
     coverVisualId: message.coverVisualId,
-    customLabels: message.customLabels
+    customLabels: labelsEdited ? editedLabels(current?.customLabels, message) : undefined
   });
   await commitLocalChanges({ [STORAGE_KEYS.compoundCases]: result.compoundCases });
   return {
@@ -2356,7 +2680,7 @@ async function splitCompoundCaseAction(compoundCaseId) {
 }
 
 async function setEntryPrimaryVisual(entryId, visualId) {
-  const state = await readState();
+  const state = await readCaseLibraryState();
   const current = findEntry(state, entryId);
   const next = setPrimaryVisual(current, visualId);
   const updated = next.primaryVisualId === current.primaryVisualId ? next : touchEntry(next);
@@ -2479,28 +2803,6 @@ async function prepareStoredVideoPoster(asset) {
   return response;
 }
 
-async function ensureEntryVideoPoster(entryId, assetId) {
-  const state = await readState();
-  const entry = findEntry(state, entryId);
-  const asset = entry.mediaAssets?.find((item) => item.id === assetId && item.kind === "video" && item.storageMode === "managed");
-  if (!asset) throw new Error("没有找到本地视频");
-  const existing = entry.mediaAssets.find((item) => item.usage === "poster" && (item.id === asset.posterAssetId || item.derivedFromAssetId === assetId));
-  if (existing && await getMediaBlob(existing.id)) return { ok: true, poster: existing };
-  const prepared = await prepareStoredVideoPoster(asset);
-  if (!prepared.poster) throw new Error("视频封面暂不可用，请打开详情查看视频");
-  try {
-    const updated = normalizeEntryMedia({ ...entry, mediaAssets: [
-      ...entry.mediaAssets.filter((item) => item.id !== existing?.id).map((item) => item.id === assetId ? { ...item, ...prepared.metadata, posterAssetId: prepared.poster.id } : item),
-      prepared.poster
-    ] });
-    await commitLocalChanges({ [STORAGE_KEYS.entries]: state.entries.map((item) => item.id === entry.id ? updated : item) });
-    return { ok: true, poster: prepared.poster };
-  } catch (error) {
-    await deleteMediaBlob(prepared.poster.id).catch(() => undefined);
-    throw error;
-  }
-}
-
 async function addUploadedMedia(entryId, assetValue, posterValue = null, choices = {}) {
   const state = await readState();
   const current = findEntry(state, entryId);
@@ -2510,6 +2812,7 @@ async function addUploadedMedia(entryId, assetValue, posterValue = null, choices
     throw new Error("没有读取到待添加的媒体文件");
   }
   if (current.mediaAssets?.some(asset => asset.id === assetId)) return { ok: true, duplicate: true, message: "资料已在案例中", entry: current };
+  if (assetValue?.derivedFromAssetId && !current.mediaAssets.some(asset => asset.id === assetValue.derivedFromAssetId && asset.kind === 'video')) throw new Error('截图来源视频不属于当前案例');
   let updated = addEntryMedia(current, {
     ...assetValue,
     id: assetId,
@@ -2642,15 +2945,15 @@ async function addVideoKeyframe(entryId, assetValue, noteValue) {
     capturedAt: new Date().toISOString(),
     reviewStatus: "verified"
   });
-  updated = addTimeNote(updated, { ...noteValue, frameAssetId: frameId });
+  if (noteValue) updated = addTimeNote(updated, { ...noteValue, frameAssetId: frameId });
   updated = touchEntry(updated);
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
   await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "当前画面和时间点笔记已保存", entry: updated };
+  return { ok: true, message: noteValue ? "当前画面和时间点笔记已保存" : "截图已保存", entry: updated };
 }
 
 async function deleteEntryTimeNote(entryId, noteId) {
-  const state = await readState();
+  const state = await readCaseLibraryState();
   const current = findEntry(state, entryId);
   const next = removeTimeNote(current, noteId);
   const updated = (next.timeNotes ?? []).length === (current.timeNotes ?? []).length ? next : touchEntry(next);
@@ -2659,14 +2962,15 @@ async function deleteEntryTimeNote(entryId, noteId) {
   return { ok: true, message: "时间点笔记已删除", entry: updated };
 }
 
-async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
+async function commitCaptureDraft(duplicateAction = "", placementValue = {}, progress = createCaptureSaveProgress()) {
+  progress.stage('verify');
   const draft = await captureRuntime.getDraft();
   if (!draft.fragments.length && !draft.visuals.length) return { ok: false, message: "草稿里还没有可保存的文字或截图", draft };
   const state = await readState();
   const targetCompound = normalizeCompoundCases(state.compoundCases, state.entries)
     .find((compound) => compound.id === draft.targetCaseId) ?? null;
   const placement = capturePlacement(draft, placementValue);
-  if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound, placement, placementValue.generationPromptChoices);
+  if (targetCompound) return commitCaptureIntoCompound(draft, draftParts(draft), state, targetCompound, placement, placementValue.generationPromptChoices, progress);
   const text = draftText(draft);
   const sourcePages = mergeSourcePages(draftSourcePages(draft), draft.visuals.map((visual) => {
     const context = sourceContextForUrl(draft, visual.sourceUrl);
@@ -2732,7 +3036,7 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
     });
   }
   const promptPlan = await planImageGenerationPrompts(entry, draft.visuals.filter(asset => !target?.mediaAssets?.some(item => item.id === asset.id)), placementValue.generationPromptChoices);
-  if (promptPlan.conflicts.length) return generationPromptConfirmation(promptPlan.conflicts);
+  if (promptPlan.conflicts.length) { progress.stage('confirm'); return generationPromptConfirmation(promptPlan.conflicts); }
   entry = promptPlan.entry;
   let entries = target
     ? state.entries.map((item) => item.id === entry.id ? entry : item)
@@ -2746,6 +3050,8 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
   entries = touchEntries(entries, [...touchedEntryIds]);
   entry = entries.find((item) => item.id === entry.id) ?? entry;
   const nextDraft = createCaptureDraft();
+  await progress.commit?.();
+  progress.stage('writing');
   await retireLastSaveUndo();
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
@@ -2757,12 +3063,13 @@ async function commitCaptureDraft(duplicateAction = "", placementValue = {}) {
   return { ok: true, message: target ? "内容已加入明确选择的案例" : "多段文字和截图已保存为新案例", entry, draft: nextDraft };
 }
 
-async function commitCaptureIntoCompound(draft, parts, state, targetCompound, placement = {}, choices = {}) {
+async function commitCaptureIntoCompound(draft, parts, state, targetCompound, placement = {}, choices = {}, progress = createCaptureSaveProgress()) {
   let entries = [...state.entries];
   let compounds = normalizeCompoundCases(state.compoundCases, entries);
   const memberIds = [...targetCompound.memberEntryIds];
   const updatedExistingIds = new Set();
   for (const [index, part] of parts.entries()) {
+    progress.stage('verify', { index: index + 1, count: parts.length });
     const partTarget = findCapturePartTarget({
       entries,
       memberIds,
@@ -2790,7 +3097,7 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound, pl
     entries[index] = plan.entry;
     promptConflicts.push(...plan.conflicts);
   }
-  if (promptConflicts.length) return generationPromptConfirmation(promptConflicts);
+  if (promptConflicts.length) { progress.stage('confirm'); return generationPromptConfirmation(promptConflicts); }
   const updated = updateCompoundCase(compounds, entries, targetCompound.id, { memberEntryIds: memberIds });
   compounds = updated.compoundCases;
   const compoundCase = updated.compoundCase;
@@ -2802,6 +3109,8 @@ async function commitCaptureIntoCompound(draft, parts, state, targetCompound, pl
   entries = touchEntries(entries, [...updatedExistingIds]);
 
   const nextDraft = createCaptureDraft();
+  await progress.commit?.();
+  progress.stage('writing');
   await retireLastSaveUndo();
   await commitLocalChanges({
     [STORAGE_KEYS.entries]: entries,
@@ -3146,79 +3455,68 @@ async function restoreSelectedTrashItems(message = {}) {
 }
 
 async function permanentlyDeleteTrashItems(message = {}) {
-  const state = await readState();
-  const retainedMediaIds = collectRetainedLocalAssetIds(state);
-  const taken = takeTrashItems(state.trashState, message.itemIds, {
-    retainedMediaIds: [...retainedMediaIds],
-    retainedEntryIds: state.entries.map((entry) => entry.id)
-  });
-  return commitTrashCleanup(taken, { retainedLocalAssetIds: [...retainedMediaIds] });
+  const state = await readTrashCleanupState();
+  return commitTrashCleanup(planTrashCleanup(state, message.itemIds ?? [], await trashCleanupActiveAssetIds()));
 }
 
 async function emptyTrashAction() {
-  const state = await readState();
-  const retainedMediaIds = collectRetainedLocalAssetIds(state);
-  const taken = emptyTrash(state.trashState, {
-    retainedMediaIds: [...retainedMediaIds],
-    retainedEntryIds: state.entries.map((entry) => entry.id)
-  });
-  return commitTrashCleanup(taken, { retainedLocalAssetIds: [...retainedMediaIds] });
+  const state = await readTrashCleanupState();
+  const ids = normalizeTrashState(state.trashState).items.map(item => item.id);
+  return commitTrashCleanup(planTrashCleanup(state, ids, await trashCleanupActiveAssetIds()));
 }
 
-async function commitTrashCleanup(taken, options = {}) {
+async function readTrashCleanupState() {
+  const state = await readState();
+  return { ...state, ...await libraryStorage.get(TRASH_HISTORY_KEYS) };
+}
+
+async function trashCleanupActiveAssetIds() {
+  return [...activeCaptureAssetIds, ...await agentTransfers.retainedIds(), ...await stagedMedia.retainedIds()];
+}
+
+async function commitTrashCleanup(taken) {
   if (!taken.takenItems.length) return { ok: false, message: "回收站中没有可永久删除的内容" };
-  const retainedLocalAssetIds = new Set(Array.isArray(options.retainedLocalAssetIds) ? options.retainedLocalAssetIds : []);
-  const localReferenceIds = [...new Set(taken.takenItems.flatMap(localReferenceIdsInTrashItem))]
-    .filter((assetId) => !retainedLocalAssetIds.has(assetId));
-  const cleanup = await commitMetadataThenDeleteImages({
-    imageIds: taken.cleanup.mediaIds,
-    deleteImages: deleteMediaBlobs,
-    commitMetadata: () => commitLocalChanges({ [STORAGE_KEYS.trashState]: taken.trashState })
-  });
-  if (cleanup.failedIds.length) {
-    const retryableTrashState = normalizeTrashState({
-      items: [...taken.trashState.items, ...taken.takenItems]
-    });
-    await commitLocalChanges({ [STORAGE_KEYS.trashState]: retryableTrashState });
-    return {
-      ok: false,
-      message: "本机文件清理失败，内容仍保留在回收站，可稍后重试",
-      failedMediaCount: cleanup.failedIds.length,
-      trashState: retryableTrashState
-    };
-  }
-  const screenshotResults = await Promise.allSettled(
-    taken.cleanup.screenshotEntryIds.map((entryId) => libraryStorage.remove(screenshotStorageKey(entryId)))
-  );
-  const localReferenceResults = await Promise.allSettled(localReferenceIds.map((assetId) => deleteLocalAssetHandle(assetId)));
-  const failedScreenshotCount = screenshotResults.filter((result) => result.status === "rejected").length;
-  const failedLocalReferenceCount = localReferenceResults.filter((result) => result.status === "rejected").length;
-  const warningParts = [
-    failedScreenshotCount ? `${failedScreenshotCount} 个旧版截图缓存未能清理` : "",
-    failedLocalReferenceCount ? `${failedLocalReferenceCount} 个本机链接记录未能清理` : ""
-  ].filter(Boolean);
-  const warning = warningParts.length ? `；${warningParts.join("；")}` : "";
+  const stored = await libraryStorage.get(TRASH_CLEANUP_KEY);
+  const previous = stored[TRASH_CLEANUP_KEY] ?? {};
+  const pending = {
+    mediaIds: [...new Set([...(previous.mediaIds ?? []), ...taken.cleanup.mediaIds])],
+    localReferenceIds: [...new Set([...(previous.localReferenceIds ?? []), ...taken.cleanup.localReferenceIds])],
+    screenshotEntryIds: [...new Set([...(previous.screenshotEntryIds ?? []), ...taken.cleanup.screenshotEntryIds])]
+  };
+  // Commit deletion intent with metadata: interruption cannot orphan the cleanup work.
+  // This journal stores IDs only; it cannot restore a permanently deleted case.
+  await commitLocalChanges({ ...taken.changes, [TRASH_CLEANUP_KEY]: pending });
+  const cleanup = await resumeTrashCleanup();
   return {
-    ok: true,
-    message: `已永久删除 ${taken.takenItems.length} 项${warning}`,
-    permanentlyDeletedItemIds: taken.takenItems.map((item) => item.id),
-    deletedMediaCount: cleanup.deletedIds.length,
-    deletedLocalReferenceCount: localReferenceIds.length - failedLocalReferenceCount,
-    failedMediaCount: 0,
-    failedLocalReferenceCount,
-    failedLegacyScreenshotCount: failedScreenshotCount,
+    ...cleanup,
+    message: cleanup.ok ? `已永久删除 ${taken.takenItems.length} 项` : cleanup.message,
+    permanentlyDeletedItemIds: taken.takenItems.map(item => item.id),
     trashState: taken.trashState
   };
 }
 
-function localReferenceIdsInTrashItem(item) {
-  if (!item || !["entry", "media"].includes(item.kind)) return [];
-  const assets = Array.isArray(item.snapshot?.mediaAssets)
-    ? item.snapshot.mediaAssets
-    : Array.isArray(item.snapshot?.visuals) ? item.snapshot.visuals : [];
-  return assets.flatMap((asset) => asset?.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE && asset?.id
-    ? [String(asset.id).trim()]
-    : []).filter(Boolean);
+async function resumeTrashCleanup() {
+  const stored = await libraryStorage.get(TRASH_CLEANUP_KEY);
+  const pending = stored[TRASH_CLEANUP_KEY];
+  if (!pending) return { ok: true, deletedMediaCount: 0 };
+  const state = await readTrashCleanupState();
+  const retained = retainedTrashCleanupAssets(state, await trashCleanupActiveAssetIds());
+  const mediaIds = pending.mediaIds.filter(id => !retained.has(id));
+  const localReferenceIds = pending.localReferenceIds.filter(id => !retained.has(id));
+  const entryIds = new Set(state.entries.map(entry => entry.id));
+  const screenshotEntryIds = pending.screenshotEntryIds.filter(id => !entryIds.has(id));
+  try {
+    await deleteMediaBlobs(mediaIds);
+    // Linked originals stay at their user-owned location; remove only the local handle.
+    await Promise.all(localReferenceIds.map(id => deleteLocalAssetHandle(id)));
+    await Promise.all(screenshotEntryIds.map(id => libraryStorage.remove(screenshotStorageKey(id))));
+    await libraryStorage.remove(TRASH_CLEANUP_KEY);
+    return { ok: true, deletedMediaCount: mediaIds.length, failedMediaCount: 0 };
+  } catch (error) {
+    console.warn('永久删除文件清理未完成', error);
+    return { ok: false, failedMediaCount: mediaIds.length,
+      message: "案例已永久删除，但文件清理未完成；下次启动插件时会继续释放空间" };
+  }
 }
 
 function enqueue(task) {
@@ -3263,8 +3561,25 @@ async function discardSaveUndoBackup(undoValue) {
   await discardScreenshotReplacementBackup(undo.entryId, { backupEntryId: undo.backupEntryId });
 }
 
+// Only the library records a migration rewrites. Other recovery copies are not nested inside, so a
+// backup per upgrade does not grow with every version.
+const MIGRATION_BACKUP_KEYS = Object.freeze(["schemaVersion", "entries", "trashState", "compoundCases", "taxonomy",
+  "facetCatalog", "classificationRules", "organizerState", "settings", "tagCatalog"]);
+function migrationBackupSnapshot(stored) {
+  return {
+    fromSchemaVersion: Number.isInteger(stored.schemaVersion) ? stored.schemaVersion : null,
+    toSchemaVersion: SCHEMA_VERSION,
+    createdAt: new Date().toISOString(),
+    state: structuredClone(Object.fromEntries(MIGRATION_BACKUP_KEYS.filter(key => stored[key] !== undefined).map(key => [key, stored[key]])))
+  };
+}
+
 async function readState() {
+  const doneReading = startPhase("background", "readState");
   const stored = await libraryStorage.get([...Object.values(STORAGE_KEYS), "tagCatalog"]);
+  doneReading({ bytes: () => jsonBytes(stored) });
+  // Checked before any repair or migration write: a newer library is left exactly as it is.
+  if (libraryFromNewerVersion(stored)) throw newerLibraryError();
   const aiConfiguration = aiConfigurationFromStorage(stored);
   const aiStorageOutdated = aiConfigurationNeedsStorageUpdate(stored, aiConfiguration);
   if (aiStorageOutdated) {
@@ -3283,6 +3598,12 @@ async function readState() {
     return readState();
   }
   const migration = shouldMigrate ? migrateLibraryState(stored) : null;
+  const lostCaseIds = migration ? casesLostByMigration(stored, migration.state) : [];
+  if (lostCaseIds.length) {
+    // Nothing has been written yet; the library stays exactly as stored until a fixed version runs.
+    throw Object.assign(new Error(`升级检查发现 ${lostCaseIds.length} 个案例会丢失，已停止升级；资料没有改动`),
+      { code: "MIGRATION_WOULD_LOSE_CASES", lostEntryIds: lostCaseIds.slice(0, 20) });
+  }
   let state = migration?.state ?? {
     schemaVersion: SCHEMA_VERSION,
     entries: stored[STORAGE_KEYS.entries],
@@ -3305,6 +3626,11 @@ async function readState() {
     if (!stored[STORAGE_KEYS.migrationBackup]) {
       update[STORAGE_KEYS.migrationBackup] = migration?.backup;
     }
+    // Every schema upgrade also keeps the library exactly as it was before that upgrade, replacing
+    // the copy from the previous upgrade; the first-ever backup above is never replaced, and
+    // repairs within one version keep the existing upgrade copy.
+    const upgrading = !Number.isInteger(stored.schemaVersion) || stored.schemaVersion < SCHEMA_VERSION;
+    if (upgrading || !stored[STORAGE_KEYS.upgradeBackup]) update[STORAGE_KEYS.upgradeBackup] = migrationBackupSnapshot(stored);
     if (migration.resetPerformed && !stored[STORAGE_KEYS.facetMigrationBackup]) {
       update[STORAGE_KEYS.facetMigrationBackup] = migration.backup;
     }
@@ -4701,7 +5027,10 @@ async function deleteUnreferencedMedia(assetIdsValue) {
 }
 
 function referencedMediaAssetIds(state) {
-  return collectRetainedLocalAssetIds(state);
+  const retained = collectRetainedLocalAssetIds(state);
+  // Capture staging is protected while network work runs outside the write lock.
+  for (const id of activeCaptureAssetIds) retained.add(id);
+  return retained;
 }
 
 function temporaryAssetIdsFromSession(session) {
@@ -5140,7 +5469,7 @@ async function analyzeCreativeOutput(runId, visualId) {
       settings: privateSettings,
       target: creativeEvaluationTarget(located.run)
     });
-    return enqueue(async () => {
+    return await enqueue(async () => {
       const latest = await readState();
       const current = findCreativeOutput(latest.creativeRuns, runId, visualId);
       const currentBlob = await getScreenshotBlob(visualId);
@@ -5824,10 +6153,20 @@ async function analyzeEntryVisualSet(message) {
     usage: result.usage,
     createdAt: new Date().toISOString()
   };
-  const updated = normalizeEntryMedia({ ...current, visualSetAnalyses: [...current.visualSetAnalyses, analysis] });
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "整组图片关系分析已保存", entry: updated, analysis };
+  // The AI call can take minutes; append to the latest library state so edits,
+  // captures and trash changes made meanwhile are never replaced.
+  return enqueue(async () => {
+    const latestState = await readState();
+    const latest = normalizeEntryMedia(findEntry(latestState, current.id));
+    const latestIds = new Set(latest.mediaAssets.map((asset) => asset.id));
+    if (!assets.every((asset) => latestIds.has(asset.id))) {
+      return { ok: false, message: "分析期间图片已经变化，本次结果没有写入，请重新分析" };
+    }
+    const updated = normalizeEntryMedia({ ...latest, visualSetAnalyses: [...latest.visualSetAnalyses, analysis] });
+    const entries = latestState.entries.map((entry) => entry.id === latest.id ? updated : entry);
+    await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
+    return { ok: true, message: "整组图片关系分析已保存", entry: updated, analysis };
+  });
 }
 
 async function dispatchVideoAnalysisTask(task) {
@@ -6025,60 +6364,19 @@ async function failVideoAnalysisAction(message) {
 }
 
 async function updateVideoReconstructionPrompt(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const updated = editCurrentVideoReconstruction(current, message.assetId, message.reconstructionPrompt);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "AI 视觉逆推提示词已保存", entry: updated, entries };
+  return caseEditor.videoReconstruction(message);
 }
 
 async function updateVisionReconstructionPrompt(entryId, visualIdValue, reconstructionPrompt) {
-  const state = await readState();
-  const current = findEntry(state, entryId);
-  const visualId = String(visualIdValue ?? "").trim() || primaryVisual(current)?.id;
-  const visual = normalizeEntryVisuals(current).visuals.find((item) => item.id === visualId);
-  if (!visual?.visionAnalysis) throw new Error("这张截图还没有可编辑的反推提示词");
-  const temporary = editVisionReconstructionPrompt({ visionAnalysis: visual.visionAnalysis }, reconstructionPrompt);
-  const updated = updateEntryVisual(current, visual.id, (item) => ({ ...item, visionAnalysis: temporary.visionAnalysis }));
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "反推提示词已保存", entry: updated, entries };
+  return caseEditor.visionReconstruction({ entryId, visualId: visualIdValue, reconstructionPrompt });
 }
 
 async function updateEntryMediaPromptAction(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const preserveAiSource = message.preserveAiSource === true
-    && current.mediaPrompts?.some(item => item.assetId === message.assetId && item.source === "ai-suggestion");
-  const next = setEntryMediaPrompt(current, message.assetId, message.text, preserveAiSource ? "ai-suggestion" : "manual", { preserveOtherSource: true });
-  const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return {
-    ok: true,
-    message: String(message.text ?? "").trim() ? "独立提示词已保存" : "已恢复使用案例共享提示词",
-    entry: updated
-  };
+  return caseEditor.mediaPrompt(message);
 }
 
 async function applyEntryMediaPromptSuggestions(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const suggestions = Array.isArray(message.suggestions) ? message.suggestions : [];
-  let updated = current;
-  let appliedCount = 0;
-  for (const item of suggestions) {
-    const text = String(item?.text ?? "").trim();
-    if (!text) continue;
-    updated = setEntryMediaPrompt(updated, item.assetId, text, "ai-suggestion");
-    appliedCount += 1;
-  }
-  if (!appliedCount) return { ok: false, message: "没有需要保存的逐图提示词" };
-  updated = touchEntry(updated);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: `已确认并保存 ${appliedCount} 条逐图提示词`, entry: updated };
+  return caseEditor.mediaPromptSuggestions(message);
 }
 
 async function undoEntryVisionAnalysis(entryId) {
@@ -6132,51 +6430,23 @@ async function updateEntryFacet(message) {
 }
 
 async function updateCaseArticle(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const next = updateArticleText(current, message.patches, message.textRevision);
-  const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: state.entries.map(entry => entry.id === current.id ? updated : entry) });
-  return { ok: true, message: "正文已保存", entry: updated };
+  return caseEditor.article(message);
 }
 
 async function updateCaseText(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const next = updateEntryText(current, message.text, message.textRevision);
-  const updated = next.text === current.text ? next : touchEntry(next);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return {
-    ok: true,
-    message: updated.text === current.text ? "提示词没有变化" : "提示词已保存，需要时可重新分析标签",
-    entry: updated
-  };
+  return caseEditor.text(message);
 }
 
 async function updateCaseTitle(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const title = String(message.title ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  if (!title) return { ok: false, message: "案例标题不能为空" };
-  const updated = title === current.title ? current : touchEntry({ ...current, title });
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: title === current.title ? "标题没有变化" : "标题已保存", entry: updated };
+  return caseEditor.title(message);
 }
 
 async function updateEntryCustomLabels(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const customLabels = uniqueNames(message.customLabels);
-  const updated = stringListsEqual(customLabels, current.customLabels) ? current : touchEntry({ ...current, customLabels });
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "标签已保存", entry: updated, entries };
+  return caseEditor.customLabels(message);
 }
 
 async function batchAddCustomLabels(message) {
-  const state = await readState();
+  const state = await readCaseLibraryState();
   const requested = new Set(uniqueNames(message.entryIds));
   const labels = uniqueNames(message.customLabels);
   if (!labels.length) return { ok: false, message: "请输入要添加的标签" };
@@ -6509,89 +6779,10 @@ async function createDeepSeekBatch(outputLocale, mode = "incremental", entryIds 
   return { ok: true, message: `已创建 ${job.items.length} 条批量分析任务`, analysisBatchJob: analysisBatchSummary(job) };
 }
 
-async function claimDeepSeekBatchItems(jobId) {
-  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
-  const current = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
-  const claimed = claimAnalysisItems(current);
-  if (claimed.claims.length) {
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: claimed.job });
-  }
-  return {
-    ok: true,
-    claims: claimed.claims,
-    analysisBatchJob: analysisBatchSummary(claimed.job)
-  };
-}
-
 async function getDeepSeekBatchStatus(jobId) {
   const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "text_tags");
   return { ok: true, analysisBatchJob: analysisBatchSummary(job) };
-}
-
-async function commitDeepSeekBatchItem(message) {
-  const stored = await libraryStorage.get([
-    STORAGE_KEYS.batchJob,
-    STORAGE_KEYS.analysisRebuildStaging,
-    STORAGE_KEYS.analysisBatchUndo
-  ]);
-  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
-  requireClaim(job, message.entryId, message.claimId);
-  if (message.error) {
-    const failed = failAnalysisItem(job, message.entryId, message.claimId, message.error);
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: failed });
-    return {
-      ok: true,
-      message: "已记录失败项",
-      analysisBatchJob: analysisBatchSummary(failed)
-    };
-  }
-  const state = await readState();
-  const entry = findEntry(state, message.entryId);
-  if (!await textAnalysisResultIsCurrent(entry, message)) {
-    return failDeepSeekBatchItem({
-      ...message,
-      error: { message: "提示词原文已变化，请重新预览", status: 409 }
-    });
-  }
-  const expectedRevision = job.resultCatalogRevision ?? job.catalogRevision;
-  if (state.facetCatalog.revision !== expectedRevision) {
-    const failed = failAnalysisItem(job, message.entryId, message.claimId, {
-      message: "创作词库已在其他页面修改，请暂停后重新分析",
-      status: 409
-    });
-    const paused = pauseAnalysisBatch(failed);
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: paused });
-    return { ok: false, message: "创作词库已变化，批量任务已暂停", analysisBatchJob: analysisBatchSummary(paused) };
-  }
-  if (job.mode === "rebuild") {
-    return commitStagedRebuildResults(job, stored[STORAGE_KEYS.analysisRebuildStaging], state, [message]);
-  }
-  const applied = applyTextAnalysisTags(domainState(state), entry.id, message.tags);
-  const updated = applied.state.entries.find((item) => item.id === entry.id);
-  updated.analysisPending = false;
-  updated.analyzedAt = new Date().toISOString();
-  updated.analysisMeta = analysisMeta({ ...message, profileFingerprint: job.profileFingerprint }, message.fingerprint, updated.analyzedAt, updated);
-  const nextJob = succeedAnalysisItem(
-    job,
-    message.entryId,
-    message.claimId,
-    message.usage,
-    applied.state.facetCatalog.revision,
-    message
-  );
-  const nextUndo = Array.isArray(stored[STORAGE_KEYS.analysisBatchUndo]?.appliedEntries)
-    ? sealAnalysisBatchUndo(stored[STORAGE_KEYS.analysisBatchUndo], applied.state, [entry.id]) : null;
-  await commitLocalChanges({
-    ...storagePayload(applied.state),
-    [STORAGE_KEYS.batchJob]: nextJob,
-    ...(nextUndo ? { [STORAGE_KEYS.analysisBatchUndo]: nextUndo } : {})
-  });
-  return {
-    ok: true,
-    message: analysisResultMessage(applied),
-    analysisBatchJob: analysisBatchSummary(nextJob)
-  };
 }
 
 async function commitDeepSeekBatchItems(message) {
@@ -6686,15 +6877,6 @@ async function commitStagedRebuildResults(jobValue, stagingValue, state, results
   };
 }
 
-async function failDeepSeekBatchItem(message) {
-  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
-  const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
-  requireClaim(job, message.entryId, message.claimId);
-  const failed = failAnalysisItem(job, message.entryId, message.claimId, message.error);
-  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: failed });
-  return { ok: true, message: "已记录失败项", analysisBatchJob: analysisBatchSummary(failed) };
-}
-
 async function updateDeepSeekBatch(action, jobId) {
   const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
@@ -6778,36 +6960,6 @@ async function applyStagedAnalysisRebuild(jobId) {
     analysisBatchJob: analysisBatchSummary(finalized.job),
     canUndoAnalysisBatch: true
   };
-}
-
-async function recoverDeepSeekBatch() {
-  const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
-  const job = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
-  if (!job || !job.items.some((item) => item.status === "running")) {
-    return { ok: true, analysisBatchJob: analysisBatchSummary(job) };
-  }
-  if (job.kind === "video") {
-    const recovered = structuredClone(job);
-    for (const item of recovered.items) {
-      if (item.status !== "running") continue;
-      item.status = "failed";
-      item.claimId = "";
-      item.error = "上次执行状态未知，未自动重试；服务商可能已收到请求";
-      item.statusCode = 0;
-    }
-    recovered.status = "paused";
-    recovered.updatedAt = new Date().toISOString();
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: recovered }, { markSyncDirty: false });
-    await ensureAnalysisBatchAlarm(false);
-    return { ok: true, message: "视频批量任务已暂停，未知项未自动重发", visionBatchJob: analysisBatchSummary(recovered) };
-  }
-  const recovered = recoverInterruptedAnalysisBatch(job);
-  await commitLocalChanges({ [STORAGE_KEYS.batchJob]: recovered });
-  if (recovered.status === "running") {
-    await ensureAnalysisBatchAlarm(true);
-    scheduleAnalysisBatchRunner();
-  }
-  return { ok: true, message: "已从上次中断处继续", analysisBatchJob: analysisBatchSummary(recovered) };
 }
 
 async function undoDeepSeekBatch(jobId) {
@@ -7030,46 +7182,6 @@ async function createVisionBatchTask(message) {
     ok: true,
     message: `已创建 ${job.requestCount} 张图片分析任务`,
     visionBatchJob: analysisBatchSummary(job)
-  };
-}
-
-async function claimVisionBatchItem(jobId) {
-  const [state, stored] = await Promise.all([
-    readState(),
-    libraryStorage.get(STORAGE_KEYS.batchJob)
-  ]);
-  let job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], jobId, "vision");
-  const reconciled = reconcileVisionBatchResults(job, state.entries);
-  job = reconciled.job;
-  if (reconciled.recoveredCount) {
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
-  }
-  const loadedConfiguration = await loadAiConfiguration();
-  const configuration = configurationForAssignment(loadedConfiguration, "imageAnalysis", job);
-  const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
-  const currentSettings = resolveVisionTaskSettings("imageAnalysis", loadedConfiguration, { requireConfigured: false });
-  const currentModel = currentSettings.activeProvider === "openai" ? currentSettings.openai.model : currentSettings.compatible.model;
-  const snapshotModel = settings.activeProvider === "openai" ? settings.openai.model : settings.compatible.model;
-  if (job.providerType !== currentSettings.activeProvider || job.model !== currentModel || job.providerType !== settings.activeProvider || job.model !== snapshotModel) {
-    const canceled = cancelAnalysisBatch(job);
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: canceled });
-    return { ok: false, message: "图片分析设置已变化，旧批量任务已取消，请重新开始" };
-  }
-  const snapshotReady = publicVisionSettings(settings)[settings.activeProvider]?.configured === true;
-  if (!snapshotReady || !settings.consent) {
-    const paused = pauseAnalysisBatch(job);
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: paused });
-    return { ok: false, message: "任务快照所用服务当前不可用，任务已暂停" };
-  }
-  const claimed = claimAnalysisItems(job);
-  if (claimed.claims.length) {
-    await commitLocalChanges({ [STORAGE_KEYS.batchJob]: claimed.job });
-  }
-  return {
-    ok: true,
-    claims: claimed.claims,
-    claim: claimed.claims[0] ?? null,
-    visionBatchJob: analysisBatchSummary(claimed.job)
   };
 }
 
@@ -7461,7 +7573,6 @@ async function settleVideoBatchTask(task, actionResult) {
       attempts,
       diagnostic: actionResult?.diagnostic
     });
-    if ([429, 500, 502, 503, 504].includes(Number(actionResult?.status))) next = pauseAnalysisBatch(next);
   }
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: next });
   if (next.status === "running") {
@@ -7498,20 +7609,31 @@ async function queueAutomaticVisionAnalysis(entryIdsValue, options = {}) {
   const publicSettings = publicVisionSettings(settings);
   if ((options.requireAutoImportSetting !== false && !settings.autoAnalyzeImports) ||
       !settings.consent || !publicSettings[settings.activeProvider].configured) return false;
-  const provider = settings[settings.activeProvider];
-  const job = buildAutomaticVisionJob(state.entries, entryIds, {
-    providerType: settings.activeProvider,
-    providerId: configuration.assignments.imageAnalysis.providerId,
-    model: provider.model,
-    outputProtocol: settings.activeProvider === "compatible" ? settings.compatible.structuredOutput : "json_schema",
-    concurrency: configuration.assignments.imageAnalysis.concurrency,
-    outputLocale: resolveLocale(state.uiPreferences, chrome.i18n.getUILanguage()) === "en" ? "en" : "zh-CN"
-  }, stored[STORAGE_KEYS.automaticVisionBatchJob]);
+  const job = buildAutomaticVisionJob(state.entries, entryIds,
+    automaticVisionRoute(configuration, settings, state.uiPreferences),
+    stored[STORAGE_KEYS.automaticVisionBatchJob]);
   if (!job) return false;
   await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
   await ensureAutomaticVisionAlarm(true);
   scheduleAutomaticVisionRunner();
   return true;
+}
+
+function automaticVisionRoute(configuration, settings, uiPreferences) {
+  return {
+    providerType: settings.activeProvider,
+    providerId: configuration.assignments.imageAnalysis.providerId,
+    model: settings[settings.activeProvider].model,
+    outputProtocol: settings.activeProvider === "compatible" ? settings.compatible.structuredOutput : "json_schema",
+    concurrency: configuration.assignments.imageAnalysis.concurrency,
+    outputLocale: resolveLocale(uiPreferences, chrome.i18n.getUILanguage()) === "en" ? "en" : "zh-CN"
+  };
+}
+
+function automaticVisionRouteMatches(job, configuration, settings) {
+  return job.providerType === settings.activeProvider
+    && job.model === settings[settings.activeProvider].model
+    && String(job.providerId ?? "") === String(configuration.assignments.imageAnalysis.providerId ?? "");
 }
 
 function scheduleAutomaticVisionRunner() {
@@ -7540,16 +7662,55 @@ async function runAutomaticVisionItem() {
     const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
     const configured = publicVisionSettings(settings)[settings.activeProvider].configured;
     if (!settings.autoAnalyzeImports || !settings.consent || !configured) {
-      job = pauseAnalysisBatch(job);
-      await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
+      await enqueue(async () => {
+        const latestStored = await libraryStorage.get(STORAGE_KEYS.automaticVisionBatchJob);
+        const latest = normalizeAnalysisBatchJob(latestStored[STORAGE_KEYS.automaticVisionBatchJob]);
+        if (latest?.id !== job.id || latest.status !== "running") return;
+        await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: pauseAnalysisBatch(latest) });
+      });
       await ensureAutomaticVisionAlarm(false);
       return;
     }
-    const state = await readState();
-    job = recoverInterruptedAnalysisBatch(reconcileVisionBatchResults(job, state.entries).job);
-    const claimed = claimAnalysisItems(job);
-    job = claimed.job;
-    await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: job });
+    const currentSettings = resolveVisionTaskSettings("imageAnalysis", loadedConfiguration, { requireConfigured: false });
+    if (!automaticVisionRouteMatches(job, loadedConfiguration, currentSettings)) {
+      // The image service changed: requeue unfinished images under the current service instead of paying the old one.
+      continueRunning = await enqueue(async () => {
+        const [latestStored, state] = await Promise.all([
+          libraryStorage.get(STORAGE_KEYS.automaticVisionBatchJob),
+          readState()
+        ]);
+        const latest = normalizeAnalysisBatchJob(latestStored[STORAGE_KEYS.automaticVisionBatchJob]);
+        if (latest?.id !== job.id || latest.status !== "running") return latest?.kind === "vision" && latest.status === "running";
+        if (!publicVisionSettings(currentSettings)[currentSettings.activeProvider].configured) {
+          await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: pauseAnalysisBatch(latest) });
+          return false;
+        }
+        const rebuilt = buildAutomaticVisionJob(state.entries, [],
+          automaticVisionRoute(loadedConfiguration, currentSettings, state.uiPreferences), latest);
+        await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: rebuilt ?? cancelAnalysisBatch(latest) });
+        return Boolean(rebuilt);
+      });
+      await ensureAutomaticVisionAlarm(continueRunning);
+      return;
+    }
+    const claimed = await enqueue(async () => {
+      const [latestStored, state] = await Promise.all([
+        libraryStorage.get(STORAGE_KEYS.automaticVisionBatchJob),
+        readState()
+      ]);
+      const latest = normalizeAnalysisBatchJob(latestStored[STORAGE_KEYS.automaticVisionBatchJob]);
+      if (latest?.id !== job.id || latest.status !== "running") {
+        return { replaced: latest?.kind === "vision" && latest.status === "running", claims: [] };
+      }
+      const next = claimAnalysisItems(recoverInterruptedAnalysisBatch(reconcileVisionBatchResults(latest, state.entries).job));
+      await commitLocalChanges({ [STORAGE_KEYS.automaticVisionBatchJob]: next.job });
+      return next;
+    });
+    if (claimed.replaced) {
+      continueRunning = true;
+      return;
+    }
+    if (claimed.job) job = claimed.job;
     if (!claimed.claims.length) {
       await ensureAutomaticVisionAlarm(false);
       return;
@@ -7928,38 +8089,10 @@ function findEntry(state, entryId) {
   return entry;
 }
 
-function touchEntry(entry, updatedAt = new Date().toISOString()) {
-  return { ...entry, libraryUpdatedAt: updatedAt };
-}
-
 function touchEntries(entriesValue, entryIdsValue, updatedAt = new Date().toISOString()) {
   const entryIds = new Set(Array.isArray(entryIdsValue) ? entryIdsValue : []);
   if (!entryIds.size) return entriesValue;
   return entriesValue.map((entry) => entryIds.has(entry.id) ? touchEntry(entry, updatedAt) : entry);
-}
-
-function stringListsEqual(leftValue, rightValue) {
-  const left = Array.isArray(leftValue) ? leftValue : [];
-  const right = Array.isArray(rightValue) ? rightValue : [];
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function userVisibleEntryEqual(left = {}, right = {}) {
-  return JSON.stringify({
-    title: left.title,
-    text: left.text,
-    customLabels: left.customLabels ?? [],
-    classification: left.classification ?? null,
-    facetAssignments: left.facetAssignments ?? [],
-    mediaPrompts: left.mediaPrompts ?? []
-  }) === JSON.stringify({
-    title: right.title,
-    text: right.text,
-    customLabels: right.customLabels ?? [],
-    classification: right.classification ?? null,
-    facetAssignments: right.facetAssignments ?? [],
-    mediaPrompts: right.mediaPrompts ?? []
-  });
 }
 
 function userVisibleEntryChanges(beforeValue, afterValue) {
@@ -8134,7 +8267,7 @@ async function exportArchive(state, requestedEntryIds) {
   try {
     const downloadId = await chrome.downloads.download({
       url: archive.url,
-      filename: sharedArchivePath(state.settings.outputPath),
+      filename: sharedArchivePath(state.settings.outputPath, archiveLocale(state)),
       conflictAction: "uniquify",
       saveAs: false
     });
@@ -8162,7 +8295,7 @@ async function exportProjectArchive(state, collectionId) {
   try {
     const downloadId = await chrome.downloads.download({
       url: archive.url,
-      filename: projectArchivePath(state.settings.outputPath, project.name),
+      filename: projectArchivePath(state.settings.outputPath, project.name, archiveLocale(state)),
       conflictAction: "uniquify",
       saveAs: false
     });
@@ -8192,7 +8325,8 @@ async function exportCuratedSubmission(state, message = {}) {
   const result = await chrome.runtime.sendMessage({
     target: "offscreen",
     type: "CREATE_CURATED_SUBMISSION_URLS",
-    ...prepared.state
+    ...prepared.state,
+    locale: archiveLocale(state)
   });
   if (!result?.ok || !Array.isArray(result.outputs) || !result.outputs.length) {
     throw new Error(result?.message || "无法生成精选投稿包");
@@ -8247,7 +8381,7 @@ async function exportCreativeExperiments(state) {
   try {
     const downloadId = await chrome.downloads.download({
       url: archive.url,
-      filename: experimentArchivePath(state.settings.outputPath),
+      filename: experimentArchivePath(state.settings.outputPath, archiveLocale(state)),
       conflictAction: "uniquify",
       saveAs: false
     });
@@ -8627,12 +8761,15 @@ async function applyCuratedImport(state, message) {
     [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(result.state.creativeRuns ?? state.creativeRuns),
     [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(result.state.creativeSkills ?? state.creativeSkills)
   });
+  const warnings = [];
   if (result.importedEntryIds.length) {
     const importedEntryIdSet = new Set(result.importedEntryIds);
-    await enqueueAutomaticLibraryMaintenance(result.state.entries.filter((entry) => importedEntryIdSet.has(entry.id)));
+    try { await enqueueAutomaticLibraryMaintenance(result.state.entries.filter((entry) => importedEntryIdSet.has(entry.id))); }
+    catch (error) { warnings.push(`案例已保存，自动整理未启动：${userMessage(error)}`); }
+    try { await queueAutomaticVisionAnalysis(result.importedEntryIds); }
+    catch (error) { warnings.push(`案例已保存，自动分析未启动：${userMessage(error)}`); }
   }
-  if (result.importedEntryIds.length) await queueAutomaticVisionAnalysis(result.importedEntryIds);
-  return curatedImportResponse(result);
+  return { ...curatedImportResponse(result), ...(warnings.length ? { warnings } : {}) };
 }
 
 function curatedImportResponse(result) {
@@ -8655,27 +8792,40 @@ function curatedImportResponse(result) {
   };
 }
 
-function sharedArchivePath(outputPath) {
-  const normalized = normalizeSettings({ outputPath }).outputPath;
-  const separator = normalized.lastIndexOf("/");
-  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
-  const filename = separator >= 0 ? normalized.slice(separator + 1) : normalized;
-  return `${directory}${filename.replace(/\.zip$/i, "")}-分享.zip`;
+function archiveLocale(state) {
+  return resolveLocale(state.uiPreferences, chrome.i18n.getUILanguage()) === "en" ? "en" : "zh-CN";
 }
 
-function projectArchivePath(outputPath, projectName) {
-  const normalized = normalizeSettings({ outputPath }).outputPath;
-  const separator = normalized.lastIndexOf("/");
-  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
-  const safeName = String(projectName ?? "项目").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() || "项目";
-  return `${directory}PromptDirector-${safeName}-分享.zip`;
+// Export names follow the interface language and carry the local date, so repeated exports
+// stay distinguishable without relying on the browser's "(1)" suffix.
+function archiveName(locale, zh, en) {
+  const now = new Date();
+  const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(part => String(part).padStart(2, "0")).join("-");
+  return `${locale === "en" ? en : zh}-${date}.zip`;
 }
 
-function experimentArchivePath(outputPath) {
+function sharedArchivePath(outputPath, locale) {
   const normalized = normalizeSettings({ outputPath }).outputPath;
   const separator = normalized.lastIndexOf("/");
   const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
-  return `${directory}PromptDirector-创作实验.zip`;
+  const filename = (separator >= 0 ? normalized.slice(separator + 1) : normalized).replace(/\.zip$/i, "");
+  return `${directory}${archiveName(locale, `${filename}-分享`, `${filename}-Share`)}`;
+}
+
+function projectArchivePath(outputPath, projectName, locale) {
+  const normalized = normalizeSettings({ outputPath }).outputPath;
+  const separator = normalized.lastIndexOf("/");
+  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  const fallback = locale === "en" ? "Project" : "项目";
+  const safeName = String(projectName ?? fallback).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() || fallback;
+  return `${directory}${archiveName(locale, `PromptDirector-${safeName}-分享`, `PromptDirector-${safeName}-Share`)}`;
+}
+
+function experimentArchivePath(outputPath, locale) {
+  const normalized = normalizeSettings({ outputPath }).outputPath;
+  const separator = normalized.lastIndexOf("/");
+  const directory = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  return `${directory}${archiveName(locale, "PromptDirector-创作实验", "PromptDirector-Creative-Experiment")}`;
 }
 
 async function createArchiveUrl(state, sharing = false) {

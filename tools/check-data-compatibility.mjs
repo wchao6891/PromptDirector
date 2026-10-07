@@ -8,6 +8,7 @@ import {
   SUPPORTED_LIBRARY_PACKAGE_VERSIONS
 } from "../extension/library-package-format.js";
 import { prepareLibraryPackageDraft } from "../extension/library-package-migrations.js";
+import { createLibraryStorage } from "../extension/library-storage.js";
 import { migrateLibraryState } from "../extension/migration.js";
 import { SCHEMA_VERSION } from "../extension/taxonomy.js";
 
@@ -44,7 +45,8 @@ export async function verifyDataCompatibility() {
 
   const checkedStorageSchemas = [];
   for (const item of matrix.releasedStorageSchemas) {
-    const source = await readJson(join(fixtureRoot, item.fixture));
+    // Storage fixtures are raw browser storage; they are read the way the extension reads them.
+    const source = await readStoredLibrary(await readJson(join(fixtureRoot, item.fixture)));
     assert(source.schemaVersion === item.schemaVersion, `资料库 schema ${item.schemaVersion} 夹具声明错误`);
     const migrated = migrateLibraryState(source).state;
     assert(migrated.schemaVersion === SCHEMA_VERSION, `资料库 schema ${item.schemaVersion} 未迁移到当前结构`);
@@ -110,6 +112,20 @@ function integerConstant(source, name) {
 
 function consecutiveVersions(current) {
   return Array.from({ length: current }, (_, index) => index + 1);
+}
+
+async function readStoredLibrary(raw) {
+  const data = structuredClone(raw);
+  const backend = {
+    async getKeys() { return Object.keys(data); },
+    async get(keys) {
+      const names = keys == null ? Object.keys(data) : [keys].flat();
+      return structuredClone(Object.fromEntries(names.filter(key => Object.hasOwn(data, key)).map(key => [key, data[key]])));
+    },
+    async set() { throw new Error("兼容检查只读取夹具"); },
+    async remove() { throw new Error("兼容检查只读取夹具"); }
+  };
+  return createLibraryStorage({ backend, lock: operation => operation() }).get(null);
 }
 
 async function readJson(path) {

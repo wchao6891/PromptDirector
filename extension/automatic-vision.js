@@ -5,8 +5,19 @@ import {
 } from "./analysis-batch.js";
 
 export function buildAutomaticVisionJob(entries, entryIds, options = {}, currentValue = null) {
+  const current = normalizeAnalysisBatchJob(currentValue);
+  const active = current?.kind === "vision" && ["running", "paused"].includes(current.status) ? current : null;
+  // Unfinished images of the active job stay queued when it is rebuilt for a new service or model.
+  const carriedEntryIds = active
+    ? active.items.filter((item) => ["pending", "running"].includes(item.status)).map((item) => item.entryId)
+    : [];
+  const sameRoute = active
+    && active.providerType === options.providerType
+    && active.model === options.model
+    && String(active.providerId ?? "") === String(options.providerId ?? "");
+  const targetEntryIds = sameRoute ? entryIds : [...new Set([...entryIds, ...carriedEntryIds])];
   const preview = previewVisionBatch(entries, {
-    entryIds,
+    entryIds: targetEntryIds,
     includeAllImages: true,
     reanalyze: false,
     providerType: options.providerType,
@@ -15,25 +26,25 @@ export function buildAutomaticVisionJob(entries, entryIds, options = {}, current
     outputProtocol: options.outputProtocol,
     concurrency: options.concurrency
   });
-  if (!preview.requestCount) return null;
 
-  const current = normalizeAnalysisBatchJob(currentValue);
-  if (current?.kind === "vision" && current.status === "running" &&
-      current.providerType === preview.providerType && current.model === preview.model) {
-    const known = new Set(current.items.map((item) => `${item.entryId}:${item.visualId}`));
+  if (sameRoute) {
+    const known = new Set(active.items.map((item) => `${item.entryId}:${item.visualId}`));
     const additions = preview.items.filter((item) => !known.has(`${item.entryId}:${item.visualId}`));
-    if (!additions.length) return null;
+    const resumable = active.status === "paused" && carriedEntryIds.length > 0;
+    if (!additions.length && !resumable) return null;
     return {
-      ...current,
+      ...active,
+      status: "running",
       updatedAt: String(options.now ?? new Date().toISOString()),
       includeAllImages: true,
-      items: [...current.items, ...additions.map(automaticVisionItem)],
-      requestCount: current.items.length + additions.length
+      items: [...active.items, ...additions.map(automaticVisionItem)],
+      requestCount: active.items.length + additions.length
     };
   }
+  if (!preview.requestCount) return null;
 
   return createVisionBatchJob(entries, {
-    entryIds,
+    entryIds: targetEntryIds,
     includeAllImages: true,
     reanalyze: false,
     providerType: options.providerType,

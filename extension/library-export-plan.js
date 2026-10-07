@@ -1,4 +1,5 @@
 import { createBlobDigestCache } from "./blob-digest.js";
+import { t } from "./i18n.js";
 const FOLDER_BACKUP_FORMAT = "prompt-director-folder-backup";
 const FOLDER_RESCUE_FORMAT = "prompt-director-folder-rescue";
 const BACKUP_MARKER_PATHS = new Set(["complete.json", "rescue.json"]);
@@ -189,22 +190,22 @@ function updateRequiredError() {
 async function verifyFolderMarker(completionValue, filesValue, expected, { digest = createBlobDigestCache(), onProgress } = {}) {
   const completion = completionValue && typeof completionValue === "object" ? completionValue : {};
   if (completion.format !== expected.format || completion.version !== expected.version || !Array.isArray(completion.files)) {
-    throw new Error(expected.invalidMessage);
+    throw new Error(t(expected.invalidMessage));
   }
   const files = backupFiles(filesValue);
   if (completion.fileCount !== completion.files.length) {
-    throw new Error(`${expected.integrityLabel}的文件清单完整性校验失败`);
+    throw new Error(t("{label}的文件清单完整性校验失败", { label: t(expected.integrityLabel) }));
   }
   const expectedPaths = new Set();
   for (const descriptor of completion.files) {
     const path = safePath(descriptor?.path);
-    if (!path || expectedPaths.has(path)) throw new Error(`${expected.integrityLabel}的文件清单完整性校验失败`);
+    if (!path || expectedPaths.has(path)) throw new Error(t("{label}的文件清单完整性校验失败", { label: t(expected.integrityLabel) }));
     expectedPaths.add(path);
     const blob = files.get(path);
     const progress = { path, completed: expectedPaths.size - 1, total: completion.files.length };
     await onProgress?.(progress);
     if (!(blob instanceof Blob) || blob.size !== descriptor.byteSize || await digest(blob, { onProgress: bytes => onProgress?.({ ...progress, ...bytes }) }) !== descriptor.sha256) {
-      throw new Error(`${expected.integrityLabel}文件“${path}”完整性校验失败`);
+      throw new Error(t("{label}文件“{path}”完整性校验失败", { label: t(expected.integrityLabel), path }));
     }
     await onProgress?.({ ...progress, completed: expectedPaths.size });
   }

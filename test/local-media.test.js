@@ -259,7 +259,7 @@ test("exact duplicate detection includes earlier files from the same import batc
 });
 
 
-test("batch duplicate checks index stored metadata once and retain exact filename semantics", async () => {
+test("batch duplicate checks index stored metadata once and match identical bytes under any filename", async () => {
   let metadataReads = 0;
   const entries = Array.from({ length: 1000 }, (_, index) => ({ mediaAssets: [{
     id: `old:${index}`, get byteSize() { metadataReads += 1; return 4; },
@@ -267,14 +267,25 @@ test("batch duplicate checks index stored metadata once and retain exact filenam
   }] }));
   const index = createExactMediaDuplicateIndex(entries);
   for (let i = 0; i < 100; i += 1) {
-    const file = new File(["data"], `new-${i}.png`, { type: "image/png" });
+    const file = new File([`d${String(i).padStart(3, "0")}`], `new-${i}.png`, { type: "image/png" });
     const result = await index.find(file);
     assert.equal(result.duplicateAssetId, "");
     index.add({ id: `new:${i}`, byteSize: 4, mimeType: "image/png", sourceTitle: file.name, contentHash: result.contentHash });
   }
   assert.equal(metadataReads, 1000, "batch growth must not rescan the existing library for each file");
-  assert.equal((await index.find(new File(["data"], "new-42.png", { type: "image/png" }))).duplicateAssetId, "new:42");
-  assert.equal((await index.find(new File(["diff"], "new-42.png", { type: "image/png" }))).duplicateAssetId, "");
+  assert.equal((await index.find(new File(["d042"], "new-42.png", { type: "image/png" }))).duplicateAssetId, "new:42");
+  assert.equal((await index.find(new File(["d042"], "renamed copy.png", { type: "image/png" }))).duplicateAssetId, "new:42",
+    "a renamed copy of the same bytes is still the same original");
+  assert.equal((await index.find(new File(["diff"], "new-42.png", { type: "image/png" }))).duplicateAssetId, "", "same name with other bytes is not a duplicate");
+});
+
+test("unhashed stored originals of another size are never read for a duplicate check", async () => {
+  let reads = 0;
+  const index = createExactMediaDuplicateIndex([{ mediaAssets: [
+    { id: "other-size", byteSize: 9, mimeType: "image/png", sourceTitle: "x.png" }
+  ] }], { readBlob: async () => { reads += 1; return new Blob(["123456789"]); } });
+  assert.equal((await index.find(new File(["four"], "x.png", { type: "image/png" }))).duplicateAssetId, "");
+  assert.equal(reads, 0);
 });
 
 test("unhashed stored originals are read only once per import and earlier matches retain priority", async () => {
@@ -294,8 +305,9 @@ test("frontend duplicate lookup reuses preparation hash but ordinary admission r
   const file = new File(["data"], "one.png", { type: "image/png" });
   const hash = (await findExactMediaDuplicate(file)).contentHash;
   let reads = 0;
-  const stream = file.stream.bind(file);
+  const stream = file.stream.bind(file), arrayBuffer = file.arrayBuffer.bind(file);
   file.stream = () => { reads += 1; return stream(); };
+  file.arrayBuffer = () => { reads += 1; return arrayBuffer(); };
   const index = createExactMediaDuplicateIndex();
   assert.equal((await index.find(file, { contentHash: hash })).contentHash, hash);
   assert.equal(reads, 0);

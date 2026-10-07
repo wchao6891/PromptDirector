@@ -1,6 +1,7 @@
 """Synthetic assets; real library cover selection, upload, persistence and article order."""
 from pathlib import Path
 import base64
+import re
 from playwright.sync_api import expect
 from e2e_support import extension_session, base_entry
 
@@ -49,7 +50,10 @@ def main():
         library.locator('#detail-close').click()
         expect(library.locator('.case-card[data-entry-id="article-cover"] img')).to_have_attribute('data-visual-id', 'second')
         library.locator('.case-card[data-entry-id="video-cover"]').click()
-        expect(library.get_by_role('button', name='逆推视频提示词', exact=True)).to_have_class('button-secondary video-analysis-run')
+        # The video analysis action became a secondary icon button (f7a4fdb); it must stay secondary, never primary.
+        analysis_run = library.get_by_role('button', name='逆推视频提示词', exact=True)
+        expect(analysis_run).to_have_class(re.compile(r'(?=.*\bbutton-secondary\b)(?=.*\bicon-button\b)(?=.*\bvideo-analysis-run\b)'))
+        expect(analysis_run).not_to_have_class(re.compile(r'\bbutton-primary\b'))
         library.screenshot(path='/tmp/pd-b14-video-secondary.png', animations='disabled')
         library.locator('.entry-editor > summary').click()
         library.get_by_role('button', name='更换封面', exact=True).click()

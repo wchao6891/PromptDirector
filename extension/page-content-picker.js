@@ -9,7 +9,7 @@ export function pickPageContent(options = {}) {
   overlay.id = id;
   Object.assign(overlay.style, { position: "fixed", pointerEvents: "none", zIndex: "2147483647", border: "2px solid #bafa00", background: "rgba(186,250,0,.08)", display: "none" });
   const cancel = document.createElement("button");
-  cancel.textContent = "取消选取";
+  cancel.textContent = options.cancelLabel || "取消选取";
   Object.assign(cancel.style, { position: "fixed", top: "16px", right: "16px", zIndex: "2147483647", padding: "10px 16px", borderRadius: "8px", border: "1px solid #777", background: "#161719", color: "white", cursor: "pointer" });
   document.documentElement.append(overlay, cancel);
   let selected;
@@ -25,7 +25,8 @@ export function pickPageContent(options = {}) {
     if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.textContent);
     if (!(node instanceof Element) || node.matches("script,style,noscript,button,input,textarea,select")) return document.createDocumentFragment();
     const copy = document.createElement(node.localName.includes("-") ? "div" : node.localName);
-    for (const name of ["href", "src", "poster", "alt", "colspan", "rowspan", "width", "height", "srcset", "sizes", "data-src", "data-original", "data-video-src", "download"]) {
+    if (node.closest('form,[hx-post],[hx-delete],[hx-put],[hx-patch],[hx-include],[hx-vals],[data-hx-vals]')) copy.setAttribute('data-promptdirector-detail-blocked', '');
+    for (const name of ["href", "src", "poster", "alt", "colspan", "rowspan", "width", "height", "srcset", "sizes", "data-src", "data-original", "data-video-src", "download", "hx-get", "data-hx-get"]) {
       const value = node[name] || node.getAttribute(name);
       if ((typeof value === "string" || typeof value === "number") && value !== "") copy.setAttribute(name, String(value));
       else if (name === "download" && node.hasAttribute(name)) copy.setAttribute(name, "");
@@ -119,8 +120,26 @@ export function pickPageContent(options = {}) {
         catch (error) { console.debug("PromptDirector comment selection", error); finish({ cancelled: true }); }
         return;
       }
-      const wrapper = document.createElement("div"); wrapper.append(serialize(selected));
-      finish({ html: wrapper.innerHTML });
+      const wrapper = document.createElement("div");
+      const detailOwner = selected.closest("[hx-get],[data-hx-get],a[href]");
+      const selectedCopy = serialize(selected);
+      if (detailOwner && detailOwner !== selected) {
+        const link = document.createElement("a");
+        for (const name of ["href", "hx-get", "data-hx-get"]) {
+          const value = detailOwner.getAttribute(name); if (value) link.setAttribute(name, value);
+        }
+        link.append(selectedCopy); wrapper.append(link);
+      } else wrapper.append(selectedCopy);
+      for (const node of document.querySelectorAll('[data-promptdirector-capture-template]')) node.removeAttribute('data-promptdirector-capture-template');
+      const marker = crypto.randomUUID();
+      // Hover previews can remove the video while keeping its poster in this
+      // exact container. Preserve media identity without widening the selection.
+      const mediaSources = selected.matches('img,video')
+        ? [...new Set([selected, ...selected.querySelectorAll('source')].flatMap(node => [node.currentSrc, node.src, node.poster]).filter(Boolean))] : [];
+      const anchor = mediaSources.length ? selected.parentElement : selected;
+      anchor.setAttribute('data-promptdirector-capture-template', marker);
+      finish({ html: wrapper.innerHTML, selectionTemplate: { sourceUrl: location.href, marker,
+        ...(mediaSources.length ? { mediaSources } : {}) } });
     };
     const key = event => { if (event.key === "Escape") { event.preventDefault(); finish({ cancelled: true }); } };
     overlay.addEventListener("cancel", () => finish({ cancelled: true }), { once: true });

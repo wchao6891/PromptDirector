@@ -127,7 +127,7 @@ def main():
             legacy_id = stored[0]['id']
             collector.evaluate('''async id => {
               const {deleteMediaBlob}=await import('./media-store.js');
-              const {entries}=await chrome.storage.local.get('entries');
+              const {entries}=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
               const entry=entries.find(item=>item.id===id);
               for (const media of entry.mediaAssets) await deleteMediaBlob(media.id);
               const video=entry.mediaAssets.find(item=>item.kind==='video');
@@ -137,7 +137,7 @@ def main():
               entry.mediaPrompts=[{assetId:video.id,source:'manual',text:'User media prompt',updatedAt:'2026-09-05T00:00:00.000Z'}];
               entry.sourceFacts.pageType='article';
               entry.classification={pathIds:['content:tutorial'],status:'confirmed',source:'auto'};
-              await chrome.storage.local.set({entries});
+              await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries}));
             }''', legacy_id)
             repaired = collector.evaluate("async batch => chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch})", video_batch)
             assert repaired.get('ok') and repaired['results'][0].get('repaired'), repaired
@@ -205,7 +205,7 @@ def main():
               const entry=state.entries.find(e=>e.url===id);
               for (const asset of entry.mediaAssets.filter(a=>a.usage==='poster')) await deleteMediaBlob(asset.id);
               entry.mediaAssets=entry.mediaAssets.filter(a=>a.usage!=='poster').map(a=>{delete a.posterAssetId;return a;});
-              await chrome.storage.local.set({entries:state.entries});
+              await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:state.entries}));
             }''',PUBLICATION)
             library = run.open_page('library.html')
             library.locator(f'.case-card[data-entry-id="{stored[0]["id"]}"]').first.wait_for()

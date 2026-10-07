@@ -6,17 +6,11 @@
     <title data-i18n="PromptDirector｜视觉创作灵感库">PromptDirector｜视觉创作灵感库</title>
     <script src="theme-bootstrap.js"></script>
     <link rel="stylesheet" href="ui-foundation.css" />
-    <link rel="stylesheet" href="library.css" />
+    <link rel="stylesheet" href="shortcuts.css" /><link rel="stylesheet" href="library.css" />
     <link rel="stylesheet" href="library-layout.css" />
+    <link rel="stylesheet" href="organization.css" />
   </head>
   <body class="modular-library" data-library-state="loading">
-    <div id="library-loading" class="library-loading" role="status" aria-live="polite">
-      <div class="library-loading-bar"></div>
-      <div class="library-loading-body">
-        <div class="library-loading-sidebar"></div>
-        <div class="library-loading-content"><strong data-i18n="正在打开资料库">正在打开资料库</strong><div></div><div></div><div></div></div>
-      </div>
-    </div>
     <header class="topbar">
       <button id="toggle-filters" class="icon-button" type="button" aria-label="展开或收起筛选" data-i18n-aria-label="展开或收起筛选" title="展开或收起筛选" data-i18n-title="展开或收起筛选"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-menu"></use></svg></button>
       <div class="brand product-brand">
@@ -24,6 +18,7 @@
         <div class="product-brand-copy"><strong class="brand-wordmark product-brand-name">PromptDirector</strong><span class="product-brand-tagline" data-i18n="视觉创作灵感库">视觉创作灵感库</span></div>
       </div>
         <div id="gallery-heading" class="gallery-heading">
+            <span id="workspace-agent-activity" class="workspace-agent-activity" role="status" hidden></span>
           <div class="gallery-heading-copy"><div class="browse-location"><nav id="browse-breadcrumb" aria-label="项目路径" data-i18n-aria-label="项目路径"></nav></div><h1 id="library-title"></h1><strong id="result-count"></strong></div>
       <label class="global-search">
         <span class="sr-only" data-i18n="搜索提示词、来源或 AI 标签">搜索提示词、来源或 AI 标签</span>
@@ -50,8 +45,8 @@
                     <label><span data-i18n="选择目标项目">选择目标项目</span><select id="selection-project-target" aria-label="选择目标项目" data-i18n-aria-label="选择目标项目"><option value="" data-i18n="选择项目…">选择项目…</option></select></label>
                     <div class="selection-project-actions">
                       <button id="selection-move-project" class="project-menu-primary" type="button" disabled data-i18n="移动">移动</button>
-                      <button id="selection-copy-project" class="button-secondary" type="button" disabled data-i18n="复制到项目">复制到项目</button>
-                      <button id="selection-remove-project" class="button-secondary" type="button" disabled data-i18n="移出当前项目">移出当前项目</button>
+                      <button id="selection-copy-project" class="button-secondary" type="button" disabled title="复制到项目" data-i18n="复制到项目" data-i18n-title="复制到项目">复制到项目</button>
+                      <button id="selection-remove-project" class="button-secondary" type="button" disabled title="移出当前项目" data-i18n="移出当前项目" data-i18n-title="移出当前项目">移出当前项目</button>
                     </div>
                     <button id="selection-new-project" class="button-secondary" type="button" disabled data-i18n="新建项目并移动">新建项目并移动</button>
                   </div>
@@ -107,11 +102,13 @@
           <div class="package-menu-panel">
             <button id="add-media" class="ui-content-row" type="button"><strong data-i18n="导入本机资料">导入本机资料</strong><span data-i18n="选择文件或文件夹，统一确认后导入">选择文件或文件夹，统一确认后导入</span></button>
             <button id="add-video-reference" class="button-secondary ui-content-row" type="button"><strong data-i18n="视频链接">视频链接</strong><span data-i18n="保存 YouTube、Vimeo 或来源网页">保存 YouTube、Vimeo 或来源网页</span></button>
+            <button id="open-temporary-review" class="button-secondary ui-content-row" type="button"><strong data-i18n="审阅本机样片">审阅本机样片</strong><span data-i18n="选择图片或视频，先审阅再入库">选择图片或视频，先审阅再入库</span></button>
             <button id="add-quick-note" class="button-secondary ui-content-row" type="button"><strong data-i18n="快速笔记">快速笔记</strong><span data-i18n="立即记下一段创作想法">立即记下一段创作想法</span></button>
           </div>
         </details>
         <button id="start-compose" type="button" data-i18n="开始创作">开始创作</button>
         <button id="open-settings" class="icon-button settings-entry-button" type="button" aria-label="设置" data-i18n-aria-label="设置" title="设置" data-i18n-title="设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-settings"></use></svg><span id="settings-update-badge" class="settings-update-badge" aria-label="有可用更新" hidden data-i18n-aria-label="有可用更新"></span></button>
+        <input id="temporary-review-file" class="sr-only" type="file" accept="video/*,image/*" multiple />
         <input id="media-file" class="sr-only" type="file" multiple />
         <input id="media-folder" class="sr-only" type="file" multiple webkitdirectory />
       </div>
@@ -156,6 +153,7 @@
       <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="调整项目侧栏宽度" aria-orientation="vertical" aria-valuemin="216" aria-valuemax="420" aria-valuenow="244" data-i18n-aria-label="调整项目侧栏宽度"></div>
 
       <main class="gallery-shell">
+        <div id="library-loading" class="library-loading" role="status" aria-live="polite"><strong data-i18n="正在打开资料库">正在打开资料库</strong></div>
         <p id="feedback" class="ui-feedback-toast" role="status" aria-live="polite"></p>
         <div class="browse-results">
         <section id="project-folder-list" class="project-folder-list" aria-label="子项目" data-i18n-aria-label="子项目"></section>
@@ -292,9 +290,18 @@
       </footer>
     </dialog>
 
+    <dialog id="temporary-review-dialog" class="temporary-review-dialog">
+      <button id="temporary-review-close" class="icon-button" type="button" title="退出审片" aria-label="退出审片" data-i18n-title="退出审片" data-i18n-aria-label="退出审片"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
+      <div id="temporary-review-media"></div>
+      <div id="temporary-review-notes"></div>
+      <footer id="temporary-review-actions" class="review-media-toolbar">
+        <button id="temporary-review-save" class="icon-button" type="button" title="保存入库" aria-label="保存入库" data-i18n-title="保存入库" data-i18n-aria-label="保存入库"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-save"></use></svg></button>
+      </footer>
+    </dialog>
     <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
     <aside id="detail-drawer" class="detail-drawer" role="dialog" aria-modal="true" aria-label="案例详情" data-i18n-aria-label="案例详情" aria-hidden="true">
       <header id="drawer-toolbar" class="drawer-toolbar">
+        <button id="detail-review-toggle" class="icon-button" type="button" aria-pressed="false" title="审片" aria-label="审片" data-i18n-title="审片" data-i18n-aria-label="审片"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-clapperboard"></use></svg></button>
         <button id="detail-mode-toggle" class="icon-button" type="button" aria-label="切换侧栏详情" title="切换侧栏详情" data-i18n-aria-label="切换侧栏详情" data-i18n-title="切换侧栏详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-panel-left"></use></svg></button>
         <button id="detail-close" class="icon-button" type="button" aria-label="关闭详情" data-i18n-aria-label="关闭详情" title="关闭详情" data-i18n-title="关闭详情"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
       </header>
@@ -303,11 +310,6 @@
       <div id="detail-content" class="detail-content ui-scrollbar"></div>
     </aside>
 
-    <dialog id="image-lightbox" class="image-lightbox" aria-label="查看原图" data-i18n-aria-label="查看原图">
-      <button id="image-lightbox-close" class="icon-button" type="button" aria-label="关闭原图" data-i18n-aria-label="关闭原图" title="关闭原图" data-i18n-title="关闭原图"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button>
-      <img id="image-lightbox-image" alt="" />
-    </dialog>
-
     <dialog id="settings-dialog" class="data-safety-dialog settings-dialog ui-dialog">
       <header class="data-safety-header ui-dialog-header"><div class="ui-dialog-heading"><h2 data-i18n="设置">设置</h2></div><button id="settings-close" class="icon-button" type="button" aria-label="关闭设置" data-i18n-aria-label="关闭设置" title="关闭设置" data-i18n-title="关闭设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
       <div class="data-safety-body settings-shell">
@@ -315,8 +317,35 @@
           <button type="button" data-settings-tab="general" aria-selected="true" data-i18n="界面与资料库">界面与资料库</button>
           <button type="button" data-settings-tab="ai" aria-selected="false" data-i18n="AI 配置">AI 配置</button>
           <button type="button" data-settings-tab="rules" aria-selected="false" data-i18n="分析与创作规则">分析与创作规则</button>
+          <button type="button" data-settings-tab="shortcuts" aria-selected="false" data-i18n="键盘快捷键">键盘快捷键</button>
+          <button type="button" data-settings-tab="layout" aria-selected="false" data-i18n="布局">布局</button>
           <button type="button" data-settings-tab="tasks" aria-selected="false" data-i18n="任务与维护">任务与维护</button>
         </nav>
+        <section id="settings-shortcuts-panel" class="settings-panel shortcut-settings" data-settings-panel="shortcuts" hidden>
+          <form id="shortcut-form"><div id="shortcut-groups"></div><footer><button id="shortcut-reset" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button><button type="submit" data-i18n="保存">保存</button></footer></form>
+          <p id="shortcut-feedback" role="status"></p>
+        </section>
+        <section id="settings-layout-panel" class="settings-panel compact-general" data-settings-panel="layout" hidden>
+          <form id="layout-form">
+            <div class="layout-config-row">
+              <select id="layout-config" aria-label="布局配置" data-i18n-aria-label="布局配置"></select>
+              <button id="layout-create" class="icon-button" type="button" title="新建布局配置" aria-label="新建布局配置" data-i18n-title="新建布局配置" data-i18n-aria-label="新建布局配置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-plus"></use></svg></button>
+              <button id="layout-rename" class="icon-button" type="button" title="重命名布局配置" aria-label="重命名布局配置" data-i18n-title="重命名布局配置" data-i18n-aria-label="重命名布局配置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-pencil"></use></svg></button>
+              <button id="layout-delete" class="icon-button quiet-danger" type="button" title="删除布局配置" aria-label="删除布局配置" data-i18n-title="删除布局配置" data-i18n-aria-label="删除布局配置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-trash-2"></use></svg></button>
+            </div>
+            <section class="setting-section appearance-grid">
+              <label><span data-i18n="案例视图">案例视图</span><select name="galleryView"><option value="waterfall" data-i18n="瀑布流">瀑布流</option><option value="list" data-i18n="列表">列表</option></select></label>
+              <label><span data-i18n="详情方式">详情方式</span><select name="detailMode"><option value="fullscreen" data-i18n="完整详情">完整详情</option><option value="sidebar" data-i18n="信息面板">信息面板</option></select></label>
+              <label><span data-i18n="缩略图宽度（px）">缩略图宽度（px）</span><input name="gallerySize" type="number" step="1" required></label>
+              <label><span data-i18n="左侧栏宽度（px）">左侧栏宽度（px）</span><input name="sidebarWidth" type="number" step="1" required></label>
+              <label><span data-i18n="信息面板宽度（px）">信息面板宽度（px）</span><input name="detailSidebarWidth" type="number" step="1" required></label>
+              <label><span data-i18n="信息栏占比（%）">信息栏占比（%）</span><input name="detailPanelRatio" type="number" min="1" max="99" step="1" placeholder="自动" data-i18n-placeholder="自动"></label>
+            </section>
+            <label class="import-check"><input name="sidebarCollapsed" type="checkbox"><span data-i18n="收起左侧栏">收起左侧栏</span></label>
+            <footer><button id="layout-return" class="button-secondary" type="button" data-i18n="返回">返回</button><button id="layout-reset" class="button-secondary" type="button" data-i18n="恢复默认">恢复默认</button><button type="submit" data-i18n="保存当前布局">保存当前布局</button></footer>
+          </form>
+          <p id="layout-feedback" class="data-safety-feedback" role="status"></p>
+        </section>
         <section id="settings-general-panel" class="settings-panel compact-general" data-settings-panel="general">
           <section class="setting-section appearance-grid">
             <label><span data-i18n="界面语言">界面语言</span><select id="ui-locale"><option value="system" data-i18n="跟随浏览器">跟随浏览器</option><option value="zh-CN" data-i18n="中文">中文</option><option value="en">English</option></select></label>
@@ -349,8 +378,8 @@
             </div></div>
             <p id="data-safety-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
             <progress id="data-safety-progress" class="ui-task-progress" aria-label="备份与同步进度" data-i18n-aria-label="备份与同步进度" hidden></progress>
-            <div class="share-package-import"><span data-i18n="导入分享包">导入分享包</span><button id="import-library-package" class="button-secondary" type="button" data-i18n="选择 ZIP">选择 ZIP</button><input id="library-package-file" type="file" accept=".zip,application/zip" multiple hidden /></div>
-            <details id="library-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="restore-library-replacement-point" class="button-secondary" type="button" hidden data-i18n="回退上次精确恢复">回退上次精确恢复</button></details>
+            <div class="share-package-import"><span data-i18n="导入分享包">导入分享包</span><button id="import-library-package" class="button-secondary" type="button" data-i18n="选择 ZIP">选择 ZIP</button><input id="library-package-file" type="file" accept=".zip,.eaglepack,application/zip" multiple hidden />
+              <details id="library-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="restore-library-replacement-point" class="button-secondary" type="button" hidden data-i18n="回退上次精确恢复">回退上次精确恢复</button></details></div>
             <details id="sync-settings" class="sync-settings">
               <summary><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg><span data-i18n="跨设备同步">跨设备同步</span><small id="data-safety-status"></small></summary>
               <div class="sync-settings-body">

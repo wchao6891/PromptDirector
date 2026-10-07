@@ -21,7 +21,11 @@ def main():
         (extension / 'library.js').write_text((EXTENSION_DIR / 'library.js').read_text() + '''
 window.pdWindowStats = () => ({loaded: renderedCount, cards: elements.caseList.children.length,
   cardCache: caseCardCache.size, thumbnails: thumbnailUrls.size, originals: originalUrls.size,
-  selected: selectedCaseIds.size, previewBudget: previewCacheEntries});
+  selected: selectedCaseIds.size, previewBudget: previewCacheEntries,
+  thumbnailBytes: [...new Set(thumbnailUrls.values())].reduce((sum, url) => sum + (thumbnailUrls.sizes.get(url) || 0), 0),
+  thumbnailMaxBytes: Math.max(0, ...thumbnailUrls.sizes.values()), thumbnailBudgetBytes: thumbnailUrls.policy.maxBytes,
+  dragPinned: mediaDragUrls.size});
+window.pdSetThumbnailBudgetBytes = bytes => { thumbnailUrls.policy.maxBytes = bytes; thumbnailUrls.trim(); };
 ''')
         with extension_session('pd-window-profile-', extension_dir=extension,
                                viewport={'width': 1440, 'height': 900}) as run:
@@ -81,13 +85,21 @@ window.pdWindowStats = () => ({loaded: renderedCount, cards: elements.caseList.c
             page.locator('#share-cancel').click()
 
             # A long gesture pins its source, not every card traversed.
+            # Thumbnail URLs are now budgeted by real file bytes (f7a4fdb, ResourceUrlCache), not an entry
+            # count. The synthetic PNGs are tiny, so apply the byte equivalent of the old entry quota
+            # (previewBudget x largest thumbnail) to keep this gesture under real eviction pressure.
+            pressure = page.evaluate('pdWindowStats()')
+            assert pressure['thumbnailMaxBytes'] > 0, pressure
+            page.evaluate('bytes=>pdSetThumbnailBudgetBytes(bytes)', pressure['previewBudget'] * pressure['thumbnailMaxBytes'])
             page.evaluate('''() => {
               const card=document.querySelector('#case-list > .case-card'); window.pdDragSource=card.dataset.entryId;
               card.dispatchEvent(new DragEvent('dragstart',{bubbles:true,cancelable:true,dataTransfer:new DataTransfer()}));
             }''')
             gesture_samples = scroll_batches(12)
             assert max(s['cards'] for s in gesture_samples) < 125, gesture_samples
+            assert max(s['thumbnailBytes'] - s['thumbnailBudgetBytes'] - s['thumbnailMaxBytes'] for s in gesture_samples) <= 0, gesture_samples
             assert max(s['thumbnails'] for s in gesture_samples) <= gesture_samples[-1]['previewBudget'] + 1, gesture_samples
+            assert max(s['dragPinned'] for s in gesture_samples) <= 2, gesture_samples
             assert page.evaluate('document.querySelector(`[data-entry-id="${pdDragSource}"]`) !== null')
             page.evaluate('document.dispatchEvent(new DragEvent("dragend",{bubbles:true}))')
             page.evaluate('scrollBy(0,2)')

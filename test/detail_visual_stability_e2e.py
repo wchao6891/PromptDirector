@@ -65,9 +65,9 @@ def main():
         setup.evaluate("task=>chrome.runtime.sendMessage({type:'ANALYSIS_TASK_UPDATED',task:{...task,phase:'processing'}})", task)
         expect(panel.locator("textarea")).to_have_value("不能丢失的用户草稿")
         setup.evaluate("""async task=>{
-          const {entries}=await chrome.storage.local.get('entries');
+          const {entries}=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
           entries.find(e=>e.id===task.request.entryId).videoAnalyses[0].reconstructionPrompt += '\\n新的后台结果';
-          await chrome.storage.local.set({entries});
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries}));
           await chrome.runtime.sendMessage({type:'ANALYSIS_TASK_UPDATED',task:{...task,status:'completed',phase:'completed'}});
         }""", task)
         expect(panel.locator("textarea")).to_have_value("不能丢失的用户草稿")
@@ -104,7 +104,7 @@ def main():
         setup.evaluate("""async ({entry,encoded})=>{
           const {saveMediaBlob}=await import(chrome.runtime.getURL('media-store.js'));
           await saveMediaBlob('mp4-media',new Blob([Uint8Array.from(atob(encoded),c=>c.charCodeAt(0))],{type:'video/mp4'}),{checkCapacity:false});
-          const {entries}=await chrome.storage.local.get('entries'); await chrome.storage.local.set({entries:[...entries,entry]});
+          const {entries}=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')); await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[...entries,entry]}));
         }""", {"entry": mp4, "encoded": encoded})
         for theme in ("light", "dark"):
             page.close()

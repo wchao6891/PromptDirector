@@ -104,14 +104,14 @@ def main():
         undo_check = library.evaluate("""async () => {
           const {saveMediaBlob,getMediaBlob} = await import('./media-store.js');
           const {createScreenshotSaveUndo,captureScreenshotMetadata} = await import('./save-history.js');
-          const stored=await chrome.storage.local.get('entries');
+          const stored=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
           const entry={...structuredClone(stored.entries[0]),id:'legacy-shot',screenshotUpdatedAt:'2026-09-23T00:00:00.000Z',
             mediaAssets:[{id:'legacy-shot',kind:'image',storageMode:'managed',mimeType:'image/png'}],primaryMediaId:'legacy-shot'};
           const copy={...structuredClone(entry),id:'legacy-copy'};
           await saveMediaBlob('legacy-shot',new Blob(['new-image'],{type:'image/png'}));
           await saveMediaBlob('backup:legacy-shot',new Blob(['old-image'],{type:'image/png'}));
-          await chrome.storage.local.set({entries:[...stored.entries,entry,copy],lastSaveUndo:createScreenshotSaveUndo(
-            entry.id,{hasScreenshot:true},entry.screenshotUpdatedAt,true,'backup:legacy-shot',captureScreenshotMetadata(entry))});
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[...stored.entries,entry,copy],lastSaveUndo:createScreenshotSaveUndo(
+            entry.id,{hasScreenshot:true},entry.screenshotUpdatedAt,true,'backup:legacy-shot',captureScreenshotMetadata(entry))}));
           const response=await chrome.runtime.sendMessage({type:'UNDO_LAST'});
           if(!response.ok) throw new Error(response.message);
           const id=response.entry.primaryMediaId;

@@ -61,7 +61,12 @@ def main():
             assert any(p['source'] == 'manual' and p['text'] == '原始提示词' for p in annotations['mediaPrompts'])
             assert any(p['source'] == 'ai-suggestion' and p['text'] == 'AI逆推测试' for p in annotations['mediaPrompts'])
             assert annotations['facetAssignments'][0]['visualId'] == 'picture'
-            edited = call('edit_case', {'caseId': 'second', 'expectedRevision': second['revision'], 'requestId': 'human-edit', 'patch': {'text': '人工后来改过'}})
+            # Original body text is protected by default (user-confirmed rule, case-field-access.js); the concurrent
+            # human edit therefore declares an explicit source correction, and an undeclared rewrite must be refused.
+            correction = {'reason': '隔离夹具：用户明确修正正文', 'fields': ['text']}
+            refused = call('edit_case', {'caseId': 'second', 'expectedRevision': second['revision'], 'requestId': 'undeclared-edit', 'patch': {'text': '未声明修正'}})
+            assert refused.get('code') == 'source_protected', refused
+            edited = call('edit_case', {'caseId': 'second', 'expectedRevision': second['revision'], 'requestId': 'human-edit', 'sourceCorrection': correction, 'patch': {'text': '人工后来改过'}})
             assert edited['ok'], edited
             stale = call('submit_analysis_result', {'batchId': 'browser-batch', 'requestId': 'stale', 'caseId': 'second', 'epoch': 0,
                 'attemptId': rows[1]['attemptId'], 'result': {'tags': [{'g': 'scene.weather'}]}})
@@ -89,7 +94,7 @@ def main():
                           for case_id in ['first', 'second']]
             assert call('manage_analysis_batch', {'action': 'create', 'requestId': 'page-batch', 'instruction': '合并结果测试', 'items': page_items})['ok']
             page_rows = call('read_analysis_batch', {'batchId': 'page-batch'})['items']
-            assert call('edit_case', {'caseId': 'second', 'expectedRevision': page_items[1]['expectedRevision'], 'requestId': 'page-human-edit', 'patch': {'text': '合并提交前人工新改'}})['ok']
+            assert call('edit_case', {'caseId': 'second', 'expectedRevision': page_items[1]['expectedRevision'], 'requestId': 'page-human-edit', 'sourceCorrection': correction, 'patch': {'text': '合并提交前人工新改'}})['ok']
             page_submit = {'requestId': 'save-page', 'batchId': 'page-batch', 'epoch': 0, 'items': [
                 {'caseId': row['caseId'], 'attemptId': row['attemptId'], 'result': {'tags': [{'g': 'scene.weather', 't': '晴天'}]}} for row in page_rows]}
             page_saved = call('submit_analysis_results', page_submit)
@@ -145,7 +150,15 @@ def main():
             assert coverage['mediaWithRecordedScope'] == 3 and coverage['currentBytesVerified'] is False
             assert coverage['media'][2]['analyses'][0]['coverage'] == '仅0至2秒画面，无音频'
             page.locator('.case-card[data-entry-id="complete"]').click()
-            page.get_by_text('隔离图片逆推 full-image', exact=True).first.wait_for()
+            # The detail prompt section is now tabbed (library.js createMediaPromptSection): it opens on the preserved
+            # case original, the manual media prompt and the external AI result are separate tabs, none overwritten.
+            prompt_section = page.locator('.media-prompt-section').first
+            prompt_section.locator('[data-prompt-tab="shared"][aria-selected="true"]').wait_for()
+            prompt_section.get_by_text('保留人工正文', exact=True).wait_for()
+            prompt_section.locator('[data-prompt-tab="media"]').click()
+            prompt_section.get_by_text('保留原始提示词', exact=True).wait_for()
+            prompt_section.locator('[data-prompt-tab="ai"]').click()
+            prompt_section.get_by_text('隔离图片逆推 full-image', exact=True).wait_for()
             page.locator('.visual-set-analysis summary').click()
             page.get_by_text('隔离整组人物场景提示词', exact=True).wait_for()
             assert 'imageAnalyses' in call('status', {})['analysisResultFields']

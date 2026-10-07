@@ -23,7 +23,8 @@ test("unsupported failures can become inert persistent local references", () => 
   assert.match(js, /saveLocalAssetHandle\(assetId, handle, file\)/);
   assert.match(js, /recordType:\s*reference\.recordType/);
   assert.match(js, /sourceLastModified:\s*file\.lastModified/);
-  assert.match(js, /deleteLocalAssetHandle\(item\.assetId\)/);
+  assert.match(js, /mediaStage\.write\(\[assetId\], \(\) => saveLocalAssetHandle\(assetId, handle, file\), \[assetId\]\)/);
+  assert.match(js, /draft\?\.mediaStage\.release\(\)/);
 });
 
 test("audio and creative source files have useful card and detail surfaces", () => {

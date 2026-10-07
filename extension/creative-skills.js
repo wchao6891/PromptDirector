@@ -250,7 +250,10 @@ export function mergeCreativeSkillsState(currentValue, importedValue, options = 
   const imported = normalizeCreativeSkillsState(importedValue);
   const usedSkillIds = new Set(state.items.map((item) => item.id));
   const usedVersionIds = new Set(state.items.flatMap((item) => item.versions.map((version) => version.id)));
-  const usedAssetIds = new Set(state.items.flatMap(skillPackageAssetIds));
+  const usedAssetIds = new Set([
+    ...state.items.flatMap(skillPackageAssetIds),
+    ...(Array.isArray(options.reservedAssetIds) ? options.reservedAssetIds : [])
+  ]);
   const skillIdMap = {};
   const skillVersionIdMap = { ...(options.skillVersionIdMap ?? {}) };
   const packageAssetIdMap = { ...(options.packageAssetIdMap ?? {}) };

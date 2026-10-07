@@ -582,8 +582,9 @@ export async function createArchiveUrl({
 }
 
 async function createCuratedSubmissionUrls({
-  entries, settings, taxonomy, facetCatalog, classificationRules, organizerState, compoundCases
+  entries, settings, taxonomy, facetCatalog, classificationRules, organizerState, compoundCases, locale
 }) {
+  const submissionName = locale === "en" ? "Submission" : "投稿";
   const files = [];
   const resolvedEntries = [];
   let mediaCount = 0;
@@ -640,8 +641,8 @@ async function createCuratedSubmissionUrls({
       url,
       byteSize: blob.size,
       filename: split
-        ? `PromptDirector-投稿-${shortId}-${String(index + 1).padStart(2, "0")}-of-${String(outputBlobs.length).padStart(2, "0")}.zip`
-        : `PromptDirector-投稿-${shortId}.zip`
+        ? `PromptDirector-${submissionName}-${shortId}-${String(index + 1).padStart(2, "0")}-of-${String(outputBlobs.length).padStart(2, "0")}.zip`
+        : `PromptDirector-${submissionName}-${shortId}.zip`
     };
   });
   return {

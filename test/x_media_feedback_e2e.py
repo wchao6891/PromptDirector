@@ -63,8 +63,10 @@ def supplement():
         expect(setup.locator('.page-capture-thumbnail')).to_have_count(0)
         setup.locator('.page-capture-supplements > summary').click()
         setup.get_by_role('button',name='补入当前案例',exact=True).click()
-        setup.evaluate("async()=>{const send=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=async m=>{if(m.type==='COMMIT_PAGE_CAPTURE'){window.savedBatch=m.batch;return {ok:false,message:JSON.stringify(m.batch)}}return send(m)}}")
         # Inspect the real sidebar's save payload without writing fake media bytes.
+        # The commit now enters the background save-task pipeline as START_CAPTURE_SAVE
+        # wrapping a COMMIT_PAGE_CAPTURE input; refusing to start it keeps storage untouched.
+        setup.evaluate("async()=>{const send=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=async m=>{if(m.type==='START_CAPTURE_SAVE'&&m.input?.type==='COMMIT_PAGE_CAPTURE'){window.savedBatch=m.input.batch;return {ok:false,message:JSON.stringify(m.input.batch)}}return send(m)}}")
         setup.locator('#page-capture-save').click()
         expect(setup.locator('#feedback')).to_contain_text('selectedMediaIds')
         saved=setup.evaluate('window.savedBatch')

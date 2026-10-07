@@ -5,8 +5,22 @@ import {
   normalizeDetailSidebarWidth,
   normalizeSidebarWidth,
   normalizeUiPreferences,
+  normalizePanelPositions,
+  updateLayoutPreferences,
   resolveLocale
 } from "../extension/preferences.js";
+
+test('restoring layout changes only presentation and retains custom keys, theme and browsing filters', () => {
+  const before = normalizeUiPreferences({ locale: 'en', theme: 'light', shortcuts: { addFeedback: 'N' },
+    gallerySort: 'title-asc', includeSubprojects: true, sidebarWidth: 410, detailMode: 'sidebar',
+    floatingPanelPositions: { reviewFeedback: { left: .4, top: .3 } } });
+  const reset = updateLayoutPreferences(before, {}, true);
+  for (const key of ['locale', 'theme', 'shortcuts', 'gallerySort', 'includeSubprojects']) assert.deepEqual(reset[key], before[key]);
+  assert.equal(reset.sidebarWidth, normalizeUiPreferences().sidebarWidth);
+  assert.deepEqual(reset.floatingPanelPositions, {});
+  assert.equal(reset.detailMode, 'fullscreen');
+  assert.equal(updateLayoutPreferences(before, { theme: 'dark', sidebarWidth: 300 }).theme, 'light');
+});
 
 test("UI preferences accept only supported locale theme and motion values", () => {
   assert.deepEqual(normalizeUiPreferences({ locale: "fr", theme: "neon", motion: "spin" }), {
@@ -14,6 +28,10 @@ test("UI preferences accept only supported locale theme and motion values", () =
     theme: "dark",
     motion: "system",
     analysisDiagnostics: false,
+    shortcuts: {},
+    floatingPanelPositions: {},
+    layoutPresets: normalizeUiPreferences().layoutPresets,
+    activeLayoutId: "default",
     sidebarWidth: 244,
     sidebarLayout: { collapsed: false, open: ["projects"], order: ["projects", "types", "tags"] },
     detailMode: "fullscreen",
@@ -30,6 +48,10 @@ test("UI preferences accept only supported locale theme and motion values", () =
     theme: "dark",
     motion: "reduced",
     analysisDiagnostics: true,
+    shortcuts: {},
+    floatingPanelPositions: {},
+    layoutPresets: normalizeUiPreferences().layoutPresets,
+    activeLayoutId: "default",
     sidebarWidth: 244,
     sidebarLayout: { collapsed: false, open: ["projects"], order: ["projects", "types", "tags"] },
     detailMode: "fullscreen",
@@ -43,6 +65,18 @@ test("UI preferences accept only supported locale theme and motion values", () =
   });
   assert.equal(normalizeUiPreferences({ theme: "light", motion: "reduced" }).theme, "light");
   assert.equal(normalizeUiPreferences({ theme: "system", motion: "reduced" }).theme, "system");
+});
+
+test('floating positions retain authored placement and discard coordinates that can hide tools', () => {
+  const source = { reviewFeedback: { left: .6, top: .2, width: 999 }, tagEditor: { left: 0, top: 1 },
+    invalid: { left: NaN, top: 0 }, outside: { left: 2, top: .2 }, negative: { left: -.1, top: .2 },
+    'bad key': { left: .2, top: .2 } };
+  assert.deepEqual(normalizePanelPositions(source), { reviewFeedback: { left: .6, top: .2 }, tagEditor: { left: 0, top: 1 } });
+  assert.equal(source.reviewFeedback.width, 999);
+  const normalized = normalizeUiPreferences({ floatingPanelPositions: source, shortcuts: { addFeedback: 'N' } });
+  assert.equal(normalized.shortcuts.addFeedback, 'N');
+  assert.deepEqual(normalized.floatingPanelPositions, normalizePanelPositions(source));
+  assert.deepEqual(normalizePanelPositions(null), {});
 });
 
 test("case detail mode remains local UI state and clamps its remembered sidebar width", () => {

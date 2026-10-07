@@ -14,11 +14,13 @@ export class ResourceCache extends Map {
     if (previous !== undefined && previous !== value) this.release(previous); super.set(key, value); this.trim(key); return this;
   }
   trim(incomingKey) {
-    let bytes = [...this.values()].reduce((sum, value) => sum + this.policy.cost(value), 0);
+    let bytes = [...new Set(this.values())].reduce((sum, value) => sum + this.policy.cost(value), 0);
     for (const [key, value] of this) {
       if (this.size <= this.policy.maxEntries && bytes <= this.policy.maxBytes) break;
       if (key === incomingKey || this.policy.protectedValue(value, key)) continue;
-      super.delete(key); bytes -= this.policy.cost(value); this.release(value);
+      super.delete(key);
+      if (![...this.values()].includes(value)) bytes -= this.policy.cost(value);
+      this.release(value);
     }
   }
   release(value) {

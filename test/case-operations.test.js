@@ -1,3 +1,4 @@
+import { AGENT_CASE_ACTION_SPECS } from '../extension/agent-case-action-specs.js';
 import {ANALYSIS_BATCH_SPECS} from '../extension/analysis-batch-specs.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,10 +104,25 @@ test('compound edits and split check member edits and project changes; compound 
   run.data.entries[1].text = '人工成员新文字';
   await assert.rejects(run.api.execute('edit_case', { ...patch, requestId: 'stale-title', expectedRevision: fresh.revision }), { code: 'case_conflict' });
 });
-test('cross-project combination without an explicit destination cannot trigger implicit folder copies or move originals', async () => {
-  const run = service(library()), input = await combineInput(run), before = structuredClone(run.data);
-  await assert.rejects(run.api.execute('organize_case', input), { code: 'compound_project_conflict' });
-  assert.equal(run.commits, 0); assert.deepEqual(run.data, before);
+test('cross-project combination survives migration and split without copying or moving original cases', async () => {
+  const run = service(migrateLibraryState(library()).state), input = await combineInput(run);
+  const before = structuredClone(run.data);
+  const saved = await run.api.execute('organize_case', input);
+  assert.equal(saved.ok, true);
+  assert.deepEqual(run.data.entries, before.entries);
+  assert.deepEqual(run.data.organizerState, before.organizerState);
+  const reread = migrateLibraryState(run.data);
+  assert.equal(reread.folderOwnershipMigrated, false);
+  assert.deepEqual(reread.state.entries, before.entries);
+  assert.deepEqual(reread.state.organizerState, before.organizerState);
+  assert.equal(reread.state.compoundCases.length, 1);
+  Object.assign(run.data, reread.state);
+  const compoundId = saved.cases[0].caseId;
+  await run.api.execute('organize_case', { requestId: 'cross-project-split', caseId: compoundId,
+    expectedRevision: (await run.api.read({caseId:compoundId})).revision, action:'split_compound' });
+  assert.deepEqual(run.data.entries, before.entries);
+  assert.deepEqual(run.data.organizerState, before.organizerState);
+  assert.equal(run.data.compoundCases.length, 0);
 });
 test('cover changes preserve original media and annotations, reject foreign assets and can restore automatic selection', async () => {
   const run = service(library()), before = structuredClone(run.data.entries[0]);
@@ -137,6 +153,7 @@ test('complete details are paginated consistently and never include library cred
 test('field edits correct source identity while preserving originals and unrelated manual work', async () => {
   const run = service(library()), before = structuredClone(run.data.entries[0]);
   const input = { requestId: 'edit', caseId: 'old', expectedRevision: await caseRevision(run.data, before),
+    sourceCorrection: { reason: '核对来源帖子后修正错误元信息', fields: ['sourceUrl', 'sourceFacts'] },
     patch: { sourceUrl: before.url, sourceFacts: { itemId: '101', author: '第一作者', engagement: null }, title: '正确标题' } };
   assert((await run.api.execute('edit_case', input)).ok);
   const next = run.data.entries[0];
@@ -184,7 +201,8 @@ test('failed storage commit leaves both library and acknowledgement untouched', 
 });
 test('explicit article edits keep media structure and text in sync', async () => {
   const run = service(library());
-  const input = { requestId: 'text', caseId: 'old', expectedRevision: (await run.api.read({ caseId: 'old' })).revision, patch: { text: '不能扁平覆盖' } };
+  const input = { requestId: 'text', caseId: 'old', expectedRevision: (await run.api.read({ caseId: 'old' })).revision, sourceCorrection: { reason: '明确修正已读原文段落', fields: ['text', 'articlePatches'] }, patch: { text: '不能扁平覆盖' } };
+  input.sourceCorrection = { reason: '明确修正已读原文段落', fields: ['text', 'articlePatches'] };
   await assert.rejects(run.api.execute('edit_case', input), { code: 'article_requires_patches' });
   input.patch = { articlePatches: [{ blockId: 'body', text: '新的正文' }] };
   await run.api.execute('edit_case', input);
@@ -288,7 +306,7 @@ test('composer and MCP share schemas; composer cannot edit unknown cases and rep
       if (name === 'read_case_details') return run.api.read(input);
       const result = await run.api.execute(name, input); controller.abort(); return result;
     }, onEvent: e => events.push(e) });
-  assert.deepEqual(wrapper.specs.map(s => s.parameters), [...CASE_OPERATION_SPECS, ...PROJECT_OPERATION_SPECS, SAVE_TEXT_MATERIAL_SPEC, ...ANALYSIS_BATCH_SPECS].map(s => s.parameters));
+  assert.deepEqual(wrapper.specs.map(s => s.parameters), [...CASE_OPERATION_SPECS, ...AGENT_CASE_ACTION_SPECS, ...PROJECT_OPERATION_SPECS, SAVE_TEXT_MATERIAL_SPEC, ...ANALYSIS_BATCH_SPECS].map(s => s.parameters));
   assert((await wrapper.execute('read_case_details', { caseId: 'old' }, {})).data.error);
   await wrapper.execute('search_cases', {}, {});
   const read = (await wrapper.execute('read_case_details', { caseId: 'old' }, {})).data;
@@ -321,4 +339,77 @@ test('shared remove_tags validates reviewed version, commits undo atomically and
   await assert.rejects(run.api.execute('organize_case',{...input,requestId:'stale'}),{code:'case_conflict'});
   const noOp=await run.api.execute('organize_case',{...input,requestId:'noop',expectedRevision:result.cases[0].revision});
   assert.equal(noOp.updatedCount,0);assert.equal(run.data.facetUndo.steps.length,1);
+});
+
+test('originals are protected by default while authored notes and AI prompts can change independently', async () => {
+  const run = service(library()), original = structuredClone(run.data.entries[0]);
+  const input = { requestId: 'protected', caseId: 'old', expectedRevision: (await run.api.read({ caseId: 'old' })).revision };
+  for (const patch of [{sourceFacts:{author:'guess'}},{articlePatches:[{blockId:'body',text:'rewrite'}]},{mediaPrompts:[{assetId:'b',source:'manual',text:'overwrite'}]}]) {
+    await assert.rejects(run.api.execute('edit_case', {...input,patch}), {code:'source_protected'});
+  }
+  assert.equal(run.commits,0); assert.deepEqual(run.data.entries[0],original);
+  const saved = await run.api.execute('edit_case',{...input,requestId:'own',patch:{creative:{purpose:'广告参考',notes:'第二镜表演参考'},mediaPrompts:[{assetId:'b',source:'ai-suggestion',text:'自己的推导词'}]}});
+  assert.equal(saved.cases.length,1); assert.equal(run.data.entries[0].creative.purpose,'广告参考');
+  for (const field of ['text','articleDocument','sourceFacts','mediaAssets']) assert.deepEqual(run.data.entries[0][field],original[field]);
+  assert(run.data.entries[0].mediaPrompts.some(p=>p.source==='manual'&&p.text==='独立原词'));
+  const annotations = JSON.parse((await run.api.read({caseId:'old',part:'annotations'})).content); assert.equal(annotations.creative.notes,'第二镜表演参考');
+});
+test('explicit source correction keeps the previous evidence for readback and authored creation text stays editable', async () => {
+  const run=service(library());
+  await run.api.execute('edit_case',{requestId:'correct',caseId:'old',expectedRevision:(await run.api.read({caseId:'old'})).revision,
+    sourceCorrection:{reason:'核对作者主页后的修正',fields:['sourceFacts']},patch:{sourceFacts:{author:'真实作者'}}});
+  const source=JSON.parse((await run.api.read({caseId:'old',part:'source'})).content);
+  assert.equal(source.corrections[0].before.sourceFacts.author,'被覆盖的作者'); assert.equal(source.corrections[0].reason,'核对作者主页后的修正');
+  run.data.entries[1].agentProvenance={kind:'creation'};
+  await run.api.execute('edit_case',{requestId:'creation',caseId:'other',expectedRevision:(await run.api.read({caseId:'other'})).revision,patch:{text:'新的自写方案'}});
+  assert.equal(run.data.entries[1].text,'新的自写方案');
+});
+test('media reordering keeps every original and refuses incomplete or foreign permutations', async () => {
+  const run=service(library()), before=structuredClone(run.data.entries[0]);
+  const input={requestId:'order',caseId:'old',expectedRevision:(await run.api.read({caseId:'old'})).revision};
+  await assert.rejects(run.api.execute('edit_case',{...input,patch:{mediaOrder:['b','a']}}),{code:'invalid_media_order'});
+  const ids=before.mediaAssets.map(a=>a.id).reverse();
+  await run.api.execute('edit_case',{...input,patch:{mediaOrder:ids}});
+  assert.deepEqual(run.data.entries[0].mediaAssets,ids.map(id=>before.mediaAssets.find(a=>a.id===id)));
+  assert.deepEqual(run.data.entries[0].articleDocument,before.articleDocument); assert.deepEqual(run.data.entries[0].timeNotes,before.timeNotes);
+});
+
+
+test('one requested case read supplies complete source, media and body with a single snapshot and no unrelated fields', async () => {
+  const data = library(); let reads = 0;
+  data.entries[0].text = '完整原词\n'.repeat(1800);
+  const api = createCaseOperations({ loadState: async () => { reads++; return data; }, enqueue: fn => fn() });
+  const parts = ['overview', 'source', 'media', 'document'];
+  const result = await api.read({ caseId: 'old', parts, length: 49152 });
+  assert.equal(reads, 1, 'one user request must not load the same library once per section');
+  assert.equal(result.nextOffset, null);
+  const content = JSON.parse(result.content);
+  assert.deepEqual(Object.keys(content), parts);
+  assert.equal(content.document.text, data.entries[0].text);
+  assert.deepEqual(content.media, data.entries[0].mediaAssets);
+  assert.deepEqual(content.source.sourceFacts, data.entries[0].sourceFacts);
+  assert.equal(result.revision, await caseRevision(data, data.entries[0]));
+  assert.equal(result.untrustedContent, true);
+  assert(!result.content.includes('must-not-expose'));
+  await assert.rejects(api.read({ caseId: 'old', part: 'media', parts }), { code: 'invalid_input' });
+  await assert.rejects(api.read({ caseId: 'old', parts: [] }));
+  await assert.rejects(api.read({ caseId: 'old', parts: ['media', 'media'] }));
+  assert.equal(reads, 1, 'invalid requests must fail before a library read');
+});
+
+test('multi-part pagination preserves the whole original and rejects an intervening human edit', async () => {
+  const run = service(library()), parts = ['source', 'document', 'annotations'];
+  const first = await run.api.read({ caseId: 'old', parts, length: 200 });
+  let text = first.content, page = first;
+  while (page.nextOffset !== null) {
+    page = await run.api.read({ caseId: 'old', parts, expectedRevision: first.revision, offset: page.nextOffset, length: 200 });
+    text += page.content;
+  }
+  assert.equal(JSON.parse(text).document.text, run.data.entries[0].text);
+  assert.deepEqual(JSON.parse(text).annotations.timeNotes, run.data.entries[0].timeNotes);
+  run.data.entries[0].text = '用户刚修改的正文';
+  await assert.rejects(run.api.read({ caseId: 'old', parts, expectedRevision: first.revision, offset: first.nextOffset }), { code: 'case_conflict' });
+  const combined = service(combinationLibrary());
+  const saved = await combined.api.execute('organize_case', await combineInput(combined));
+  await assert.rejects(combined.api.read({ caseId: saved.cases[0].caseId, parts: ['overview', 'document'] }), { code: 'compound_member' });
 });

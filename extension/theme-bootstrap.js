@@ -33,6 +33,24 @@
   root.style.backgroundColor = backgroundColor;
   root.style.colorScheme = colorScheme;
 
+  // Pages ship Chinese markup; when the last page used another language, keep the body hidden
+  // until initializeUi has translated it so the Chinese text never flashes.
+  const storedLocale = (() => {
+    try {
+      return localStorage.getItem("promptDirectorLocale");
+    } catch {
+      return null;
+    }
+  })();
+  if (storedLocale && storedLocale !== "zh-CN" && document.head) {
+    const pending = document.createElement("style");
+    pending.id = "promptdirector-locale-pending";
+    pending.textContent = "body { visibility: hidden; }";
+    document.head.append(pending);
+    // Never leave a page blank when its script fails to start.
+    setTimeout(() => pending.remove(), 3000);
+  }
+
   if (storedMotion === "none") {
     try {
       localStorage.setItem("promptDirectorMotion", "reduced");

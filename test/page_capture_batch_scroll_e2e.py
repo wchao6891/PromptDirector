@@ -28,7 +28,7 @@ def main():
         cancelled=wait_for_async_condition(panel,'()=>window.scanResult',timeout=30000)
         assert cancelled['batch']['stopReason']=='cancelled',cancelled
         assert page.locator('#scroll').evaluate('e=>e.scrollTop')==520
-        assert panel.evaluate("()=>chrome.storage.local.get('entries').then(s=>(s.entries||[]).length)")==0
+        assert panel.evaluate("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(s=>(s.entries||[]).length)")==0
         for target in [0,-1,1.5,'invalid']:
             invalid=panel.evaluate("targetCount=>chrome.runtime.sendMessage({type:'START_PAGE_CAPTURE',mode:'list',targetCount})",target)
             assert not invalid['ok'],invalid

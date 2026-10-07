@@ -9,7 +9,9 @@ export function readVideoMedia(blob, mimeType, videoAssetId = "", options = {}) 
       settled = true;
       clearTimeout(timeout);
       URL.revokeObjectURL(url);
+      video.pause();
       video.removeAttribute("src");
+      video.load();
       resolve({ metadata, poster });
     };
     const metadata = () => ({
@@ -25,8 +27,8 @@ export function readVideoMedia(blob, mimeType, videoAssetId = "", options = {}) 
       if (!videoAssetId || !video.videoWidth || !video.videoHeight) return finish(metadata());
       try {
         const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        canvas.width = options.posterMaxWidth > 0 ? Math.min(video.videoWidth, options.posterMaxWidth) : video.videoWidth;
+        canvas.height = Math.max(1, Math.round(video.videoHeight * canvas.width / video.videoWidth));
         canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
         const posterBlob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("视频封面生成失败")), "image/webp", 0.84));
         const posterId = globalThis.crypto.randomUUID();

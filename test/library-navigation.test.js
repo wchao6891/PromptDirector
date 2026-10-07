@@ -59,7 +59,7 @@ test("desktop sidebar width is adjustable and persists as a bounded UI preferenc
   assert.match(css, /grid-template-columns: var\(--sidebar-width, 244px\) 6px minmax\(0, 1fr\)/);
   assert.match(css, /@media \(max-width: 900px\)[\s\S]*?\.sidebar-resizer \{ display: none; \}/);
   assert.match(source, /event\.key === "ArrowRight" \? 16 : -16/);
-  assert.match(source, /updateUiPreferences\(\{ \.\.\.uiPreferences, sidebarWidth \}\)/);
+  assert.match(source, /updateUiPreferences\(\{ sidebarWidth \}\)/);
   assert.match(source, /Math\.floor\(innerWidth \* 0\.45\)/);
 });
 

@@ -31,14 +31,14 @@ test("visual gallery cards contain only media and selection state", () => {
 
 test("time notes seek the local player and support optional segment ends", () => {
   const notes = source.slice(source.indexOf("function renderTimeNotes"), source.indexOf("function officialEmbedUrl"));
-  assert.match(notes, /seekToMs\(note\.startMs\)/);
-  assert.match(notes, /添加时间笔记/);
-  assert.match(notes, /更多记录选项/);
-  assert.match(notes, /endMs/);
+  assert.match(notes, /seekToMs\(ms\)/);
+  assert.match(notes, /mountReviewFeedback/);
+  assert.doesNotMatch(notes, /更多记录选项/);
+  assert.match(notes, /getRange/);
   assert.match(notes, /ADD_TIME_NOTE/);
   assert.match(notes, /DELETE_TIME_NOTE/);
   assert.match(notes, /ADD_VIDEO_KEYFRAME/);
-  assert.match(notes, /drawImage\(video/);
+  assert.match(notes, /captureReviewFrame/);
 });
 
 test("social video references prefer official embeds and never download a platform video", () => {
@@ -183,7 +183,7 @@ test("similar material stays local, image-led, and free of project-age resurfaci
   assert.match(discovery, /local-discovery-media/);
   assert.doesNotMatch(discovery, /local-discovery-copy|相似色卡|同类\$\{name\}/);
   assert.match(discovery, /相似资料/);
-  assert.match(discovery, /localSimilarityIndex\.profiles\.size/);
+  assert.match(discovery, /const similarityIndex = currentSimilarityIndex\(\)[\s\S]*similarityIndex\.profiles\.size/);
   assert.match(discovery, /renderedCount \+ PAGE_SIZE/);
   assert.match(discovery, /createStableMasonry\(grid, \{[\s\S]*scrollContainer: elements\.detailContent/);
   assert.match(discovery, /IntersectionObserver\([\s\S]*root: elements\.detailContent/);
@@ -193,7 +193,7 @@ test("similar material stays local, image-led, and free of project-age resurfaci
 });
 
 test("the home wall shows every library-visible content type and hides only explicit category-only types", () => {
-  const gallery = source.slice(source.indexOf("function renderGalleryResults"), source.indexOf("function projectManualOrderAvailable"));
+  const gallery = source.slice(source.indexOf("function structuredBrowseEntries"), source.indexOf("function projectManualOrderAvailable"));
   assert.match(gallery, /CONTENT_TYPE_VISIBILITY\.categoryOnly/);
   assert.match(gallery, /const browseEntries = selectedContentId/);
   assert.match(gallery, /isEntryPending\(entry\)/);

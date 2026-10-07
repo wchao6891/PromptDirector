@@ -34,7 +34,7 @@ export function bindVideoHoverPreview(container, options = {}) {
     container.classList.add("is-video-loading");
     try {
       const blob = await options.loadBlob();
-      if (!active || token !== generation) return;
+      if (!active || token !== generation || !container.isConnected) return;
       if (!(blob instanceof Blob) || !blob.size || !blob.type.startsWith("video/")) {
         throw new Error("本地视频文件缺失或格式无效");
       }
@@ -50,7 +50,10 @@ export function bindVideoHoverPreview(container, options = {}) {
       video.src = objectUrl;
       container.append(video);
       await video.play();
-      if (!active || token !== generation) return destroyPlayer();
+      // An older play() can settle after a new pointer entry created a player.
+      // It owns no part of the newer preview and must leave it alone.
+      if (token !== generation) return;
+      if (!active || !container.isConnected) return destroyPlayer();
       container.classList.remove("is-video-loading");
       container.classList.add("is-video-playing");
     } catch {
@@ -69,6 +72,7 @@ export function bindVideoHoverPreview(container, options = {}) {
   container.addEventListener("pointerenter", start);
   container.addEventListener("pointerleave", stop);
   return {
+    stop,
     destroy() {
       active = false;
       container.removeEventListener("pointerenter", start);

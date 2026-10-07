@@ -172,3 +172,16 @@ test('save acknowledgement identifies persisted body, exact sources and project 
   assert.equal(item.body.characters, saved.text.length);
   assert.match(item.body.sha256, /^[a-f0-9]{64}$/);
 });
+
+test('new materials save and read back authored fields, labels, source evidence and explicit classification through shared schemas', async () => {
+  const run=setup(), pathIds=[run.state.taxonomy.nodes[0].id];
+  const input={title:'新创作方案',text:'自己的方案正文',kind:'creation',creative:{prompt:'镜头创作词',summary:'提炼',notes:'待审',purpose:'广告',plan:'版本A'},customLabels:['人工选择'],classificationPathIds:pathIds,sourceFacts:{author:'明确提供的作者',license:'fixture license'}};
+  const receipt=await run.save(input,'authored-new');assert(receipt.ok);
+  const id=receipt.results[0].entryId;
+  const creative=JSON.parse((await run.cases.read({caseId:id,part:'creative'})).content);
+  assert.deepEqual(creative,input.creative);
+  const annotations=JSON.parse((await run.cases.read({caseId:id,part:'annotations'})).content);
+  assert.deepEqual(annotations.customLabels,input.customLabels);assert.deepEqual(annotations.classification.pathIds,pathIds);
+  assert.equal(JSON.parse((await run.cases.read({caseId:id,part:'source'})).content).sourceFacts.author,input.sourceFacts.author);
+  assert.equal(run.state.entries.length,2);
+});

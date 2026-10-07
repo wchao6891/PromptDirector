@@ -28,7 +28,7 @@ def main():
         editor.locator('summary').click()
         title = editor.locator('.entry-edit-row input').first
         title.fill('尚未保存标题')
-        original = editor.locator('.entry-original-summary')
+        original = page.locator('.original-prompt-panel')
         original.get_by_role('button', name='编辑原始提示词', exact=True).click()
         original.locator('textarea').fill('尚未保存原始提示词')
         remove = editor.locator('.selected-edit-tags button').first
@@ -48,7 +48,7 @@ def main():
         expect(title).to_have_value('尚未保存标题')
         expect(original.locator('textarea')).to_have_value('尚未保存原始提示词')
         expect(editor.locator('select[aria-label="选择创作维度"]')).to_be_focused()
-        stored = page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries.find(e=>e.id==='edit-case')")
+        stored = page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.find(e=>e.id==='edit-case')")
         assert not stored['facetAssignments']
         assert stored['title'] == fixture['title'] and stored['text'] == fixture['text']
         original.get_by_role('button', name='取消', exact=True).click()
@@ -66,6 +66,7 @@ def main():
         page.reload()
         expect(page.locator('[data-entry-id="edit-case"].case-card')).to_be_visible()
         page.locator('[data-entry-id="edit-case"].case-card').click()
+        page.get_by_role('tab',name='AI 逆推',exact=True).click()
         ai = page.locator('.image-reconstruction-current')
         ai.get_by_role('button', name='编辑 AI 逆推提示词', exact=True).click()
         ai.locator('textarea').fill('')
@@ -74,18 +75,18 @@ def main():
         page.reload()
         page.locator('[data-entry-id="edit-case"].case-card').click()
         expect(page.locator('.image-reconstruction-current')).to_have_count(0)
-        stored = page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries.find(e=>e.id==='edit-case')")
+        stored = page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.find(e=>e.id==='edit-case')")
         analysis = stored['mediaAssets'][0]['visionAnalysis']
         assert analysis['reconstructionPrompt'] == '' and analysis['userEdited']
         assert analysis['tags'] and analysis['imageFingerprint'] == 'fixture'
         assert stored['text'] == fixture['text'] and stored['mediaAssets'][0]['id'] == 'edit-image'
         # Adopted AI clearing must clear the displayed layer and its underlying text together.
         result = page.evaluate('''async () => {
-          const {entries} = await chrome.storage.local.get('entries');
+          const {entries} = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
           const entry=entries.find(e=>e.id==='edit-case');
           entry.mediaAssets[0].visionAnalysis.reconstructionPrompt='底层旧AI';
           entry.mediaPrompts=[{assetId:'edit-image',source:'ai-suggestion',text:'采用AI'}];
-          await chrome.storage.local.set({entries});
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries}));
           return chrome.runtime.sendMessage({type:'UPDATE_ENTRY_MEDIA_PROMPT',entryId:entry.id,assetId:'edit-image',text:'',preserveAiSource:true});
         }''')
         assert result['ok'], result

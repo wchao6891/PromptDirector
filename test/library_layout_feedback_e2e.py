@@ -19,7 +19,7 @@ def main():
    entries.append(e)
   s.seed_storage(setup,{'entries':entries,'uiPreferences':{'locale':'zh-CN','motion':'reduced','galleryZoom':50},'organizerState':{'version':7,'collections':[{'id':'root','name':'项目','entryIds':['v0']},{'id':'child','parentId':'root','name':'子项目','entryIds':['v1']}]}})
   setup.evaluate("""async()=>{const {saveMediaBlob}=await import('./media-store.js');for(let i=0;i<18;i++){const c=document.createElement('canvas');c.width=i%2?360:640;c.height=i%2?640:360;const ctx=c.getContext('2d');ctx.fillStyle=i%2?'#8a6040':'#386578';ctx.fillRect(0,0,c.width,c.height);await saveMediaBlob('p'+i,await new Promise(r=>c.toBlob(r)));}}""")
-  before=setup.evaluate("()=>chrome.storage.local.get(['entries','organizerState'])")
+  before=setup.evaluate("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','organizerState']))")
   p=s.open_page('library.html',wait_until='networkidle');expect(p.locator('#gallery-size')).to_have_value('50')
   assert p.locator('.size-mark').count()==0
   centers=[]
@@ -66,7 +66,7 @@ def main():
   expect(menu.locator('#share-export')).to_have_class('button-primary')
   p.screenshot(path=str(OUT/'management-menu.png'))
   p.locator('#selection-more-menu summary').click();p.locator('#share-cancel').click()
-  after=setup.evaluate("()=>chrome.storage.local.get(['entries','organizerState'])");assert after==before
+  after=setup.evaluate("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','organizerState']))");assert after==before
   assert not s.page_errors,s.page_errors
   (OUT/'checks.json').write_text(json.dumps({'centers':centers,'pointerHeader':css,'dataUnchanged':True},ensure_ascii=False,indent=2))
   print('PASS: shared zoom/reset, video centers at min/default/max, pointer/keyboard headers, topbar scope, shared menu and unchanged data')

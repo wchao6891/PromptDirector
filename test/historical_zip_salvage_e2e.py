@@ -112,7 +112,7 @@ def main() -> None:
             invalid_row = dialog.locator(".library-package-import-row", has_text="invalid-share.zip")
             expect(invalid_row).to_contain_text("缺少 library.json")
             expect(library.locator("#library-package-import-confirm")).to_be_disabled()
-            before_remove = library.evaluate("async () => (await chrome.storage.local.get('entries')).entries || []")
+            before_remove = library.evaluate("async () => (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries || []")
             assert before_remove == [], before_remove
 
             library.locator("#library-package-import-cancel").click()
@@ -121,7 +121,7 @@ def main() -> None:
                 """async () => {
                   const media = await import(chrome.runtime.getURL('media-store.js'));
                   return {
-                    entries: (await chrome.storage.local.get('entries')).entries || [],
+                    entries: (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries || [],
                     blobs: await Promise.all(['image:good', 'image:damaged', 'image:second'].map(id => media.getMediaBlob(id)))
                   };
                 }"""
@@ -161,11 +161,23 @@ def main() -> None:
             library.locator("#library-package-import-confirm").click()
             expect(dialog).to_be_visible()
             expect(library.locator("#library-package-import-feedback")).to_contain_text("模拟批量导入提交失败", timeout=10_000)
+            # Failed imports now hand their pre-written media to the background staged-media
+            # registry (RELEASE_STAGED_MEDIA), which deletes it asynchronously. Wait for that
+            # cleanup to finish; the end state must still be zero entries and zero orphan blobs.
+            library.wait_for_function(
+                """async () => {
+                  const media = await import(chrome.runtime.getURL('media-store.js'));
+                  const blobs = await Promise.all(['image:good', 'image:damaged', 'image:second'].map(id => media.getMediaBlob(id)));
+                  return blobs.every(blob => blob == null);
+                }""",
+                polling=200,
+                timeout=15_000,
+            )
             failed_apply = library.evaluate(
                 """async () => {
                   const media = await import(chrome.runtime.getURL('media-store.js'));
                   return {
-                    entries: (await chrome.storage.local.get('entries')).entries || [],
+                    entries: (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries || [],
                     blobs: await Promise.all(['image:good', 'image:damaged', 'image:second'].map(id => media.getMediaBlob(id)))
                   };
                 }"""

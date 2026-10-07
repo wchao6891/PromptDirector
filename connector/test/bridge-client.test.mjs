@@ -29,3 +29,14 @@ for (const code of ['EPERM', 'EACCES', 'ENOENT', 'ECONNREFUSED']) {
     });
   });
 }
+
+test('missing pairing record keeps ENOENT for discovery but gives pairing guidance without local paths', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'pd-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await assert.rejects(callExtension('status', {}, { root, instanceId: randomUUID() }), error => {
+    assert.equal(error.code, 'ENOENT');
+    assert.match(error.message, /配对/);
+    assert(!error.message.includes(root));
+    return true;
+  });
+});

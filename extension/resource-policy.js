@@ -14,6 +14,9 @@ export const RESOURCE_POLICY = Object.freeze({
   agentToolCalls: 500,
   agentDurationMs: 30 * 60 * 1000,
   mediaDownloadConcurrency: 2,
+  // Native SHA-256 reads the whole file into one buffer (measured about 7x faster than streaming on M4).
+  // Up to this share of the working budget, two concurrent downloads plus their buffers still fit.
+  nativeDigestFraction: 1 / 8,
   temporaryIdleMs: 7 * 24 * 60 * 60 * 1000
 });
 

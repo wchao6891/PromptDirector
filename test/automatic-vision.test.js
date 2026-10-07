@@ -50,3 +50,26 @@ test("automatic import vision merges newly added images without paying twice", (
     providerType: "openai", model: "vision-model", outputLocale: "zh-CN"
   }, merged), null);
 });
+
+test("a paused automatic job resumes with its unfinished images when the same service queues more work", () => {
+  const route = { providerType: "openai", providerId: "openai", model: "vision-model", outputLocale: "zh-CN" };
+  const paused = { ...buildAutomaticVisionJob(entries, ["case-one"], { ...route, id: "automatic:paused" }), status: "paused" };
+  const resumed = buildAutomaticVisionJob(entries, ["case-one"], route, paused);
+  assert.equal(resumed.id, "automatic:paused");
+  assert.equal(resumed.status, "running");
+  assert.deepEqual(resumed.items.map((item) => item.visualId), ["image-one", "image-two"]);
+});
+
+test("changing the automatic image model carries unfinished images into a job for the current model", () => {
+  const oldRoute = { providerType: "openai", providerId: "openai", model: "old-model", outputLocale: "zh-CN" };
+  let current = buildAutomaticVisionJob(entries, ["case-one"], { ...oldRoute, id: "automatic:old" });
+  current = { ...current, items: current.items.map((item) => item.visualId === "image-one"
+    ? { ...item, status: "succeeded" }
+    : item) };
+  const analysed = structuredClone(entries);
+  analysed[0].mediaAssets[0].visionAnalysis = structuredClone(analysed[0].mediaAssets[2].visionAnalysis);
+  const next = buildAutomaticVisionJob(analysed, [], { ...oldRoute, model: "new-model", id: "automatic:new" }, current);
+  assert.equal(next.id, "automatic:new");
+  assert.equal(next.model, "new-model");
+  assert.deepEqual(next.items.map((item) => item.visualId), ["image-two"], "only the unfinished image is requeued, nothing already paid is resent");
+});

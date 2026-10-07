@@ -72,7 +72,7 @@ scroller.addEventListener('scroll',()=>{{
           status:'ready',candidates:[c],selections:[{candidateId:c.id,includeText:true,selectedMediaIds:c.media.map(m=>m.id),mediaDecision:'confirmed'}]
         }})""", candidate)
         assert result["ok"], result
-        entries = setup.evaluate("async()=> (await chrome.storage.local.get('entries')).entries")
+        entries = setup.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries")
         assert len(entries) == 1, entries
         entry = entries[0]
         assert entry["sourceFacts"]["itemId"] == WORK_ID

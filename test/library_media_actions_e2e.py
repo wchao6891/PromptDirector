@@ -31,6 +31,7 @@ def action_geometry(page, name: str) -> dict:
 
 
 def assert_action_is_reachable(page, name: str) -> None:
+    page.get_by_role("button", name=name).scroll_into_view_if_needed()
     page.wait_for_function(
         """name => {
           const button = [...document.querySelectorAll('button')]
@@ -89,10 +90,13 @@ def main() -> None:
         expect(library.get_by_role("button", name="编辑当前图片", exact=True)).to_have_count(0)
         library.locator(".entry-editor-inline > summary").click()
         expect(library.locator(".entry-editor-inline textarea:visible")).to_have_count(0)
-        expect(library.get_by_role("combobox", name="提示词范围", exact=True)).to_be_visible()
+        expect(library.locator(".entry-editor-inline .entry-original-editor")).to_have_count(0)
+        library.get_by_role("tab", name="当前媒体", exact=True).click()
+        expect(library.get_by_role("button", name="添加当前媒体提示词", exact=True)).to_be_visible()
+        library.get_by_role("tab", name="原始提示词", exact=True).click()
         library.locator(".entry-editor-inline > summary").click()
         expect(library.locator(".original-prompt-panel").get_by_role("button", name="编辑原始提示词", exact=True)).to_be_visible()
-        expect(library.locator(".original-prompt-panel h3")).to_have_text("案例共享提示词")
+        expect(library.locator(".original-prompt-panel h3")).to_have_text("原始提示词")
         stable_before = library.evaluate(
             """() => {
               const gallery = document.querySelector('.detail-visual-gallery');
@@ -112,7 +116,7 @@ def main() -> None:
         )
         for index in (14, 6, 11):
             library.locator(".detail-visual-thumb").nth(index).click()
-        expect(library.locator(".detail-visual-caption")).to_contain_text("12/15")
+        assert "12/15" in library.locator(".detail-visual-caption > span").first.get_attribute("title")
         stable_after = library.evaluate(
             """() => {
               const gallery = document.querySelector('.detail-visual-gallery[data-stability-probe="same-gallery"]');
@@ -137,15 +141,13 @@ def main() -> None:
 
         library.locator(".detail-visual-thumb").nth(14).click()
 
-        library.locator(".entry-editor-inline > summary").click()
-        active_asset_id = library.locator(".entry-editor-inline").get_attribute("data-asset-id")
-        library.get_by_role("combobox", name="提示词范围", exact=True).select_option(active_asset_id)
-        original_editor = library.locator(".entry-original-panel")
-        original_editor.get_by_role("button", name="编辑原始提示词", exact=True).click()
-        original_editor.get_by_role("textbox", name="编辑原始提示词", exact=True).fill("第十五张的独立原始")
+        library.get_by_role("tab", name="当前媒体", exact=True).click()
+        library.get_by_role("button", name="添加当前媒体提示词", exact=True).click()
+        original_editor = library.locator(".media-original-prompt-panel")
+        original_editor.get_by_role("textbox", name="添加当前媒体提示词", exact=True).fill("第十五张的独立原始")
         original_editor.get_by_role("button", name="保存", exact=True).click()
-        expect(library.locator(".original-prompt-panel .prompt-read-body")).to_have_text("第十五张的独立原始")
-        stored = library.evaluate("async()=>{const {entries}=await chrome.storage.local.get('entries');return entries[0]}")
+        expect(library.locator(".media-original-prompt-panel .prompt-read-body")).to_have_text("第十五张的独立原始")
+        stored = library.evaluate("async()=>{const {entries}=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));return entries[0]}")
         assert next(p for p in stored["mediaPrompts"] if p["text"] == "第十五张的独立原始")["assetId"] == "multi-image-15"
         library.locator(".entry-editor-inline > summary").click()
 

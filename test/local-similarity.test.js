@@ -71,11 +71,12 @@ test('repeating prompt words or whole duplicate members does not inflate similar
  assert.equal(result[0].promptSimilarity,result[1].promptSimilarity);
 });
 
-test('original media prompts exclude website prose and incomplete video reconstruction remain excluded',()=>{
+test('original media prompts exclude website prose; explicitly adopted video AI prompts provide independent evidence while incomplete analysis does not',()=>{
  const current=entry('current','video',[],'website marketing');current.mediaPrompts=[{assetId:'current:media',source:'webpage',text:'copper robot city'}];
  const ai=entry('ai','video',[],'');ai.mediaPrompts=[{assetId:'ai:media',source:'ai-suggestion',text:'copper robot city'}];
- const result=rank([current,entry('original','video',[],'copper robot city'),entry('marketing','video',[],'website marketing'),ai]);
- assert.deepEqual(ids(result),['original']);
+ const incomplete=entry('incomplete','video',[],'');incomplete.videoAnalyses=[{id:'unfinished',assetId:'incomplete:media',mode:'visual-reconstruction',reconstructionPrompt:'copper robot city',finishReason:'length'}];
+ const result=rank([current,entry('original','video',[],'copper robot city'),entry('marketing','video',[],'website marketing'),ai,incomplete]);
+ assert.deepEqual(ids(result),['ai','original']);
 });
 
 test('tags assist equal color and prompt results but cannot gate or manufacture candidates',()=>{

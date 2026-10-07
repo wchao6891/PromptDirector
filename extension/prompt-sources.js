@@ -1,17 +1,17 @@
 import { usesArticleReader } from "./case-presentation.js";
 import { currentVideoReconstruction } from "./media.js";
 import { validReconstructionPrompt } from "./image-prompt.js";
-import { CONTENT_ROLES, contentRoleForEntry } from "./taxonomy.js";
 
 export function detailPromptSources(entry = {}, asset = {}) {
   const mediaPrompt = originalMediaPrompt(entry, asset.id);
-  const adoptedAi = String(entry.mediaPrompts?.find(item => item.assetId === asset.id && item.source === "ai-suggestion")?.text ?? "").trim();
+  const adoptedPrompt = entry.mediaPrompts?.find(item => item.assetId === asset.id && item.source === "ai-suggestion");
+  const adoptedAi = String(adoptedPrompt?.text ?? "").trim();
   const original = String(mediaPrompt?.text ?? "").trim() || sharedOriginalPrompt(entry);
   const record = asset.kind === "video" ? currentVideoReconstruction(entry, asset.id) : null;
   return {
     original,
     originalAssetId: mediaPrompt?.source !== "ai-suggestion" && String(mediaPrompt?.text ?? "").trim() ? asset.id : "",
-    ai: asset.kind === "video" ? record?.reconstructionPrompt || "" : adoptedAi || validReconstructionPrompt(asset),
+    ai: adoptedPrompt?.cleared ? '' : adoptedAi || (asset.kind === "video" ? record?.reconstructionPrompt || "" : validReconstructionPrompt(asset)),
     aiSource: adoptedAi ? "media-prompt" : "analysis",
     record
   };
@@ -29,10 +29,6 @@ export function originalMediaPrompt(entry, assetId) {
 export function sharedOriginalPrompt(entry = {}) {
   if (usesArticleReader(entry) || entry.sourceFacts?.originalPromptAvailable === false
     || originalMediaPrompts(entry).some(item => item.source === "webpage")) return "";
-  // Explicit source evidence remains readable regardless of browsing category.
-  if (entry.sourceFacts?.originalPromptAvailable !== true && (
-    [CONTENT_ROLES.imageCase, CONTENT_ROLES.videoCase].includes(contentRoleForEntry(entry))
-  )) return "";
   return String(entry.text ?? "").trim();
 }
 

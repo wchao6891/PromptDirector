@@ -7,6 +7,7 @@
     <script src="theme-bootstrap.js"></script>
     <link rel="stylesheet" href="ui-foundation.css" />
     <link rel="stylesheet" href="collector.css" />
+    <link rel="stylesheet" href="organization.css" />
   </head>
   <body>
     <main>
@@ -95,17 +96,19 @@
       <section id="page-capture" class="page-capture" hidden aria-live="polite">
         <header>
           <h2 id="page-capture-title" data-i18n="网页采集">网页采集</h2>
-          <select id="page-capture-mode" aria-label="采集方式" data-i18n-aria-label="采集方式"><option value="single" data-i18n="单个案例">单个案例</option><option value="list" data-i18n="列表批量">列表批量</option><option value="article" data-i18n="文章内案例">文章内案例</option></select>
+          <select id="page-capture-mode" aria-label="采集方式" data-i18n-aria-label="采集方式"><option value="single" data-i18n="单个案例">单个案例</option><option value="list" data-i18n="列表批量">列表批量</option><option value="article" data-i18n="文章内案例">文章内案例</option><option value="media" data-i18n="每个媒体一个案例" hidden>每个媒体一个案例</option></select>
           <button id="page-capture-undo-region" class="button-secondary compact capture-icon-button" type="button" title="撤销" aria-label="撤销" data-i18n-title="撤销" data-i18n-aria-label="撤销"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-undo-2"></use></svg></button>
           <button id="page-capture-scan" class="button-secondary compact capture-icon-button" type="button" title="重新扫描" aria-label="重新扫描" data-i18n-title="重新扫描" data-i18n-aria-label="重新扫描"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button>
         </header>
         <p id="page-capture-help"></p>
+        <label id="page-capture-details-option" class="page-capture-details-option" hidden><input id="page-capture-details" type="checkbox" /><span data-i18n="采集详情信息">采集详情信息</span></label>
         <section id="page-capture-list-setup" class="page-capture-list-setup" hidden>
           <p data-i18n="选一个代表案例，再采集同类内容">选一个代表案例，再采集同类内容</p>
           <div class="page-capture-list-controls"><label><span data-i18n="目标案例数">目标案例数</span><input id="page-capture-target-count" type="number" min="1" inputmode="numeric" placeholder="数量" data-i18n-placeholder="数量" /></label><button id="page-capture-list-run" class="button-secondary" type="button" data-i18n="读取列表">读取列表</button></div>
         </section>
         <section id="page-capture-list-result" class="page-capture-list-result" hidden>
           <p id="page-capture-list-summary"></p>
+          <button id="page-capture-merge-groups" data-i18n="合并选中分组" class="button-secondary compact" type="button" hidden>合并选中分组</button>
           <label><span data-i18n="保存方式">保存方式</span><select id="page-capture-save-mode"><option value="" data-i18n="请选择">请选择</option><option value="multiple" data-i18n="分别保存多个案例">分别保存多个案例</option><option value="combined" data-i18n="合并为一个案例">合并为一个案例</option></select></label>
           <label id="page-capture-combined-title-row" hidden><span data-i18n="合并案例标题">合并案例标题</span><input id="page-capture-combined-title" autocomplete="off" placeholder="默认使用列表页标题" data-i18n-placeholder="默认使用列表页标题" /></label>
         </section>
@@ -158,23 +161,12 @@
           <div><small data-i18n="待保存内容">待保存内容</small><h2 id="content-summary"></h2></div><button id="organize-toggle" class="organize-toggle" type="button" aria-expanded="false" title="编辑与整理" aria-label="编辑与整理" data-i18n-title="编辑与整理" data-i18n-aria-label="编辑与整理"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-pencil"></use></svg></button>
         </header>
         <div id="quick-preview" class="quick-preview"></div>
-        <section id="capture-metadata" class="save-metadata" aria-label="保存设置" data-i18n-aria-label="保存设置">
-          <label>
-            <span data-i18n="项目">项目</span>
-            <select id="capture-collection"></select>
-          </label>
-          <label id="capture-new-collection-row" hidden>
-            <span data-i18n="新项目名称">新项目名称</span>
-            <input id="capture-new-collection-name" autocomplete="off" placeholder="输入后会在保存案例时创建" data-i18n-placeholder="输入后会在保存案例时创建" />
-          </label>
+        <section id="capture-metadata" class="detail-quick-organization" aria-label="保存设置" data-i18n-aria-label="保存设置">
+          <details id="capture-collection" class="detail-project-menu"></details>
           <label id="capture-extra-metadata">
-            <span data-i18n="分类">分类</span>
-            <select id="content-type"></select>
+            <select id="content-type" aria-label="分类" title="分类" data-i18n-aria-label="分类" data-i18n-title="分类"></select>
           </label>
-          <div class="custom-label-editor">
-            <span data-i18n="标签">标签</span>
-            <div id="custom-labels"></div>
-          </div>
+          <div id="custom-labels"></div>
         </section>
         <div id="capture-add-more-actions" class="add-more-actions">
           <button id="add-smart-visuals" class="button-secondary" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-image"></use></svg><span data-i18n="选图">选图</span></button>

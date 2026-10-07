@@ -125,7 +125,7 @@ test("page capture never deletes committed media when a post-commit action fails
   const start = source.indexOf("async function commitPageCapture(");
   const block = source.slice(start, source.indexOf("async function startCaptureForCase", start));
   assert.match(block, /metadataCommitted = true/);
-  assert.match(block, /if \(!metadataCommitted\) await deleteUnreferencedMedia\(savedAssetIds\)/);
+  assert.match(block, /if \(!metadataCommitted\) \{[\s\S]*?await progress\.release\?\.\(savedAssetIds\);[\s\S]*?await deleteUnreferencedMedia\(savedAssetIds\)/);
   assert.ok(block.indexOf("metadataCommitted = true") < block.indexOf("await notifySaved"));
 });
 
@@ -133,7 +133,9 @@ test("temporary composer assets are tracked before derived data can fail", async
   const source = await readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8");
   const start = source.indexOf("async function addTempReferences");
   const block = source.slice(start, source.indexOf("async function removeTempReference", start));
-  assert.ok(block.indexOf("savedAssetIds.push(assetId)") < block.indexOf("await saveDerivedMedia"));
+  assert.ok(block.indexOf("await stage.register([assetId])") >= 0);
+  assert.ok(block.indexOf("await stage.register([assetId])") < block.indexOf("await saveMediaBlob"));
+  assert.doesNotMatch(block, /deleteMediaBlobs/);
 });
 
 test("creative video posters roll back only before their metadata commit", async () => {

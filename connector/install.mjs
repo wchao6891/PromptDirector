@@ -6,6 +6,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectorRoot, ensurePrivateRoot, instancePaths, readJson } from './paths.mjs';
 import { windowsLauncher, registerWindowsHost, nativeRegistryKey } from './windows.mjs';
+import { nodeCommand } from './node-command.mjs';
 const source = dirname(fileURLToPath(import.meta.url));
 const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
 export async function installationPlan({ root = connectorRoot(), nativeDirectory, extensionId } = {}) {
@@ -27,7 +28,7 @@ export async function installationPlan({ root = connectorRoot(), nativeDirectory
   return { root: resolve(root), nativeDirectory: resolve(nativeDirectory), extensionId,
     runtime: join(resolve(root), 'runtime'), launcher: join(resolve(root), process.platform === 'win32' ? 'native-host.cmd' : 'native-host'),
     ...(process.platform === 'win32' ? { registryKey: nativeRegistryKey } : {}),
-    registration: join(resolve(nativeDirectory), 'com.promptdirector.connector.json'), node: process.execPath };
+    registration: join(resolve(nativeDirectory), 'com.promptdirector.connector.json'), node: nodeCommand() };
 }
 async function atomicWrite(path, text, mode = 0o600) {
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -41,11 +42,11 @@ export async function install(plan, { register = registerWindowsHost } = {}) {
   const sharedDirectory = join(plan.root, 'extension');
   await mkdir(sharedDirectory, { recursive: true, mode: 0o700 });
   await atomicWrite(join(sharedDirectory, 'package.json'), JSON.stringify({ type: 'module' }));
-  for (const name of ['case-operation-specs.js', 'project-operation-specs.js', 'skill-operation-specs.js', 'analysis-batch-specs.js', 'visual-result-schema.js']) {
+  for (const name of ['workspace-screenshot-specs.js', 'agent-case-action-specs.js', 'workspace-operation-specs.js', 'case-query-specs.js', 'case-operation-specs.js', 'project-operation-specs.js', 'skill-operation-specs.js', 'analysis-batch-specs.js', 'visual-result-schema.js']) {
     await cp(resolve(source, '../extension', name), join(sharedDirectory, name));
   }
   for (const entry of await readdir(source, { withFileTypes: true })) {
-    if (entry.name.endsWith('.mjs') || ['node_modules', 'package.json', 'package-lock.json', 'SKILL.md'].includes(entry.name)) {
+    if (entry.name.endsWith('.mjs') || ['node_modules', 'package.json', 'package-lock.json', 'SKILL.md', 'README.md', 'INSTALL.md'].includes(entry.name)) {
       await cp(join(source, entry.name), join(plan.runtime, entry.name), { recursive: true, dereference: true });
     }
   }
@@ -63,7 +64,7 @@ export async function pair(instanceId, root = connectorRoot()) {
   const value = await readJson(record);
   if (value.instanceId !== instanceId || !/^[a-f0-9]{64}$/.test(value.secret)) throw new Error('未找到有效的资料库配对记录。');
   await atomicWrite(join(root, 'selected.json'), JSON.stringify({ instanceId }));
-  return { instanceId, mcp: { command: process.execPath, args: [join(root, 'runtime/mcp.mjs')], env: { PROMPTDIRECTOR_CONNECTOR_HOME: root } } };
+  return { instanceId, mcp: { command: nodeCommand(), args: [join(root, 'runtime/mcp.mjs')], env: { PROMPTDIRECTOR_CONNECTOR_HOME: root } } };
 }
 if (isMain(import.meta.url)) {
   const [command = 'plan', instanceId] = process.argv.slice(2);

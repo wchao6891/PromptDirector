@@ -2,13 +2,16 @@ import { readImageGenerationInfo } from "./image-generation-info.js";
 import { createSearchIndexCache } from "./search-index.js";
 import { materializeLogicalCases, normalizeCompoundCases } from "./compound-cases.js";
 import { entryMediaAssets } from "./media.js";
-import { filterCaseSearchEntries, searchCaseResult } from "./case-search.js";
+import { filterCaseSearchEntries, searchCaseResult, caseSearchSourceSummary, caseSearchPage } from "./case-search.js";
+import { describeCaseQuery } from './case-query-fields.js';
+import { caseTextPage } from './case-text-page.js';
 import { caseTextPart } from "./composer-library-tools.js";
 import { AGENT_CHUNK_BYTES, agentDownloadChunkBytes, agentError, bytesToBase64, requireInteger } from "./agent-protocol.js";
 import { detailPromptSources } from "./prompt-sources.js";
 import { sha256Blob } from "./blob-digest.js";
 import { resolveCaseMediaId } from './media-identity-aliases.js';
 import { assertCaseFilesReadable, caseFilesUnavailable } from './case-file-status.js';
+import { startPhase } from './perf-trace.js';
 
 // Explicit projections: never return GET_STATE or model runtime credentials.
 export function createAgentLibrary({ loadState, readBlob, readDerived, readDerivedMetadata, libraryUrl }) {
@@ -41,24 +44,40 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
     return entry;
   }
   return {
+    async describeQuery() {
+      let done = startPhase("agent", "describe:load");
+      const state = await load();
+      done();
+      done = startPhase("agent", "describe:fields");
+      try { return describeCaseQuery(state.entries, state); } finally { done(); }
+    },
     async search(input = {}) {
       const { query = "", offset = 0, limit = 24 } = input;
       requireInteger(offset); requireInteger(limit, { min: 1, max: 100 });
+      let done = startPhase("agent", "search:load");
       const state = await load();
-      const { minDurationMs, maxDurationMs, hasOriginalPrompt, ...indexScope } = input;
+      done();
+      const { minDurationMs, maxDurationMs, hasOriginalPrompt, hasPrompt, ...indexScope } = input;
       filterCaseSearchEntries([], state.organizerState, input);
       const scoped = filterCaseSearchEntries(state.entries, state.organizerState, indexScope);
+      done = startPhase("agent", "search:derived");
       const docs = await documents(scoped);
-      const { index, resultVersion } = searchCache.build(scoped, state.facetCatalog, docs, await readDerivedMetadata(), new Set(state.entries.map(e => e.id)));
+      const derived = await readDerivedMetadata();
+      done();
+      done = startPhase("agent", "search:index");
+      const { index, resultVersion } = searchCache.build(scoped, state.facetCatalog, docs, derived, new Set(state.entries.map(e => e.id)));
+      done();
       // Coverage must include unknown-duration candidates; structural project/type
       // scoping happens below, while index reads already skip unrelated projects.
-      const { matches: entries, revision, durationCoverage } = await searchCaseResult(state.entries, index, state.organizerState, input, resultVersion);
-      const projects = (state.organizerState?.collections || []).map(item => ({ id: item.id, name: item.name, parentId: item.parentId || null }));
-      const cases = input.countOnly === true ? [] : entries.slice(offset, offset + limit).map(entry => ({ ...summary(entry), excerpt: caseFilesUnavailable(entry) ? '' : String(entry.text || "").slice(0, 240), excerptOnly: true }));
-      return { cases, query, revision, ...(durationCoverage ? { durationCoverage } : {}), total: entries.length, offset, nextOffset: !input.countOnly && offset + cases.length < entries.length ? offset + cases.length : null,
-        projects, basis: "本地文字、标签和媒体元数据；未进行视觉识别。" };
+      done = startPhase("agent", "search:match");
+      const result = await searchCaseResult(state.entries, index, state.organizerState, input, resultVersion, { ...state, documentTextByAsset: docs, derivedMetadataByAsset: derived });
+      done();
+      const { matches: entries, revision, durationCoverage, engagementCoverage } = result;
+      const page = caseSearchPage(result, input, limit, entry => ({ ...summary(entry), sources: caseSearchSourceSummary(entry, input), excerpt: caseFilesUnavailable(entry) ? '' : String(entry.text || "").slice(0, 240), excerptOnly: true }));
+      return { ...page, query, revision, ...(durationCoverage ? { durationCoverage } : {}), ...(engagementCoverage ? { engagementCoverage } : {}), total: entries.length, offset,
+        basis: "本地文字、标签和媒体元数据；未进行视觉识别。" };
     },
-    async read({ caseId, assetId, part = "body", offset = 0, length = 12000 }) {
+    async read({ caseId, assetId, part = "body", offset = 0, length = 12000, expectedRevision }) {
       requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
       const entry = find(await load(), caseId);
       assetId = resolveCaseMediaId(entry, assetId);
@@ -85,11 +104,9 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
         : assetOriginal !== undefined ? assetOriginal
         : part === "media_prompts" ? JSON.stringify(entry.mediaPrompts || [])
         : caseTextPart(entry, part, byEntry);
-      return { ...summary(entry), part, content: text.slice(offset, offset + length), offset, totalCharacters: text.length,
-        nextOffset: offset + length < text.length ? offset + length : null,
-        mediaPrompts: (entry.mediaPrompts || []).map(prompt => ({ assetId: prompt.assetId, source: prompt.source, characters: prompt.text?.length || 0 })), sourcePages: entry.sourcePages || [],
-        provenance: entry.agentProvenance || null,
-        untrustedContent: true };
+      return { caseId: entry.id, ...(assetId ? { assetId } : {}), title: entry.title, sourceUrl: entry.url || '',
+        openUrl: `${libraryUrl}?case=${encodeURIComponent(entry.id)}`, part,
+        ...await caseTextPage({ caseId: entry.id, assetId, part, text, offset, length, expectedRevision }) };
     },
     async media({ caseId, assetId, offset = 0, expectedHash }) {
       requireInteger(offset);

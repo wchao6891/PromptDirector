@@ -108,3 +108,42 @@ test("video batches exclude busy assets and never join an unrelated single-item 
   assert.match(dispatch, /type: "RUN_VIDEO_ANALYSIS"/);
   assert.match(dispatch, /deadlineAt/);
 });
+
+test("visual set analysis writes into the latest library state instead of the pre-AI snapshot", () => {
+  const action = background.slice(
+    background.indexOf("async function analyzeEntryVisualSet"),
+    background.indexOf("async function dispatchVideoAnalysisTask")
+  );
+  const aiCall = action.indexOf("summarizeVisualSetWithAi(");
+  const queued = action.indexOf("return enqueue(async () => {");
+  assert.ok(aiCall > 0 && queued > aiCall, "the AI call stays outside the write queue and the write happens inside it");
+  const write = action.slice(queued);
+  assert.match(write, /const latestState = await readState\(\)/);
+  assert.match(write, /latestState\.entries\.map/);
+  assert.doesNotMatch(write, /[^t]state\.entries\.map/, "the stale pre-AI snapshot must never be committed");
+});
+
+test("automatic vision runner claims and pauses inside the write queue against the latest stored job so newly queued images survive", () => {
+  const runner = background.slice(
+    background.indexOf("async function runAutomaticVisionItem"),
+    background.indexOf("async function ensureAutomaticVisionAlarm")
+  );
+  const pause = runner.slice(runner.indexOf("!settings.autoAnalyzeImports"), runner.indexOf("const claimed ="));
+  assert.match(pause, /await enqueue\(async \(\) => \{\s*const latestStored = await libraryStorage\.get\(STORAGE_KEYS\.automaticVisionBatchJob\)/);
+  assert.match(pause, /pauseAnalysisBatch\(latest\)/);
+  const claim = runner.slice(runner.indexOf("const claimed ="), runner.indexOf("await Promise.all(claimed.claims"));
+  assert.match(claim, /^const claimed = await enqueue\(async \(\) => \{/);
+  assert.match(claim, /libraryStorage\.get\(STORAGE_KEYS\.automaticVisionBatchJob\)/);
+  assert.match(claim, /claimAnalysisItems\(recoverInterruptedAnalysisBatch\(reconcileVisionBatchResults\(latest,/);
+  assert.ok(claim.indexOf("commitLocalChanges") > claim.indexOf("libraryStorage.get"));
+  assert.ok(claim.indexOf("commitLocalChanges") < claim.indexOf("\n    });"));
+  assert.doesNotMatch(runner.slice(0, runner.indexOf("const claimed =")), /commitLocalChanges\(\{ \[STORAGE_KEYS\.automaticVisionBatchJob\]: job \}\)/);
+});
+
+test("creative output analysis awaits its queued commit before releasing the in-flight guard", () => {
+  const action = background.slice(
+    background.indexOf("async function analyzeCreativeOutput"),
+    background.indexOf("finally", background.indexOf("async function analyzeCreativeOutput"))
+  );
+  assert.match(action, /return await enqueue\(/);
+});

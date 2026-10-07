@@ -8,7 +8,7 @@ html.detail-open, html.detail-open body { overflow: hidden; }
 body { min-width: 320px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-.curated-header { position: sticky; z-index: 20; top: 0; display: grid; min-height: 64px; grid-template-areas: "title search actions"; grid-template-columns: minmax(0, 1fr) minmax(260px, 720px) minmax(0, 1fr); align-items: center; gap: 12px; border-bottom: 1px solid var(--ui-border); padding: 10px var(--ui-browse-gutter); background: var(--bar); }
+.curated-header { position: sticky; z-index: 20; top: 0; display: grid; min-height: 64px; grid-template-areas: "title search actions"; grid-template-columns: minmax(max-content, 1fr) minmax(260px, 720px) minmax(max-content, 1fr); align-items: center; gap: 12px; border-bottom: 1px solid var(--ui-border); padding: 10px var(--ui-browse-gutter); background: var(--bar); }
 .curated-title-group { grid-area: title; display: flex; min-width: 0; align-items: center; gap: 14px; }
 .curated-brand-home { display: flex; min-width: 0; flex: 0 1 auto; border-radius: var(--ui-control-radius); }
 .curated-brand-home:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: 3px; }
@@ -32,8 +32,8 @@ body { min-width: 320px; }
 .filter-panel label { display: flex; min-height: 32px; align-items: center; gap: 8px; font-size: var(--ui-button-size); }
 .filter-panel input { width: 15px; min-height: 15px; accent-color: var(--ui-accent-emphasis); }
 .filter-panel button { margin-top: 4px; }
-.curated-sort { min-width: 0; max-width: 100%; }
-.curated-sort select { width: 110px; min-width: 0; max-width: 100%; min-height: 34px; padding-block: 5px; font-size: var(--ui-button-size); font-weight: 750; }
+.curated-sort { flex: none; min-width: 0; max-width: 100%; }
+.curated-sort select { width: auto; min-width: 110px; max-width: 100%; min-height: 34px; padding-block: 5px; font-size: var(--ui-button-size); font-weight: 750; }
 
 .curated-status-bar { position: sticky; z-index: 15; top: 64px; display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--ui-border); padding: 5px var(--ui-browse-gutter); color: var(--ui-muted); background: var(--ui-raised); font-size: var(--ui-meta-size); }
 .curated-status-bar[hidden] { display: none; }

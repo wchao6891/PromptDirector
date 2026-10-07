@@ -7,20 +7,23 @@ const sourcePath = join(projectRoot, "node_modules", "lucide-static", "icon-node
 const outputPath = join(projectRoot, "extension", "assets", "ui-icons.svg");
 const iconNames = [
   "arrow-down", "arrow-left", "arrow-up", "check", "chevron-down", "chevron-left", "chevron-right", "circle-check-big", "clipboard", "copy",
-  "download", "ellipsis", "external-link", "file-text", "audio-lines", "file-box", "folder", "image", "library",
-  "list-checks", "maximize-2", "menu", "moon", "panel-left", "panel-left-close", "grip-vertical", "layers", "paperclip", "pencil", "play", "plus",
-  "refresh-cw", "save", "search", "send", "settings", "sliders-horizontal", "sparkles", "square-check-big",
-  "square", "sun", "tag", "trash-2", "undo-2", "upload", "video", "wand-sparkles", "x"
+  "download", "ellipsis", "external-link", "file-text", "audio-lines", "file-box", "folder", "image", "library", "clapperboard",
+  "list-checks", "maximize-2", "minimize-2", "menu", "moon", "panel-left", "panel-left-close", "grip-vertical", "layers", "paperclip", "pencil", "play", "plus",
+  "refresh-cw", "repeat-2", "mark-in", "mark-out", "camera", "brackets", "eraser", "images", "message-square", "pause", "volume-2", "volume-x", "keyboard", "save", "search", "send", "settings", "sliders-horizontal", "sparkles", "square-check-big",
+  "square", "step-back", "step-forward", "sun", "tag", "trash-2", "undo-2", "upload", "video", "wand-sparkles", "x"
 ];
 
 const iconNodes = JSON.parse(await readFile(sourcePath, "utf8"));
+// Product editing marks: [> opens the range; <] closes it.
+iconNodes['mark-in'] = [['path', { d: 'M7 4H3v16h4' }], ['path', { d: 'm11 7 7 5-7 5' }]];
+iconNodes['mark-out'] = [['path', { d: 'M17 4h4v16h-4' }], ['path', { d: 'm13 7-7 5 7 5' }]];
 const symbols = iconNames.map((name) => {
   const nodes = iconNodes[name];
   if (!nodes) throw new Error(`Lucide 图标不存在：${name}`);
   return `  <symbol id="icon-${name}" viewBox="0 0 24 24">\n${nodes.map(renderNode).join("\n")}\n  </symbol>`;
 });
 const sprite = [
-  "<!-- Generated from lucide-static. ISC license: THIRD_PARTY_NOTICES.md -->",
+  "<!-- Generated from lucide-static (ISC; THIRD_PARTY_NOTICES.md) and PromptDirector editing marks. -->",
   '<svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">',
   ...symbols,
   "</svg>",

@@ -151,14 +151,14 @@ test("text-only posts retain their reader while structured articles show only ge
   assert.match(rule(styles, ".unplaced-media-shelf"), /grid-template-columns:/);
 });
 
-test("media switching preserves the detail scroll anchor and locks image stage height", async () => {
+test("media switching preserves the scroll anchor and no longer sizes the shared stage from an image", async () => {
   const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const gallery = script.slice(script.indexOf("async function createDetailMediaGallery"), script.indexOf("function refreshActiveDetailAssetSections"));
-  assert.match(gallery, /lockedImageStageHeight/);
+  assert.doesNotMatch(gallery, /lockedImageStageHeight|lockedImageStageWidth/);
   assert.match(gallery, /captureDetailScrollAnchor/);
   assert.match(gallery, /restoreDetailScrollAnchor/);
   assert.match(gallery, /trigger\.disabled \? mediaNavigation : trigger\)\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(gallery, /rail\.offsetHeight \+ mediaNavigation\.offsetHeight/);
+  assert.match(gallery, /stage\.style\.removeProperty\('height'\)/);
   assert.match(gallery, /event\.stopPropagation\(\)/);
 });
 
@@ -176,17 +176,17 @@ test("case detail shell and transparent media stage follow the active UI theme",
   const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const drawer = rule(source, ".detail-drawer");
   const body = rule(source, ".detail-body");
-  assert.match(foundation, /--viewer-bg:\s*var\(--ui-browser\)/);
+  assert.match(foundation, /--viewer-bg:\s*#ffffff/);
   assert.match(foundation, /--viewer-checker-a:\s*#eef1ef/);
   assert.match(foundation, /--viewer-checker-b:\s*#d6dcd8/);
-  assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-bg:\s*var\(--ui-browser\)/);
+  assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-bg:\s*#000000/);
   assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-checker-a:\s*#17191c/);
-  assert.match(foundation, /:root\[data-theme="system"\][\s\S]*--viewer-bg:\s*var\(--ui-browser\)/);
+  assert.match(foundation, /:root\[data-theme="system"\][\s\S]*--viewer-bg:\s*#000000/);
   assert.match(drawer, /background:\s*var\(--viewer-bg\)/);
   assert.match(body, /background:\s*var\(--card\)/);
   assert.doesNotMatch(source, /\.detail-visual-gallery\.is-(?:image|video)-detail \.detail-visual-caption\s*\{[^}]*background:\s*#[0-9a-f]+/i);
-  assert.match(source, /\.detail-visual-gallery\.is-video-detail \.detail-visual-caption\s*\{[^}]*background:\s*var\(--card\)/);
-  assert.match(source, /\.case-image-wrap\.has-alpha-channel,[\s\S]*\.image-lightbox\.has-alpha-channel\s*\{/);
+  assert.match(source, /\.detail-visual-gallery\.is-video-detail \.detail-visual-caption\s*\{[^}]*background:\s*var\(--viewer-bg\)/);
+  assert.match(source, /\.case-image-wrap\.has-alpha-channel,[\s\S]*\.detail-visual-thumb img\.has-alpha-channel\s*\{/);
   assert.match(source, /background-size:\s*24px 24px/);
   assert.match(html, /id="detail-drawer"[^>]*role="dialog"[^>]*aria-modal="true"/);
 });
@@ -207,7 +207,7 @@ test("case detail supports one remembered right sidebar and forces narrow screen
   assert.doesNotMatch(source, /@container\s*\(max-width:\s*840px\)/);
   assert.match(resizer, /cursor:\s*col-resize/);
   assert.match(script, /uiPreferences\.detailMode === "sidebar" && !mobileLayout\.matches/);
-  assert.match(script, /updateUiPreferences\(\{ \.\.\.uiPreferences, detailMode \}\)/);
+  assert.match(script, /updateUiPreferences\(\{ detailMode \}\)/);
   assert.match(narrow, /\.detail-drawer\.detail-sidebar-mode\s*\{[^}]*width:\s*100vw/);
   assert.match(narrow, /#detail-mode-toggle, \.detail-resizer\s*\{[^}]*display:\s*none/);
 });

@@ -104,15 +104,16 @@ def main() -> None:
         )
         assert detail_order is True
         tag_input = library.locator(".detail-quick-organization .tag-editor input")
+        library.locator('.detail-quick-organization').get_by_role('button',name='添加标签',exact=True).click()
         tag_input.fill("客户喜欢，待复刻")
-        library.locator(".detail-quick-organization .tag-editor").get_by_role("button", name="添加", exact=True).click()
+        library.locator(".detail-quick-organization .tag-editor").get_by_role("button", name="保存标签", exact=True).click()
         expect(library.locator(".detail-quick-organization .tag-editor-chip")).to_have_count(2)
         expect(library.locator(".detail-quick-organization .tag-editor-chip")).to_contain_text(["客户喜欢", "待复刻"])
         expect(library.locator(".detail-quick-organization")).not_to_contain_text("可选")
         expect(library.locator(".detail-quick-organization")).not_to_contain_text("不用预先创建")
         expect(library.locator(".detail-quick-organization")).not_to_contain_text("任意输入")
-        expect(library.locator(".detail-quick-organization .detail-delete-action")).to_have_count(0)
-        expect(library.locator(".metadata-section .detail-delete-action")).to_contain_text("删除案例")
+        expect(library.locator(".detail-quick-organization .detail-delete-action")).to_have_attribute('title','移入回收站')
+        expect(library.locator(".metadata-section .detail-delete-action")).to_have_count(0)
         expect(library.locator(".metadata-actions > *")).to_have_count(2)
         expect(library.locator(".detail-content > .detail-footer-actions")).to_have_count(0)
 
@@ -168,7 +169,7 @@ def main() -> None:
 
         library.set_viewport_size({"width": 390, "height": 844})
         mobile_project_menu = library.locator(".detail-project-menu")
-        mobile_project_popover = library.locator(".detail-project-popover")
+        mobile_project_popover = mobile_project_menu.locator(".detail-project-popover")
         for _ in range(5):
             if mobile_project_menu.get_attribute("open") is not None and mobile_project_popover.is_visible():
                 break
@@ -199,8 +200,9 @@ def main() -> None:
         library.locator("#detail-close").click()
         library.locator(f'.case-card[data-entry-id="{no_source_entry["id"]}"]').click()
         expect(library.locator(".metadata-section")).to_have_count(0)
-        expect(library.locator(".detail-body > .detail-footer-actions .detail-delete-action")).to_contain_text("删除案例")
-        expect(library.locator(".detail-body > .detail-footer-actions")).to_be_visible()
+        expect(library.locator('.detail-quick-organization .detail-delete-action')).to_be_visible()
+        expect(library.locator('.detail-quick-organization').get_by_role('link',name='打开来源',exact=True)).to_have_count(0)
+        expect(library.locator(".detail-body > .detail-footer-actions")).to_have_count(0)
 
         print({
             "core_actions": core_geometry,

@@ -1,4 +1,5 @@
 import { GlobalWorkerOptions, getDocument } from "./vendor/pdfjs/pdf.mjs";
+import { t } from "./i18n.js";
 
 GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdfjs/pdf.worker.mjs");
 
@@ -45,8 +46,8 @@ export async function createPdfViewer(blob, title = "PDF") {
   const pdf = await openPdf(blob);
   const root = node("div", "pdf-reader");
   const toolbar = node("div", "pdf-reader-toolbar");
-  const previous = button("上一页");
-  const next = button("下一页");
+  const previous = button(t("上一页"));
+  const next = button(t("下一页"));
   const pageStatus = node("span", "pdf-page-status");
   const zoom = document.createElement("select");
   for (const [value, label] of [["0.8", "80%"], ["1", "100%"], ["1.25", "125%"], ["1.5", "150%"], ["2", "200%"]]) {
@@ -56,11 +57,11 @@ export async function createPdfViewer(blob, title = "PDF") {
     item.selected = value === "1";
     zoom.append(item);
   }
-  zoom.setAttribute("aria-label", "PDF 缩放");
+  zoom.setAttribute("aria-label", t("PDF 缩放"));
   toolbar.append(previous, pageStatus, next, zoom);
   const viewport = node("div", "pdf-page-viewport ui-scrollbar");
   const canvas = document.createElement("canvas");
-  canvas.setAttribute("aria-label", `${title} 页面`);
+  canvas.setAttribute("aria-label", t("{title} 页面", { title }));
   viewport.append(canvas);
   root.append(toolbar, viewport);
   let pageNumber = 1;
@@ -121,14 +122,14 @@ async function openPdf(blob) {
     wasmUrl: chrome.runtime.getURL("vendor/pdfjs/wasm/")
   });
   loading.onPassword = (updatePassword) => {
-    const password = globalThis.prompt("这个 PDF 需要密码。密码只用于本次打开，不会保存。") ?? "";
+    const password = globalThis.prompt(t("这个 PDF 需要密码。密码只用于本次打开，不会保存。")) ?? "";
     updatePassword(password);
   };
   return loading.promise;
 }
 
 function canvasBlob(canvas) {
-  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("无法生成 PDF 预览")), "image/webp", 0.82));
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error(t("无法生成 PDF 预览"))), "image/webp", 0.82));
 }
 
 function yieldToBrowser() {

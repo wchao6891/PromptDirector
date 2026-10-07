@@ -3,20 +3,22 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { installationPlan, install } from './install.mjs';
-import { hostConfiguration, configurationPlan, writeConfiguration } from './host-config.mjs';
+import { HOSTS, hostConfiguration, configurationPlan, writeConfiguration } from './host-config.mjs';
 import { discoverLibraries } from './discovery.mjs';
 import { connectorRoot, instancePaths } from './paths.mjs';
 import { isMain } from './is-main.mjs';
+import { nodeCommand } from './node-command.mjs';
+import { lstat } from 'node:fs/promises';
 
 export function mcpConfiguration(root, instanceId) {
   if (instanceId) instancePaths(root, instanceId);
-  return { command: process.execPath, args: [join(root, 'runtime/mcp.mjs')],
+  return { command: nodeCommand(), args: [join(root, 'runtime/mcp.mjs')],
     env: { PROMPTDIRECTOR_CONNECTOR_HOME: root, ...(instanceId ? { PROMPTDIRECTOR_INSTANCE: instanceId } : {}) } };
 }
-export async function setupPlan({ host, root = connectorRoot(), instanceId, home = homedir(), env = process.env, nativeDirectory, extensionId } = {}) {
+export async function setupPlan({ host, root = connectorRoot(), instanceId, home = homedir(), env = process.env, profile, nativeDirectory, extensionId } = {}) {
   const installation = await installationPlan({ root, nativeDirectory, extensionId });
   const mcp = mcpConfiguration(installation.root, instanceId);
-  const configuration = await configurationPlan(hostConfiguration(host, { home, env }), mcp);
+  const configuration = await configurationPlan(hostConfiguration(host, { home, env, profile }), mcp);
   return { installation, configuration, instanceId, mcp };
 }
 function value(result) {
@@ -28,6 +30,7 @@ export async function verifyConnection({ root = connectorRoot(), instanceId, pro
   onProgress('library-discovery');
   const libraries = await probe({ root, instanceId });
   if (!libraries.length) return { state: 'awaiting_browser', connected: false,
+    diagnostics: await offlineDiagnostics(root, instanceId),
     next: '在已安装 PromptDirector 的 Chrome 中打开设置 → Agent 连接 → 启用。若已启用请断开再启用；浏览器要求重新加载时先保存未完成编辑，然后重试 verify。' };
   if (libraries.length > 1) return { state: 'library_selection_required', connected: false, libraries,
     next: '请从目标案例库复制连接指令，使用其中的 instance 参数；不要猜测用户要连接哪个资料库。' };
@@ -55,8 +58,21 @@ export async function verifyConnection({ root = connectorRoot(), instanceId, pro
       next: '连接器已实际查询案例库。还需在当前 Agent 会话发现 promptdirector 工具并调用 status/search_cases；如需重载请使用宿主正常入口。只有当前会话实际调用成功后才报告已连接；需要展示案例时按返回的媒体编号读取原件。' };
   } finally { onProgress('mcp-close'); await client.close(); onProgress('mcp-closed'); }
 }
+async function offlineDiagnostics(root, instanceId) {
+  const present = async path => {
+    try { await lstat(path); return 'present'; }
+    catch (error) { return error.code === 'ENOENT' ? 'missing' : 'unreadable'; }
+  };
+  const paths = instanceId ? instancePaths(root, instanceId) : null;
+  return { runtime: await present(join(root, 'runtime/mcp.mjs')), launcher: await present(join(root, process.platform === 'win32' ? 'native-host.cmd' : 'native-host')),
+    pairing: paths ? await present(paths.record) : 'unknown',
+    endpoint: paths && process.platform !== 'win32' ? await present(paths.socket) : 'unknown',
+    browserRunning: 'unknown', extensionInstalled: 'unknown', agentSwitchEnabled: 'unknown',
+    note: '仅核对连接器自有文件；文件存在不表示握手成功，endpoint缺失不能区分浏览器、扩展或开关状态。' };
+}
 export async function connect(options, { installRuntime = install, verify = verifyConnection } = {}) {
   const plan = await setupPlan(options);
+  if (plan.configuration.state === 'host_verification_required') return { state: plan.configuration.state, connected: false, configuration: await writeConfiguration(plan.configuration) };
   await installRuntime(plan.installation);
   const configured = plan.instanceId ? await writeConfiguration(plan.configuration)
     : { changed: false, state: 'awaiting_pairing' };
@@ -66,17 +82,17 @@ export async function connect(options, { installRuntime = install, verify = veri
   let finalConfiguration = configured;
   if (!plan.instanceId && checked.connected) {
     finalConfiguration = await writeConfiguration(await configurationPlan(
-      hostConfiguration(options.host, { home: options.home, env: options.env }), checked.mcp));
+      hostConfiguration(options.host, { home: options.home, env: options.env, profile: options.profile }), checked.mcp));
   }
   return { ...checked, configuration: finalConfiguration, mcp: checked.mcp || (plan.instanceId ? plan.mcp : undefined),
     skill: join(plan.installation.runtime, 'SKILL.md') };
 }
 function optionsFrom(args) {
   const options = {};
-  const keys = { '--host': 'host', '--instance': 'instanceId', '--root': 'root' };
+  const keys = { '--host': 'host', '--instance': 'instanceId', '--root': 'root', '--profile': 'profile' };
   for (let index = 0; index < args.length; index += 2) {
     const key = keys[args[index]];
-    if (!key || !args[index + 1] || args[index + 1].startsWith('--')) throw new Error('用法：node connector/setup.mjs plan|connect|verify --host codex|claude|workbuddy|generic [--instance 编号] [--root 私有目录]');
+    if (!key || !args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`用法：node connector/setup.mjs plan|connect|verify --host ${HOSTS.join('|')} [--instance 编号] [--root 私有目录] [--profile DSH配置名称]`);
     options[key] = args[index + 1];
   }
   return options;
@@ -88,7 +104,7 @@ if (isMain(import.meta.url)) {
     let result;
     if (command === 'plan') {
       const plan = await setupPlan(options);
-      result = { installation: plan.installation, configuration: { path: plan.configuration.path, changed: plan.configuration.changed, host: plan.configuration.host }, mcp: plan.instanceId ? plan.mcp : undefined };
+      result = { installation: plan.installation, configuration: { path: plan.configuration.path, changed: plan.configuration.changed, host: plan.configuration.host, state: plan.configuration.state, hostEnabled: plan.configuration.hostEnabled, next: plan.configuration.next, importConfig: plan.configuration.importConfig }, mcp: plan.instanceId && plan.configuration.state !== 'host_verification_required' ? plan.mcp : undefined };
     } else if (command === 'connect') result = await connect(options);
     else if (command === 'verify') result = await verifyConnection(options);
     else throw new Error('未知命令，请使用 plan、connect 或 verify。');

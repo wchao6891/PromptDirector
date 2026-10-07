@@ -149,7 +149,7 @@ def main() -> None:
                           jobId: created.analysisBatchJob.id
                         })).analysisBatchJob;
                       }
-                      const stored = await chrome.storage.local.get(['entries', 'facetCatalog']);
+                      const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog']));
                       const savedEntry = stored.entries.find(item => item.id === 'large-00000');
                       const savedNodeIds = new Set(savedEntry.facetAssignments.filter(item => item.source === 'deepseek_text').map(item => item.nodeId));
                       return {

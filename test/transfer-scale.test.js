@@ -61,7 +61,8 @@ test("streaming file hashes preserve standard SHA256 without whole-file arrayBuf
   const bytes = new Uint8Array(1024 * 1024 + 73).fill(19);
   const blob = new Blob([bytes]);
   blob.arrayBuffer = () => { throw new Error("whole-file allocation"); };
-  assert.equal(await sha256Blob(blob), createHash("sha256").update(bytes).digest("hex"));
+  // A file beyond the native-digest share of the working budget is never materialized whole.
+  assert.equal(await sha256Blob(blob, { budget: { workingBytes: bytes.length } }), createHash("sha256").update(bytes).digest("hex"));
   assert.equal(await sha256Blob(new Blob()), createHash("sha256").digest("hex"));
 });
 
@@ -69,7 +70,7 @@ test("local backup document validation streams text and keeps original PDF bytes
   const markdown = new Blob(["跨段文字\n".repeat(30000)], { type: "text/markdown" });
   markdown.arrayBuffer = () => { throw new Error("whole document allocation"); };
   const verified = await verifiedDocumentBlob(markdown, "text/markdown", markdown.size);
-  assert.equal(await sha256Blob(verified), await sha256Blob(markdown));
+  assert.equal(await sha256Blob(verified), await sha256Blob(markdown, { budget: { workingBytes: markdown.size } }));
   const pdf = new Blob(["%PDF-1.7\n", new Uint8Array(1024 * 1024)], { type: "application/pdf" });
   pdf.arrayBuffer = () => { throw new Error("whole document allocation"); };
   assert.equal((await verifiedDocumentBlob(pdf, "application/pdf", pdf.size)).size, pdf.size);

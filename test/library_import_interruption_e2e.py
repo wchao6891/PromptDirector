@@ -51,7 +51,7 @@ def check_interruption(phase):
         cdp.send("ServiceWorker.stopWorker", {"versionId": version["versionId"]})
         page.wait_for_function("() => window.restoreResult || window.restoreError")
         proof = page.evaluate("""async () => {
-          const stored = await chrome.storage.local.get(['entries','libraryReplacementRecoveryPoint','libraryImportTransactions']);
+          const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','libraryReplacementRecoveryPoint','libraryImportTransactions']));
           const {getMediaBlob} = await import('./media-store.js');
           const point = stored.libraryReplacementRecoveryPoint;
           const replay = await chrome.runtime.sendMessage(window.restoreRequest);
@@ -74,7 +74,7 @@ def check_interruption(phase):
           const request = {type:'RESTORE_LIBRARY_REPLACEMENT_POINT', expectedPointId:point.id, operationId:crypto.randomUUID()};
           const first = await chrome.runtime.sendMessage(request);
           const second = await chrome.runtime.sendMessage(request);
-          const stored = await chrome.storage.local.get(['entries','libraryReplacementRecoveryPoint']);
+          const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','libraryReplacementRecoveryPoint']));
           return {first, second, entries:stored.entries.map(entry=>entry.id)};
         }""")
         assert rollback["first"] == rollback["second"] and rollback["entries"] == [old["id"]], rollback

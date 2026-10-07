@@ -65,7 +65,7 @@ test("share-package import is separate from the two backup actions while sync st
   assert.match(panel, /id="restore-folder-backup"[\s\S]*?data-i18n="恢复资料库"/);
   assert.match(panel, /class="share-package-import"/);
   assert.match(panel, /id="import-library-package"[^>]*>选择 ZIP/);
-  assert.match(panel, /id="library-package-file"[^>]*accept="\.zip,application\/zip"/);
+  assert.match(panel, /id="library-package-file"[^>]*accept="\.zip,\.eaglepack,application\/zip"/);
   assert.doesNotMatch(panel, /create-portable-backup|restore-portable-backup|小型 ZIP|从 ZIP/);
   assert.match(panel, /<details id="sync-settings"/);
   assert.match(panel, /<summary>[\s\S]*?data-i18n="跨设备同步"/);

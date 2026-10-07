@@ -17,7 +17,9 @@ def main():
           chrome.permissions.contains=async()=>true;chrome.permissions.request=async()=>true;
           chrome.tabs.query=async()=>[{id:999,url:'https://x.com/director/status/123'}];
           chrome.runtime.sendMessage=async m=>{
-            if(m.type==='COMMIT_PAGE_CAPTURE' && window.forceSaveFailure)return {ok:false,message:'模拟保存失败'};
+            // Saves now run through the background save-task pipeline: the collector sends
+            // START_CAPTURE_SAVE{input:COMMIT_PAGE_CAPTURE} and reads the finished task back.
+            if(m.type==='START_CAPTURE_SAVE' && m.input?.type==='COMMIT_PAGE_CAPTURE' && window.forceSaveFailure)return {ok:false,message:'模拟保存失败'};
             if(m.type==='START_PAGE_CAPTURE') return {ok:true,batch:{sourceUrl:'https://x.com/director/status/123',candidates:[{
               id:'partial-video',title:'Video prompt fixture',canonicalUrl:'https://x.com/director/status/123',pageType:'post',
               contentText:'Prompt: a cinematic martial arts scene.',textBlocks:[{id:'text',kind:'section',text:'Prompt: a cinematic martial arts scene.'}],
@@ -27,7 +29,8 @@ def main():
             }]}};
             if(['PREVIEW_PAGE_CAPTURE_REGION','CLEAR_PAGE_CAPTURE_MARKERS'].includes(m.type)) return {ok:true};
             const result=await send(m);
-            if(m.type==='COMMIT_PAGE_CAPTURE')window.saveResult=result;
+            const task=m.type==='GET_CAPTURE_SAVE_TASK'?result?.task:null;
+            if(task?.input?.type==='COMMIT_PAGE_CAPTURE' && ['completed','failed','confirmation'].includes(task.status))window.saveResult=task.result;
             return result;
           };
         }""")
@@ -38,13 +41,13 @@ def main():
         page.wait_for_function('()=>Boolean(window.saveResult)')
         result=page.evaluate('window.saveResult')
         assert result['ok'] and result['results'][0]['status']=='partial', result
-        entries=page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries")
+        entries=page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries")
         assert len(entries)==1 and any(asset['kind']=='video' for asset in entries[0]['mediaAssets']),entries
         assert 'captureWarnings' not in entries[0]['sourceFacts'], entries
         assert result['results'][0]['warnings'], result
         expect(page.locator('#page-capture')).to_be_hidden()
         expect(page.locator('#feedback')).to_contain_text('已保存')
-        assert len(page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries"))==1
+        assert len(page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries"))==1
         expect(page.locator('#feedback')).not_to_have_class(re.compile(r'\berror\b'))
         workspace=page.evaluate("async()=>chrome.runtime.sendMessage({type:'GET_CAPTURE_WORKSPACE'})")
         assert workspace['draft']['fragments']==[],workspace
@@ -54,7 +57,7 @@ def main():
         page.locator('#page-capture-save').click()
         expect(page.locator('#feedback')).to_contain_text('模拟保存失败')
         expect(page.locator('#page-capture')).to_be_visible()
-        assert len(page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries"))==1
+        assert len(page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries"))==1
         print({'case_saved':True,'diagnostics_not_in_case':True,'saved_sidebar_cleared':True,'unsaved_content_preserved':True})
 
 

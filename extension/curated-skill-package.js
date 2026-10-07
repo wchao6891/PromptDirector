@@ -1,14 +1,13 @@
 import { currentCreativeSkillVersion } from "./creative-skills.js";
-import { generatedSkillFiles } from "./creative-skill-package.js";
+import { storedSkillFiles, parseSkillFiles } from "./creative-skill-package.js";
 import { sha256Hex } from "./sync-crypto.js";
 import { createZipBlob } from "./zip.js";
-import { readSkillCover } from "./skill-cover.js";
+import { readSkillCover, isSkillCoverPath } from "./skill-cover.js";
 
 export const CURATED_SKILL_SUBMISSION_FORMAT = "prompt-director-curated-skill-submission";
-export const CURATED_SKILL_SUBMISSION_VERSION = 2;
+export const CURATED_SKILL_SUBMISSION_VERSION = 3;
 
 const PUBLIC_LICENSE = "CC BY 4.0";
-const encoder = new TextEncoder();
 
 export async function buildCuratedSkillSnapshot(skillValue, metadata = {}, options = {}) {
   const skill = structuredClone(skillValue ?? {});
@@ -17,23 +16,24 @@ export async function buildCuratedSkillSnapshot(skillValue, metadata = {}, optio
   const manifest = normalizeSubmissionMetadata(metadata, skill);
   const cover = await readSkillCover(skill, options.readFile);
   if (!cover) throw new Error("请先为 Skill 添加一张成果封面");
-  const files = generatedSkillFiles({
-    portableId: manifest.skillId,
-    description: skill.description,
-    skillMarkdown: version.skillMarkdown,
-    references: version.references,
-    provenanceMarkdown: metadata.includeProvenance === true ? version.provenanceMarkdown : ""
-  });
+  const stored = await storedSkillFiles(skill, options);
+  const parsed = await parseSkillFiles(stored);
+  const files = new Map([...stored].map(([path, blob]) => [parsed.root ? path.slice(parsed.root.length + 1) : path, blob]));
+  for (const path of files.keys()) {
+    if (isSkillCoverPath(path) || (path === "references/provenance.md" && metadata.includeProvenance !== true)) files.delete(path);
+  }
+  files.set(cover.path, cover.blob);
   const preview = [];
   const findings = [];
   for (const [path, blob] of files) {
-    const text = await blob.text();
-    preview.push({ path, text, byteSize: encoder.encode(text).byteLength });
-    findings.push(...findPrivacyRisks(text, path));
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let text;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); if (text.includes("\0")) text = undefined; } catch {}
+    const sha256 = await sha256Hex(bytes);
+    preview.push({ path, ...(text === undefined ? { mimeType: blob.type || "application/octet-stream" } : { text }), byteSize: blob.size, sha256 });
+    if (text !== undefined) findings.push(...findPrivacyRisks(text, path));
   }
-  files.set(cover.path, cover.blob);
-  preview.push({ path: cover.path, mimeType: cover.mimeType, byteSize: cover.blob.size, sha256: await sha256Hex(cover.blob) });
-  const digestInput = preview.map((item) => `${item.path}\0${item.sha256 ?? item.text}\0`).join("");
+  const digestInput = preview.map((item) => `${item.path}\0${item.sha256}\0`).join("");
   const digest = await sha256Hex(digestInput);
   return {
     manifest: { ...manifest, digest, fileCount: files.size },

@@ -65,7 +65,7 @@ def main():
               const batch=normalizePageCaptureBatch({adapter:'x',tabId:tab.id,sourceUrl:work,sessionMediaAllowed:true,
                 candidates:[candidate],selections:[{candidateId:candidate.id,includeText:true,selectedMediaIds:['selected-video'],mediaDecision:'confirmed'}]});
               const result=await chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch});
-              const entry=(await chrome.storage.local.get('entries')).entries.find(item=>item.id===result.results?.[0]?.entryId);
+              const entry=(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.find(item=>item.id===result.results?.[0]?.entryId);
               const asset=entry?.mediaAssets.find(item=>item.kind==='video');
               const {getMediaBlob}=await import('./media-store.js');
               const {sha256Blob}=await import('./blob-digest.js');
@@ -80,10 +80,10 @@ def main():
             assert direct['result']['results'][0]['pendingMediaIds'] == [], direct
             # Reuse a source whose cover was historically marked content. The new case must
             # correct the cover role while leaving the original source metadata untouched.
-            page.evaluate("""async id=>{const stored=await chrome.storage.local.get('entries');
+            page.evaluate("""async id=>{const stored=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
               const e=stored.entries.find(item=>item.id===id);e.mediaAssets.find(item=>item.id===e.mediaAssets.find(a=>a.kind==='video').posterAssetId).usage='content';
-              await chrome.storage.local.set({entries:stored.entries});}""", direct['entryId'])
-            before = page.evaluate("async id=>(await chrome.storage.local.get('entries')).entries.find(e=>e.id===id)", direct['entryId'])
+              await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:stored.entries}));}""", direct['entryId'])
+            before = page.evaluate("async id=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.find(e=>e.id===id)", direct['entryId'])
             source.evaluate(script, args)
             worker.evaluate(script, {**args, 'failVideo': True})
             reused = page.evaluate(save, {**save_args, 'suffix': 'session-reuse'})
@@ -94,7 +94,7 @@ def main():
             page.reload()
             readback = page.evaluate("""async ids=>{
               const {getMediaBlob}=await import('./media-store.js');const {sha256Blob}=await import('./blob-digest.js');
-              const entries=(await chrome.storage.local.get('entries')).entries;
+              const entries=(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries;
               const blob=await getMediaBlob(ids.assetId);
               return {source:entries.find(e=>e.id===ids.sourceId),result:entries.find(e=>e.id===ids.resultId),bytes:blob.size,sha256:await sha256Blob(blob)};
             }""", {'assetId': direct['asset']['id'], 'sourceId': direct['entryId'], 'resultId': reused['entryId']})

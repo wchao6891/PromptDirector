@@ -1,3 +1,6 @@
+import { assertSourceCorrection } from './case-field-access.js';
+import { confirmClassification } from './classifier.js';
+import { isValidContentPath } from './taxonomy.js';
 import { removeCaseTags } from './case-tags.js';
 import { appendFacetUndo } from './facet-history.js';
 import { validateCaseOperation } from './case-operation-specs.js';
@@ -9,7 +12,7 @@ import { setEntryMediaPrompt, addTimeNote, removeTimeNote, setCaseCover, visualS
 import { createCompoundCase, updateCompoundCase, splitCompoundCase } from './compound-cases.js';
 import { uniqueNames } from './facets.js';
 import { moveEntriesBetweenCollections } from './organizer.js';
-import { planCaseCopies, assertCompoundProjectScope } from './library-folder-ownership.js';
+import { planCaseCopies } from './library-folder-ownership.js';
 import { agentError } from './agent-protocol.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
 import { caseAnalysisCoverage } from './analysis-coverage.js';
@@ -17,6 +20,7 @@ import { caseAnalysisCoverage } from './analysis-coverage.js';
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const hash = value => sha256Blob(new Blob([JSON.stringify(canonical(value))]));
+export const caseOperationFingerprint = hash;
 const fail = (code, message) => { throw agentError(code, message); };
 function entryFor(state, id) {
   const entry = state.entries.find(item => item.id === id);
@@ -39,7 +43,7 @@ const compoundRevision = (state, compound) => {
     return { entry, organization: memberships.get(id) };
   }) });
 };
-async function operationCase(state, id) {
+export async function operationCase(state, id) {
   const compound = state.compoundCases?.find(item => item.id === id);
   const entry = compound || entryFor(state, id);
   return { caseId: id, title: entry.title, revision: compound ? await compoundRevision(state, compound) : await caseRevision(state, entry) };
@@ -101,15 +105,19 @@ export function editCaseEntry(entry, patch, now = new Date().toISOString()) {
   }
   if (patch.articlePatches) next = updateArticleText(next, patch.articlePatches, next.textRevision || 1);
   if (patch.customLabels) next.customLabels = uniqueNames(patch.customLabels);
-  for (const item of patch.mediaPrompts || []) next = setEntryMediaPrompt(next, item.assetId, item.text, item.source, { preserveOtherSource: true });
+  for (const item of patch.mediaPrompts || []) {
+    const updated = setEntryMediaPrompt(next, item.assetId, item.text, item.source, { preserveOtherSource: true });
+    // Prompt normalization must not rewrite unrelated original-file metadata.
+    next = { ...next, mediaPrompts: updated.mediaPrompts };
+  }
   for (const item of patch.timeNotes || []) {
     if (item.endMs !== undefined && item.endMs <= item.startMs) fail('invalid_input', '笔记结束时间必须晚于开始时间');
     if (item.frameAssetId && !next.mediaAssets?.some(a => a.id === item.frameAssetId && a.kind === 'image')) fail('asset_not_in_case', '笔记关键帧必须是当前案例中的图片');
-    next = addTimeNote(next, item);
+    next = { ...next, timeNotes: addTimeNote(next, item).timeNotes };
   }
   for (const id of patch.removeTimeNoteIds || []) {
     if (!next.timeNotes?.some(note => note.id === id)) fail('note_not_found', '要删除的笔记已不存在');
-    next = removeTimeNote(next, id);
+    next = { ...next, timeNotes: removeTimeNote(next, id).timeNotes };
   }
   if (patch.mediaSources) {
     const byId = new Map(patch.mediaSources.map(item => [item.assetId, item]));
@@ -217,7 +225,23 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
   }
   const current = await checkedEntry(state, input.caseId, input.expectedRevision);
   if (operation === 'edit_case') {
-    const next = editCaseEntry(current, input.patch, now);
+    assertSourceCorrection(current, input.patch, input.sourceCorrection);
+    let next = editCaseEntry(current, input.patch, now);
+    if (input.patch.creative) next.creative = { ...current.creative, ...input.patch.creative };
+    if (input.patch.classificationPathIds) {
+      if (!isValidContentPath(state.taxonomy, input.patch.classificationPathIds)) fail('invalid_classification', '分类编号不在当前词库中');
+      next = confirmClassification(next, input.patch.classificationPathIds, state.taxonomy);
+    }
+    if (input.patch.mediaOrder) {
+      const assets = next.mediaAssets || [], ids = input.patch.mediaOrder;
+      if (ids.length !== assets.length || ids.some(id => !assets.some(asset => asset.id === id))) fail('invalid_media_order', '媒体排序必须包含当前案例所有媒体，且不能重复');
+      const byId = new Map(assets.map(asset => [asset.id, asset])); next.mediaAssets = ids.map(id => byId.get(id));
+    }
+    if (input.sourceCorrection) next.sourceCorrections = [...(current.sourceCorrections || []), {
+      reason: input.sourceCorrection.reason, fields: input.sourceCorrection.fields, correctedAt: now,
+      before: Object.fromEntries(input.sourceCorrection.fields.map(field => [field,
+        field === 'sourceUrl' ? current.url || '' : field === 'mediaSources' ? current.mediaAssets || [] : field === 'articlePatches' ? current.articleDocument || null : current[field] ?? null]))
+    }];
     return { update: { entries: state.entries.map(e => e.id === current.id ? next : e) }, caseIds: [current.id] };
   }
   if (operation !== 'organize_case') fail('unknown_operation', '未知写入操作');
@@ -230,7 +254,6 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
       await checkedEntry(state, item.caseId, item.expectedRevision);
       if (organization(state, item.caseId).compounds.length) fail('compound_member', '成员已在另一个组合中，请先拆开原组合');
     }
-    assertCompoundProjectScope(state, ids);
     if (input.coverVisualId && !state.entries.some(e => ids.includes(e.id) && e.mediaAssets?.some(a => a.id === input.coverVisualId && a.kind === 'image' && a.usage !== 'poster'))) fail('asset_not_in_case', '组合封面必须是成员中的内容图片');
     const result = createCompoundCase(state.compoundCases, state.entries, {
       id: idFactory(), title: input.title, memberEntryIds: ids, coverVisualId: input.coverVisualId, now
@@ -317,21 +340,23 @@ export function createCaseOperations({ loadState, loadReadState = loadState, sto
       const state = await loadReadState();
       const compound = state.compoundCases?.find(c => c.id === input.caseId);
       const entry = compound || entryFor(state, input.caseId);
-      const revision = compound ? await compoundRevision(state, compound) : await caseRevision(state, entry);
+      const memberships = compound ? null : organization(state, entry.id);
+      const revision = compound ? await compoundRevision(state, compound) : await caseRevision(state, entry, memberships);
       if (input.expectedRevision && revision !== input.expectedRevision) fail('case_conflict', '案例已变化，请从第一页重新读取');
-      const part = input.part || 'overview';
-      const parts = compound ? { overview: { kind: 'compound', ...compound } } : {
-        overview: { id: entry.id, title: entry.title, textCharacters: (entry.text || '').length, textRevision: entry.textRevision || 1,
-          primaryMediaId: entry.primaryMediaId, coverVisualId: entry.coverVisualId, mediaCount: (entry.mediaAssets || []).length, savedAt: entry.savedAt, libraryUpdatedAt: entry.libraryUpdatedAt },
-        source: { url: entry.url || '', sourceFacts: entry.sourceFacts || {}, sourcePages: entry.sourcePages || [], provenance: entry.agentProvenance || null },
-        media: entry.mediaAssets || [], document: { text: entry.text || '', articleDocument: entry.articleDocument || null },
-        annotations: { customLabels: entry.customLabels || [], classification: entry.classification, facetAssignments: entry.facetAssignments || [],
-          mediaPrompts: entry.mediaPrompts || [], timeNotes: entry.timeNotes || [], videoAnalyses: entry.videoAnalyses || [], visualSetAnalyses: entry.visualSetAnalyses || [] },
-        organization: organization(state, entry.id), analysis_coverage: caseAnalysisCoverage(entry)
+      const requested = input.parts || [input.part || 'overview'];
+      const sections = compound ? { overview: () => ({ kind: 'compound', ...compound }) } : {
+        overview: () => ({ id: entry.id, title: entry.title, textCharacters: (entry.text || '').length, textRevision: entry.textRevision || 1,
+          primaryMediaId: entry.primaryMediaId, coverVisualId: entry.coverVisualId, mediaCount: (entry.mediaAssets || []).length, savedAt: entry.savedAt, libraryUpdatedAt: entry.libraryUpdatedAt }),
+        source: () => ({ url: entry.url || '', sourceFacts: entry.sourceFacts || {}, sourcePages: entry.sourcePages || [], provenance: entry.agentProvenance || null, corrections: entry.sourceCorrections || [] }),
+        creative: () => entry.creative || {}, media: () => entry.mediaAssets || [], document: () => ({ text: entry.text || '', articleDocument: entry.articleDocument || null }),
+        annotations: () => ({ creative: entry.creative || {}, customLabels: entry.customLabels || [], classification: entry.classification, facetAssignments: entry.facetAssignments || [],
+          mediaPrompts: entry.mediaPrompts || [], timeNotes: entry.timeNotes || [], videoAnalyses: entry.videoAnalyses || [], visualSetAnalyses: entry.visualSetAnalyses || [] }),
+        organization: () => memberships, analysis_coverage: () => caseAnalysisCoverage(entry)
       };
-      if (!Object.hasOwn(parts, part)) fail('compound_member', '请读取概览并指定组合中的成员');
-      const text = JSON.stringify(parts[part]), offset = input.offset || 0, length = input.length || 12000;
-      return { ok: true, caseId: entry.id, revision, part, content: text.slice(offset, offset + length), totalCharacters: text.length,
+      for (const part of requested) if (!Object.hasOwn(sections, part)) fail('compound_member', '请读取概览并指定组合中的成员');
+      const value = input.parts ? Object.fromEntries(requested.map(part => [part, sections[part]()])) : sections[requested[0]]();
+      const text = JSON.stringify(value), offset = input.offset || 0, length = input.length || 12000;
+      return { ok: true, caseId: entry.id, revision, ...(input.parts ? { parts: requested } : { part: requested[0] }), content: text.slice(offset, offset + length), totalCharacters: text.length,
         nextOffset: offset + length < text.length ? offset + length : null, untrustedContent: true };
     }),
     execute: (operation, input) => enqueue(async () => {

@@ -158,16 +158,29 @@ def cache():
     finally:
         server.shutdown();server.server_close()
 
+# Saves now run as background save tasks: START_CAPTURE_SAVE wraps the commit input and
+# the collector waits for the task result. Simulate a task that finished with a partial
+# failure (the real stored outcome) instead of a direct COMMIT_* reply.
+FAILED_SAVE_TASK = """()=>{window.failedSaveTask=(m,type)=>{
+  if(m.type==='START_CAPTURE_SAVE'&&m.input?.type===type){
+    window.stubSaveTask={id:'feedback-save',status:'failed',canCancel:false,input:m.input,message:'部分内容未保存，已保留供重试',result:{ok:false,message:'部分内容未保存，已保留供重试'}};
+    return {ok:true,id:'feedback-save'};
+  }
+  if(m.type==='GET_CAPTURE_SAVE_TASK'&&window.stubSaveTask)return {ok:true,task:window.stubSaveTask};
+  return null;
+}}"""
+
 def feedback():
     with extension_session('pd-feedback-actions-',viewport={'width':340,'height':700}) as run:
         page=run.open_page('collector.html')
         run.seed_storage(page,{'entries':[],'capturePermissionOnboarding':{'version':1,'acknowledgedAt':'2026-10-02T00:00:00Z','clipboardIncluded':True}})
+        page.evaluate(FAILED_SAVE_TASK)
         page.evaluate("""async()=>{
           const batch=(await import('./page-capture.js')).normalizePageCaptureBatch({id:'feedback',tabId:999,sourceUrl:'https://x.com/director/status/123',adapter:'x',status:'ready',candidates:[{id:'one',canonicalUrl:'https://x.com/director/status/123',contentText:'Capture preview. '.repeat(900),pageType:'post',media:[]}]});
           const query=chrome.tabs.query.bind(chrome.tabs);chrome.tabs.query=async q=>q.active?[{id:999,url:batch.sourceUrl}]:query(q);
           chrome.permissions.contains=async()=>true;chrome.permissions.request=async()=>true;
           const send=chrome.runtime.sendMessage.bind(chrome.runtime);
-          chrome.runtime.sendMessage=async m=>m.type==='START_PAGE_CAPTURE'?{ok:true,batch}:m.type==='COMMIT_PAGE_CAPTURE'?{ok:false,message:'部分内容未保存，已保留供重试'}:send(m);
+          chrome.runtime.sendMessage=async m=>m.type==='START_PAGE_CAPTURE'?{ok:true,batch}:failedSaveTask(m,'COMMIT_PAGE_CAPTURE')||send(m);
         }""")
         page.locator('#start-page-capture').click();page.locator('.page-capture-confirm').click()
         page.locator('#page-capture-save').click()
@@ -196,7 +209,8 @@ def feedback():
           await chrome.runtime.sendMessage({type:'UPDATE_CAPTURE_DRAFT',draft:createCaptureDraft({fragments:[{id:'normal',text:'Keep this unsaved user material.'}]})});
         }""")
         normal=run.open_page('collector.html')
-        normal.evaluate("""()=>{const send=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=async m=>m.type==='COMMIT_CAPTURE_DRAFT'?{ok:false,message:'部分内容未保存，已保留供重试'}:send(m)}""")
+        normal.evaluate(FAILED_SAVE_TASK)
+        normal.evaluate("""()=>{const send=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=async m=>failedSaveTask(m,'COMMIT_CAPTURE_DRAFT')||send(m)}""")
         normal.locator('#save-draft').click()
         expect(normal.locator('#feedback')).to_contain_text('部分内容未保存')
         assert normal.locator('#feedback').evaluate('e=>e.parentElement.id')=='collector-footer'

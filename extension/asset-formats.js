@@ -136,7 +136,7 @@ export function assetKindFromFileMetadata(file = {}) {
 }
 
 export function importContainerKindForFile(file = {}) {
-  return fileExtension(file.name) === "zip" && SHARE_PACKAGE_MIME_TYPES.has(normalizeMimeType(file.type))
+  return ["zip", "eaglepack"].includes(fileExtension(file.name)) && SHARE_PACKAGE_MIME_TYPES.has(normalizeMimeType(file.type))
     ? "share-package"
     : "";
 }

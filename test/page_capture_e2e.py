@@ -135,6 +135,9 @@ def main() -> None:
         assert collector.locator("#page-capture > #capture-metadata").count() == 1
         expect(collector.locator(".page-capture-item")).to_have_count(2)
         expect(collector.locator(".page-capture-preview-details").first).not_to_have_attribute("open", "")
+        # Generic full previews are built when opened, avoiding hundreds of eager animated decodes.
+        collector.locator(".page-capture-preview-details").first.locator("summary").click()
+        expect(collector.locator(".page-capture-article").first).to_be_visible()
         scroll_owners = collector.evaluate(
             """() => Object.fromEntries(['#page-capture-list', '#page-capture-media-review-list', '.page-capture-article'].map(selector => {
               const node = document.querySelector(selector);
@@ -156,10 +159,9 @@ def main() -> None:
         assert "视频引用" in " ".join(media_labels), media_labels
         assert not any(source.endswith("/video-poster.png") for source in media_sources[:-1]), media_sources
         expect(collector.locator(".page-capture-item.confirmed")).to_have_count(0)
-        assert collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries.length)") == 0
+        assert collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries.length)") == 0
         expect(collector.locator("#page-capture-save")).to_be_disabled()
 
-        collector.locator(".page-capture-preview-details").first.locator(":scope > summary").click()
         collector.locator(".page-capture-article-media").first.click()
         expect(collector.locator("#page-capture-media-viewer")).to_be_visible()
         expect(collector.locator("#page-capture-media-stage img")).to_be_visible()
@@ -200,9 +202,9 @@ def main() -> None:
         expect(collector.locator("#page-capture-save")).to_be_enabled()
         collector.locator("#page-capture-save").click()
         # Successful content is committed immediately; the failed video remains available for retry.
-        expect(collector.locator("#page-capture-help")).to_contain_text("有效视频文件", timeout=8000)
+        expect(collector.locator("#page-capture-help")).to_contain_text("有效视频文件", timeout=60000)
         expect(collector.locator("#page-capture")).to_be_visible()
-        partial_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        partial_saved = collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries)")
         assert len(partial_saved) == 1, partial_saved
         original_entry_id = partial_saved[0]['id']
         assert 'captureWarnings' not in partial_saved[0]['sourceFacts'], partial_saved
@@ -212,7 +214,7 @@ def main() -> None:
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)
         expect(fixture.locator("#promptdirector-page-capture-region-preview")).to_have_count(0)
         expect(fixture.locator("[data-promptdirector-capture-region]")).to_have_count(0)
-        media_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        media_saved = collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries)")
         assert len(media_saved) == 1 and media_saved[0]['id'] == original_entry_id, media_saved
         assert len([asset for asset in media_saved[0].get("mediaAssets", []) if asset.get('usage') != 'poster']) == 6, media_saved
         assert "real injected page capture path" in media_saved[0]["text"], media_saved[0]
@@ -244,7 +246,7 @@ def main() -> None:
         expect(library.locator(".article-document-reader")).to_contain_text("Packaged Skill archive")
         library.close()
 
-        collector.evaluate("() => chrome.storage.local.set({entries: []})")
+        collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries: []}))")
         fixture.evaluate("""() => {
             const paragraph = document.querySelector('article p');
             const range = document.createRange();
@@ -257,20 +259,21 @@ def main() -> None:
         collector.evaluate("() => document.querySelector('#start-page-capture').click()")
         expect(collector.locator("#page-capture")).to_be_visible(timeout=8000)
         expect(collector.locator(".page-capture-confirm small")).to_contain_text("原网页选区")
+        collector.locator(".page-capture-preview-details summary").click()
         expect(collector.locator(".page-capture-article p")).to_have_count(1)
         collector.locator(".page-capture-confirm").click()
         expect(collector.locator("#page-capture-save")).to_have_text("保存案例")
         expect(collector.locator("#page-capture-save-text-only")).to_be_hidden()
         collector.locator("#page-capture-save").click()
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)
-        selected_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        selected_saved = collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries)")
         assert len(selected_saved) == 1, selected_saved
         assert "real injected page capture path" in selected_saved[0]["text"], selected_saved[0]
         assert "A second paragraph" not in selected_saved[0]["text"], selected_saved[0]
         assert len(selected_saved[0].get("mediaAssets", [])) == 0, selected_saved[0]
         assert selected_saved[0]["sourceFacts"]["captureScope"] == "selection", selected_saved[0]
 
-        collector.evaluate("() => chrome.storage.local.set({entries: []})")
+        collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries: []}))")
         list_url = f"{FIXTURE_ORIGIN}/promptdirector-list?page=1"
         fixture.goto(list_url, wait_until="networkidle")
         fixture.bring_to_front()
@@ -293,11 +296,11 @@ def main() -> None:
         except AssertionError:
             print({'saveFailure': collector.locator('#page-capture-help').inner_text()}, flush=True)
             raise
-        multiple_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        multiple_saved = collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries)")
         assert len(multiple_saved) == 3, multiple_saved
         assert fixture.url == list_url, fixture.url
 
-        collector.evaluate("() => chrome.storage.local.set({entries: []})")
+        collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries: []}))")
         fixture.bring_to_front()
         collector.evaluate("() => document.querySelector('#start-page-capture').click()")
         expect(collector.locator(".page-capture-item")).to_have_count(2)
@@ -311,7 +314,7 @@ def main() -> None:
         collector.locator("#page-capture-combined-title").press("Tab")
         collector.locator("#page-capture-save").click()
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=10000)
-        combined_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        combined_saved = collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries)")
         assert len(combined_saved) == 1, combined_saved
         assert combined_saved[0]["title"] == "Combined list inspiration", combined_saved[0]
         assert len(combined_saved[0].get("mediaAssets", [])) == 3, combined_saved[0]

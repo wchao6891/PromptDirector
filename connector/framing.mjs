@@ -6,7 +6,7 @@ const littleEndian = endianness() === "LE";
 
 export function encodeFrame(value, maxBytes = NATIVE_TO_CHROME_MAX) {
   const data = Buffer.from(JSON.stringify(value));
-  if (data.length > maxBytes) throw new Error("Protocol message exceeds frame capacity; use chunked data transfer.");
+  if (data.length > maxBytes) throw Object.assign(new Error('单次本机消息超过传输边界，请使用文件分块通道（save_skill的files或save_material的bodyFile）；完整原文无需缩短。'), { code: 'native_message_too_large' });
   const header = Buffer.alloc(4);
   if (littleEndian) header.writeUInt32LE(data.length); else header.writeUInt32BE(data.length);
   return Buffer.concat([header, data]);

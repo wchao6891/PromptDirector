@@ -1,24 +1,11 @@
 // Planning is side-effect free: callers commit the whole result atomically only
 // after their import/upgrade checks pass. Original media bytes remain shared.
-export function assertCompoundProjectScope(state, memberEntryIds) {
-  const scopes = memberEntryIds.map(id => (state.organizerState?.collections || [])
-    .filter(collection => collection.entryIds.includes(id)).map(collection => collection.id).sort());
-  if (scopes.some(scope => JSON.stringify(scope) !== JSON.stringify(scopes[0]))) {
-    throw Object.assign(new Error('跨项目组合须先明确目标项目并复制或移动成员，不能自动改变原案例归属'), { code: 'compound_project_conflict' });
-  }
-}
-
 export function needsFolderOwnershipMigration(state = {}) {
-  const logicalId = new Map();
-  for (const compound of state.compoundCases ?? []) {
-    for (const id of compound.memberEntryIds ?? []) logicalId.set(id, compound.id);
-  }
   const owners = new Map();
   for (const collection of state.organizerState?.collections ?? []) {
     for (const id of collection.entryIds ?? []) {
-      const key = logicalId.get(id) ?? id;
-      if (owners.has(key) && owners.get(key) !== collection.id) return true;
-      owners.set(key, collection.id);
+      if (owners.has(id) && owners.get(id) !== collection.id) return true;
+      owners.set(id, collection.id);
     }
   }
   return false;
@@ -29,16 +16,23 @@ export function planFolderOwnership(stateValue) {
   const { entries, collections, groups, usedIds } = indexState(state);
   const copies = [];
   const locations = new Map();
+  const owners = new Map();
+  const sharedMembers = new Set();
   for (const collection of collections) {
     for (const id of collection.entryIds) {
       const group = groups.get(id);
       if (!group) throw new Error("项目包含不存在的案例，未转换资料");
+      if (owners.has(id) && owners.get(id) !== collection.id) sharedMembers.add(id);
+      owners.set(id, collection.id);
       if (!locations.has(group)) locations.set(group, []);
       const list = locations.get(group);
       if (list.at(-1) !== collection) list.push(collection);
     }
   }
   for (const [group, folders] of locations) {
+    // A relation may connect members with different owners. Only a physical
+    // member shared by multiple projects needs the legacy copy conversion.
+    if (!group.members.some(id => sharedMembers.has(id))) continue;
     const uniqueFolders = [...new Set(folders)];
     if (uniqueFolders.length < 2) continue;
     for (const collection of uniqueFolders.slice(1)) {

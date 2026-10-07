@@ -23,7 +23,7 @@ def main():
     const blob=await new Promise(r=>c.toBlob(r,'image/png'));
     for(let i=0;i<180;i++)await saveMediaBlob('asset-'+i,blob);
   }""")
-  before=setup.evaluate("()=>chrome.storage.local.get(['entries','organizerState'])")
+  before=setup.evaluate("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','organizerState']))")
   page=s.open_page('library.html',wait_until='networkidle');expect(page.locator('body')).to_have_attribute('data-library-state','ready')
   assert page.locator('#gallery-sort').count()==0
   expect(page.locator('#case-list .case-row-tags').first).to_contain_text('参考')
@@ -97,7 +97,7 @@ def main():
   expect(page.locator('#empty-filter')).to_contain_text('这个项目还没有案例');expect(page.locator('#case-list-header')).to_be_hidden()
   page.screenshot(path=str(OUT/'empty-project.png'))
   page.locator('#empty-filter button').click();expect(page.locator('#project-selection-actions')).to_be_visible();page.locator('#project-selection-cancel').click()
-  after=setup.evaluate("()=>chrome.storage.local.get(['entries','organizerState'])");assert before==after
+  after=setup.evaluate("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','organizerState']))");assert before==after
   (OUT/'checks.json').write_text(json.dumps({'positions':positions,'headerCoordinates':coords,'dataUnchanged':before==after,'deepZoomAnchor':anchor},ensure_ascii=False,indent=2))
   page.close()
   s.seed_storage(setup,{'entries':[],'organizerState':{'version':7,'collections':[]}})

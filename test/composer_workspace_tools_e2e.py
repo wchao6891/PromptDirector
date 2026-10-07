@@ -101,7 +101,7 @@ def main():
         dialog=page.get_by_role('dialog',name='查看并保存标签')
         dialog.locator('[name=tags]').fill('用户确认的逆光')
         dialog.get_by_role('button',name='添加到案例').click();expect(dialog).to_have_count(0)
-        labels=page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries[0].customLabels")
+        labels=page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries[0].customLabels")
         assert labels==['用户已有标签','用户确认的逆光'],labels
         page.locator('#composer-library-search').click()
         mode='help';send('关闭查库后，还能用哪些插件功能？',2)

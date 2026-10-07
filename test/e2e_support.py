@@ -253,7 +253,7 @@ def base_entry(entry_id: str, title: str, text: str, content_id: str, saved_minu
 
 def scroll_to_case(page, entry_id: str) -> None:
     """Reach an original via real scrolling, including virtual/unmounted cards."""
-    total = page.evaluate("async () => (await chrome.storage.local.get('entries')).entries.length")
+    total = page.evaluate("async () => { const {getLibraryStorage}=await import(chrome.runtime.getURL('library-storage.js')); return (await getLibraryStorage().get('entries')).entries.length; }")
     page.evaluate('scrollTo(0,0)')
     selector = f'.case-card[data-entry-id="{entry_id}"]'
     for _ in range(total * 2):

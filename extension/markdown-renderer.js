@@ -1,3 +1,5 @@
+import { t, translateUiMessage } from "./i18n.js";
+
 export function renderMarkdownDocument(sourceValue, options = {}) {
   const root = document.createElement("article");
   root.className = "markdown-reader";
@@ -108,7 +110,7 @@ export function renderMarkdownDocument(sourceValue, options = {}) {
     appendInline(paragraph, paragraphLines.join("\n"), options);
     root.append(paragraph);
   }
-  if (!root.childNodes.length) root.textContent = "这个 Markdown 文档没有可显示的文字";
+  if (!root.childNodes.length) root.textContent = t("这个 Markdown 文档没有可显示的文字");
   return root;
 }
 
@@ -169,17 +171,17 @@ function appendInlineToken(parent, token, options) {
 function localDocumentImage(reference, alt, options) {
   const figure = document.createElement("span");
   figure.className = "markdown-remote-image";
-  figure.textContent = alt || "正在读取文档图片";
+  figure.textContent = alt || t("正在读取文档图片");
   Promise.resolve().then(() => options.loadLocalImage(reference)).then(url => {
     if (!/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[A-Za-z0-9+/=]+$/u.test(url || "")) {
-      throw new Error("文档图片无法预览，请下载原文档查看");
+      throw new Error(t("文档图片无法预览，请下载原文档查看"));
     }
     const image = document.createElement("img");
     image.src = url;
     image.alt = alt;
     image.loading = "lazy";
     figure.replaceChildren(image);
-  }).catch(error => { figure.textContent = error.message || "文档图片读取失败"; });
+  }).catch(error => { figure.textContent = translateUiMessage(error.message) || t("文档图片读取失败"); });
   return figure;
 }
 
@@ -187,18 +189,18 @@ function remoteImage(url, alt, options) {
   const figure = document.createElement("span");
   figure.className = "markdown-remote-image";
   if (!url) {
-    figure.textContent = alt || "远程图片地址无效";
+    figure.textContent = alt || t("远程图片地址无效");
     return figure;
   }
   const button = document.createElement("button");
   button.type = "button";
   button.className = "button-secondary";
-  button.textContent = alt ? `加载图片：${alt}` : "加载远程图片";
+  button.textContent = alt ? t("加载图片：{alt}", { alt }) : t("加载远程图片");
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
       const imageUrl = await options.loadRemoteImage?.(url);
-      if (!imageUrl) throw new Error("图片读取失败");
+      if (!imageUrl) throw new Error(t("图片读取失败"));
       const image = document.createElement("img");
       image.src = imageUrl;
       image.alt = alt;
@@ -206,7 +208,7 @@ function remoteImage(url, alt, options) {
       figure.replaceChildren(image);
     } catch (error) {
       button.disabled = false;
-      button.textContent = error?.message || "图片读取失败，请重试";
+      button.textContent = translateUiMessage(error?.message) || t("图片读取失败，请重试");
     }
   });
   figure.append(button);

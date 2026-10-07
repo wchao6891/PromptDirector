@@ -1,10 +1,10 @@
 import { showAppDialog } from './ui-dialogs.js';
 
 // Reuse the existing application dialog, leaving the library detail intact.
-export async function sendWithGenerationPromptConfirmation(message) {
+export async function sendWithGenerationPromptConfirmation(message, { send = value => chrome.runtime.sendMessage(value) } = {}) {
   const choices = { ...(message.generationPromptChoices ?? {}) };
   while (true) {
-    const response = await chrome.runtime.sendMessage({ ...message, generationPromptChoices: choices });
+    const response = await send({ ...message, generationPromptChoices: choices });
     if (!response?.promptConflicts?.length) return response;
     for (const conflict of response.promptConflicts) {
       const answer = await showAppDialog({

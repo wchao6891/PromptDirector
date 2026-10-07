@@ -61,7 +61,8 @@ with extension_session('pd-settings-compact-', viewport={'width':1440,'height':1
   assert all(0<=r['gap']<=13 for r in rects['permissions']),rects
   assert rects['scrollWidth']<=rects['clientWidth'],rects
   if width>680:
-   full=page.locator('.setting-section').first.bounding_box()
+   # Scope to the general panel: the separate layout tab panel (also .setting-section) now precedes it in the DOM and is hidden.
+   full=page.locator('#settings-general-panel .setting-section').first.bounding_box()
    panel=page.locator('#settings-general-panel').bounding_box()
    assert abs(full['width']-panel['width'])<20,(full,panel)
   output=os.environ.get('PROMPTDIRECTOR_SETTINGS_SCREENSHOT_DIR')

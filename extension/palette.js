@@ -1,4 +1,5 @@
 export const PALETTE_VERSION = 2;
+export const MAX_PALETTE_COLORS = 7;
 
 export function hasCurrentPalette(palette) {
   return palette?.version === PALETTE_VERSION && Array.isArray(palette.colors) && palette.colors.length > 0;
@@ -12,7 +13,7 @@ const LIGHT_LUMINANCE_LIMIT = 243;
 const MINIMUM_EDGE_SHARE = 0.8;
 const MAXIMUM_INTERIOR_SHARE = 0.01;
 
-export function extractPalette(imageData, maximumColors = 7) {
+export function extractPalette(imageData, maximumColors = MAX_PALETTE_COLORS) {
   const data = imageData?.data;
   if (!data || !Number.isFinite(imageData.width) || !Number.isFinite(imageData.height)) return [];
   const bins = new Map();
@@ -43,7 +44,7 @@ export function extractPalette(imageData, maximumColors = 7) {
   for (const candidate of candidates) {
     if (selected.some((item) => colorDistance(item.rgb, candidate.rgb) < 54)) continue;
     selected.push(candidate);
-    if (selected.length >= Math.max(1, Math.min(7, maximumColors))) break;
+    if (selected.length >= Math.max(1, Math.min(MAX_PALETTE_COLORS, maximumColors))) break;
   }
   if (selected.length < Math.min(5, candidates.length)) {
     for (const candidate of candidates) {

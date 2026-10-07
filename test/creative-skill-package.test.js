@@ -172,3 +172,33 @@ test("a valid 64-character portable Skill name is accepted in full", () => {
   assert.equal(parsed.name, name);
   assert.throws(() => parseSkillMarkdown(`---\nname: ${name}a\ndescription: Invalid name\n---\nMethod`), /name/);
 });
+
+test("export of an imported package carries the current version's edits at the stored paths and keeps other files", async () => {
+  const blobs = new Map([
+    ["skill-file:markdown", new Blob(["---\nname: edited-copy\ndescription: Old summary.\nlicense: MIT\n---\n\n# Old method\n"])],
+    ["skill-file:guide", new Blob(["# Old guide\n"])],
+    ["skill-file:script", new Blob(["print('unchanged')\n"], { type: "text/x-python" })]
+  ]);
+  const archive = await exportStoredSkillPackage({
+    portableId: "edited-copy",
+    description: "New summary.",
+    currentVersionId: "v2",
+    versions: [
+      { id: "v1", skillMarkdown: "# Old method", references: [{ path: "references/guide.md", markdown: "# Old guide" }] },
+      { id: "v2", skillMarkdown: "# New method", references: [{ path: "references/guide.md", markdown: "# New guide" }] }
+    ],
+    packageFiles: [
+      { path: "vendor/SKILL.md", assetId: "skill-file:markdown", byteSize: blobs.get("skill-file:markdown").size },
+      { path: "vendor/references/guide.md", assetId: "skill-file:guide", byteSize: blobs.get("skill-file:guide").size },
+      { path: "vendor/scripts/tool.py", assetId: "skill-file:script", byteSize: blobs.get("skill-file:script").size }
+    ]
+  }, { readFile: (assetId) => blobs.get(assetId) });
+  const parsed = await parseSkillArchive(archive);
+  assert.deepEqual([...parsed.files.keys()].sort(), ["vendor/SKILL.md", "vendor/references/guide.md", "vendor/scripts/tool.py"]);
+  assert.equal(parsed.name, "edited-copy");
+  assert.equal(parsed.description, "New summary.");
+  assert.equal(parsed.body, "# New method");
+  assert.match(await parsed.files.get("vendor/SKILL.md").text(), /license: MIT/);
+  assert.equal(parsed.references.find((item) => item.path === "references/guide.md").markdown, "# New guide");
+  assert.equal(await parsed.files.get("vendor/scripts/tool.py").text(), "print('unchanged')\n");
+});

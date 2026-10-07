@@ -92,12 +92,17 @@ export async function exportGeneratedSkillPackage(input = {}) {
 }
 
 export async function exportStoredSkillPackage(skillValue = {}, options = {}) {
+  const files = await storedSkillFiles(skillValue, options);
+  return createZipBlob([...files].map(([name, data]) => ({ name, data })));
+}
+
+export async function storedSkillFiles(skillValue = {}, options = {}) {
   const packageFiles = Array.isArray(skillValue.packageFiles) ? skillValue.packageFiles : [];
   const hasStoredDocument = packageFiles.some(file => file.path === "SKILL.md" || file.path.endsWith("/SKILL.md"));
   if (!packageFiles.length) {
     const versions = Array.isArray(skillValue.versions) ? skillValue.versions : [];
     const version = versions.find((item) => item.id === skillValue.currentVersionId) ?? versions.at(-1) ?? {};
-    return exportGeneratedSkillPackage({
+    return generatedSkillFiles({
       portableId: skillValue.portableId,
       description: skillValue.description,
       skillMarkdown: version.skillMarkdown,
@@ -121,7 +126,51 @@ export async function exportStoredSkillPackage(skillValue = {}, options = {}) {
     }
     files.push({ name: path, data: blob });
   }
-  return createZipBlob(files);
+  const result = new Map(files.map(({ name, data }) => [name, data]));
+  if (hasStoredDocument && version) await applyCurrentVersionFiles(result, skillValue, version);
+  return result;
+}
+
+// Stored package blobs are the import-time snapshot; the current version's edited
+// SKILL.md, references, and provenance replace their copies at the same package paths.
+async function applyCurrentVersionFiles(files, skillValue, version) {
+  const skillPath = [...files.keys()].find(path => path === "SKILL.md" || path.endsWith("/SKILL.md"));
+  const prefix = skillPath.slice(0, -"SKILL.md".length);
+  const storedMarkdown = await readMarkdown(files.get(skillPath), skillPath);
+  const storedFields = parseFrontmatter(storedMarkdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1]);
+  const storedDescription = cleanInline(storedFields.description);
+  const description = cleanInline(skillValue.description) || storedDescription;
+  const body = stripFrontmatter(version.skillMarkdown);
+  if (body && (body !== stripFrontmatter(storedMarkdown) || description !== storedDescription)) {
+    const markdown = buildSkillMarkdown({ name: normalizePortableId(storedFields.name) || skillValue.portableId, description, body });
+    const extra = extraFrontmatter(storedMarkdown);
+    const merged = extra ? markdown.replace(/\n---\n/, `\n${extra}\n---\n`) : markdown;
+    files.set(skillPath, new Blob([merged], { type: markdownType }));
+  }
+  const references = new Map((Array.isArray(version.references) ? version.references : [])
+    .map(reference => [normalizeReferencePath(reference?.path), normalizeMarkdown(reference?.markdown)]));
+  const provenance = normalizeMarkdown(version.provenanceMarkdown);
+  if (provenance) references.set("references/provenance.md", provenance);
+  for (const [path, markdown] of references) {
+    if (!path || !markdown) continue;
+    const packagePath = `${prefix}${path}`;
+    const current = files.get(packagePath);
+    if (current && normalizeMarkdown(await current.text()) === markdown) continue;
+    files.set(packagePath, new Blob([`${markdown}\n`], { type: markdownType }));
+  }
+}
+
+function extraFrontmatter(markdown) {
+  const match = markdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  const kept = [];
+  let skipping = false;
+  for (const line of match ? match[1].split("\n") : []) {
+    const key = line.match(/^([A-Za-z][A-Za-z0-9_-]*):/)?.[1];
+    if (key) skipping = key === "name" || key === "description";
+    else if (!/^\s/.test(line)) skipping = false;
+    if (!skipping) kept.push(line);
+  }
+  return kept.join("\n").trim();
 }
 
 export async function parseSkillFile(file, limitsValue = {}) {
@@ -224,7 +273,10 @@ export function skillPackageLimits(value = {}) {
   return {
     maxArchiveBytes: shared.maxArchiveBytes,
     maxFileCount: shared.maxFileCount,
-    maxFileBytes: shared.maxFileBytes || LIBRARY_TRANSFER_LIMITS.maxFileBytes
+    maxFileBytes: shared.maxFileBytes || LIBRARY_TRANSFER_LIMITS.maxFileBytes,
+    quotaPolicy: 'no_fixed_product_quota',
+    maxTextBytes: operationBudget(value.budget).maxTextBytes,
+    note: 'MAX_SAFE_INTEGER表示数值表达边界，不是业务配额；maxTextBytes是本次正文与引用解析预算。完整文件分块传输，不要求缩短原文。'
   };
 }
 

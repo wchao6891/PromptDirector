@@ -65,12 +65,19 @@ def main() -> None:
         library.locator(".case-card").click()
         expect(library.locator("#detail-drawer")).to_have_class("detail-drawer open")
         expect(library.locator("#detail-content")).to_contain_text("低饱和庭院")
-        expect(library.locator(".metadata-row")).to_have_count(4)
-        expect(library.locator(".metadata-list")).to_contain_text("来源")
-        expect(library.locator(".metadata-list")).to_contain_text("即梦灵感")
-        expect(library.locator(".metadata-list")).to_contain_text("点赞")
-        expect(library.locator(".metadata-list")).to_contain_text("3154")
-        expect(library.locator(".metadata-section .attribute-pill")).to_have_count(0)
+        # Detail "plan B" (user-approved 2026-10-04) removed the standalone source-info section; source facts now
+        # live on one icon action in the compact organization bar. With a source URL it is a link whose
+        # accessible description lists every source metadata row, so all four facts must still be present there.
+        source_action = library.locator("#detail-content .source-open-action")
+        expect(source_action).to_have_count(1)
+        expect(source_action).to_have_attribute("href", "https://fixture.invalid/library-image-one")
+        source_facts = source_action.get_attribute("aria-description") or ""
+        assert source_facts.count("\n") == 3, source_facts
+        for fact in ["来源", "即梦灵感", "作者", "creator", "点赞", "3154", "使用", "29"]:
+            assert fact in source_facts, (fact, source_facts)
+        # Source metadata must never be rendered as AI tag pills.
+        expect(library.locator("#detail-content .attribute-pill", has_text="即梦灵感")).to_have_count(0)
+        expect(library.locator("#detail-content .attribute-pill", has_text="3154")).to_have_count(0)
         expect(library.locator(".attribute-section .attribute-pill")).to_have_count(7)
         expect(library.locator(".attribute-section")).to_contain_text("渲染6")
         library.get_by_role("button", name="分析文字标签").click()
@@ -84,12 +91,12 @@ def main() -> None:
 
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
-        before_preview = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging'])")
+        before_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         library.locator(".advanced-reanalysis > summary").click()
         library.locator("#preview-analysis-reanalyze").click()
         expect(library.locator("#analysis-batch-details")).to_contain_text("3 次请求")
         expect(library.locator("#analysis-batch-details")).to_contain_text("全部成功前只暂存")
-        after_preview = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging'])")
+        after_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         assert json.dumps(after_preview, sort_keys=True, ensure_ascii=False) == json.dumps(before_preview, sort_keys=True, ensure_ascii=False)
 
         library.evaluate(
@@ -135,9 +142,9 @@ def main() -> None:
         expect(library.locator("#apply-staged-analysis-rebuild")).to_be_hidden()
         expect(library.locator("#retry-analysis-failures")).to_be_hidden()
         partial_state = library.evaluate(
-            """async () => chrome.storage.local.get([
+            """async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get([
               'entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging', 'analysisBatchUndo'
-            ])"""
+            ]))"""
         )
         partial_entries = {entry["id"]: entry for entry in partial_state["entries"]}
         assert partial_state["batchJob"]["partialApplied"] is True
@@ -183,10 +190,10 @@ def main() -> None:
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
         expect(library.locator("#cancel-analysis-batch")).to_be_visible()
-        before_cancel = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog'])")
+        before_cancel = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog']))")
         library.locator("#cancel-analysis-batch").click()
         expect(library.locator("#batch-status-badge")).to_contain_text("上次已取消")
-        after_cancel = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'analysisRebuildStaging'])")
+        after_cancel = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'analysisRebuildStaging']))")
         assert "analysisRebuildStaging" not in after_cancel
         assert json.dumps({"entries": after_cancel["entries"], "facetCatalog": after_cancel["facetCatalog"]}, sort_keys=True, ensure_ascii=False) == json.dumps(before_cancel, sort_keys=True, ensure_ascii=False)
         library.locator("#settings-close").click()

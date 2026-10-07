@@ -1,11 +1,17 @@
-import { setTaskFeedbackState } from "./task-feedback.js";
+import { genericDetailRequests, applyGenericCaptureDetails, remapDetailTextSelection } from "./generic-capture-details.js";
+import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { anchorCollectorFeedback } from './collector-feedback.js';
+import { createCaptureProjectMenu } from './capture-organization.js';
+import { bindTransientMenus } from './transient-menu.js';
+import { captureSaveProgressPresentation, createCaptureProgressGate } from './capture-save-progress.js';
 import { getLibraryStorage } from "./library-storage.js";
 const libraryStorage = getLibraryStorage();
 import { addDiscoveredVideos } from "./video-discovery.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { appendCaptureCandidate, draftCaptureAddition, savedDraftCaptureItems, savedPageCaptureCandidateIds, persistedPageCaptureCandidates } from "./capture-additions.js";
-import { createPageCaptureCard } from "./collector-page-capture-view.js";
+import { groupGenericCapture, removeCaptureTextBlock } from "./generic-capture-groups.js";
+import { combinePageCaptureCandidates } from "./page-capture.js";
+import { createPageCaptureCard, pageCapturePreviewSource, bindPageCapturePreviewFallback } from "./collector-page-capture-view.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { addDraftFragment, addDraftVisual } from "./capture-draft.js";
 import { createTextCandidate } from "./capture-text-candidate.js";
@@ -49,13 +55,13 @@ await initializeUi();
 
 const elements = Object.fromEntries([
   "start-clipboard", "add-clipboard", "add-selection", "add-screenshot", "add-smart-visuals", "collector-footer", "content-summary", "discard-draft", "draft-title",
-  "content-type", "custom-labels", "capture-metadata", "capture-collection", "capture-new-collection-row", "capture-new-collection-name", "capture-add-more-actions", "duplicate-panel", "duplicate-title", "exit-target", "feedback", "fragment-help", "fragment-list",
+  "content-type", "custom-labels", "capture-metadata", "capture-collection", "capture-add-more-actions", "duplicate-panel", "duplicate-title", "exit-target", "feedback", "fragment-help", "fragment-list",
   "fragment-section", "merge-duplicate", "open-library", "organizer", "organize-toggle", "preview-state",
   "quick-preview", "result-prompt-title", "result-screenshot", "result-smart-visuals", "result-start", "save-draft", "save-other-inspiration",
   "save-separate", "start-screenshot", "start-selection", "start-smart-visuals", "start-state", "normal-start",
   "other-capture-methods", "smart-selection", "smart-selection-count", "smart-selection-help", "smart-selection-warning", "smart-selection-cancel", "smart-selection-confirm",
   "start-page-capture", "add-page-capture", "page-capture", "page-capture-title", "page-capture-help", "page-capture-list", "page-capture-scan", "page-capture-cancel", "page-capture-save", "page-capture-save-text-only",
-  "page-capture-mode", "page-capture-organize", "capture-extra-metadata",
+  "page-capture-details-option", "page-capture-details", "page-capture-mode", "page-capture-merge-groups", "page-capture-organize", "capture-extra-metadata",
   "page-capture-media-viewer", "page-capture-media-stage", "page-capture-media-position", "page-capture-media-title", "page-capture-media-meta",
   "page-capture-media-review", "page-capture-media-review-status", "page-capture-media-review-list",
   "page-capture-undo-region",
@@ -81,6 +87,11 @@ let activeCreativeResult = null;
 let activeCreativePrompt = null;
 let organizing = false;
 let saving = false;
+let captureSaveTask = null;
+let awaitingCaptureSaveReply = false;
+let handlingRestoredSave = false;
+let currentCaptureSaveId = '';
+const captureSaveWaiters = new Map();
 let smartVisualFallback = false;
 let autoTextCaptureActive = false;
 let autoPageCaptureActive = false;
@@ -94,6 +105,8 @@ const draftVisualHashes = new Map();
 let pageCaptureSession = null;
 let pageCaptureMediaView = null;
 let pageCaptureEditHistory = [];
+let genericGroupingBase = null;
+let pageCaptureDetailsBase = null;
 let pageCapturePermissionState = { status: "unknown", origin: "", pattern: "" };
 const visualUrls = new Map();
 const FEEDBACK_DURATION_MS = 4000;
@@ -109,8 +122,11 @@ let pageCapturePreviewRequest = 0;
 const cancelledPageCaptureRequests = new Set();
 let pendingCaptureAction = null;
 let pendingClipboardButton = null;
-let creatingCollection = false;
-const NEW_COLLECTION_OPTION_VALUE = "new-collection";
+let metadataUpdates = Promise.resolve(true);
+const captureProgressGate = createCaptureProgressGate();
+const captureProgressCaption = document.createElement('span');
+const captureProgressBar = document.createElement('progress');
+captureProgressBar.setAttribute('aria-label', t('保存进度'));
 const CLIPBOARD_IMAGE_EXTENSIONS = Object.freeze({
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -118,13 +134,18 @@ const CLIPBOARD_IMAGE_EXTENSIONS = Object.freeze({
 });
 
 const customLabelEditor = createTagEditor({
-  placeholder: t("输入标签，回车添加"),
+  compact: true,
   onChange: async (values) => {
     if (!draft) return false;
-    return Boolean(await updateDraft({ ...draft, customLabels: values, customLabelsExplicit: true }));
+    return updateCaptureMetadata({ customLabels: values, customLabelsExplicit: true });
   }
 });
 elements.customLabels.replaceChildren(customLabelEditor.element);
+const captureProjectMenu = createCaptureProjectMenu({
+  menu: elements.captureCollection, getCollections: () => collections, getDraft: () => draft,
+  onChange: updateCaptureMetadata, onError: error => showFeedback(error.message, true)
+});
+bindTransientMenus(document, '.detail-project-menu');
 
 libraryStorage.subscribe((changes) => {
   if (!(changes.captureDraft || changes.activeCreativeResult || changes.composerSessions)) return;
@@ -172,10 +193,14 @@ elements.clipboardPermissionDialog.addEventListener("cancel", (event) => {
 });
 elements.pageCaptureScan.addEventListener("click", () => {
   pageCaptureListRequested = false;
-  void startPageCapture(pageCaptureBatch?.articleSplit ? "article" : "loaded", elements.pageCaptureScan);
+  void startPageCapture(pageCaptureBatch?.adapter === "generic" ? "whole" : pageCaptureBatch?.articleSplit ? "article" : "loaded", elements.pageCaptureScan);
 });
 elements.pageCaptureMode.addEventListener("change", async () => {
   const mode = elements.pageCaptureMode.value;
+  if (pageCaptureBatch?.adapter === "generic" && mode !== "list") {
+    regroupGenericPreview(mode === "article" ? "sections" : mode === "media" ? "media" : "whole");
+    return;
+  }
   if (mode === "article") { await startPageCapture("article", elements.pageCaptureScan); return; }
   if (pageCaptureBatch?.articleSplit) {
     await startPageCapture("loaded", elements.pageCaptureScan);
@@ -186,6 +211,8 @@ elements.pageCaptureMode.addEventListener("change", async () => {
   if (!pageCaptureListRequested && pageCaptureBatch?.captureMode === "list") void startPageCapture("loaded", elements.pageCaptureScan);
   else render();
 });
+elements.pageCaptureDetails.addEventListener("change", () => { if (elements.pageCaptureDetails.checked) void readPageCaptureDetails(); });
+elements.pageCaptureMergeGroups.addEventListener("click", mergeGenericPreviewGroups);
 elements.pageCaptureListRun.addEventListener("click", () => startPageListCapture(elements.pageCaptureListRun));
 elements.pageCaptureSaveMode.addEventListener("change", () => {
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, saveMode: elements.pageCaptureSaveMode.value });
@@ -197,7 +224,7 @@ elements.pageCaptureCombinedTitle.addEventListener("change", () => {
 elements.pageCaptureCancel.addEventListener("click", cancelPageCapture);
 elements.pageCaptureOrganize.addEventListener("click", () => {
   elements.captureMetadata.scrollIntoView({ block: "start", behavior: "instant" });
-  elements.captureCollection.focus({ preventScroll: true });
+  captureProjectMenu.focus();
 });
 elements.pageCaptureSave.addEventListener("click", () => savePageCapture(false));
 elements.pageCaptureSaveTextOnly.addEventListener("click", () => savePageCapture(true));
@@ -209,6 +236,19 @@ elements.regionCaptureCancel.addEventListener("click", cancelRegionCapture);
 elements.smartSelectionCancel.addEventListener("click", cancelSmartVisualSelection);
 elements.smartSelectionConfirm.addEventListener("click", confirmSmartVisualSelection);
 chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === 'CAPTURE_SAVE_TASK_CHANGED') {
+    void chrome.runtime.sendMessage({ type: 'GET_CAPTURE_SAVE_TASK' }).then(response => {
+      const task = response.task;
+      if (task && !['queued', 'running', 'cancelling', 'committing'].includes(task.status)) captureSaveWaiters.get(task.id)?.(task.result);
+      if (!awaitingCaptureSaveReply) void refresh();
+      else if (task) { captureSaveTask = task; renderSaveActions(); }
+    });
+    return;
+  }
+  if (captureProgressGate.accept(message)) {
+    showCaptureSaveProgress(message.progress);
+    return;
+  }
   if (message?.type === "OPEN_PAGE_CAPTURE") {
     void chrome.windows.getCurrent().then(window => {
       if (window.id === message.windowId) return pageCaptureBatch ? refreshDiscoveredVideos() : startAutomaticPageCapture();
@@ -236,6 +276,12 @@ chrome.runtime.onMessage.addListener((message) => {
     }
     if (!pageCaptureRequestId || message.requestId !== pageCaptureRequestId) return;
     pageCaptureSession = { sessionId: message.sessionId, phase: message.phase };
+    if (message.phase === "details") {
+      showFeedback(t("正在读取案例详情 {done}/{total}", { done: message.detailDone, total: message.detailTotal }));
+      // The preview data is unchanged until the result arrives. Do not rebuild
+      // every card and renormalize its pixel backups for each progress tick.
+      if (pageCaptureDetailsBase) return;
+    }
     pageCaptureBatch = normalizePageCaptureBatch(pageCaptureBatch
       ? { ...pageCaptureBatch, status: "scanning" }
       : { id: message.sessionId, status: "scanning", candidates: [] });
@@ -251,33 +297,11 @@ elements.exitTarget.addEventListener("click", () => discardDraft());
 elements.saveDraft.addEventListener("click", () => commitDraft("", elements.saveDraft));
 elements.mergeDuplicate.addEventListener("click", () => commitDraft("merge", elements.mergeDuplicate));
 elements.saveSeparate.addEventListener("click", () => commitDraft("new", elements.saveSeparate));
-elements.draftTitle.addEventListener("change", () => updateDraft({ ...draft, title: elements.draftTitle.value }));
-elements.contentType.addEventListener("change", () => updateDraft({
-  ...draft,
+elements.draftTitle.addEventListener("change", () => updateCaptureMetadata({ title: elements.draftTitle.value }));
+elements.contentType.addEventListener("change", () => updateCaptureMetadata({
   contentTypeId: elements.contentType.value,
   contentTypeExplicit: true
 }));
-elements.captureCollection.addEventListener("change", () => {
-  creatingCollection = elements.captureCollection.value === NEW_COLLECTION_OPTION_VALUE;
-  const collectionId = creatingCollection ? "" : elements.captureCollection.value;
-  void updateDraft({
-    ...draft,
-    collectionId,
-    newCollectionName: creatingCollection ? draft.newCollectionName : ""
-  }).then(() => {
-    if (creatingCollection) elements.captureNewCollectionName.focus();
-  });
-});
-elements.captureNewCollectionName.addEventListener("change", () => updateDraft({
-  ...draft,
-  collectionId: "",
-  newCollectionName: elements.captureNewCollectionName.value
-}));
-elements.captureNewCollectionName.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter") return;
-  event.preventDefault();
-  elements.captureNewCollectionName.blur();
-});
 
 void startAutomaticPageCapture();
 
@@ -383,7 +407,7 @@ async function confirmCapturePermissionOnboarding(event) {
     permissionGranted = true;
     pendingCaptureAction = null;
   } catch (error) {
-    elements.capturePermissionStatus.textContent = error?.message || "权限申请失败，待保存内容没有改变。";
+    elements.capturePermissionStatus.textContent = translateUiMessage(error?.message) || t("权限申请失败，待保存内容没有改变。");
     elements.capturePermissionStatus.classList.add("error");
   } finally {
     elements.capturePermissionConfirm.disabled = false;
@@ -419,6 +443,7 @@ async function refresh() {
   activeCreativeResult = response.activeCreativeResult ?? null;
   activeCreativePrompt = response.activeCreativePrompt ?? null;
   syncDraftIntoPageCapture();
+  restoreCaptureSaveTask(response.saveTask);
   render();
 }
 
@@ -448,6 +473,7 @@ async function refreshDiscoveredVideos() {
   const response = await chrome.runtime.sendMessage({ type: "GET_DISCOVERED_VIDEOS", tabId: tab.id });
   if (!response?.ok || pageCaptureBatch !== batch) return;
   pageCaptureBatch = normalizePageCaptureBatch(addDiscoveredVideos(batch, response.resources || []));
+  genericGroupingBase = null;
   render();
 }
 
@@ -467,6 +493,7 @@ async function extractPageSelection(button) {
       const previousCandidate = previous?.candidates.find(item => item.id === previous.selections[0]?.candidateId);
       if (previousCandidate && (manuallyPickedBatchId === previous.id || response.supplement === "comments")) {
         appendToPageCapture(candidate);
+        if (batch.selectionTemplate) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selectionTemplate: batch.selectionTemplate });
         render();
         return;
       }
@@ -664,12 +691,11 @@ function render() {
   elements.targetBanner.hidden = !targetEntry;
   elements.targetLabel.textContent = translateUiMessage(view.targetLabel);
   elements.contentSummary.textContent = translateUiMessage(view.summary);
-  elements.saveDraft.textContent = t(view.saveLabel);
-  elements.saveDraft.disabled = saving || !view.hasContent;
+  elements.saveDraft.textContent = saving ? t(captureSaveTask?.canCancel ? "取消保存" : "正在保存…") : t(view.saveLabel);
+  elements.saveDraft.disabled = saving ? !captureSaveTask?.canCancel : !view.hasContent;
   elements.draftTitle.disabled = saving;
   elements.contentType.disabled = saving;
-  elements.captureCollection.disabled = saving;
-  elements.captureNewCollectionName.disabled = saving;
+  captureProjectMenu.render(saving);
   for (const control of [
     elements.addClipboard,
     elements.startClipboard,
@@ -722,19 +748,6 @@ function render() {
     option.selected = true;
     elements.contentType.prepend(option);
   }
-  const selectedCollectionId = draft.collectionId && collections.some((item) => item.id === draft.collectionId)
-    ? draft.collectionId
-    : "";
-  creatingCollection = creatingCollection || Boolean(draft.newCollectionName);
-  elements.captureCollection.replaceChildren(
-    optionElement("", t("不分组"), !creatingCollection && !selectedCollectionId),
-    ...collections.map((item) => optionElement(item.id, item.name, !creatingCollection && item.id === selectedCollectionId)),
-    optionElement(NEW_COLLECTION_OPTION_VALUE, t("＋ 新建项目"), creatingCollection)
-  );
-  elements.captureNewCollectionRow.hidden = !creatingCollection;
-  if (document.activeElement !== elements.captureNewCollectionName) {
-    elements.captureNewCollectionName.value = draft.newCollectionName || "";
-  }
   customLabelEditor.setValues(draft.customLabels ?? []);
   customLabelEditor.setDisabled(saving);
   elements.quickPreview.replaceChildren(...createQuickPreview());
@@ -783,16 +796,16 @@ function renderPageCapture() {
   const busy = scanning || pageCaptureBatch.status === "saving" || Boolean(pageCaptureEditing || pageCaptureSupplementRequest) || pageCaptureCancelling;
   elements.pageCaptureTitle.textContent = t("网页采集");
   elements.pageCaptureHelp.textContent = pageCaptureSupplementRequest ? t("正在读取评论全文…") : scanning ? t("正在扫描…")
-    : pageCaptureBatch.status === "saving" ? t("正在保存…")
-    : pageCaptureBatch.error || (!pageCaptureBatch.candidates.length ? t("未识别到内容，可重新扫描或返回选择其他采集方式") : "");
-  setTaskFeedbackState(elements.pageCaptureHelp, { pending: scanning || pageCaptureBatch.status === "saving" || Boolean(pageCaptureSupplementRequest), error: Boolean(pageCaptureBatch.error) });
+    : pageCaptureBatch.status === "saving" ? ""
+    : translateUiMessage(pageCaptureBatch.error) || (!pageCaptureBatch.candidates.length ? t("未识别到内容，可重新扫描或返回选择其他采集方式") : "");
+  setTaskFeedbackState(elements.pageCaptureHelp, { pending: scanning || Boolean(pageCaptureSupplementRequest), error: Boolean(pageCaptureBatch.error) });
   elements.pageCaptureHelp.hidden = !elements.pageCaptureHelp.textContent;
   const selectedMediaCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
   const saveBlocked = busy || !selectedCount || (listMode && !["multiple", "combined"].includes(pageCaptureBatch.saveMode));
-  elements.pageCaptureSave.disabled = saveBlocked;
+  elements.pageCaptureSave.disabled = saving ? !captureSaveTask?.canCancel : saveBlocked;
   elements.pageCaptureSaveTextOnly.disabled = saveBlocked;
   elements.pageCaptureSaveTextOnly.hidden = selectedMediaCount === 0;
-  elements.pageCaptureSave.textContent = listMode
+  elements.pageCaptureSave.textContent = saving ? t(captureSaveTask?.canCancel ? "取消保存" : "正在保存…") : listMode
     ? pageCaptureBatch.saveMode === "combined" ? t("合并保存案例") : t("保存 {count} 个案例", { count: selectedCount })
     : t("保存案例");
   elements.pageCaptureOrganize.hidden = !listMode || !selectedCount;
@@ -802,7 +815,18 @@ function renderPageCapture() {
   elements.pageCaptureScan.hidden = false;
   elements.pageCaptureScan.disabled = busy;
   elements.pageCaptureMode.disabled = busy;
-  elements.pageCaptureMode.value = pageCaptureBatch.articleSplit ? "article" : listMode || pageCaptureListRequested ? "list" : "single";
+  const generic = pageCaptureBatch.adapter === "generic";
+  elements.pageCaptureDetailsOption.hidden = !generic || !genericDetailRequests(pageCaptureBatch).length;
+  elements.pageCaptureDetails.checked = pageCaptureBatch.detailsRead || Boolean(pageCaptureDetailsBase);
+  elements.pageCaptureDetails.disabled = busy || pageCaptureBatch.detailsRead;
+  const grouping = pageCaptureBatch.genericGrouping;
+  elements.pageCaptureMode.querySelector('[value="single"]').textContent = t(generic ? "整体保存" : "单个案例");
+  elements.pageCaptureMode.querySelector('[value="article"]').textContent = t(generic ? "按网页分组" : "文章内案例");
+  elements.pageCaptureMode.querySelector('[value="media"]').hidden = !generic;
+  elements.pageCaptureMode.querySelector('[value="media"]').textContent = t("每个媒体一个案例");
+  elements.pageCaptureMode.value = grouping === "media" ? "media" : grouping === "sections" || grouping === "manual" || pageCaptureBatch.articleSplit ? "article" : grouping === "whole" ? "single" : listMode || pageCaptureListRequested ? "list" : "single";
+  elements.pageCaptureMergeGroups.hidden = !generic || !listMode;
+  elements.pageCaptureMergeGroups.disabled = busy || selectedCount < 2;
   elements.pageCaptureListSetup.hidden = listMode || !pageCaptureListRequested;
   elements.pageCaptureListRun.disabled = busy || selectedCount !== 1;
   elements.pageCaptureTargetCount.disabled = busy;
@@ -812,7 +836,7 @@ function renderPageCapture() {
   if (listMode) {
     const reviewCount = pageCaptureBatch.candidates.filter((candidate) => candidate.batchStructureStatus === "review").length;
     const incomplete = !scanning && pageCaptureBatch.targetCount > pageCaptureBatch.candidates.length;
-    const stopWarning = ["layout-changed", "pagination-failed"].includes(pageCaptureBatch.stopReason);
+    const stopWarning = ["layout-changed", "pagination-failed", "manual-template-page"].includes(pageCaptureBatch.stopReason);
     elements.pageCaptureListSummary.textContent = [
       incomplete ? t("仅取得 {actual}/{target} 个案例", { actual: pageCaptureBatch.candidates.length, target: pageCaptureBatch.targetCount }) : "",
       stopWarning ? pageCaptureStopReasonLabel(pageCaptureBatch.stopReason) : "",
@@ -850,11 +874,12 @@ function renderPageCapture() {
       render();
     },
     onPreviewMedia: index => openPageCaptureMediaViewer(candidate, index),
+    onSplitMedia: generic && candidate.media.filter(m => ["image", "video"].includes(m.kind)).length > 1 ? () => splitGenericPreviewGroup(candidate) : null,
     createArticlePreview: () => createPageCaptureArticlePreview(candidate, selections.get(candidate.id)),
     previewOpen: expandedPreviews.has(candidate.id)
   })));
   elements.pageCaptureUndoRegion.disabled = saving || !pageCaptureEditHistory.length;
-  elements.pageCaptureUndoRegion.hidden = listMode;
+  elements.pageCaptureUndoRegion.hidden = listMode && !generic;
   renderPageCaptureMediaReview(selections);
   if (activeCardId) elements.pageCaptureList.querySelector(`[data-candidate-id="${CSS.escape(activeCardId)}"] .page-capture-confirm`)?.focus({ preventScroll: true });
   if (activeMediaId) elements.pageCaptureMediaReviewList.querySelector(`[data-media-id="${CSS.escape(activeMediaId)}"] button:last-child`)?.focus({ preventScroll: true });
@@ -892,15 +917,19 @@ function createPageCaptureArticlePreview(candidate, selection) {
     remove.textContent = "×";
     remove.setAttribute("aria-label", t("移除"));
     remove.addEventListener("click", () => {
-      pageCaptureEditHistory.push({ batch: structuredClone(pageCaptureBatch) });
-      const removedIndex = candidate.textBlocks.findIndex(item => item.id === block.id || item.text === block.text);
-      const blocks = candidate.textBlocks.filter((item, index) => index !== removedIndex);
-      const articleBlocks = candidate.articleDocument.blocks.filter(item => item.id !== block.id);
-      const revised = { ...candidate, textBlocks: blocks, contentText: blocks.map(item => item.text).join("\n\n"), articleDocument: { ...candidate.articleDocument, blocks: articleBlocks } };
+      pageCaptureEditHistory.push({ batch: structuredClone(pageCaptureBatch), genericBase: genericGroupingBase });
+      const revised = removeCaptureTextBlock(candidate, block.id);
+      const blocks = revised.textBlocks;
+      if (genericGroupingBase?.articleDocument) {
+        const baseBlocks = genericGroupingBase.articleDocument.blocks.filter(item => item.id !== block.id);
+        genericGroupingBase = { ...genericGroupingBase, contentHtml: "", articleDocument: { ...genericGroupingBase.articleDocument, blocks: baseBlocks },
+          contentText: baseBlocks.filter(item => item.text).map(item => item.text).join("\n\n"),
+          textBlocks: baseBlocks.filter(item => item.text).map(item => ({ ...item, kind: "section" })) };
+      }
       pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
         candidates: pageCaptureBatch.candidates.map(item => item.id === candidate.id ? revised : item),
         selections: pageCaptureBatch.selections.map(item => item.candidateId === candidate.id ? { ...item,
-          selectedTextBlockIds: item.selectedTextBlockIds.filter(id => blocks.some(block => block.id === id)) } : item) });
+          selectedTextBlockIds: item.selectedTextBlockIds?.filter(id => blocks.some(block => block.id === id)) } : item) });
       render();
     });
     row.append(node, remove);
@@ -919,11 +948,13 @@ function createPageCaptureArticleMedia(candidate, media, block, selection) {
   else if (block.sourceUrl) button.addEventListener("click", () => openPageCaptureArticleUrl(block.sourceUrl));
   const preview = document.createElement("span");
   preview.className = "page-capture-media-preview";
-  const previewUrl = media?.kind === "video" ? media.posterUrl : media?.previewDataUrl || media?.dataUrl || media?.url || block.posterUrl || block.sourceUrl;
+  const previewUrl = pageCapturePreviewSource(candidate, media) || block.posterUrl || block.sourceUrl;
   if (previewUrl || media?.localAssetId) {
     const image = document.createElement("img");
+    if (candidate.adapter === "generic") { image.loading = "lazy"; image.decoding = "async"; }
     if (media?.localAssetId) loadVisual(image, media.localAssetId);
     else image.src = previewUrl;
+    bindPageCapturePreviewFallback(image, candidate, media);
     image.alt = "";
     image.referrerPolicy = "no-referrer";
     image.addEventListener("error", () => {
@@ -984,7 +1015,8 @@ function appendToPageCapture(addition) {
   if (!selection || pageCaptureBatch.selections.length !== 1) return;
   const candidate = pageCaptureBatch.candidates.find(c => c.id === selection.candidateId);
   const result = appendCaptureCandidate(candidate, addition, selection);
-  pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selection) });
+  pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selection), genericBase: genericGroupingBase });
+  genericGroupingBase = null;
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
     candidates: pageCaptureBatch.candidates.map(c => c.id === candidate.id ? result.candidate : c),
     selections: [result.selection] });
@@ -1095,7 +1127,8 @@ function applyPageCaptureSupplement(candidate, item) {
     completeness: item.partial ? "partial" : candidate.completeness,
     sourceFacts: { ...candidate.sourceFacts, status: item.partial ? "partial" : candidate.sourceFacts.status }
   };
-  pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selected) });
+  pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selected), genericBase: genericGroupingBase });
+  genericGroupingBase = null;
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
     candidates: pageCaptureBatch.candidates.map(value => value.id === candidate.id ? revised : value),
     selections: pageCaptureBatch.selections.map(selection => selection.candidateId === candidate.id
@@ -1106,6 +1139,7 @@ function applyPageCaptureSupplement(candidate, item) {
 }
 
 function replacePageCaptureCandidate(candidate) {
+  genericGroupingBase = null;
   const candidates = pageCaptureBatch.candidates.map((item) => item.id === candidate.id ? candidate : item);
   const selection = normalizePageCaptureSelection({
     candidateId: candidate.id,
@@ -1141,11 +1175,12 @@ function renderPageCaptureMediaReview(selections) {
     preview.type = "button";
     preview.className = "page-capture-media-review-preview";
     preview.addEventListener("click", () => openPageCaptureMediaViewer(candidate, mediaIndex));
-    const previewUrl = media.kind === "video" ? media.posterUrl : media.previewDataUrl || media.dataUrl || media.url;
+    const previewUrl = pageCapturePreviewSource(candidate, media);
     if (previewUrl || media.localAssetId) {
       const image = document.createElement("img");
       if (media.localAssetId) loadVisual(image, media.localAssetId);
       else image.src = previewUrl;
+      bindPageCapturePreviewFallback(image, candidate, media);
       image.alt = "";
       image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => preview.replaceChildren(textNode("span", t("预览不可用"))), { once: true });
@@ -1217,11 +1252,101 @@ function finalizePageCaptureSelectionsForSave(batchValue, textOnly = false) {
   });
 }
 
+function genericPreviewSelection(candidate, allowedMedia) {
+  const ids = candidate.media.map(m => m.id).filter(id => !allowedMedia || allowedMedia.has(id));
+  return normalizePageCaptureSelection({ candidateId: candidate.id, includeText: Boolean(candidate.contentText),
+    selectedTextBlockIds: candidate.textBlocks.map(b => b.id), selectedMediaIds: ids,
+    mediaDecision: ids.length ? "confirmed" : "none" }, [candidate]);
+}
+
+function combineGenericPreview(candidates) {
+  const combined = combinePageCaptureCandidates(candidates);
+  combined.completeness = candidates.some(c => c.completeness !== "complete") ? "partial" : "complete";
+  combined.sourceFacts.status = combined.completeness;
+  combined.possibleOmissions = candidates.flatMap(c => c.possibleOmissions || []);
+  combined.supplements = candidates.flatMap(c => c.supplements || []);
+  combined.extraction.textTruncated = candidates.some(c => c.extraction.textTruncated);
+  return combined;
+}
+
+function commitGenericPreview(candidates, grouping, selections, previousBase = genericGroupingBase) {
+  pageCaptureEditHistory.push({ batch: structuredClone(pageCaptureBatch), genericBase: previousBase });
+  pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, candidates, selections,
+    captureMode: grouping === "whole" ? "single" : "list", saveMode: grouping === "whole" ? "single" : "multiple",
+    genericGrouping: grouping, articleSplit: false, targetCount: 0, stopReason: "", error: "" });
+  pageCaptureListRequested = false;
+  closePageCaptureMediaViewer();
+  render();
+}
+
+function regroupGenericPreview(grouping) {
+  if (!pageCaptureBatch || saving || pageCaptureRequestId) return;
+  const selected = applyPageCaptureSelections(finalizePageCaptureSelectionsForSave(pageCaptureBatch));
+  const previousBase = genericGroupingBase;
+  const hadBase = Boolean(previousBase);
+  if (!genericGroupingBase) {
+    const selectedIds = new Set(selected.map(c => c.id));
+    const sources = pageCaptureBatch.genericGrouping || pageCaptureBatch.candidates.length === 1
+      ? pageCaptureBatch.candidates : pageCaptureBatch.candidates.filter(c => selectedIds.has(c.id));
+    if (!sources.length) { showFeedback(t("请先选择要整理的内容"), true); render(); return; }
+    genericGroupingBase = sources.length === 1 ? sources[0] : combineGenericPreview(sources);
+  }
+  const allowedMedia = pageCaptureBatch.selections.length || hadBase || pageCaptureBatch.genericGrouping
+    ? new Set(selected.flatMap(c => c.media.map(m => m.id))) : null;
+  const candidates = grouping === "whole" ? [genericGroupingBase] : groupGenericCapture(genericGroupingBase, grouping);
+  if (grouping === "sections" && candidates.length === 1 && candidates[0] === genericGroupingBase) {
+    showFeedback(t("未找到明确分组，仍可整体保存或按媒体拆开"));
+    render(); return;
+  }
+  const selections = candidates.filter(c => c.batchStructureStatus !== "review"
+    && (!allowedMedia || c.media.some(m => allowedMedia.has(m.id)) || !c.media.length && selected.some(s => s.contentText)))
+    .map(c => genericPreviewSelection(c, allowedMedia)).filter(Boolean);
+  commitGenericPreview(candidates, grouping, selections, previousBase);
+}
+
+function splitGenericPreviewGroup(candidate) {
+  const groups = groupGenericCapture(candidate, "media");
+  if (groups.length < 2) return;
+  const selected = pageCaptureBatch.selections.find(s => s.candidateId === candidate.id);
+  const candidates = pageCaptureBatch.candidates.flatMap(c => c.id === candidate.id ? groups : [c]);
+  const selections = pageCaptureBatch.selections.filter(s => s.candidateId !== candidate.id);
+  if (selected) selections.push(...groups.filter(c => c.batchStructureStatus !== "review"
+    && c.media.some(m => selected.selectedMediaIds.includes(m.id)))
+    .map(c => genericPreviewSelection(c, new Set(selected.selectedMediaIds))).filter(Boolean));
+  commitGenericPreview(candidates, "manual", selections);
+}
+
+function mergeGenericPreviewGroups() {
+  const selected = applyPageCaptureSelections(finalizePageCaptureSelectionsForSave(pageCaptureBatch));
+  if (selected.length < 2) return;
+  const ids = new Set(selected.map(c => c.id));
+  // Deselected media stay in the merged case as deselected, so they can be
+  // chosen again; removed text stays removed.
+  const assetKinds = new Set(["image", "video", "document", "attachment"]);
+  const sources = selected.map(applied => {
+    const full = pageCaptureBatch.candidates.find(c => c.id === applied.id);
+    const keptText = new Set((applied.articleDocument?.blocks || []).map(b => b.id));
+    return { ...full, contentHtml: applied.contentHtml, contentText: applied.contentText, textBlocks: applied.textBlocks, excerpt: applied.excerpt,
+      articleDocument: full.articleDocument && { ...full.articleDocument,
+        blocks: full.articleDocument.blocks.filter(b => assetKinds.has(b.kind) || keptText.has(b.id)) } };
+  });
+  const combined = combineGenericPreview(sources);
+  const candidates = [];
+  for (const candidate of pageCaptureBatch.candidates) {
+    if (!ids.has(candidate.id)) candidates.push(candidate);
+    else if (!candidates.includes(combined)) candidates.push(combined);
+  }
+  commitGenericPreview(candidates, "manual", [genericPreviewSelection(combined, new Set(selected.flatMap(c => c.media.map(m => m.id))))]);
+}
+
 function undoPageCaptureRegionEdit() {
   const previous = pageCaptureEditHistory.pop();
   if (!previous) return;
-  if (previous.batch) { pageCaptureBatch = normalizePageCaptureBatch(previous.batch); render(); }
+  if (previous.batch) { pageCaptureBatch = normalizePageCaptureBatch(previous.batch);
+    if (Object.hasOwn(previous, "genericBase")) genericGroupingBase = previous.genericBase;
+    render(); }
   else if (previous.selection) {
+    if (Object.hasOwn(previous, "genericBase")) genericGroupingBase = previous.genericBase;
     pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
       candidates: pageCaptureBatch.candidates.map(c => c.id === previous.candidate.id ? previous.candidate : c),
       selections: pageCaptureBatch.selections.map(s => s.candidateId === previous.candidate.id ? previous.selection : s) });
@@ -1265,10 +1390,11 @@ function renderPageCaptureMediaViewer() {
     elements.pageCaptureMediaNext.disabled = candidate.media.length < 2;
     return;
   }
-  const sourceUrl = media.kind === "video" ? media.url : media.previewDataUrl || media.dataUrl || media.url;
+  const sourceUrl = media.kind === "video" ? media.url : pageCapturePreviewSource(candidate, media);
   const visual = document.createElement(media.kind === "video" ? "video" : "img");
   if (media.localAssetId) loadVisual(visual, media.localAssetId);
   else visual.src = sourceUrl || media.posterUrl || "";
+  bindPageCapturePreviewFallback(visual, candidate, media);
   visual.setAttribute("referrerpolicy", "no-referrer");
   if (media.kind === "video") {
     visual.controls = true;
@@ -1291,7 +1417,8 @@ function renderPageCaptureMediaViewer() {
 function pageCaptureStopReasonLabel(value) {
   return ({
     "layout-changed": t("列表结构发生变化，已停止。"),
-    "pagination-failed": t("列表翻页失败，已按当前结果结束。")
+    "pagination-failed": t("列表翻页失败，已按当前结果结束。"),
+    "manual-template-page": t("已按手选范围采集本页；其他页面需重新选取。")
   })[value] || "";
 }
 
@@ -1313,30 +1440,55 @@ function pageCaptureMediaSourceLabel(value, captureMethod = "") {
 async function cancelPageCapture() {
   if (pageCaptureCancelling || pageCaptureBatch?.status === "saving") return;
   pageCaptureCancelling = true;
-  const requestId = pageCaptureRequestId;
-  const sessionId = pageCaptureSession?.sessionId;
   const scanning = pageCaptureBatch?.status === "scanning";
-  if (requestId) cancelledPageCaptureRequests.add(requestId);
-  pageCaptureRequestId = "";
-  pageCaptureSession = null;
-  pageCaptureEditing = null;
-  pageCaptureSupplementRequest = null;
-  pageCapturePreviewRequest += 1;
-  closePageCaptureMediaViewer();
-  render();
   try {
+    if (!scanning && !pageCaptureAppendBase) {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_CAPTURE_SAVE_TASK' });
+      if (!response?.ok) throw new Error(response?.message || "无法读取待保存内容");
+      const task = response.task;
+      if (task?.input?.type === 'COMMIT_PAGE_CAPTURE' && task.input.batch?.id === pageCaptureBatch?.id) {
+        if (!await confirmAppAction({
+          title: "放弃未保存内容？",
+          description: "尚未入库的网页内容和下载进度会被清空，已入库案例及其他待保存内容会保留。",
+          confirmLabel: "放弃并退出",
+          danger: true
+        })) return;
+        const discarded = await chrome.runtime.sendMessage({ type: 'DISCARD_CAPTURE_SAVE', id: task.id });
+        if (!discarded?.ok) throw new Error(discarded?.message || "无法清空");
+        captureSaveTask = null;
+        currentCaptureSaveId = '';
+        captureProgressGate.end();
+      }
+    }
+    const requestId = pageCaptureRequestId;
+    const sessionId = pageCaptureSession?.sessionId;
+    if (requestId) cancelledPageCaptureRequests.add(requestId);
+    pageCaptureRequestId = "";
+    pageCaptureSession = null;
+    pageCaptureEditing = null;
+    pageCaptureSupplementRequest = null;
+    pageCapturePreviewRequest += 1;
+    closePageCaptureMediaViewer();
+    render();
     if (sessionId) await chrome.runtime.sendMessage({ type: "CANCEL_PAGE_CAPTURE", sessionId });
     await clearPageCaptureMarkers();
     if (pageCaptureAppendBase) {
       pageCaptureBatch = pageCaptureAppendBase;
       pageCaptureAppendBase = null;
+    } else if (pageCaptureDetailsBase) {
+      pageCaptureBatch = pageCaptureDetailsBase;
+      pageCaptureDetailsBase = null;
     } else if (scanning && pageCaptureBatch) {
       pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, status: "preview", selections: [], error: t("扫描已停止，可重新扫描") });
     } else {
       pageCaptureBatch = null;
       pageCaptureListRequested = false;
       pageCaptureEditHistory = [];
+  genericGroupingBase = null;
+      pageCaptureDraftIds = new Set();
     }
+  } catch (error) {
+    showFeedback(error.message || "无法清空", true);
   } finally {
     pageCaptureCancelling = false;
     render();
@@ -1370,7 +1522,7 @@ function createQuickPreview() {
     draft.visuals.forEach((visual, index) => {
       const item = div("quick-image-item");
       const image = document.createElement("img");
-      image.alt = visual.sourceTitle || `截图 ${index + 1}`;
+      image.alt = visual.sourceTitle || t("截图 {index}", { index: index + 1 });
       loadVisual(image, visual.id);
       const remove = createQuickRemoveButton(`删除第 ${index + 1} 张图片`, (button) =>
         sendDraftAction(button, "REMOVE_CAPTURE_VISUAL", { visualId: visual.id }));
@@ -1387,7 +1539,7 @@ function createQuickPreview() {
 
 function createQuickRemoveButton(ariaLabel, handler) {
   const button = action("", handler, false, "quick-remove", ariaLabel);
-  button.title = ariaLabel;
+  button.title = translateUiMessage(ariaLabel);
   button.append(createUiIcon("x"));
   return button;
 }
@@ -1397,7 +1549,7 @@ function createFragmentCard(fragment, index, canReorder) {
   card.className = "fragment-card";
   const textarea = document.createElement("textarea");
   textarea.value = fragment.text;
-  textarea.setAttribute("aria-label", `文字内容 ${index + 1}`);
+  textarea.setAttribute("aria-label", t("文字内容 {index}", { index: index + 1 }));
   textarea.addEventListener("change", () =>
     sendDraftAction(null, "UPDATE_CAPTURE_FRAGMENT", { fragmentId: fragment.id, text: textarea.value }));
   const meta = div("item-meta");
@@ -1423,7 +1575,7 @@ function createVisualCard(visual, index, view) {
   const card = document.createElement("article");
   card.className = `visual-card${draft.primaryVisualId === visual.id ? " primary" : ""}`;
   const image = document.createElement("img");
-  image.alt = visual.sourceTitle || `截图 ${index + 1}`;
+  image.alt = visual.sourceTitle || t("截图 {index}", { index: index + 1 });
   loadVisual(image, visual.id);
   const copy = div("visual-copy");
   copy.append(
@@ -1523,6 +1675,41 @@ async function beginSmartVisualSelection(button, commitCreative = false) {
   });
 }
 
+async function readPageCaptureDetails() {
+  if (!pageCaptureBatch || pageCaptureRequestId || saving) return;
+  const requests = genericDetailRequests(pageCaptureBatch);
+  if (!requests.length) return;
+  const requestId = crypto.randomUUID();
+  const before = structuredClone(pageCaptureBatch);
+  pageCaptureDetailsBase = before;
+  pageCaptureRequestId = requestId;
+  pageCaptureBatch = normalizePageCaptureBatch({ ...before, status: "scanning" });
+  render();
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "READ_PAGE_CAPTURE_DETAILS", tabId: before.tabId, requests, requestId });
+    if (pageCaptureRequestId !== requestId) return;
+    if (!response?.ok) throw new Error(response?.message || t("详情读取失败"));
+    pageCaptureEditHistory.push({ batch: before, genericBase: genericGroupingBase });
+    const enriched = applyGenericCaptureDetails(before, response.details);
+    // New detail text follows the selected media; existing exclusions stay intact.
+    enriched.selections = before.selections.map(selection => remapDetailTextSelection(
+      before.candidates.find(c => c.id === selection.candidateId),
+      enriched.candidates.find(c => c.id === selection.candidateId),
+      selection));
+    if (genericGroupingBase) genericGroupingBase = applyGenericCaptureDetails({ adapter: 'generic', candidates: [genericGroupingBase] }, response.details).candidates[0];
+    pageCaptureBatch = normalizePageCaptureBatch({ ...enriched, status: "preview", detailsRead: true });
+    const failed = response.details.filter(detail => detail.error).length;
+    showFeedback(failed ? t("{count} 项详情未能读取，基础内容已保留", { count: failed }) : t("详情读取完成"), Boolean(failed));
+  } catch (error) {
+    if (pageCaptureRequestId !== requestId) return;
+    pageCaptureBatch = normalizePageCaptureBatch({ ...before, status: "preview", error: error.message });
+  } finally {
+    if (pageCaptureRequestId === requestId) {
+      pageCaptureRequestId = ""; pageCaptureSession = null; pageCaptureDetailsBase = null; render();
+    }
+  }
+}
+
 async function startPageCapture(mode, button, { automatic = false } = {}) {
   if (pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureCancelling || pageCaptureBatch?.status === "saving" || button?.disabled) return;
   if (mode !== "list" && pageCaptureBatch?.selections.length === 1 && button === elements.addPageCapture) {
@@ -1532,7 +1719,9 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
   pageCaptureRequestId = requestId;
   await withButton(button, async () => {
     try {
-      const representative = mode === "list"
+      // Explicit templates already match the selected DOM scope. A manually
+      // appended draft can contain several cases and is not a one-card shape.
+      const representative = mode === "list" && !pageCaptureBatch?.selectionTemplate
         ? pageCaptureBatch?.candidates.find((candidate) => candidate.id === pageCaptureBatch.selections[0]?.candidateId) || null
         : null;
       const tab = await resolveActivePage(chrome.tabs, chrome.scripting);
@@ -1558,17 +1747,18 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
       pageCaptureBatch = normalizePageCaptureBatch({ ...(pageCaptureBatch || { id: requestId, candidates: [] }), tabId: tab.id, status: "scanning", error: "" });
       render();
       const targetCount = mode === "list" ? Number(elements.pageCaptureTargetCount.value) : 0;
-      const response = await chrome.runtime.sendMessage({ type: "START_PAGE_CAPTURE", mode, targetCount, requestId });
+      const response = await chrome.runtime.sendMessage({ type: "START_PAGE_CAPTURE", mode, targetCount, requestId,
+        ...(mode === "list" && pageCaptureBatch?.selectionTemplate ? { selectionTemplate: pageCaptureBatch.selectionTemplate } : {}) });
       if (pageCaptureRequestId !== requestId) return;
       if (!response?.ok) throw new Error(pageCapturePermissionFailureMessage(response?.message || t("网页采集失败")));
       const candidates = response.batch.candidates.map((candidate) => {
         let contentText = candidate.contentText;
         try {
-          if (candidate.contentHtml) contentText = ingestHtmlDocument(candidate.contentHtml).contentText || contentText;
+          if (candidate.adapter !== "generic" && candidate.contentHtml) contentText = ingestHtmlDocument(candidate.contentHtml).contentText || contentText;
         } catch {
         }
         const textBlocks = candidate.textBlocks.map((block) => {
-          if (!block.html) return block;
+          if (candidate.adapter === "generic" || !block.html) return block;
           try {
             return { ...block, text: ingestHtmlDocument(block.html).contentText || block.text };
           } catch {
@@ -1581,11 +1771,11 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
           : normalized;
       });
       const batch = normalizePageCaptureBatch({ ...response.batch, candidates, status: "preview" });
-      const selections = mode === "list" || mode === "article"
+      const selections = mode === "list" || mode === "article" || mode === "media"
         ? batch.candidates.filter((candidate) => candidate.batchStructureStatus !== "review").map((candidate) => normalizePageCaptureSelection({
             candidateId: candidate.id,
             selectedTextBlockIds: candidate.textBlocks.map((item) => item.id),
-            selectedMediaIds: pageCaptureDefaultMediaIds(candidate),
+            selectedMediaIds: mode === "media" && batch.adapter === "generic" ? candidate.media.map(m => m.id) : pageCaptureDefaultMediaIds(candidate),
             mediaDecision: "pending"
           }, batch.candidates)).filter(Boolean)
         : batch.selections;
@@ -1597,6 +1787,7 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
         }, batch.candidates));
       }
       pageCaptureBatch = normalizePageCaptureBatch({ ...batch, selections: selections.filter(Boolean) });
+      genericGroupingBase = null;
       if (automatic && pageCaptureBatch.selections.length === 1) {
         syncDraftIntoPageCapture();
         void previewPageCaptureRegion(pageCaptureBatch.candidates[0]);
@@ -1615,7 +1806,7 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
       }
       if (pageCaptureBatch) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, status: "preview", error: error.message });
       pageCaptureSession = null;
-      showFeedback(error.message || t("网页采集失败"), true);
+      showFeedback(pageCaptureBatch ? "" : error.message || t("网页采集失败"), true);
       render();
     } finally {
       cancelledPageCaptureRequests.delete(requestId);
@@ -1642,79 +1833,97 @@ async function startPageListCapture(button) {
   await startPageCapture("list", button);
 }
 
+async function finishPageCaptureSave(response, reviewBatch, saveBatch, selected, metadata) {
+  captureProgressGate.end();
+  if (!response?.ok) throw new Error(response?.message || t("网页内容保存失败"));
+  const results = response.results || [];
+  const savedCandidateIds = savedPageCaptureCandidateIds(saveBatch, selected, results);
+  const remainingIds = new Set(selected.filter(candidate => !savedCandidateIds.has(candidate.id)).map(candidate => candidate.id));
+  const incomplete = results.filter(item => item.status === "partial");
+  const cleanupErrors = [];
+  if (metadata.newCollectionName && response.collectionId) {
+    try { await updateCaptureMetadata({ collectionId: response.collectionId, newCollectionName: "" }); }
+    catch (error) { cleanupErrors.push(error.message); }
+  }
+  const savedDraftItems = savedDraftCaptureItems(draft, persistedPageCaptureCandidates(saveBatch, selected, results), pageCaptureDraftIds);
+  const savedFragments = savedDraftItems.filter(item => item.kind !== "image");
+  if (savedFragments.length) {
+    try {
+      const cleanup = await chrome.runtime.sendMessage({ type: "CLEAR_SAVED_CAPTURE_FRAGMENTS", fragmentIds: savedFragments.map(item => item.id) });
+      if (!cleanup?.ok) throw new Error(cleanup?.message || t("待保存内容没有更新"));
+      for (const item of savedFragments) pageCaptureDraftIds.delete(`${item.kind}:${item.id}`);
+    } catch (error) { cleanupErrors.push(error.message); }
+  }
+  for (const item of savedDraftItems.filter(item => item.kind === "image")) {
+    try {
+      const cleanup = await chrome.runtime.sendMessage({ type: "REMOVE_CAPTURE_VISUAL", visualId: item.id });
+      if (!cleanup?.ok) throw new Error(cleanup?.message || t("待保存内容没有更新"));
+      pageCaptureDraftIds.delete(`${item.kind}:${item.id}`);
+        } catch (error) { cleanupErrors.push(error.message); }
+  }
+  const failures = results.filter(item => !item.entryId || item.pendingMediaIds?.length || !["saved", "partial", "duplicate"].includes(item.status));
+  const failureReasons = [...new Set(failures.flatMap(item => item.warnings || []))];
+  pageCaptureBatch = remainingIds.size ? normalizePageCaptureBatch({
+    ...saveBatch, status: "preview", error: failureReasons.join("；"),
+    candidates: saveBatch.candidates.filter(candidate => remainingIds.has(candidate.id)),
+    selections: saveBatch.selections.filter(selection => remainingIds.has(selection.candidateId))
+  }) : null;
+  pageCaptureEditHistory = [];
+  genericGroupingBase = null;
+  if (!remainingIds.size) {
+    pageCaptureDraftIds = new Set();
+    await clearPageCaptureMarkers(saveBatch.tabId);
+  }
+  const notice = remainingIds.size ? t("部分内容未保存，已保留供重试") : incomplete.length ? t("{message}；部分媒体未完整保存，请在案例库检查", { message: response.message }) : t("已保存");
+  const message = [notice, ...(incomplete.length ? [] : response.warnings || []), ...(remainingIds.size ? [] : failureReasons), ...cleanupErrors].filter(Boolean).join("；");
+  showFeedback(message, Boolean(remainingIds.size || cleanupErrors.length));
+  await chrome.runtime.sendMessage({ type: 'ACK_CAPTURE_SAVE', id: currentCaptureSaveId, remainingBatch: pageCaptureBatch });
+  captureSaveTask = null;
+}
+
 async function savePageCapture(textOnly = false) {
-  if (!pageCaptureBatch || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureBatch.status === "saving") return;
+  if (saving && !textOnly) return cancelCaptureSave();
+  if (saving || !pageCaptureBatch || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureBatch.status === "saving") return;
   const trigger = textOnly ? elements.pageCaptureSaveTextOnly : elements.pageCaptureSave;
   await withButton(trigger, async () => {
     const reviewBatch = pageCaptureBatch;
-    const metadata = captureMetadataForCommit();
-    const saveBatch = finalizePageCaptureSelectionsForSave(reviewBatch, textOnly);
-    const selected = applyPageCaptureSelections(saveBatch);
-    const origins = pageCapturePermissionOrigins(selected);
-    pageCaptureBatch = normalizePageCaptureBatch({ ...saveBatch, status: "saving" });
-    render();
+    saving = true;
     try {
+      const saveBatch = finalizePageCaptureSelectionsForSave(reviewBatch, textOnly);
+      const selected = applyPageCaptureSelections(saveBatch);
+      const origins = pageCapturePermissionOrigins(selected);
+      // Request host access within the Save click, before asynchronous draft updates.
+      const permissionResult = origins.length
+        ? chrome.permissions.request({ origins }).then(granted => ({ granted }), error => ({ error }))
+        : Promise.resolve({ granted: true });
+      if (!await flushCaptureMetadata()) throw new Error(t('保存设置未更新，请重试'));
+      const metadata = captureMetadataForCommit();
+      pageCaptureBatch = normalizePageCaptureBatch({ ...saveBatch, status: "saving" });
+      render();
+      const saveRequestId = beginCaptureSaveProgress();
       let sessionMediaAllowed = true;
+      const permission = await permissionResult;
+      if (permission.error) throw permission.error;
       if (origins.length) {
-        const granted = await chrome.permissions.request({ origins });
-        if (!granted) {
+        if (!permission.granted) {
           sessionMediaAllowed = false;
           showFeedback(t("媒体域名权限未获授权；仍会保存正文和可用引用，并逐项显示下载失败原因。"), true);
         }
       }
       const response = await sendWithGenerationPromptConfirmation({
         type: "COMMIT_PAGE_CAPTURE",
+        saveRequestId,
         batch: normalizePageCaptureBatch({ ...pageCaptureBatch, sessionMediaAllowed }),
         ...metadata
-      });
-      if (!response?.ok) throw new Error(response?.message || t("网页内容保存失败"));
-      const results = response.results || [];
-      const savedCandidateIds = savedPageCaptureCandidateIds(saveBatch, selected, results);
-      const remainingIds = new Set(selected.filter(candidate => !savedCandidateIds.has(candidate.id)).map(candidate => candidate.id));
-      const incomplete = results.filter(item => item.status === "partial");
-      const cleanupErrors = [];
-      if (metadata.newCollectionName && response.collectionId) {
-        creatingCollection = false;
-        try { await updateDraft({ ...draft, collectionId: response.collectionId, newCollectionName: "" }); }
-        catch (error) { cleanupErrors.push(error.message); }
-      }
-      const savedDraftItems = savedDraftCaptureItems(draft, persistedPageCaptureCandidates(saveBatch, selected, results), pageCaptureDraftIds);
-      const savedFragments = savedDraftItems.filter(item => item.kind !== "image");
-      if (savedFragments.length) {
-        try {
-          const cleanup = await chrome.runtime.sendMessage({ type: "CLEAR_SAVED_CAPTURE_FRAGMENTS", fragmentIds: savedFragments.map(item => item.id) });
-          if (!cleanup?.ok) throw new Error(cleanup?.message || t("待保存内容没有更新"));
-          for (const item of savedFragments) pageCaptureDraftIds.delete(`${item.kind}:${item.id}`);
-        } catch (error) { cleanupErrors.push(error.message); }
-      }
-      for (const item of savedDraftItems.filter(item => item.kind === "image")) {
-        try {
-          const cleanup = await chrome.runtime.sendMessage({ type: "REMOVE_CAPTURE_VISUAL", visualId: item.id });
-          if (!cleanup?.ok) throw new Error(cleanup?.message || t("待保存内容没有更新"));
-          pageCaptureDraftIds.delete(`${item.kind}:${item.id}`);
-        } catch (error) { cleanupErrors.push(error.message); }
-      }
-      const failures = results.filter(item => !item.entryId || item.pendingMediaIds?.length || !["saved", "partial", "duplicate"].includes(item.status));
-      const failureReasons = [...new Set(failures.flatMap(item => item.warnings || []))];
-      pageCaptureBatch = remainingIds.size ? normalizePageCaptureBatch({
-        ...saveBatch, status: "preview", error: failureReasons.join("；"),
-        candidates: saveBatch.candidates.filter(candidate => remainingIds.has(candidate.id)),
-        selections: saveBatch.selections.filter(selection => remainingIds.has(selection.candidateId))
-      }) : null;
-      pageCaptureEditHistory = [];
-      if (!remainingIds.size) {
-        pageCaptureDraftIds = new Set();
-        await clearPageCaptureMarkers(saveBatch.tabId);
-      }
-      const notice = remainingIds.size ? t("部分内容未保存，已保留供重试") : incomplete.length ? t("{message}；部分媒体未完整保存，请在案例库检查", { message: response.message }) : t("已保存");
-      const message = [notice, ...(incomplete.length ? [] : response.warnings || []), ...(remainingIds.size ? [] : failureReasons), ...cleanupErrors].filter(Boolean).join("；");
-      showFeedback(message, Boolean(remainingIds.size || cleanupErrors.length));
-      try { await refresh(); }
-      catch (error) { showFeedback(`${message}；${error.message}`, true); render(); }
+      }, { send: waitForCaptureSave });
+      await finishPageCaptureSave(response, reviewBatch, saveBatch, selected, metadata);
     } catch (error) {
+      captureProgressGate.end();
       pageCaptureBatch = normalizePageCaptureBatch({ ...reviewBatch, status: "preview", error: error.message });
       showFeedback(error.message || t("网页内容保存失败"), true);
       render();
+    } finally {
+      captureProgressGate.end(); saving = false; awaitingCaptureSaveReply = false; await refresh(); render();
     }
   });
 }
@@ -1799,6 +2008,19 @@ async function updateDraft(value) {
   }
 }
 
+function updateCaptureMetadata(patch) {
+  // Merge into the latest draft when this edit reaches the queue, so quickly
+  // selecting a project and adding tags cannot restore a stale draft snapshot.
+  metadataUpdates = metadataUpdates.then(async () => Boolean(draft && await updateDraft({ ...draft, ...patch })));
+  return metadataUpdates;
+}
+
+async function flushCaptureMetadata() {
+  if (!await metadataUpdates) return false;
+  if (!await captureProjectMenu.flush()) return false;
+  return customLabelEditor.flush();
+}
+
 async function moveItem(kind, index, offset, button) {
   const values = kind === "fragment" ? draft.fragments : draft.visuals;
   const target = index + offset;
@@ -1813,21 +2035,24 @@ async function moveItem(kind, index, offset, button) {
 }
 
 async function commitDraft(duplicateAction = "", button) {
-  if (saving) return;
+  if (saving) return cancelCaptureSave();
   saving = true;
   if (button) {
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
   }
   render();
-  showFeedback(t("正在保存案例…"), false, true);
   try {
+    if (!await flushCaptureMetadata()) throw new Error(t('保存设置未更新，请重试'));
     const metadata = captureMetadataForCommit();
+    const saveRequestId = beginCaptureSaveProgress();
     const response = await sendWithGenerationPromptConfirmation({
       type: "COMMIT_CAPTURE_DRAFT",
+      saveRequestId,
       duplicateAction,
       ...metadata
-    });
+    }, { send: waitForCaptureSave });
+    captureProgressGate.end();
     if (response?.duplicate) {
       elements.duplicateTitle.textContent = response.existing.title;
       elements.duplicatePanel.hidden = false;
@@ -1838,13 +2063,16 @@ async function commitDraft(duplicateAction = "", button) {
     draft = response.draft;
     targetEntry = null;
     organizing = false;
-    creatingCollection = false;
     elements.duplicatePanel.hidden = true;
     showFeedback(response.message);
+    await chrome.runtime.sendMessage({ type: "ACK_CAPTURE_SAVE", id: currentCaptureSaveId });
+    captureSaveTask = null;
   } catch (error) {
+    captureProgressGate.end();
     showFeedback(error.message || "案例保存失败", true);
   } finally {
-    saving = false;
+    captureProgressGate.end();
+    saving = false; awaitingCaptureSaveReply = false;
     if (button) button.removeAttribute("aria-busy");
     render();
   }
@@ -1864,7 +2092,6 @@ async function discardDraft() {
       draft = response.draft;
       targetEntry = null;
       organizing = false;
-      creatingCollection = false;
       elements.duplicatePanel.hidden = true;
       showFeedback("待保存内容已清空");
       render();
@@ -1919,6 +2146,81 @@ function showFeedback(message, error = false, pending = false) {
   }
 }
 
+function renderSaveActions() {
+  const label = t(captureSaveTask?.canCancel ? '取消保存' : '正在保存…');
+  for (const button of [elements.saveDraft, elements.pageCaptureSave]) {
+    button.textContent = label; button.disabled = !captureSaveTask?.canCancel;
+  }
+}
+
+async function cancelCaptureSave() {
+  if (!captureSaveTask?.canCancel) return;
+  const response = await chrome.runtime.sendMessage({ type: 'CANCEL_CAPTURE_SAVE', id: captureSaveTask.id });
+  if (!response?.ok) showFeedback(response?.message || t('无法取消保存'), true);
+}
+
+async function waitForCaptureSave(input) {
+  awaitingCaptureSaveReply = true;
+  const started = await chrome.runtime.sendMessage({ type: 'START_CAPTURE_SAVE', input: { ...input, draftItemIds: [...pageCaptureDraftIds] } });
+  if (!started?.ok) throw new Error(started?.message || t('保存任务未启动'));
+  // Subscribe before reading the snapshot, including an already-completed task.
+  const completed = new Promise(resolve => captureSaveWaiters.set(started.id, resolve));
+  const { task } = await chrome.runtime.sendMessage({ type: 'GET_CAPTURE_SAVE_TASK' });
+  captureSaveTask = task; renderSaveActions();
+  if (task && !['queued', 'running', 'cancelling', 'committing'].includes(task.status)) captureSaveWaiters.get(started.id)?.(task.result);
+  try { return await completed; } finally { captureSaveWaiters.delete(started.id); }
+}
+
+function restoreCaptureSaveTask(task) {
+  captureSaveTask = task;
+  if (!task || awaitingCaptureSaveReply || handlingRestoredSave) return;
+  const active = ['queued', 'running', 'cancelling', 'committing'].includes(task.status);
+  if (task.input?.type === 'COMMIT_PAGE_CAPTURE') {
+    pageCaptureDraftIds = new Set(task.input.draftItemIds || []);
+    pageCaptureBatch = normalizePageCaptureBatch({ ...task.input.batch, status: active ? 'saving' : 'preview',
+      error: !active && task.input.batch.adapter === 'generic' ? task.input.batch.error : '' });
+  }
+  saving = active;
+  if (active) {
+    if (currentCaptureSaveId !== task.id) { currentCaptureSaveId = task.id; captureProgressGate.begin(task.id); }
+    showCaptureSaveProgress(task.progress);
+  } else if (task.status === 'completed') {
+    handlingRestoredSave = true; currentCaptureSaveId = task.id;
+    void (async () => {
+      try {
+        if (task.input.type === 'COMMIT_PAGE_CAPTURE') {
+          const batch = normalizePageCaptureBatch(task.input.batch);
+          await finishPageCaptureSave(task.result, batch, batch, applyPageCaptureSelections(batch), task.input);
+        } else {
+          if (task.result?.duplicate) { elements.duplicateTitle.textContent = task.result.existing.title; elements.duplicatePanel.hidden = false; }
+          else { showFeedback(task.result.message); await chrome.runtime.sendMessage({ type: 'ACK_CAPTURE_SAVE', id: task.id }); }
+        }
+        await refresh();
+      } catch (error) { showFeedback(error.message, true); }
+      finally { handlingRestoredSave = false; }
+    })();
+  } else if (task.message) showFeedback(task.message, false);
+}
+
+function beginCaptureSaveProgress() {
+  const id = captureSaveTask?.id || crypto.randomUUID(); currentCaptureSaveId = id; captureProgressGate.begin(id);
+  showCaptureSaveProgress({ phase: 'preparing' });
+  return id;
+}
+
+function showCaptureSaveProgress(value) {
+  if (feedbackTimer) window.clearTimeout(feedbackTimer);
+  feedbackTimer = 0;
+  const { message, completed, total } = captureSaveProgressPresentation(value, t);
+  captureProgressCaption.textContent = message;
+  setTaskProgress(captureProgressBar, { completed, total, pending: true });
+  if (captureProgressBar.parentElement !== elements.feedback) {
+    elements.feedback.replaceChildren(captureProgressCaption, captureProgressBar);
+  }
+  setTaskFeedbackState(elements.feedback, { pending: true });
+  placeCollectorFeedback();
+}
+
 function action(label, handler, disabled = false, className = "", ariaLabel = "") {
   const button = text(translateUiMessage(label), "button");
   button.type = "button";
@@ -1941,21 +2243,10 @@ function text(value, tag = "span") {
   return node;
 }
 
-function optionElement(value, label, selected = false) {
-  const option = document.createElement("option");
-  option.value = value;
-  option.textContent = label;
-  option.selected = selected;
-  return option;
-}
-
 function captureMetadataForCommit() {
-  const selectedCollection = elements.captureCollection.value;
   return {
-    collectionId: selectedCollection === NEW_COLLECTION_OPTION_VALUE ? "" : selectedCollection,
-    newCollectionName: selectedCollection === NEW_COLLECTION_OPTION_VALUE
-      ? elements.captureNewCollectionName.value.trim()
-      : "",
+    collectionId: draft.collectionId || '',
+    newCollectionName: draft.newCollectionName || '',
     customLabels: customLabelEditor.values,
     contentTypeId: draft.contentTypeId,
     contentTypeExplicit: draft.contentTypeExplicit

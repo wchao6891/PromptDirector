@@ -18,3 +18,14 @@ function sourceBlock(start, end) {
   assert.ok(startIndex >= 0 && endIndex > startIndex, `missing source block: ${start}`);
   return background.slice(startIndex, endIndex);
 }
+
+test("a capture that reuses another case's original keeps it protected until the save finishes", () => {
+  const commit = sourceBlock("async function commitPageCapture", "async function fetchSelectedPageSessionMedia");
+  assert.doesNotMatch(commit, /existing && await getMediaBlob\(existing\.id\)/, "reuse must go through the protecting helper");
+  assert.equal(commit.match(/existing && await reusableCaptureAsset\(existing\)/g)?.length, 3, "documents, videos and images are all protected");
+  const helper = sourceBlock("async function reusableCaptureAsset", "async function commitPageCapture");
+  assert.ok(helper.indexOf("activeCaptureAssetIds.add(asset.id)") < helper.indexOf("getMediaBlob(asset.id)"), "protect before confirming the file exists");
+  assert.match(helper, /activeCaptureAssetIds\.add\(asset\.posterAssetId\)/);
+  const agentCapture = sourceBlock('if (operation === "capture")', 'if (operation === "save_material")');
+  assert.match(agentCapture, /finally \{ activeCaptureAssetIds\.clear\(\); \}/, "agent captures release the guard too");
+});

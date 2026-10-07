@@ -67,6 +67,15 @@ export function moveEntriesToTrash(contextValue = {}, entryIds = [], options = {
   }
 
   const movedIds = new Set(moved.map((item) => item.targetId));
+  const compoundCasesAfterDelete = compoundCases
+    ? removeEntriesFromCompoundCases(compoundCases, entries, [...movedIds])
+    : null;
+  for (const item of moved) {
+    if (!item.relationships.compoundCases) continue;
+    const relatedIds = new Set(item.relationships.compoundCases.map((compound) => compound.id));
+    item.relationships.compoundCasesAfterDelete = compoundCasesAfterDelete
+      .filter((compound) => relatedIds.has(compound.id)).map(serializableObject);
+  }
   const result = {
     ...contextValue,
     trashState: normalizeTrashState({ items: [...trashState.items, ...moved] }),
@@ -75,7 +84,7 @@ export function moveEntriesToTrash(contextValue = {}, entryIds = [], options = {
     movedItemIds: moved.map((item) => item.id)
   };
   if (compoundCases) {
-    result.compoundCases = removeEntriesFromCompoundCases(compoundCases, entries, [...movedIds]);
+    result.compoundCases = compoundCasesAfterDelete;
   }
   return result;
 }
@@ -250,18 +259,20 @@ export function restoreTrashItems(contextValue = {}, itemIds = [], options = {})
     else unresolved.push({ itemId: item.id, kind: item.kind, targetId: item.targetId, ...result.issue });
   }
 
-  const compoundCases = restoreRelatedCompoundCases(
+  const compoundRestore = restoreRelatedCompoundCases(
     contextValue.compoundCases,
     entries,
-    candidates.filter((item) => restored.has(item.id))
+    candidates.filter((item) => restored.has(item.id) && item.kind === "entry"),
+    trashState.items.filter((item) => !restored.has(item.id))
   );
+  warnings.push(...compoundRestore.warnings);
 
   return {
     ...contextValue,
-    trashState: normalizeTrashState({ items: trashState.items.filter((item) => !restored.has(item.id)) }),
+    trashState: normalizeTrashState({ items: compoundRestore.trashItems }),
     entries,
     organizerState,
-    ...(Array.isArray(contextValue.compoundCases) ? { compoundCases } : {}),
+    ...(Array.isArray(contextValue.compoundCases) ? { compoundCases: compoundRestore.compoundCases } : {}),
     restoredItemIds: trashState.items.filter((item) => restored.has(item.id)).map((item) => item.id),
     unresolved,
     warnings
@@ -466,25 +477,86 @@ function restoreMediaItem(item, entries) {
   return { ok: true };
 }
 
-function restoreRelatedCompoundCases(currentValue, entries, restoredEntryItems) {
-  if (!Array.isArray(currentValue)) return undefined;
+function restoreRelatedCompoundCases(currentValue, entries, restoredEntryItems, remainingTrashItems) {
+  const warnings = [];
+  const trashItems = structuredClone(remainingTrashItems);
+  if (!Array.isArray(currentValue)) return { warnings, trashItems };
   const activeEntryIds = new Set(entries.map((entry) => clean(entry?.id)).filter(Boolean));
   const snapshots = new Map();
   for (const item of restoredEntryItems) {
     for (const snapshot of Array.isArray(item.relationships?.compoundCases) ? item.relationships.compoundCases : []) {
       const id = clean(snapshot?.id);
-      if (id && Array.isArray(snapshot?.memberEntryIds) && snapshot.memberEntryIds.every((entryId) => activeEntryIds.has(clean(entryId)))) {
-        snapshots.set(id, snapshot);
-      }
+      if (!id || !Array.isArray(snapshot?.memberEntryIds)) continue;
+      const records = snapshots.get(id) ?? [];
+      records.push({ snapshot, item, isRestored: true });
+      snapshots.set(id, records);
     }
   }
-  const current = normalizeCompoundCases(currentValue, entries);
-  if (!snapshots.size) return current;
-  const replacedIds = new Set(snapshots.keys());
-  return normalizeCompoundCases([
-    ...current.filter((compound) => !replacedIds.has(compound.id)),
-    ...snapshots.values()
-  ], entries);
+  let compoundCases = normalizeCompoundCases(currentValue, entries);
+  const warn = (id, memberEntryIds, reason) => warnings.push({
+    code: "COMPOUND_RESTORE_CONFLICT", compoundCaseId: id, memberEntryIds, reason
+  });
+  for (const [id, records] of snapshots) {
+    // Another recorded deletion can legitimately remove the remainder of the
+    // group. Its baseline distinguishes that from a later manual split.
+    for (const pending of trashItems) {
+      const snapshot = pending.kind === "entry" && pending.relationships.compoundCases?.find(compound => compound.id === id);
+      if (snapshot) records.push({ snapshot, item: pending, isRestored: false });
+    }
+    // Newest deletion metadata wins when a group was edited between deletions.
+    records.sort((a, b) => b.item.deletedAt.localeCompare(a.item.deletedAt));
+    const { snapshot, item } = records[0];
+    const current = compoundCases.find((compound) => compound.id === id);
+    const hasBaseline = Array.isArray(item.relationships.compoundCasesAfterDelete);
+    const expected = item.relationships.compoundCasesAfterDelete?.find((compound) => compound.id === id);
+    const deletedTogether = new Set(records.filter(record => record.item.deletedAt === item.deletedAt).map(record => record.item.targetId));
+    const legacyGroupWouldRemain = !hasBaseline && snapshot.memberEntryIds.filter(memberId => !deletedTogether.has(memberId)).length >= 2;
+    if (!current && ((hasBaseline && expected) || legacyGroupWouldRemain || activeEntryIds.has(id))) {
+      warn(id, [], "案例已恢复；原组合已拆开、删除或编号被占用，未覆盖当前组织关系");
+      continue;
+    }
+    const ownedElsewhere = new Set(compoundCases.filter((compound) => compound.id !== id).flatMap((compound) => compound.memberEntryIds));
+    // Existing groups retain every current member, adding only cases restored
+    // by this request. Never re-add a live member the user deliberately removed.
+    const requestedMembers = current ? uniqueIds(records.filter(record => record.isRestored).map(record => record.item.targetId)
+      .filter(memberId => records.some(record => record.snapshot.memberEntryIds.includes(memberId))))
+      : uniqueIds(records.toReversed().flatMap(record => record.snapshot.memberEntryIds));
+    const conflicts = requestedMembers.filter(memberId => ownedElsewhere.has(memberId));
+    if (conflicts.length) warn(id, conflicts, "案例已恢复；部分原成员已属于其他组合，保留当前组合且未抢占成员");
+    const members = current ? [...current.memberEntryIds] : [];
+    for (const memberId of requestedMembers) {
+      if (!activeEntryIds.has(memberId) || ownedElsewhere.has(memberId) || members.includes(memberId)) continue;
+      const order = records.find(record => record.snapshot.memberEntryIds.includes(memberId)).snapshot.memberEntryIds;
+      const following = order.slice(order.indexOf(memberId) + 1).find(nextId => members.includes(nextId));
+      members.splice(following ? members.indexOf(following) : members.length, 0, memberId);
+    }
+    if (members.length < 2) {
+      warn(id, [], "案例已恢复；原组合仍缺少可用成员，未丢弃或替换其他组合");
+      // Carry an incomplete relation to its still-trashed original members so
+      // restoring them later can complete the group without losing its history.
+      if (!conflicts.length) for (const pending of trashItems) {
+        if (pending.kind !== "entry" || !requestedMembers.includes(pending.targetId)) continue;
+        const related = pending.relationships.compoundCases ?? [];
+        const existing = related.find(compound => compound.id === id);
+        pending.relationships.compoundCases = existing
+          ? related.map(compound => compound.id === id
+            ? { ...compound, memberEntryIds: uniqueIds([...requestedMembers, ...compound.memberEntryIds]) } : compound)
+          : [...related, { ...snapshot, memberEntryIds: requestedMembers }];
+        pending.relationships.compoundCasesAfterDelete ??= [];
+      }
+      continue;
+    }
+    if (current && sameUndoState(members, current.memberEntryIds)) continue;
+    const untouched = current && hasBaseline && expected && sameUndoState(current, expected);
+    const restored = {
+      ...(current && !untouched ? current : snapshot), memberEntryIds: members,
+      updatedAt: new Date().toISOString()
+    };
+    compoundCases = normalizeCompoundCases(current
+      ? compoundCases.map(compound => compound.id === id ? restored : compound)
+      : [...compoundCases, restored], entries);
+  }
+  return { compoundCases, warnings, trashItems };
 }
 
 function unresolvedIssue(reason, details = {}) {

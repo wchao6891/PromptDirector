@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+const editor = await readFile(new URL("../extension/case-editor.js", import.meta.url), "utf8");
+
 const background = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 
 function functionBlock(name, nextName) {
@@ -22,6 +24,7 @@ test("background exposes tree moves without rebuilding member lists", () => {
 });
 
 test("manual content edits use one library update timestamp boundary", () => {
+  // Single-case editors are exercised through real storage in case-editor.test.js.
   for (const name of [
     "setEntryPrimaryVisual",
     "addUploadedVisual",
@@ -31,18 +34,14 @@ test("manual content edits use one library update timestamp boundary", () => {
     "addEntryTimeNote",
     "addVideoKeyframe",
     "deleteEntryTimeNote",
-    "updateEntryMediaPromptAction",
-    "updateEntryFacet",
-    "updateCaseText",
-    "updateCaseTitle",
-    "updateEntryCustomLabels"
+    "updateEntryFacet"
   ]) {
     const start = background.indexOf(`async function ${name}(`);
     const end = background.indexOf("\nasync function ", start + 1);
     assert.ok(start >= 0 && end > start, `${name} should exist`);
     assert.match(background.slice(start, end), /touchEntr(?:y|ies)\(/, `${name} should touch user-visible update time`);
   }
-  assert.match(background, /function touchEntry\(entry, updatedAt = new Date\(\)\.toISOString\(\)\)/);
+  assert.match(editor, /function touchEntry\(entry, updatedAt = new Date\(\)\.toISOString\(\)\)/);
 });
 
 test("project membership changes touch cases but pure project ordering does not", () => {

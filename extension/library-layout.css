@@ -34,7 +34,8 @@
 .modular-library .topbar #project-selection-title { flex: 0 1 120px; font-size: 11px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .modular-library .project-selection-count { margin: 0; color: var(--accent-ink); }
 .gallery-size-control { display: flex; flex: none; align-items: center; gap: 8px; margin-right: 4px; }
-.modular-library .topbar #gallery-size { appearance: none; flex: none; width: 94px; min-width: 0; height: 20px; min-height: 20px; padding: 0; border: 0; background: transparent; box-shadow: none; cursor: pointer; }
+.modular-library .topbar #gallery-size { appearance: none; flex: none; min-width: 0; height: 20px; min-height: 20px; padding: 0; border: 0; background: transparent; box-shadow: none; cursor: pointer; }
+.modular-library .topbar #gallery-size { width: 94px; }
 #gallery-size::-webkit-slider-runnable-track { height: 4px; border-radius: 3px; background: var(--line); }
 #gallery-size::-webkit-slider-thumb { appearance: none; height: 12px; width: 12px; margin-top: -4px; border-radius: 50%; background: var(--ink); }
 .modular-library .workspace { display: grid; grid-template-columns: var(--sidebar-width, 244px) 6px minmax(0, 1fr); min-height: calc(100dvh - var(--library-topbar-height)); }

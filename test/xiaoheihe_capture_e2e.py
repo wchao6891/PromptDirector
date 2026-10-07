@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 from playwright.sync_api import expect
-from e2e_support import EXTENSION_DIR, extension_session
+from e2e_support import EXTENSION_DIR, extension_session, wait_for_async_condition
 from article_cases_capture_e2e import image_bytes
 
 URL = 'https://www.xiaoheihe.cn/app/bbs/link/synthetic-gallery-post'
@@ -41,7 +41,9 @@ def main():
             assert case['completeness'] == 'complete'
             panel.locator('.page-capture-confirm').click()
             panel.locator('#page-capture-save').click()
-            panel.wait_for_function("async()=>{const s=await chrome.runtime.sendMessage({type:'GET_STATE'});return s.entries.length===1}")
+            # Saves now run through the background save-task pipeline, so poll the resolved
+            # state; wait_for_function treated the async predicate's Promise as already true.
+            wait_for_async_condition(panel, "async()=>{const s=await chrome.runtime.sendMessage({type:'GET_STATE'});return s.entries.length===1}")
             entry = panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries[0]")
             assert entry['text'] == PROMPT, entry['text']
             assert len(entry['mediaAssets']) == 17

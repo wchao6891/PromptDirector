@@ -1,3 +1,4 @@
+import { createMediaStage } from './staged-media.js';
 import { normalizeCreativeSkillsState } from './creative-skills.js';
 import { getLibraryStorage } from './library-storage.js';
 import { showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
@@ -13,8 +14,8 @@ import {
 import { CURATED_SKILL_CATALOG_URL } from "./curated-config.js";
 import { fetchCuratedPackage, readResponseBlobWithProgress } from "./curated-download.js";
 import { installCuratedSkillTransaction, planCuratedSkillInstall } from "./curated-skill-install.js";
-import { initializeUi, t } from "./i18n.js";
-import { deleteMediaBlobs, saveSkillPackageBlob } from "./media-store.js";
+import { initializeUi, t, translateUiMessage } from "./i18n.js";
+import { saveSkillPackageBlob } from "./media-store.js";
 import { renderMarkdownDocument } from "./markdown-renderer.js";
 
 await initializeUi();
@@ -115,7 +116,7 @@ async function openDetail(item) {
     const parsed = await loadParsed(item);
     renderDetail(item, parsed);
   } catch (error) {
-    elements.skillDetailContent.replaceChildren(element("div", "curated-skill-detail", error.message || t("Skill 读取失败")));
+    elements.skillDetailContent.replaceChildren(element("div", "curated-skill-detail", translateUiMessage(error.message) || t("Skill 读取失败")));
   }
 }
 
@@ -172,14 +173,15 @@ async function install(item, parsed, button) {
   button.classList.add("is-progressing");
   button.dataset.progressMode = "unknown";
   button.textContent = t("正在校验…");
+  const stage = createMediaStage();
   try {
     const verified = parsed ?? await loadParsed(item);
     const installed = await installCuratedSkillTransaction({
       state: state.creativeSkills,
       item,
       parsed: verified,
-      saveBlob: saveSkillPackageBlob,
-      deleteBlobs: deleteMediaBlobs,
+      saveBlob: async (id, blob) => { await stage.register([id]); await saveSkillPackageBlob(id, blob); },
+      deleteBlobs: () => stage.release(),
       createSkill: async (skill) => {
         const response = await chrome.runtime.sendMessage({ type: "CREATE_CREATIVE_SKILL", skill });
         if (!response?.ok) throw new Error(response?.message || t("精选 Skill 保存失败"));
@@ -194,8 +196,9 @@ async function install(item, parsed, button) {
     button.disabled = planCuratedSkillInstall(state.creativeSkills, item).action === "already-installed";
     button.removeAttribute("aria-busy");
     button.textContent = installLabel(item);
-    showToast(error.message || t("精选 Skill 保存失败"));
+    showToast(translateUiMessage(error.message) || t("精选 Skill 保存失败"));
   } finally {
+    stage.release();
     button.classList.remove("is-progressing");
     button.removeAttribute("aria-busy");
   }

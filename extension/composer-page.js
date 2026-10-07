@@ -1,3 +1,5 @@
+import { createReferenceWindow } from './composer-reference-window.js';
+import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { setTaskFeedbackState } from "./task-feedback.js";
 import { getLibraryStorage } from './library-storage.js';
@@ -74,7 +76,7 @@ import { applyLibraryToolEvent, settleLibraryToolEvents } from "./composer-libra
 import { createLocalComposerLibraryTools } from "./composer-library-host.js";
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import { readImageDimensions } from "./image-metadata.js";
-import { deleteMediaBlobs, getAllDerivedMetadata, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
+import { getAllDerivedMetadata, getDerivedMedia, getMediaBlob, saveDerivedMedia, saveMediaBlob } from "./media-store.js";
 import { prepareLocalMedia } from "./local-media.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { extractPdfSearchText } from "./document-viewer.js";
@@ -167,13 +169,9 @@ let workspaceMode = "references";
 let feedbackTimer = 0;
 const COMPOSER_TITLE_MAX_CHARACTERS = 36;
 const thumbnailUrls = new Map();
-let referenceVideoCleanups = [];
-function releaseReferenceVideos() {
-  referenceVideoCleanups.forEach(release => release());
-  referenceVideoCleanups = [];
-}
 const openJudgmentIds = new Set();
 const judgmentFeedbackById = new Map();
+const judgmentRequestById = new Map();
 const imageObserver = new IntersectionObserver((items) => {
   for (const item of items) {
     if (!item.isIntersecting) continue;
@@ -181,6 +179,26 @@ const imageObserver = new IntersectionObserver((items) => {
     hydrateCaseImage(item.target);
   }
 }, { rootMargin: "240px" });
+const referenceCaseWindow = createReferenceWindow(elements.composerCaseList, {
+  createCard: createCaseOption,
+  releaseCard: releaseReferenceCard
+});
+function releaseReferenceCard(card) {
+  const images = [...card.querySelectorAll('img')];
+  for (const image of images) imageObserver.unobserve(image);
+  const retained = new Set([...document.querySelectorAll('img')].filter(image => !card.contains(image)).map(image => image.src));
+  for (const image of images) {
+    const key = image.dataset.thumbnailKey || image.dataset.visualId;
+    const url = thumbnailUrls.get(key);
+    if (!url || retained.has(url)) continue;
+    URL.revokeObjectURL(url);
+    thumbnailUrls.delete(key);
+  }
+  for (const surface of card.querySelectorAll('.composer-case-select-preview')) {
+    surface.releaseVideo?.();
+  }
+}
+
 
 bindEvents();
 void installWorkspaceReader({ chromeApi: chrome, readContext: () => {
@@ -315,7 +333,7 @@ function bindEvents() {
     if (event.key === "Escape") closeComposerModelMenu();
   });
   addEventListener("beforeunload", () => {
-    releaseReferenceVideos();
+    referenceCaseWindow.destroy();
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   });
   getLibraryStorage().subscribe((changes) => {
@@ -555,14 +573,14 @@ function tempReferenceCard(reference) {
   save.type = "button";
   save.disabled = Boolean(activeOperation);
   save.title = t("保存到案例库");
-  save.setAttribute("aria-label", `保存到案例库：${reference.title}`);
+  save.setAttribute("aria-label", t("保存到案例库：{title}", { title: reference.title }));
   save.append(createUiIcon("save"));
   save.addEventListener("click", () => safely(() => saveTempReferenceAsCase(reference.entryId))());
   const remove = el("button", "icon-button");
   remove.type = "button";
   remove.disabled = Boolean(activeOperation);
   remove.title = t("移除临时附件");
-  remove.setAttribute("aria-label", `移除临时附件：${reference.title}`);
+  remove.setAttribute("aria-label", t("移除临时附件：{title}", { title: reference.title }));
   remove.append(createUiIcon("x"));
   remove.addEventListener("click", () => safely(() => removeTempReference(reference.entryId))());
   actions.append(save, remove);
@@ -615,12 +633,12 @@ async function addTempReferences(filesValue) {
       reference: createTempReference({ file, assetId, referenceId, alias, extractedText: preparedFile.contentText })
     };
   }));
-  const savedAssetIds = [];
+  const stage = createMediaStage();
   try {
     for (const item of prepared) {
       const [assetId] = tempReferenceAssetIds(item.reference);
+      await stage.register([assetId]);
       await saveMediaBlob(assetId, item.preparedFile.blob);
-      savedAssetIds.push(assetId);
       const thumbnail = item.preparedFile.poster?.blob instanceof Blob ? item.preparedFile.poster.blob : undefined;
       const searchText = String(item.preparedFile.contentText ?? "").trim();
       if (thumbnail || searchText) {
@@ -636,10 +654,9 @@ async function addTempReferences(filesValue) {
     applyTempReferenceResponse(response, "无法添加临时附件");
     replaceComposerSessionUrl(composerSession.id);
     renderComposer();
-    composerFeedback(`已添加 ${prepared.length} 个临时附件`);
-  } catch (error) {
-    await deleteMediaBlobs(savedAssetIds).catch(() => undefined);
-    throw error;
+    composerFeedback(t("已添加 {count} 个临时附件", { count: prepared.length }));
+  } finally {
+    await stage.release();
   }
 }
 
@@ -673,7 +690,7 @@ async function saveAllTempReferences() {
   elements.composerTempReferenceSaveAll.disabled = true;
   try {
     for (const reference of references) await saveTempReferenceAsCase(reference.entryId);
-    composerFeedback(`已保存 ${references.length} 个附件到案例库`);
+    composerFeedback(t("已保存 {count} 个附件到案例库", { count: references.length }));
   } finally {
     elements.composerTempReferenceSaveAll.disabled = false;
   }
@@ -909,8 +926,8 @@ function renderTimeline() {
   if (!operation && session.libraryTools.requestCount) {
     const stats = session.libraryTools;
     const usage = stats.usage && stats.usageRequestCount === stats.requestCount
-      ? `输入 ${stats.usage.promptTokens} / 输出 ${stats.usage.completionTokens} tokens` : "用量未知";
-    inner.append(rawTextEl("p", "composer-tool-events composer-tool-summary", `本轮 ${stats.requestCount} 次模型请求 · ${stats.imageIds.length} 张图片 · ${usage}`));
+      ? t("输入 {input} / 输出 {output} tokens", { input: stats.usage.promptTokens, output: stats.usage.completionTokens }) : t("用量未知");
+    inner.append(rawTextEl("p", "composer-tool-events composer-tool-summary", t("本轮 {requests} 次模型请求 · {images} 张图片 · {usage}", { requests: stats.requestCount, images: stats.imageIds.length, usage })));
   }
   if (streamingText) {
     const route = operation?.session?.currentRoute || session.activeTurn?.route || "";
@@ -935,11 +952,11 @@ function renderTimeline() {
       const candidates = event.candidates ?? (event === latestSearch ? session.libraryTools.candidates : []);
       if (!candidates.length) continue;
       const results = el("section", "composer-library-results");
-      results.setAttribute("aria-label", "查询候选");
+      results.setAttribute("aria-label", t("查询候选"));
       const list = el("div", "composer-library-candidate-list");
       list.dataset.searchKey = JSON.stringify([event.userMessageId, event.callId]);
       list.append(...candidates.map(createLibraryCandidate));
-      results.append(rawTextEl("small", "composer-retrieval-heading", `查询候选 · ${candidates.length} 个`), list);
+      results.append(rawTextEl("small", "composer-retrieval-heading", t("查询候选 · {count} 个", { count: candidates.length })), list);
       inner.append(results);
     }
   }
@@ -1007,7 +1024,7 @@ function createMessage(message, version, streaming, session) {
   if (message.type === "status") setTaskFeedbackState(messageText, { pending: true });
   content.append(messageText);
   if (message.type === "question" && message.options?.length) {
-    if (message.recommendedAnswer) content.append(rawTextEl("p", "composer-question-recommendation", `${t("推荐")}：${message.recommendedAnswer}`));
+    if (message.recommendedAnswer) content.append(rawTextEl("p", "composer-question-recommendation", t("推荐：{answer}", { answer: message.recommendedAnswer })));
     const options = el("div", "composer-question-options");
     options.append(...message.options.map((option) => {
       const button = rawTextEl("button", "button-secondary", option);
@@ -1160,7 +1177,7 @@ async function sendComposerTurn() {
   working = appendDiagnosticEvent(working, {
     phase: prepared.startPhase,
     status: "started",
-    detail: prepared.startPhase === "streaming" ? routeOperationLabel(prepared.executionRoute) : `${serviceLabel} 正在规划`
+    detail: prepared.startPhase === "streaming" ? routeOperationLabel(prepared.executionRoute) : t("{service} 正在规划", { service: serviceLabel })
   });
   const controller = new AbortController();
   activeOperation = {
@@ -1244,7 +1261,9 @@ function renderReferenceInputs() {
 
 async function retryComposerTurn() {
   if (!composerSession || activeOperation) return;
+  const failedUserMessageId = composerSession.lastFailure?.userMessageId;
   if (lastCreativeJob?.sessionId === composerSession.id &&
+      lastCreativeJob.userMessageId === failedUserMessageId &&
       ["failed", "canceled", "interrupted"].includes(lastCreativeJob.status) &&
       lastCreativeJob.error?.retryable) {
     if (!await confirmAppAction({ title: t("重新发起付费请求？"), description: t("上一次请求可能已经产生费用。重试会创建一个新任务，并可能再次计费。"), confirmLabel: t("继续重试") })) return;
@@ -1256,6 +1275,24 @@ async function retryComposerTurn() {
     return;
   }
   if (!composerSession.lastFailure?.retryable) return;
+  if (["create_image", "create_video"].includes(composerSession.outputMode) || sessionHasVideoReferences(composerSession)) {
+    // Media turns run only as background jobs; the in-page path cannot persist their results or send video references.
+    if ((creativeJobs.items ?? []).some(item => item.sessionId === composerSession.id && item.userMessageId === failedUserMessageId)) {
+      throw new Error(composerSession.lastFailure.message);
+    }
+    const failure = composerSession.lastFailure;
+    const working = clearComposerFailure(composerSession);
+    composerSession = working;
+    renderComposer();
+    try {
+      await startPersistentCreativeJob({ session: working, userMessageId: failure.userMessageId, startPhase: working.currentInstruction ? "generation" : "planning", imageEdit: null });
+    } catch (error) {
+      composerSession = setComposerFailure(working, { ...failure, message: error.message || failure.message });
+      composerSession = await saveSession(composerSession).catch(() => composerSession);
+      renderComposer();
+    }
+    return;
+  }
   if (composerSession.activeTurn?.providerMayHaveAccepted && !await confirmAppAction({
     title: t("重新发起文字请求？"),
     description: t("上一次请求可能已经被服务商接收。重试会发起新的请求，并可能再次计费；已保留的部分内容不会覆盖新结果。"),
@@ -1443,7 +1480,7 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
           operation.session = appendDiagnosticEvent(operation.session, {
             phase: "requesting_model",
             status: "checkpoint_failed",
-            detail: `服务请求已经发出，但本地状态检查点保存失败：${error.message || "存储不可用"}`
+            detail: t("服务请求已经发出，但本地状态检查点保存失败：{reason}", { reason: translateUiMessage(error.message || "存储不可用") })
           });
           if (composerSession?.id === operation.sessionId) composerSession = operation.session;
         }
@@ -1473,7 +1510,7 @@ async function runAgentExecution(operation, settingsValue, route, instruction) {
   operation.session = appendDiagnosticEvent(operation.session, {
     phase: "streaming",
     status: "completed",
-    detail: `输入 ${result.usage.promptTokens} / 输出 ${result.usage.completionTokens} tokens`
+    detail: t("输入 {input} / 输出 {output} tokens", { input: result.usage.promptTokens, output: result.usage.completionTokens })
   });
   const working = createComposerSession({
     ...applyComposerServiceResult(operation.session, result, composerSettings, route, instruction),
@@ -1519,7 +1556,7 @@ async function persistComposerFailure(operation, error) {
     userMessageId: operation.userMessageId,
     phase,
     kind: details.kind,
-    message: details.kind === "stopped" ? details.message : `${details.message}。本轮内容已保留。`,
+    message: details.kind === "stopped" ? details.message : t("{message}。本轮内容已保留。", { message: translateUiMessage(details.message) }),
     retryable: operation.imageEdit ? false : details.retryable
   });
   working = createComposerSession({
@@ -1811,7 +1848,7 @@ function renderImageGenerationSettings() {
     ...(!videoTask && composerSession.referenceSnapshots.some((item) => item.imageRefs?.length)
       ? [t("参考图画幅无需与输出画幅一致。")]
       : []),
-    ...(state.ignored.length ? [`当前服务不会发送：${state.ignored.join("、")}`] : [])
+    ...(state.ignored.length ? [t("当前服务不会发送：{items}", { items: state.ignored.map(translateUiMessage).join(currentLocale() === "en" ? ", " : "、") })] : [])
   ];
   elements.composerGenerationParameterNote.textContent = messages.map(translateUiMessage).join(currentLocale() === "en" ? "; " : "；");
   elements.composerGenerationParameterNote.classList.toggle("error", state.issues.length > 0);
@@ -1850,7 +1887,7 @@ function renderGenerationParameterField(field, select, capability, key, selected
   const selected = String(selectedValue ?? "").trim();
   const selectedSupported = supportedOptions.some((item) => item.value === selected);
   const options = parameter && selected && !selectedSupported
-    ? [{ value: selected, label: `${selected}（当前模型不支持，请重选）`, incompatible: true }, ...supportedOptions]
+    ? [{ value: selected, label: t("{value}（当前模型不支持，请重选）", { value: selected }), incompatible: true }, ...supportedOptions]
     : supportedOptions;
   select.replaceChildren(...options.map((item) => {
     const option = document.createElement("option");
@@ -2128,10 +2165,10 @@ function setReferenceWorkspaceMode(mode) {
 }
 
 function closeReferenceWorkspace() {
-  releaseReferenceVideos();
   if (elements.composerReferenceWorkspace.contains(document.activeElement)) {
     elements.composerReferenceOpen.focus({ preventScroll: true });
   }
+  referenceCaseWindow.suspend();
   elements.composerReferenceWorkspace.inert = true;
   elements.composerReferenceWorkspace.setAttribute("aria-hidden", "true");
   elements.composerReferenceWorkspace.hidden = true;
@@ -2153,7 +2190,7 @@ function renderReferencePicker() {
     renderProjectFilter();
     renderCasePicker();
     renderReferenceSelection();
-  } else renderSkills();
+  } else { referenceCaseWindow.suspend(); renderSkills(); }
 }
 
 function renderProjectFilter() {
@@ -2208,7 +2245,6 @@ function renderSkills() {
 }
 
 function renderCasePicker() {
-  releaseReferenceVideos();
   const query = elements.composerReferenceSearch.value.trim().toLocaleLowerCase();
   const projectId = elements.composerReferenceProjectFilter.value;
   const projectIds = projectId
@@ -2221,10 +2257,11 @@ function renderCasePicker() {
     return `${entry.title ?? ""}\n${entry.text ?? ""}\n${primaryVisionDescription(entry)}\n${composerDocumentTextByEntryId.get(entry.id) || ""}`.toLocaleLowerCase().includes(query);
   });
   if (!eligible.length) {
+    referenceCaseWindow.suspend();
     elements.composerCaseList.replaceChildren(rawTextEl("p", "composer-reference-empty", t("没有匹配的可用案例。")));
     return;
   }
-  elements.composerCaseList.replaceChildren(...eligible.map(createCaseOption));
+  referenceCaseWindow.set(eligible);
 }
 
 function createCaseOption(entry) {
@@ -2242,13 +2279,13 @@ function createCaseOption(entry) {
   checkbox.type = "checkbox";
   checkbox.className = "composer-case-preview-checkbox";
   checkbox.disabled = !selectable;
-  checkbox.setAttribute("aria-label", `选择当前预览素材：${entry.title || t("未命名案例")}`);
+  checkbox.setAttribute("aria-label", t("选择当前预览素材：{title}", { title: entry.title || t("未命名案例") }));
   checkbox.checked = selectedPreviewAsset ? referenceDraftSelections.get(entry.id)?.has(selectedPreviewAsset.id) === true : referenceDraftSelections.has(entry.id);
   checkbox.addEventListener("change", () => {
     const assetId = referencePreviewAssetIds.get(entry.id);
     setDraftAssetSelected(entry.id, assetId || "", checkbox.checked);
     const asset = referenceAssets.find((item) => item.id === assetId);
-    if (asset?.kind === "video") renderCasePicker();
+    if (asset?.kind === "video") referenceCaseWindow.refresh(entry.id);
     else syncCaseOptionSelection(option, entry);
     renderReferenceSelection();
   });
@@ -2256,13 +2293,13 @@ function createCaseOption(entry) {
   const selectPreview = el("button", "composer-case-select-preview");
   selectPreview.type = "button";
   selectPreview.disabled = !selectable;
-  selectPreview.setAttribute("aria-label", "选择或取消当前预览素材");
+  selectPreview.setAttribute("aria-label", t("选择或取消当前预览素材"));
   selectPreview.addEventListener("click", () => {
     const assetId = referencePreviewAssetIds.get(entry.id);
     const selected = assetId ? referenceDraftSelections.get(entry.id)?.has(assetId) === true : referenceDraftSelections.has(entry.id);
     setDraftAssetSelected(entry.id, assetId || "", !selected);
     const asset = referenceAssets.find((item) => item.id === assetId);
-    if (asset?.kind === "video") renderCasePicker();
+    if (asset?.kind === "video") referenceCaseWindow.refresh(entry.id);
     else syncCaseOptionSelection(option, entry);
     renderReferenceSelection();
   });
@@ -2291,7 +2328,7 @@ function createCaseOption(entry) {
   if (!selectable) copy.append(rawTextEl("small", "", t("暂无可读取的正文或当前支持的素材")));
   if (referenceAssets.length > 1) {
     const assetPicker = el("div", "composer-case-assets");
-    assetPicker.setAttribute("aria-label", `${entry.title || t("未命名案例")}的素材`);
+    assetPicker.setAttribute("aria-label", t("{title}的素材", { title: entry.title || t("未命名案例") }));
     for (const [index, asset] of referenceAssets.entries()) {
       const assetOption = el("label", "composer-case-asset");
       assetOption.dataset.assetId = asset.id;
@@ -2299,8 +2336,8 @@ function createCaseOption(entry) {
       assetCheckbox.type = "checkbox";
       assetCheckbox.checked = referenceDraftSelections.get(entry.id)?.has(asset.id) === true;
       assetCheckbox.setAttribute("aria-label", asset.kind === "image"
-        ? `选择第 ${index + 1} 张图片`
-        : `选择第 ${index + 1} 支视频`);
+        ? t("选择第 {number} 张图片", { number: index + 1 })
+        : t("选择第 {number} 支视频", { number: index + 1 }));
       const displayAsset = asset.kind === "video" ? posterAssetForVideo(entry, asset) : asset;
       const thumbnail = displayAsset ? document.createElement("img") : rawTextEl("span", "", t("视频"));
       if (displayAsset) {
@@ -2315,7 +2352,7 @@ function createCaseOption(entry) {
       assetCheckbox.addEventListener("change", () => {
         referencePreviewAssetIds.set(entry.id, asset.id);
         setDraftAssetSelected(entry.id, asset.id, assetCheckbox.checked);
-        if (asset.kind === "video") renderCasePicker();
+        if (asset.kind === "video") referenceCaseWindow.refresh(entry.id);
         else {
           renderCasePreviewImage(option, entry, asset.id);
           syncCaseOptionSelection(option, entry);
@@ -2331,7 +2368,7 @@ function createCaseOption(entry) {
     ? composerVideoSourceOptions(entry, asset) : []);
   if (sourceOptions.length) {
     const sourcePicker = el("div", "composer-case-assets");
-    sourcePicker.setAttribute("aria-label", `${entry.title || t("未命名案例")}的视频文字来源`);
+    sourcePicker.setAttribute("aria-label", t("{title}的视频文字来源", { title: entry.title || t("未命名案例") }));
     sourcePicker.append(...sourceOptions);
     option.append(sourcePicker);
   }
@@ -2362,7 +2399,7 @@ function composerVideoSourceOptions(entry, asset) {
     const label = rawTextEl("span", "", labelText);
     input.addEventListener("change", () => {
       input.checked ? selected.add(part.id) : selected.delete(part.id);
-      renderCasePicker();
+      referenceCaseWindow.refresh(entry.id);
       renderReferenceSelection();
     });
     option.dataset.assetId = asset.id;
@@ -2405,6 +2442,7 @@ function renderCasePreviewImage(option, entry, assetId) {
   const asset = previewReferenceAsset(entry, assetId);
   if (!asset) return surface.replaceChildren(rawTextEl("span", "", t("文字资料")));
   surface.releaseVideo?.();
+  surface.releaseVideo = null;
   if (asset.kind === "video") {
     const cover = el("span", "composer-video-cover");
     surface.replaceChildren(cover);
@@ -2412,14 +2450,13 @@ function renderCasePreviewImage(option, entry, assetId) {
     const hover = asset.storageMode !== "reference"
       ? bindVideoHoverPreview(surface, { loadBlob: () => getMediaBlob(asset.id) }) : null;
     surface.releaseVideo = () => { releaseCover(); hover?.destroy(); };
-    referenceVideoCleanups.push(surface.releaseVideo);
     return;
   }
   const displayAsset = asset;
   if (!displayAsset) return surface.replaceChildren(rawTextEl("span", "", t("视频")));
   const image = document.createElement("img");
   image.className = "composer-case-image";
-  image.alt = translateUiMessage(`${entry.title || t("未命名案例")} 对应画面`);
+  image.alt = t("{title} 对应画面", { title: entry.title || t("未命名案例") });
   image.loading = "lazy";
   image.decoding = "async";
   image.dataset.visualId = displayAsset.id;
@@ -2472,10 +2509,10 @@ async function openReferenceAssetPreview(entry, assetId) {
     const dialog = el("dialog", "composer-reference-preview-dialog");
     const close = textEl("button", "icon-button", "×");
     close.type = "button";
-    close.setAttribute("aria-label", "关闭原图预览");
+    close.setAttribute("aria-label", t("关闭原图预览"));
     const image = document.createElement("img");
     image.src = url;
-    image.alt = `${entry.title || t("未命名案例")} 原图`;
+    image.alt = t("{title} 原图", { title: entry.title || t("未命名案例") });
     dialog.append(close, image);
     const dispose = () => {
       URL.revokeObjectURL(url);
@@ -2541,8 +2578,9 @@ async function hydrateCaseImage(image) {
     const derived = image.dataset.thumbnailKey ? await getDerivedMedia(visualId) : null;
     const blob = derived?.thumbnail instanceof Blob ? derived.thumbnail : await getScreenshotBlob(visualId);
     if (!blob || !image.isConnected) return;
-    const url = URL.createObjectURL(blob);
-    thumbnailUrls.set(image.dataset.thumbnailKey || visualId, url);
+    const key = image.dataset.thumbnailKey || visualId;
+    const url = thumbnailUrls.get(key) || URL.createObjectURL(blob);
+    thumbnailUrls.set(key, url);
     image.src = url;
   } catch {
     image.closest(".composer-case-select-preview")?.replaceChildren(rawTextEl("span", "", t("截图读取失败")));
@@ -2552,9 +2590,8 @@ async function hydrateCaseImage(image) {
 function renderReferenceSelection() {
   const selectedItems = orderedDraftItems();
   const limit = draftReferenceLimitState(selectedItems);
-  elements.composerCaseSelectionCount.textContent = translateUiMessage(
-    `已选择 ${selectedItems.length} 张/项参考${limit.maximum !== null ? ` · 当前生图模型 ${limit.imageCount}/${limit.maximum}` : ""}`
-  );
+  elements.composerCaseSelectionCount.textContent = t("已选择 {count} 张/项参考", { count: selectedItems.length })
+    + (limit.maximum !== null ? t(" · 当前生图模型 {count}/{maximum}", { count: limit.imageCount, maximum: limit.maximum }) : "");
   elements.composerReferenceApply.disabled = limit.exceeded;
   if (limit.exceeded) {
     elements.composerReferenceFeedback.textContent = t("所选模型最多接收 {maximum} 张参考图；当前 {count} 张。选择已保留，请减少后再应用。", { maximum: limit.maximum, count: limit.imageCount });
@@ -2569,20 +2606,20 @@ function renderReferenceSelection() {
     const assetIndex = item.assetId ? assets.findIndex((asset) => asset.id === item.assetId) : -1;
     const asset = assetIndex >= 0 ? assets[assetIndex] : null;
     const chip = el("span", "composer-selection-chip");
-    chip.append(rawTextEl("b", "", `${entry?.title || t("未命名案例")}${assetIndex >= 0 ? asset?.kind === "video" ? " · 视频" : ` · 图${assetIndex + 1}` : ""}`));
+    chip.append(rawTextEl("b", "", `${entry?.title || t("未命名案例")}${assetIndex >= 0 ? asset?.kind === "video" ? ` · ${t("视频")}` : t(" · 图{number}", { number: assetIndex + 1 }) : ""}`));
     const moveLeft = textEl("button", "", "←");
     moveLeft.type = "button";
     moveLeft.disabled = index === 0;
-    moveLeft.setAttribute("aria-label", "向前移动参考");
+    moveLeft.setAttribute("aria-label", t("向前移动参考"));
     moveLeft.addEventListener("click", () => moveDraftItem(item.key, -1));
     const moveRight = textEl("button", "", "→");
     moveRight.type = "button";
     moveRight.disabled = index === selectedItems.length - 1;
-    moveRight.setAttribute("aria-label", "向后移动参考");
+    moveRight.setAttribute("aria-label", t("向后移动参考"));
     moveRight.addEventListener("click", () => moveDraftItem(item.key, 1));
     const remove = textEl("button", "", "×");
     remove.type = "button";
-    remove.setAttribute("aria-label", "移除参考");
+    remove.setAttribute("aria-label", t("移除参考"));
     remove.addEventListener("click", () => {
       const selection = referenceDraftSelections.get(item.entryId);
       if (item.assetId) selection?.delete(item.assetId);
@@ -2635,7 +2672,7 @@ async function applySelectedReferences() {
   const selected = orderedDraftItems();
   const limit = draftReferenceLimitState(selected);
   if (limit.exceeded) {
-    return setReferenceFeedback(`所选模型最多接收 ${limit.maximum} 张参考图；当前 ${limit.imageCount} 张。系统不会自动删图。`, true);
+    return setReferenceFeedback(t("所选模型最多接收 {maximum} 张参考图；当前 {count} 张。系统不会自动删图。", { maximum: limit.maximum, count: limit.imageCount }), true);
   }
   composerSession = createComposerSession({
     ...composerSession,
@@ -2695,11 +2732,14 @@ async function applyCreativeSkill(skill) {
   composerSession = await saveSession(composerSession);
   closeReferenceWorkspace();
   renderComposer();
-  composerFeedback(`已应用 Skill：/${skill.callName}`);
+  composerFeedback(t("已应用 Skill：/{name}", { name: skill.callName }));
 }
 
 async function removeAppliedSkill(skillId) {
   if (!composerSession) return;
+  if (activeOperation?.kind === "compose" && activeOperation.sessionId === composerSession.id) {
+    return composerFeedback("生成期间不能修改当前对话的 Skill", true);
+  }
   composerSession = createComposerSession({ ...composerSession, appliedSkills: composerSession.appliedSkills.filter((item) => item.skillId !== skillId), currentInstruction: "", retrievedSources: [], currentRoute: "", currentRouteSource: "" });
   composerSession = await saveSession(composerSession);
   renderComposer();
@@ -2810,10 +2850,10 @@ function openAssemblyDialog() {
     : [];
   const snapshotSkills = snapshot?.skills.map((skill) => `${skill.order}. /${skill.callName} · ${skill.version}\n${skill.instructions}`).join("\n\n");
   const mediaSummary = snapshot ? [
-    `手选图片 ${snapshot.media.selectedImageCount} 张；预计发送 ${snapshot.media.expectedSentImageCount} 张`,
-    snapshot.media.selectedVideoCount ? `手选视频 ${snapshot.media.selectedVideoCount} 个；预计发送 ${snapshot.media.expectedSentVideoCount} 个` : "",
-    snapshot.media.baseImageIncluded ? `编辑底图已发送${snapshot.media.maskIncluded ? "；局部遮罩已发送" : ""}` : "",
-    snapshot.media.omittedImageCount ? `明确未发送 ${snapshot.media.omittedImageCount} 张：${snapshot.media.omittedReason}` : ""
+    t("手选图片 {selected} 张；预计发送 {sent} 张", { selected: snapshot.media.selectedImageCount, sent: snapshot.media.expectedSentImageCount }),
+    snapshot.media.selectedVideoCount ? t("手选视频 {selected} 个；预计发送 {sent} 个", { selected: snapshot.media.selectedVideoCount, sent: snapshot.media.expectedSentVideoCount }) : "",
+    snapshot.media.baseImageIncluded ? t(snapshot.media.maskIncluded ? "编辑底图已发送；局部遮罩已发送" : "编辑底图已发送") : "",
+    snapshot.media.omittedImageCount ? t("明确未发送 {count} 张：{reason}", { count: snapshot.media.omittedImageCount, reason: translateUiMessage(snapshot.media.omittedReason) }) : ""
   ].filter(Boolean).join("\n") : "";
   const layers = composerAssemblyLayers({
     settings: composerSettings,
@@ -2866,7 +2906,7 @@ function openAssemblyDialog() {
 
 function composerRetrievalSummary(session) {
   if (!libraryRetrievalEnabled) return "案例库：关闭";
-  return `案例库：按需 · ${session?.libraryTools?.candidates.length || 0} 个候选 · ${session?.retrievedSources?.length || 0} 条已读来源；仅在你要求查询或参考时调用`;
+  return t("案例库：按需 · {candidates} 个候选 · {sources} 条已读来源；仅在你要求查询或参考时调用", { candidates: session?.libraryTools?.candidates.length || 0, sources: session?.retrievedSources?.length || 0 });
 }
 
 function assemblyLayer(title, content, actionLabel, action) {
@@ -2982,7 +3022,7 @@ function creativeOutputCard(run, output) {
     const editCapabilities = composerImageEditCapabilities(composerSession?.generationAiProfile, composerVisionSettings);
     const edit = textEl("button", "button-secondary", "编辑");
     edit.disabled = !editCapabilities.whole;
-    edit.title = edit.disabled ? "请切换到已验证支持图片编辑的 OpenAI 或米醋服务" : "";
+    edit.title = edit.disabled ? t("请切换到已验证支持图片编辑的 OpenAI 或米醋服务") : "";
     edit.addEventListener("click", () => openCreativeImageWorkspace(run.id, output.visual.id, true));
     secondaryActions.append(edit);
   }
@@ -3031,6 +3071,8 @@ function creativeJudgmentEditor(run, output) {
   const clear = textEl("button", "button-secondary", "清空");
   clear.disabled = !output.judgment;
   const persist = async (judgment) => {
+    const request = Symbol();
+    judgmentRequestById.set(judgmentId, request);
     save.disabled = true;
     clear.disabled = true;
     try {
@@ -3040,6 +3082,9 @@ function creativeJudgmentEditor(run, output) {
         visualId: output.visual.id,
         judgment
       });
+      // Storage notifications can rebuild this editor before its request returns.
+      // A newer edit in that editor owns both the result and its feedback.
+      if (judgmentRequestById.get(judgmentId) !== request) return;
       if (!response?.ok) throw new Error(response?.message || t("判断保存失败"));
       creativeRuns = response.creativeRuns ?? creativeRuns;
       const feedbackMessage = t(response.message || (response.judgment ? "本次人工判断已保存" : "本次人工判断已清空"));
@@ -3048,7 +3093,10 @@ function creativeJudgmentEditor(run, output) {
       save.textContent = t(response.judgment ? "保存修改" : "保存判断");
       clear.disabled = !response.judgment;
     } finally {
-      save.disabled = false;
+      if (judgmentRequestById.get(judgmentId) === request) {
+        judgmentRequestById.delete(judgmentId);
+        save.disabled = false;
+      }
     }
   };
   save.addEventListener("click", () => safely(() => persist({ keep: keep.value, improve: improve.value }))());
@@ -3265,7 +3313,7 @@ async function useCreativeOutputAsReference(run, output) {
   if (response?.ok) creativeRuns = response.creativeRuns ?? creativeRuns;
   imageWorkspace.close();
   renderComposer();
-  composerFeedback(`已作为 ${alias} 加入本次参考`);
+  composerFeedback(t("已作为 {alias} 加入本次参考", { alias }));
 }
 
 function normalizeEntryVisualIds(entry) {
@@ -3287,7 +3335,7 @@ function creativeEvaluationView(evaluation) {
     list.append(rawTextEl("li", `status-${check.status}`, `${creativeCheckLabel(check.status)} · ${check.criterion}：${check.evidence}`));
   }
   if (evaluation.primaryDeviation) {
-    list.append(rawTextEl("li", "primary-deviation", `${t("主要偏差")}：${evaluation.primaryDeviation.finding}`));
+    list.append(rawTextEl("li", "primary-deviation", t("主要偏差：{finding}", { finding: evaluation.primaryDeviation.finding })));
   }
   details.append(list);
   wrap.append(details);
@@ -3440,9 +3488,13 @@ function renderSendState() {
   const usage = composerInputUsage(composerSession, elements.composerInstruction.value, composerSettings);
   renderReferenceInputs();
   const toolState = composerSession.libraryTools;
-  const requestLabel = toolState.requestCount ? `本轮已请求 ${toolState.requestCount} 次 · ${toolState.usage && toolState.usageRequestCount === toolState.requestCount ? `输入 ${toolState.usage.promptTokens} / 输出 ${toolState.usage.completionTokens} tokens` : "用量未知"}` : "按任务执行";
-  const retrievalLabel = !libraryRetrievalEnabled ? " · 案例库：关闭" : composerLibraryToolService(composerSession, composerAiSettings, composerVisionSettings).nativeTools ? " · 案例库：按需" : " · 案例库：手动选择";
-  elements.composerSendNote.textContent = `${prompts} 条提示词原文 · ${images} 张手选原图 · ${descriptions} 条画面描述 · ${usage.characters.toLocaleString("en-US")} 字符${retrievalLabel} · ${requestLabel} · 本轮已附 ${toolState.imageIds.length} 张图片`;
+  const requestUsage = toolState.usage && toolState.usageRequestCount === toolState.requestCount
+    ? t("输入 {input} / 输出 {output} tokens", { input: toolState.usage.promptTokens, output: toolState.usage.completionTokens }) : t("用量未知");
+  const requestLabel = toolState.requestCount ? t("本轮已请求 {count} 次 · {usage}", { count: toolState.requestCount, usage: requestUsage }) : t("按任务执行");
+  const retrievalLabel = t(!libraryRetrievalEnabled ? "案例库：关闭" : composerLibraryToolService(composerSession, composerAiSettings, composerVisionSettings).nativeTools ? "案例库：按需" : "案例库：手动选择");
+  elements.composerSendNote.textContent = t("{prompts} 条提示词原文 · {images} 张手选原图 · {descriptions} 条画面描述 · {characters} 字符 · {retrieval} · {request} · 本轮已附 {attached} 张图片", {
+    prompts, images, descriptions, characters: usage.characters.toLocaleString("en-US"), retrieval: retrievalLabel, request: requestLabel, attached: toolState.imageIds.length
+  });
   const currentRun = activeOperation?.kind === "compose" && activeOperation.sessionId === composerSession.id;
   if (currentRun) {
     elements.composerAction.dataset.state = activeOperation.phase === "stopping" ? "stopping" : "stop";
@@ -3534,7 +3586,7 @@ function referenceAliasButton(reference) {
   const remove = el("button", "icon-button composer-input-reference-remove");
   remove.type = "button";
   remove.title = t("取消参考");
-  remove.setAttribute("aria-label", `取消参考：${reference.title || reference.alias}`);
+  remove.setAttribute("aria-label", t("取消参考：{title}", { title: reference.title || reference.alias }));
   remove.disabled = Boolean(activeOperation);
   remove.append(createUiIcon("x"));
   remove.addEventListener("click", () => safely(async () => {
@@ -3558,7 +3610,7 @@ function createLibraryCandidate(candidate, index) {
   open.href = `library.html?case=${encodeURIComponent(candidate.caseId)}`;
   open.target = "_blank";
   open.title = [candidate.title, candidate.excerpt].filter(Boolean).join("\n");
-  open.setAttribute("aria-label", `查看案例：${candidate.title}`);
+  open.setAttribute("aria-label", t("查看案例：{title}", { title: candidate.title }));
   const entry = entries.find((entry) => entry.id === candidate.caseId);
   const media = entry ? primaryMediaAsset(entry) : null;
   const visualAsset = media?.kind === "video" ? posterAssetForVideo(entry, media) : entry ? primaryVisual(entry) : null;

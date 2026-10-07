@@ -57,6 +57,38 @@ test('unknown-length overflow cancels the source rather than leaving a downloadi
   assert.equal(canceled, true);
 });
 
+test('download progress counts actual streamed bytes while preserving the original blob', async () => {
+  const events = [];
+  const stream = new ReadableStream({ start(controller) {
+    controller.enqueue(PNG.slice(0, 8)); controller.enqueue(PNG.slice(8)); controller.close();
+  } });
+  const blob = await boundedMediaBlobFromResponse(new Response(stream, { headers: { 'content-length': String(PNG.length) } }),
+    { kind: 'image', maxBytes: 1024, onProgress: value => events.push(value) });
+  assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), PNG);
+  assert.deepEqual(events[0], { receivedBytes: 0, totalBytes: PNG.length });
+  assert.ok(events.some(event => event.receivedBytes === 8));
+  assert.deepEqual(events.at(-1), { receivedBytes: PNG.length, totalBytes: PNG.length });
+});
+
+test('missing, compressed and inaccurate lengths never produce a false completed-file percentage', async () => {
+  for (const headers of [{}, { 'content-length': '10', 'content-encoding': 'gzip' }, { 'content-length': String(PNG.length + 8) }]) {
+    const events = [];
+    await boundedMediaBlobFromResponse(new Response(PNG, { headers }),
+      { kind: 'image', maxBytes: 1024, onProgress: value => events.push(value) });
+    assert.equal(events.at(-1).receivedBytes, PNG.length);
+    assert.equal(events.at(-1).totalBytes, null);
+  }
+});
+
+test('an interrupted original still fails saving after showing only the bytes actually received', async () => {
+  const events = [];
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(PNG); }, pull(controller) { controller.error(new Error('network interrupted')); } });
+  await assert.rejects(() => boundedMediaBlobFromResponse(new Response(stream),
+    { kind: 'image', maxBytes: 1024, onProgress: value => events.push(value) }), /network interrupted/);
+  assert.equal(events.at(-1).receivedBytes, PNG.length);
+  assert.equal(events.at(-1).totalBytes, null);
+});
+
 test("bounded media trusts file signatures instead of a spoofed content type", async () => {
   const response = new Response(new TextEncoder().encode("<svg onload=alert(1)></svg>"), {
     headers: { "content-type": "image/png" }

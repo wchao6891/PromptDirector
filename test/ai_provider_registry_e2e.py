@@ -280,6 +280,7 @@ def assert_deepseek_dynamic_image_analysis() -> None:
 
 def open_ai_settings(run):
     library = run.open_page("library.html", wait_until="networkidle")
+    expect(library.locator("body")).to_have_attribute("data-library-state", "ready")
     if not library.locator("#settings-dialog").is_visible():
         library.locator("#open-settings").click()
     library.locator('[data-settings-tab="ai"]').click()
@@ -352,6 +353,7 @@ def assert_new_install_defaults() -> None:
             }"""
         )
         library.wait_for_load_state("networkidle")
+        expect(library.locator("body")).to_have_attribute("data-library-state", "ready")
         if not library.locator("#settings-dialog").is_visible():
             library.locator("#open-settings").click()
         library.locator('[data-settings-tab="ai"]').click()

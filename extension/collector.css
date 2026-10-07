@@ -131,10 +131,12 @@ main {
   background: transparent;
 }
 .normal-start .capture-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.normal-start .capture-actions > button { min-height: 40px; padding: 8px; font-size: 11px; }
+.normal-start .capture-actions > button { min-width: 0; min-height: 40px; padding: 8px 4px; gap: 4px; font-size: 11px; }
+/* Long translations end with an ellipsis instead of running into the next button; the title keeps the full name. */
+.normal-start .capture-actions button strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .normal-start .capture-actions > #start-page-capture { grid-column: 1 / -1; min-height: 46px; font-size: 13px; }
 .normal-start .other-capture-methods { grid-column: auto; }
-.normal-start .other-capture-methods button { width: 100%; min-height: 40px; padding: 8px; font-size: 11px; }
+.normal-start .other-capture-methods button { width: 100%; min-width: 0; min-height: 40px; padding: 8px 4px; gap: 4px; font-size: 11px; }
 .normal-start .capture-actions button .ui-icon { width: 17px; height: 17px; }
 .capture-icon-button { display: inline-grid; place-items: center; width: 34px; min-width: 34px; min-height: 34px; padding: 7px; }
 .capture-icon-button .ui-icon { width: 17px; height: 17px; }
@@ -199,7 +201,6 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
 .page-capture-card-actions > details[open] { flex-basis: 100%; }
 .page-capture-edit-status { border: 1px solid var(--selection-edge); border-radius: 6px; padding: 9px; }
 .page-capture-edit-status p { margin: 0 0 7px; font-size: 12px; }
-.page-capture-active .save-metadata { padding: 0; border: 0; background: transparent; }
 
 .page-capture-media-review { display: block; gap: 9px; border: 1px solid var(--selection-edge); border-radius: 6px; padding: 10px; background: var(--paper); }
 .page-capture-media-review[hidden] { display: none; }
@@ -357,43 +358,6 @@ body.page-capture-active { height: 100dvh; overflow: hidden; }
   backdrop-filter: blur(5px);
 }
 
-.save-metadata {
-  display: grid;
-  gap: 8px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px 11px;
-  background: var(--card);
-}
-.save-metadata label {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-.save-metadata select,
-.save-metadata input {
-  width: 100%;
-  min-height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 6px 9px;
-  color: var(--ink);
-  background: var(--paper);
-}
-.custom-label-editor summary {
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-}
-.custom-label-editor { display: grid; gap: 7px; }
-.custom-label-editor > span { color: var(--muted); font-size: 11px; font-weight: 700; }
-.custom-label-editor label { display: block; margin-top: 8px; }
-.custom-label-editor small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
 
 .add-more-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .add-more-actions button { min-height: 36px; font-size: 12px; }
@@ -550,7 +514,7 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 .library-entry { min-height: 44px; border-radius: var(--ui-control-radius); padding: 7px 11px; background: var(--card); color: var(--ink); }
 .library-entry:hover:not(:disabled) { border-color: var(--selection-edge); background: var(--selection-hover); }
 .library-entry > .ui-icon { color: var(--muted); }
-.target-banner, .save-metadata, .other-capture-methods, .fragment-card, .visual-card, .duplicate-panel { border-radius: 7px; }
+.target-banner, .other-capture-methods, .fragment-card, .visual-card, .duplicate-panel { border-radius: 7px; }
 .start-state { gap: 12px; padding: 14px; }
 .start-copy { text-align: left; margin-inline: 0; }
 .start-copy h2 { font-size: 18px; letter-spacing: 0; }
@@ -589,14 +553,6 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 .normal-start .capture-actions .ui-icon { width: 16px; height: 16px; flex-shrink: 0; }
 .add-more-actions { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; align-items: start; }
 .add-more-actions > button { padding: 6px 3px; white-space: nowrap; min-width: 0; }
-.custom-label-editor { grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; }
-.custom-label-editor > span { padding-top: 8px; white-space: nowrap; }
-.custom-label-editor .tag-editor { min-width: 0; display: flex; flex-direction: column; }
-.custom-label-editor .tag-editor-chips { order: 1; }
-.custom-label-editor .tag-editor-row { display: flex; gap: 6px; }
-.custom-label-editor .tag-editor-row input { min-width: 0; flex: 1; }
-.custom-label-editor .tag-editor-row button { white-space: nowrap; flex-shrink: 0; padding: 6px 8px; }
-.save-metadata label > span { white-space: nowrap; }
 .collector-footer button, .page-capture-actions button { white-space: nowrap; }
 .preview-heading small { display: none; }
 .quick-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -630,3 +586,16 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 .page-capture-text-row { position: relative; padding-right: 26px; }
 .page-capture-text-remove { position: absolute; right: 0; top: 0; border: 0; background: transparent; color: inherit; cursor: pointer; opacity: .55; font-size: 20px; }
 .page-capture-text-remove:hover, .page-capture-text-remove:focus-visible { opacity: 1; }
+
+#capture-metadata { padding-block: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+#capture-metadata #content-type { width: auto; max-width: 13ch; min-height: 30px; padding: 4px 8px; font-size: 11px; white-space: nowrap; }
+#capture-metadata .detail-project-summary-text { max-width: 16ch; }
+#capture-metadata > .detail-project-menu { min-width: 0; max-width: calc(100% - 132px); }
+#capture-metadata .detail-project-popover { width: min(430px, calc(100vw - 28px)); }
+#capture-metadata #custom-labels { min-width: 0; }
+#capture-metadata .prompt-icon-action { display: inline-flex; justify-content: center; align-items: center; width: 36px; height: 36px; padding: 6px; }
+#feedback .ui-task-progress { display: block; width: 100%; margin-top: 7px; }
+
+.page-capture-details-option { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.page-capture-details-option[hidden] { display: none; }
+.page-capture-details-option input { margin: 0; width: auto; }

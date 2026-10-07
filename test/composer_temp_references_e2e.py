@@ -246,16 +246,16 @@ def main() -> None:
         composer.locator("#composer-temp-reference-save-all").click()
         expect(composer.locator("#composer-feedback")).to_contain_text("已保存")
         expect(composer.locator(".composer-temp-reference-card")).to_have_count(0)
-        entries = composer.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries || [])")
+        entries = composer.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(value => value.entries || [])")
         assert len(entries) == 3, entries
 
         # An explicit analysis task for two pictures from one case writes both results back.
         task_ids = composer.evaluate(
             """async () => {
-              const stored = await chrome.storage.local.get('entries');
+              const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
               const imageEntries = stored.entries.filter(entry => entry.mediaAssets.some(asset => asset.kind === 'image'));
               const combined = {...imageEntries[0], mediaAssets: imageEntries.flatMap(entry => entry.mediaAssets)};
-              await chrome.storage.local.set({entries: [combined]});
+              await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries: [combined]}));
               const domain = await import(chrome.runtime.getURL('composer.js'));
               const session = domain.createComposerSession({referenceSnapshots: domain.createReferenceSnapshots([combined], [{entryId: combined.id, assetIds: combined.mediaAssets.map(asset => asset.id)}])});
               await chrome.runtime.sendMessage({type: 'UPSERT_COMPOSER_SESSION', session});
@@ -273,7 +273,7 @@ def main() -> None:
         assert completed["task"]["status"] == "completed", completed
         saved_analyses = composer.evaluate(
             """async (entryId) => {
-              const stored = await chrome.storage.local.get('entries');
+              const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
               return stored.entries.find(entry => entry.id === entryId).mediaAssets.filter(asset => asset.kind === 'image').map(asset => asset.visionAnalysis);
             }""", task_ids["entryId"])
         assert len(saved_analyses) == 2 and all(value and value.get("reconstructionPrompt") for value in saved_analyses), saved_analyses

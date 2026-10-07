@@ -106,6 +106,17 @@ function applyLegacyTrashFacetMigration(trashState, bindings, migratedEntries) {
   return normalizeTrashState({ items });
 }
 
+// Case identities that a migration would drop from both the library and the recycle bin. A non-empty
+// result stops the migration before anything is written.
+export function casesLostByMigration(before = {}, after = {}) {
+  const ids = state => new Set([
+    ...(Array.isArray(state.entries) ? state.entries : []).map(entry => entry?.id),
+    ...(Array.isArray(state.trashState?.items) ? state.trashState.items : []).filter(item => item?.kind === "entry").map(item => item.targetId)
+  ].filter(id => typeof id === "string" && id));
+  const kept = ids(after);
+  return [...ids(before)].filter(id => !kept.has(id));
+}
+
 export function needsMigration(stored = {}) {
   return needsFolderOwnershipMigration(stored) || stored.schemaVersion !== SCHEMA_VERSION || !stored.taxonomy || !stored.facetCatalog ||
     !stored.organizerState || stored.organizerState.version !== ORGANIZER_VERSION || !stored.trashState || !Array.isArray(stored.compoundCases) ||

@@ -63,6 +63,10 @@ export function updateCompoundCase(values, entries = [], compoundId, changes = {
   const target = current.find((item) => item.id === clean(compoundId));
   if (!target) throw new Error("组合案例不存在");
   const memberEntryIds = changes.memberEntryIds === undefined ? target.memberEntryIds : uniqueIds(changes.memberEntryIds);
+  const entryIds = new Set(entries.map((entry) => entry.id));
+  if (memberEntryIds.some((id) => !entryIds.has(id))) throw new Error("组合中包含不存在的案例，请刷新后重试");
+  const otherMemberIds = new Set(current.filter((item) => item.id !== target.id).flatMap((item) => item.memberEntryIds));
+  if (memberEntryIds.some((id) => otherMemberIds.has(id))) throw new Error("案例已属于其他组合，请刷新后重新选择");
   if (memberEntryIds.length < 2) {
     return { compoundCases: current.filter((item) => item.id !== target.id), compoundCase: null, split: true };
   }

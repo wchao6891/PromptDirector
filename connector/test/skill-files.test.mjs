@@ -18,6 +18,8 @@ import { createCreativeSkill } from '../../extension/creative-skills.js';
 
 test('MCP transfers full Skill packages, updates/restores script versions, downloads exact files and rejects stale cache after deletion',async()=>{
   const root=await mkdtemp(join(tmpdir(),'pd-skill-mcp-'));
+  // Agent-authored sources live outside the connector's private pairing directory.
+  const source=await mkdtemp(join(tmpdir(),'pd-skill-source-'));
   const instanceId=randomUUID(), extensionId='a'.repeat(32);
   await writeFile(join(root,'config.json'),JSON.stringify({extensionId}));
   await writeFile(join(root,'selected.json'),JSON.stringify({instanceId}));
@@ -38,21 +40,27 @@ test('MCP transfers full Skill packages, updates/restores script versions, downl
     const action={begin_transfer:'begin',append_transfer:'append',finish_transfer:'finish'}[name];
     return action?transfers[action](input):service.execute(name,input);
   };
-  let chunks=0,ready;
-  const readiness=new Promise(resolve=>{ready=resolve;});
-  const input=new PassThrough(),output=new PassThrough();
-  output.on('data',frameDecoder(message=>{
-    if(message.type==='ready')ready();
-    if(message.type==='request'){
-      if(message.operation==='read_skill_file')chunks++;
-      dispatch(message.operation,message.input).then(result=>input.write(encodeFrame({type:'response',id:message.id,result})),
-        error=>input.write(encodeFrame({type:'response',id:message.id,error:{code:error.code,message:error.message}})));
-    }
-  }));
-  const host=await startNativeHost({root,origin:`chrome-extension://${extensionId}/`,input,output});
+  let chunks=0,input,output,host;
+  // Chrome starts a new native host whenever the extension is reloaded or replaced by another version.
+  const startExtensionHost=async()=>{
+    let ready;
+    const readiness=new Promise(resolve=>{ready=resolve;});
+    input=new PassThrough();output=new PassThrough();
+    const reply=input;
+    output.on('data',frameDecoder(message=>{
+      if(message.type==='ready')ready();
+      if(message.type==='request'){
+        if(message.operation==='read_skill_file')chunks++;
+        dispatch(message.operation,message.input).then(result=>reply.write(encodeFrame({type:'response',id:message.id,result})),
+          error=>reply.write(encodeFrame({type:'response',id:message.id,error:{code:error.code,message:error.message}})));
+      }
+    }));
+    host=await startNativeHost({root,origin:`chrome-extension://${extensionId}/`,input,output});
+    input.write(encodeFrame({type:'hello',protocolVersion:1,extensionId,instanceId}));await readiness;
+  };
   const client=new Client({name:'skill-file-test',version:'1'});
   try{
-    input.write(encodeFrame({type:'hello',protocolVersion:1,extensionId,instanceId}));await readiness;
+    await startExtensionHost();
     await client.connect(new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('../mcp.mjs',import.meta.url))],env:{...process.env,PROMPTDIRECTOR_CONNECTOR_HOME:root}}));
     const invoke=async(name,args)=>{
       const result=await client.callTool({name:`promptdirector_${name}`,arguments:args});
@@ -64,11 +72,14 @@ test('MCP transfers full Skill packages, updates/restores script versions, downl
     assert.equal(first.relativePath,args.path);assert(chunks>1);
     assert.deepEqual(await readFile(first.path),bytes);
     chunks=0;const reused=await invoke('download_skill_file',args);assert.equal(reused.path,first.path);assert.equal(chunks,1);
-    const mainPath=join(root,'SKILL.md'),scriptPath=join(root,'frames.py'),emptyPath=join(root,'__init__.py');
+    const mainPath=join(source,'SKILL.md'),scriptPath=join(source,'frames.py'),emptyPath=join(source,'__init__.py');
     await writeFile(mainPath,'---\nname: native-skill\ndescription: Native write\ncustom: keep\n---\nUse scripts/frames.py\n');
     await writeFile(scriptPath,'print("first")');await writeFile(emptyPath,'');
     const saveArgs={requestId:'native-write',files:[{path:mainPath,packagePath:'SKILL.md'},{path:scriptPath,packagePath:'scripts/frames.py'},{path:emptyPath,packagePath:'scripts/__init__.py'}]};
     const saved=await invoke('save_skill',saveArgs);assert(saved.ok,JSON.stringify(saved));assert.equal(saved.fileCount,3);
+    const uploadCount=uploads;
+    const invalid=await invoke('save_skill',{...saveArgs,requestId:'mixed-input',skillMarkdown:'另一份正文'});
+    assert(invalid.isError);assert.equal(invalid.code,'invalid_input');assert.equal(uploads,uploadCount,'mutually exclusive input must fail before any native upload');
     assert((await invoke('save_skill',saveArgs)).replayed);
     await writeFile(scriptPath,'print("second")');
     const updated=await invoke('save_skill',{...saveArgs,requestId:'native-update',skillId:saved.skillId,expectedRevision:saved.revision});assert(updated.ok,JSON.stringify(updated));
@@ -77,6 +88,8 @@ test('MCP transfers full Skill packages, updates/restores script versions, downl
     const restored=await invoke('restore_skill',{requestId:'native-restore',skillId:saved.skillId,expectedRevision:updated.revision,versionId:saved.versionId});assert(restored.ok,JSON.stringify(restored));
     const file=await invoke('read_skill_file',{skillId:saved.skillId,expectedRevision:restored.revision,source:'package',path:'scripts/frames.py'});assert.equal(file.content,'print("first")');
     writesSupported=false;
+    await host.close();input.destroy();output.destroy();
+    await startExtensionHost();
     const before=uploads;
     const unsupported=await invoke('save_skill',{...saveArgs,requestId:'old-backend'});
     assert(unsupported.isError);assert.match(JSON.stringify(unsupported),/尚不支持Skill写入/);
@@ -84,6 +97,6 @@ test('MCP transfers full Skill packages, updates/restores script versions, downl
     data.creativeSkills.items=[];
     const missing=await invoke('download_skill_file',args);assert(missing.isError);assert.equal(missing.code,'skill_not_found');
   }finally{
-    await client.close();await host.close();input.destroy();output.destroy();await rm(root,{recursive:true,force:true});
+    await client.close();await host.close();input.destroy();output.destroy();await rm(root,{recursive:true,force:true});await rm(source,{recursive:true,force:true});
   }
 });

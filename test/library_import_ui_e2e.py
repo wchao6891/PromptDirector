@@ -208,7 +208,7 @@ def main() -> None:
             rtf_card.click()
             expect(library.locator(".detail-visual-gallery.is-document-detail")).to_be_visible()
             expect(library.locator(".markdown-reader")).to_contain_text("RTF import")
-            rtf_text = library.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries.find(item => item.title === 'notes.rtf')?.text || '')")
+            rtf_text = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(value => value.entries.find(item => item.title === 'notes.rtf')?.text || '')")
             assert "\\rtf" not in rtf_text and "RTF import" in rtf_text, rtf_text
             library.locator("#detail-close").click()
             expect(library.locator("#detail-drawer")).not_to_be_visible()
@@ -217,7 +217,7 @@ def main() -> None:
             expect(markdown_card).to_have_count(1)
             markdown_card.click()
             expect(library.locator(".detail-visual-gallery.is-document-detail")).to_be_visible()
-            expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", library.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries.find(item => item.title === 'new-note.md').id)"))
+            expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(value => value.entries.find(item => item.title === 'new-note.md').id)"))
             expect(library.locator(".markdown-reader")).to_contain_text("END-OF-DOCUMENT")
             expect(library.locator("#detail-drawer > #detail-navigation")).to_be_visible()
             document_toolbar = library.evaluate(
@@ -234,7 +234,7 @@ def main() -> None:
                 }"""
             )
             assert not document_toolbar["navEditorOverlap"] and not document_toolbar["closeEditorOverlap"], document_toolbar
-            long_document = library.locator(".detail-visual-gallery.is-document-detail .detail-visual-stage").evaluate(
+            long_document = library.locator(".detail-visual-gallery.is-document-detail .detail-document").evaluate(
                 """stage => {
                   const before = {clientHeight: stage.clientHeight, scrollHeight: stage.scrollHeight};
                   stage.scrollTop = stage.scrollHeight;
@@ -253,7 +253,7 @@ def main() -> None:
             library.locator("#import-recovery-actions > summary").click()
             library.locator("#import-undo").click()
             expect(library.locator("#import-undo")).to_be_hidden()
-            remaining_ids = library.evaluate("() => chrome.storage.local.get('entries').then(value => (value.entries || []).map(item => item.id))")
+            remaining_ids = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(value => (value.entries || []).map(item => item.id))")
             assert remaining_ids == ["entry:duplicate"], remaining_ids
             library.locator("#import-cancel").click()
 

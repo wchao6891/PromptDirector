@@ -21,6 +21,7 @@ def main() -> None:
             }]}
         })
         library = session.open_page("library.html", wait_until="networkidle")
+        expect(library.locator('body')).to_have_attribute('data-library-state', 'ready')
         for unassigned in [True, False]:
             if unassigned:
                 library.locator("#workspace-unassigned").click()
@@ -43,11 +44,16 @@ def main() -> None:
             assert saved["scrollY"] > 700, saved
             library.locator(".composer-library-exit").click()
             library.wait_for_url("**/library.html")
+            expect(library.locator('body')).to_have_attribute('data-library-state', 'ready')
             expect(library.locator("#workspace-unassigned")).to_have_attribute("aria-current", "page" if unassigned else "false")
             expect(library.locator("#library-title")).to_have_text("未归项目" if unassigned else "浏览项目")
             expect(library.locator("#search-input")).to_have_value("雨夜")
             expect(library.locator('[role="columnheader"][data-column="title"]')).to_have_attribute("aria-sort","ascending")
-            library.wait_for_function("target => Math.abs(scrollY - target) <= 2", arg=saved["scrollY"])
+            try:
+                library.wait_for_function("target => Math.abs(scrollY - target) <= 2", arg=saved["scrollY"])
+            except Exception:
+                print({'saved': saved, 'current': library.evaluate("({state:document.body.dataset.libraryState,scrollY,viewportHeight:innerHeight,scrollHeight:document.scrollingElement.scrollHeight,loaded:document.querySelector('#case-list').dataset.loadedCount})")}, flush=True)
+                raise
             assert library.locator("#case-list > .case-card").count() > 24
 
         # A project deleted while away must resolve to the library, not a phantom project.
@@ -61,6 +67,7 @@ def main() -> None:
         assert await_result is True
         library.locator(".composer-library-exit").click()
         library.wait_for_url("**/library.html")
+        expect(library.locator('body')).to_have_attribute('data-library-state', 'ready')
         expect(library.locator("#workspace-library")).to_have_attribute("aria-current", "page")
         expect(library.locator("#workspace-unassigned")).to_have_attribute("aria-current", "false")
         expect(library.locator("#search-input")).to_have_value("雨夜")

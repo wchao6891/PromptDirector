@@ -65,7 +65,7 @@ def main():
         expect(reader.locator("img")).to_have_count(1)
         page.wait_for_function("() => [...document.querySelectorAll('.markdown-reader img')].every(i => i.complete && i.naturalWidth > 0)")
         result = page.evaluate("""async () => {
-          const {entries} = await chrome.storage.local.get('entries');
+          const {entries} = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
           const entry = entries.find(e => e.title.endsWith('.docx') && e.title !== 'broken.docx');
           return {text: entry.text, path: entry.classification.pathIds, warnings: entry.mediaAssets[0].extractionWarnings};
         }""")
@@ -78,7 +78,7 @@ def main():
         assert hashlib.sha256(Path(download.value.path()).read_bytes()).digest() == hashlib.sha256(source.read_bytes()).digest()
         page.locator("#detail-close").click()
         expected = {"archive.xlsx": "content:reference", "source.psd": "content:source-file", "edit.prproj": "content:source-file", "voice.wav": "content:audio", "broken.docx": "content:reference"}
-        records = page.evaluate("() => chrome.storage.local.get('entries').then(s => Object.fromEntries(s.entries.map(e => [e.title, e.classification.pathIds[0]])))")
+        records = page.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(s => Object.fromEntries(s.entries.map(e => [e.title, e.classification.pathIds[0]])))")
         for name, category in expected.items():
             assert records[name] == category, (name, records)
         for name, original_bytes in {"source.psd": b"PSD preservation fixture\x00\xff", "edit.prproj": b"Premiere preservation fixture\x00\xff"}.items():

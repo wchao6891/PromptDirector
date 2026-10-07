@@ -6,7 +6,9 @@ import { encodeFrame, frameDecoder } from "./framing.mjs";
 
 export const CONNECTOR_TIMEOUT_MS = 30000;
 
-export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = CONNECTOR_TIMEOUT_MS, instanceId } = {}) {
+export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = CONNECTOR_TIMEOUT_MS, instanceId, expectedHostSession, onHostSession } = {}) {
+  const id = randomUUID();
+  const request = encodeFrame({ type: 'request', id, operation, input });
   await ensurePrivateRoot(root);
   let instance;
   try { instance = instanceId || process.env.PROMPTDIRECTOR_INSTANCE || (await readJson(join(root, "selected.json"))).instanceId; }
@@ -15,11 +17,10 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
   let record;
   try { record = await readJson(paths.record); }
   catch (error) {
-    if (error.code === 'ENOENT') throw error;
+    if (error.code === 'ENOENT') throw Object.assign(new Error('未找到该资料库的配对记录，请在插件启用 Agent 连接后重新运行连接器配对。'), { code: 'ENOENT' });
     throw Object.assign(new Error('资料库配对记录无法读取，请检查本机连接器记录。'), { code: 'invalid_pairing_record' });
   }
   return new Promise((resolve, reject) => {
-    const id = randomUUID();
     const socket = net.connect(paths.socket);
     let settled = false;
     const finish = (error, value) => {
@@ -30,7 +31,12 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
     const decode = frameDecoder(message => {
       if (message.type === "ready") {
         if (message.instanceId !== instance || message.protocolVersion !== 1) return finish(new Error("连接的资料库或协议不匹配。"));
-        socket.write(encodeFrame({ type: "request", id, operation, input }));
+        // The request is not sent, so the caller can re-check capabilities against the reloaded extension.
+        if (expectedHostSession && message.hostSessionId !== expectedHostSession) {
+          return finish(Object.assign(new Error("插件已重新加载，需要重新核对能力。"), { code: "connector_session_changed" }));
+        }
+        onHostSession?.(message.hostSessionId);
+        socket.write(request);
       } else if (message.id === id) {
         finish(message.error ? Object.assign(new Error(message.error.message), { code: message.error.code }) : null, message.result);
       }

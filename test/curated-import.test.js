@@ -125,3 +125,30 @@ test("curated imports preserve real source identities that contain namespace sep
   assert.equal(result.importedCount, 1);
   assert.equal(result.entriesBySourceEntryId[sourceEntryId], result.state.entries[0].id);
 });
+
+test("a new curated case sharing an asset with an already saved case gets its own media target and never reuses the local original", () => {
+  const catalogItem = { ...item("1.0.0"), caseCount: 2, imageCount: 1 };
+  const source = sourceLibrary(["fresh", "saved"]);
+  for (const entry of source.entries) {
+    Object.assign(entry, { hasScreenshot: false, screenshotPath: "", primaryMediaId: "shared",
+      mediaAssets: [{ id: "shared", kind: "image", assetPath: "images/shared.webp", mimeType: "image/webp" }] });
+  }
+  const library = prepareCuratedPackageVersion(source, catalogItem);
+  const options = { packageId: catalogItem.packageId, projectName: catalogItem.title, mode: "package" };
+  const savedOnly = { ...library, entries: library.entries.filter((entry) => entry.curatedOrigin.sourceEntryId === "saved") };
+  const first = mergeCuratedLibraryPackage(emptyState(), savedOnly, { ...options, mode: "case" });
+  const localAssetIds = new Set(first.state.entries.flatMap((entry) => entry.mediaAssets.map((asset) => asset.id)));
+  // The new case is created first; the saved case's skip branch must not then remap the shared asset to the local original.
+  const preview = mergeCuratedLibraryPackage(first.state, library, options);
+  const sharedSourceId = library.entries[0].mediaAssets[0].id;
+  const target = preview.visualIdMap[sharedSourceId];
+  assert.equal(preview.importedCount, 1);
+  assert.ok(preview.importedVisualIds.includes(target), "blob staging target must belong to the newly created case");
+  assert.ok(!localAssetIds.has(target), "a curated save must never write into an existing local media id");
+  const applied = mergeCuratedLibraryPackage(first.state, library, {
+    ...options, entryIdMap: preview.entryIdMap, visualIdMap: preview.visualIdMap, compoundIdMap: preview.compoundIdMap
+  });
+  const fresh = applied.state.entries.find((entry) => entry.curatedOrigin.sourceEntryId === "fresh");
+  assert.deepEqual(fresh.mediaAssets.map((asset) => asset.id), [target]);
+  assert.deepEqual(applied.importedVisualIds, [target]);
+});

@@ -18,6 +18,10 @@ export const ANALYSIS_BATCH_VERSION = 2;
 export const ANALYSIS_BATCH_CONCURRENCY = 20;
 export const VISION_BATCH_CONCURRENCY = 10;
 export const VIDEO_BATCH_CONCURRENCY = 2;
+// Failures that need the user to fix the service (key, quota, permission) pause even a settled batch.
+const AUTHORIZATION_PAUSE_STATUSES = new Set([401, 402, 403]);
+// Items reach the batch only after the shared retry policy is exhausted; stop claiming new paid requests.
+const SERVICE_PAUSE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 export async function previewAnalysisBatch(entries = [], options = {}) {
   const eligible = [];
@@ -469,7 +473,8 @@ export function failAnalysisItem(value, entryId, claimId, error = {}) {
   recordItemExecution(item, error);
   job.usage = addUsage(job.usage, error.usage);
   finishIfSettled(job);
-  if ([401, 402, 403].includes(item.statusCode)) job.status = "paused";
+  if (AUTHORIZATION_PAUSE_STATUSES.has(item.statusCode)) job.status = "paused";
+  else if (SERVICE_PAUSE_STATUSES.has(item.statusCode) && job.status === "running") job.status = "paused";
   touch(job);
   return job;
 }

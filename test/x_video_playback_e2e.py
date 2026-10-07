@@ -69,7 +69,7 @@ def main():
             library.locator('#detail-close').click()
             # Exercise a second capture with HLS-only normal page data, then the real save path.
             mode['stream']=True
-            collector.evaluate("async()=>chrome.storage.local.set({entries:[]})")
+            collector.evaluate("async()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[]}))")
             source.bring_to_front()
             stream_batch=collector.evaluate("async()=>{const r=await chrome.runtime.sendMessage({type:'START_PAGE_CAPTURE',mode:'loaded'});if(!r.ok)throw Error(r.message);return r.batch;}")
             stream_candidate=stream_batch['candidates'][0]

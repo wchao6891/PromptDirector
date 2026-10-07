@@ -45,7 +45,8 @@ for(const previouslyPrepared of [false,true]) test(`image generation uses the de
     messages: [{ role: 'user', content: '用雨夜案例的图片生成画面' }] });
   const original = 'data:image/png;base64,aW1hZ2U=';
   const runtime = createComposerLibraryTools({ session, vision: true, maxCharacters: 750000,
-    loadLibrary: async () => ({ entries }), readImage: async () => ({ dataUrl: original, sha256:'a'.repeat(64) }), readImageDigest:async()=>'a'.repeat(64) });
+    loadLibrary: async () => ({ entries }), readImage: async (_id, _signal, expectedHash) => expectedHash === 'a'.repeat(64)
+      ? { sha256: expectedHash } : { dataUrl: original, sha256:'a'.repeat(64) } });
   const requests = [];
   const result = await executeComposerTurnWithService({ session, route: 'compose', composerSettings: normalizeComposerSettings() }, { ai: {}, vision: {
     consent: true, openai: { apiKey: 'fixture', model: 'gpt-5-mini' }, compatible: { endpoint: 'https://fixture.invalid/v1/responses', protocol: 'responses', apiKey: 'fixture', model: 'fixture-planner',
@@ -62,4 +63,38 @@ for(const previouslyPrepared of [false,true]) test(`image generation uses the de
   assert.equal(await requests[2].body.get('image').text(), 'image');
   assert.equal([...requests[2].body.keys()].filter(key => key.startsWith('image')).length, 1);
   assert.match(requests[2].url, /images\/edits/);
+});
+
+test('video generation submits only the user-chosen frame references, never an image the planner fetched with tools', async () => {
+  const entries = [{ id: 'a', title: '雨夜案例', text: '雨夜', mediaAssets: [{ id: 'a-image', kind: 'image', usage: 'content', mimeType: 'image/png', storageMode: 'managed' }] }];
+  const userImage = 'data:image/png;base64,dXNlcg==';
+  const session = createComposerSession({ targetType: 'video', outputMode: 'create_video', imageReferenceMode: 'conditioned',
+    aiProfile: { serviceId: 'openai', model: 'gpt-5-mini' }, generationAiProfile: { serviceId: 'minimax', model: 'hailuo-account-model' },
+    generationParameters: { size: '1080P' },
+    referenceSnapshots: [{ entryId: 'u', title: '用户首帧', alias: '@用户首帧', referenceKind: 'vision', imageRefs: [{ visualId: 'u-image' }], assetRefs: [] }],
+    messages: [{ role: 'user', content: '用雨夜案例的图片生成视频' }] });
+  const runtime = createComposerLibraryTools({ session, vision: true, maxCharacters: 750000,
+    loadLibrary: async () => ({ entries }), readImage: async () => ({ dataUrl: 'data:image/png;base64,dG9vbA==', sha256: 'a'.repeat(64) }) });
+  const requests = [];
+  const result = await executeComposerTurnWithService({ session, route: 'compose', composerSettings: normalizeComposerSettings() }, { ai: {}, vision: {
+    consent: true, openai: { apiKey: 'fixture', model: 'gpt-5-mini' },
+    providerProfiles: { minimax: { id: 'minimax', label: 'MiniMax', endpoint: 'https://api.minimaxi.com/v1', protocol: 'minimax_videos', apiKey: 'minimax-secret', consent: true,
+      capabilities: ['videoGeneration'], models: { videoGeneration: 'hailuo-account-model' },
+      discoveredModels: [{ id: 'hailuo-account-model', tasks: ['videoGeneration'], inputModalities: ['text', 'image'], outputModalities: ['video'], supportedResolutions: ['1080P'] }] } }
+  } }, [{ visualId: 'u-image', dataUrl: userImage }], { toolRuntime: runtime, stream: false, pollIntervalMs: 0, fetchImpl: async (url, init = {}) => {
+    requests.push({ url, body: init.body });
+    const json = (payload) => new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } });
+    if (url.includes('openai.com')) return json(requests.length === 1
+      ? { status: 'completed', output: [{ type: 'function_call', call_id: 'image', name: 'use_case_images', arguments: '{"caseId":"a","imageIds":["a-image"]}' }] }
+      : { status: 'completed', output_text: '首帧人物在雨夜街道缓慢前行。' });
+    if (url.endsWith('/video_generation') && init.method === 'POST') return json({ task_id: 'minimax-task' });
+    if (url.includes('/query/video_generation')) return json({ status: 'Success', file_id: 'minimax-file' });
+    if (url.includes('/files/retrieve')) return json({ file: { download_url: 'https://cdn.example/result.mp4' } });
+    return new Response(Uint8Array.from([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109]), { headers: { 'content-type': 'video/mp4' } });
+  } });
+  assert.equal(result.kind, 'video');
+  assert.ok(String(requests[1].body).includes('dG9vbA=='), 'the planner still sees the fetched image');
+  const submit = JSON.parse(requests.find(request => request.url.endsWith('/video_generation')).body);
+  assert.equal(submit.first_frame_image, userImage);
+  assert.equal(submit.last_frame_image, undefined);
 });

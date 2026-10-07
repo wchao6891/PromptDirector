@@ -17,12 +17,24 @@ def main():
 const libraryStorage = {...pdScopeStorage, get: async keys => {
   (globalThis.pdScopeReads ??= []).push(Array.isArray(keys) ? keys : [keys]);
   return pdScopeStorage.get(keys);
+}, getSnapshot: async keys => {
+  (globalThis.pdScopeReads ??= []).push(Array.isArray(keys) ? keys : [keys]);
+  return pdScopeStorage.getSnapshot(keys);
+}, getSnapshotBatches: (keys, options) => {
+  (globalThis.pdScopeReads ??= []).push(Array.isArray(keys) ? keys : [keys]);
+  return pdScopeStorage.getSnapshotBatches(keys, options);
 }};''')
         (ext / 'background.js').write_text(source)
         page_source = (EXTENSION_DIR / 'library.js').read_text().replace(anchor, '''const pdScopeStorage = getLibraryStorage();
 const libraryStorage = {...pdScopeStorage, get: async keys => {
   (globalThis.pdScopeReads ??= []).push(Array.isArray(keys) ? keys : [keys]);
   return pdScopeStorage.get(keys);
+}, getSnapshot: async keys => {
+  (globalThis.pdScopeReads ??= []).push(Array.isArray(keys) ? keys : [keys]);
+  return pdScopeStorage.getSnapshot(keys);
+}, getSnapshotBatches: (keys, options) => {
+  (globalThis.pdScopeReads ??= []).push(Array.isArray(keys) ? keys : [keys]);
+  return pdScopeStorage.getSnapshotBatches(keys, options);
 }};''')
         (ext / 'library.js').write_text(page_source)
         with extension_session('pd-library-read-scope-profile-', extension_dir=ext) as run:
@@ -43,6 +55,7 @@ const libraryStorage = {...pdScopeStorage, get: async keys => {
                          'creativeJobs', 'creativeSkills', 'activeCreativeResult', 'importStaging',
                          'analysisTasks', 'libraryImportTransactions', 'libraryReplacementRecoveryPoint']
             preserved = {key: {'marker': key, 'retainedText': '原有历史资料' * 1000} for key in histories}
+            protected_keys = [*histories, 'legacyEntries', 'upgradeBackup']
             setup.evaluate('async payload => chrome.storage.local.set(payload)', preserved)
             setup.evaluate("""async () => {
               const {completeLibraryViewSummary}=await import('./library-view-summary.js');
@@ -50,6 +63,7 @@ const libraryStorage = {...pdScopeStorage, get: async keys => {
               await chrome.storage.local.set({libraryViewSummary:completeLibraryViewSummary(state)});
             }""")
             before = setup.evaluate("async () => chrome.storage.local.get(null)")
+            before_entries = setup.evaluate("async () => (await (await import('./library-storage.js')).getLibraryStorage().get('entries')).entries")
             worker = run.context.service_workers[0]
             worker.evaluate('globalThis.pdScopeReads=[]')
             page = run.open_page('library.html')
@@ -63,9 +77,11 @@ const libraryStorage = {...pdScopeStorage, get: async keys => {
             assert page.locator('.case-card').count() > 0
             reads = worker.evaluate('globalThis.pdScopeReads') + page.evaluate('globalThis.pdScopeReads')
             for keys in reads:
-                assert not set(keys).intersection(histories), f'Gallery opening loaded unrelated records: {keys}'
+                assert None not in keys, f'Gallery opening loaded every storage key: {keys}'
+                assert not set(keys).intersection(protected_keys), f'Gallery opening loaded unrelated records: {keys}'
             after = setup.evaluate('async () => chrome.storage.local.get(null)')
-            for key in [*histories, 'entries', 'organizerState', 'compoundCases', 'trashState']:
+            case_keys = {key for key in before.keys() | after.keys() if key.startswith('case:') or key == 'caseIndex'}
+            for key in [*protected_keys, *case_keys, 'entries', 'organizerState', 'compoundCases', 'trashState']:
                 assert after.get(key) == before.get(key), f'Opening must preserve {key} byte-for-byte as stored'
             print('PASS: gallery opening/reload/project switch preserve cases and histories; unrelated recovery/session/task records are not read')
             # An obsolete library still needs the established full repair path,
@@ -82,9 +98,10 @@ const libraryStorage = {...pdScopeStorage, get: async keys => {
             # More than one runtime message can carry; retain complete bodies in
             # every workspace without sending the whole library through runtime.
             counts = setup.evaluate("""async () => {
-              const stored = await chrome.storage.local.get('entries');
+              const {getLibraryStorage}=await import('./library-storage.js');
+              const stored = await getLibraryStorage().get('entries');
               const entries = stored.entries.map(entry => ({...entry,text:'x'.repeat(34*1024*1024)+entry.id}));
-              await chrome.storage.local.set({entries});
+              await getLibraryStorage().set({entries});
               const {createLibraryViewReader}=await import('./library-view-state.js');
               const reader=createLibraryViewReader({storage:(await import('./library-storage.js')).getLibraryStorage(),
                 prepare:()=>chrome.runtime.sendMessage({type:'PREPARE_LIBRARY_VIEW_STATE'}),includeCreativeState:true});
@@ -108,11 +125,12 @@ const libraryStorage = {...pdScopeStorage, get: async keys => {
               const thumbnail=await(await fetch('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==')).blob();
               await saveMediaBlob('cached-pdf',new Blob(['%PDF fixture'],{type:'application/pdf'}));
               await saveDerivedMedia('cached-pdf',{thumbnail,pageCount:2,searchText:'PDF缓存末尾可搜索'});
-              await chrome.storage.local.set({entries:[...entries,{id:'pdf-cache-case',title:'缓存文档',text:'正文中没有检索词',
+              const {getLibraryStorage}=await import('./library-storage.js');
+              await getLibraryStorage().set({entries:[...entries,{id:'pdf-cache-case',title:'缓存文档',text:'正文中没有检索词',
                 classification:{pathIds:['content:reference'],status:'confirmed'},
                 mediaAssets:[{id:'cached-pdf',kind:'document',usage:'content',storageMode:'managed',mimeType:'application/pdf'}],
                 primaryMediaId:'cached-pdf'}]});
-            }""", before['entries'])
+            }""", before_entries)
             page.reload()
             page.wait_for_selector('body[data-library-state="ready"]')
             page.locator('#workspace-library').click()

@@ -51,12 +51,12 @@ test("connection model preview reads the account catalog without persisting cred
 });
 
 test("persisted batch recovery wakes the runner while runner exceptions become visible failures", () => {
-  const recovery = source.slice(
-    source.indexOf("async function recoverDeepSeekBatch"),
-    source.indexOf("async function undoDeepSeekBatch")
-  );
-  assert.match(recovery, /ensureAnalysisBatchAlarm\(true\)/);
-  assert.match(recovery, /scheduleAnalysisBatchRunner\(\)/);
+  // The persisted alarm wakes the runner after a restart; each slice recovers interrupted claims itself.
+  assert.match(source, /if \(alarm\.name === ANALYSIS_BATCH_ALARM\) scheduleAnalysisBatchRunner\(\)/);
+  for (const [start, end] of [["async function runPersistedTextBatchSlice", "async function analyzePersistedTextClaim"],
+    ["async function runPersistedVisionBatchSlice", "async function runPersistedVideoBatchSlice"]]) {
+    assert.match(source.slice(source.indexOf(start), source.indexOf(end)), /recoverInterruptedAnalysisBatch\(/);
+  }
 
   const runner = source.slice(
     source.indexOf("async function runPersistedAnalysisBatch"),
@@ -67,17 +67,10 @@ test("persisted batch recovery wakes the runner while runner exceptions become v
 });
 
 test("vision batch runner cancels stale model snapshots instead of blocking new settings", () => {
-  const claim = source.slice(
-    source.indexOf("async function claimVisionBatchItem"),
-    source.indexOf("async function completeVisionBatchItem")
-  );
   const runner = source.slice(
     source.indexOf("async function runPersistedVisionBatchSlice"),
     source.indexOf("async function finalizeVisionBatchResults")
   );
-  assert.match(claim, /const currentSettings = resolveVisionTaskSettings\("imageAnalysis", loadedConfiguration, \{ requireConfigured: false \}\);/);
-  assert.match(claim, /job\.providerType !== currentSettings\.activeProvider \|\| job\.model !== currentModel/);
-  assert.match(claim, /const canceled = cancelAnalysisBatch\(job\)/);
   assert.match(runner, /const currentSettings = resolveVisionTaskSettings\("imageAnalysis", configuration, \{ requireConfigured: false \}\);/);
   assert.match(runner, /job\.providerType !== currentSettings\.activeProvider \|\| job\.model !== currentModel/);
   assert.match(runner, /job = cancelAnalysisBatch\(job\)/);

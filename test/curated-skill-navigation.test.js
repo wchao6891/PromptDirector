@@ -57,7 +57,9 @@ test("curated Skill page verifies bytes and installs through the rollback transa
   assert.match(curatedSkillPage, /validateCuratedSkillPackage/);
   assert.match(curatedSkillPage, /installCuratedSkillTransaction/);
   assert.match(curatedSkillPage, /saveSkillPackageBlob/);
-  assert.match(curatedSkillPage, /deleteMediaBlobs/);
+  assert.match(curatedSkillPage, /createMediaStage/);
+  assert.match(curatedSkillPage, /deleteBlobs: \(\) => stage\.release\(\)/);
+  assert.doesNotMatch(curatedSkillPage, /deleteMediaBlobs/);
   assert.match(curatedSkillPage, /type: "CREATE_CREATIVE_SKILL"/);
   assert.doesNotMatch(curatedSkillPage, /innerHTML|insertAdjacentHTML|eval\(|new Function/);
 });

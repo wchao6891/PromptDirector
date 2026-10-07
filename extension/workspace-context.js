@@ -141,40 +141,51 @@ export function compactWorkspaceReference(reference) {
 }
 
 export async function workspacePage(value, input = {}) {
+  return (await createWorkspaceSnapshot(value))(input);
+}
+
+// One immutable projection owns its revision and serialized text for every continuation.
+export async function createWorkspaceSnapshot(value) {
   const context = projectWorkspace(value);
   const compactReferences = context.references.map(compactWorkspaceReference);
   const availability = { completeness: context.issues.length ? "partial" : "complete",
     selectedCaseCount: context.selectedCaseIds.length, availableCaseCount: new Set(context.references.map(reference => reference.entryId)).size };
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(context)));
   const revision = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-  if (input.expectedRevision && input.expectedRevision !== revision) {
-    throw agentError("selection_changed", "当前选择或参考资料已改变，请重新读取工作现场，不要继续拼接旧参考。");
-  }
-  const offset = requireInteger(input.offset ?? 0);
-  if (input.part !== undefined) {
-    if (!input.expectedRevision) throw agentError("invalid_input", "读取参考必须携带当前选择的版本。");
-    if (!["instruction", "reference", "selection"].includes(input.part)) throw agentError("invalid_input", "不支持的工作资料类型。");
-    const reference = input.part === "reference" ? compactReferences.find(item => item.referenceId === input.referenceId) : null;
-    if (input.part === "reference" && !reference) throw agentError("reference_not_selected", "这份参考不在当前已确认的选择中。");
-    const length = requireInteger(input.length ?? 12000, { min: 1, max: 49152 });
-    const text = input.part === "selection" ? JSON.stringify({ selectedCaseIds: context.selectedCaseIds, references: compactReferences, issues: context.issues })
-      : reference ? JSON.stringify(reference) : context.instruction;
-    return { ...availability, revision, part: input.part, referenceId: reference?.referenceId, format: input.part === "instruction" ? "text" : "json", content: text.slice(offset, offset + length),
-      offset, totalCharacters: text.length, nextOffset: offset + length < text.length ? offset + length : null, untrustedContent: true };
-  }
-  const limit = requireInteger(input.limit ?? 24, { min: 1, max: 100 });
-  const { references, instruction, ...location } = context;
-  return { ...location, ...availability, revision, total: references.length, offset,
-    instruction: { text: instruction.slice(0, 4000), totalCharacters: instruction.length, nextOffset: instruction.length > 4000 ? 4000 : null },
-    nextOffset: offset + limit < references.length ? offset + limit : null,
-    references: references.slice(offset, offset + limit).map(reference => ({
-      referenceId: reference.referenceId, caseId: reference.entryId, assetId: reference.assetId,
-      title: reference.title, alias: reference.alias, scope: reference.scope, sourceType: reference.sourceType,
-      sourceUrl: reference.sourceUrl, memberCaseIds: reference.memberCaseIds, caseSources: reference.caseSources,
-      originalPromptCharacters: reference.originalText.length,
-      referenceKind: reference.referenceKind, characters: JSON.stringify(reference).length,
-      media: reference.media, mediaReadSupported: reference.sourceType !== "temporary"
-    })), untrustedContent: true };
+  const texts = new Map();
+  return (input = {}) => {
+    if (input.expectedRevision && input.expectedRevision !== revision) {
+      throw agentError("selection_changed", "当前选择或参考资料已改变，请重新读取工作现场，不要继续拼接旧参考。");
+    }
+    const offset = requireInteger(input.offset ?? 0);
+    if (input.part !== undefined) {
+      if (!input.expectedRevision && (input.part !== "selection" || offset !== 0)) throw agentError("invalid_input", "续页或单份读取必须携带当前选择的版本。");
+      if (!["instruction", "reference", "selection"].includes(input.part)) throw agentError("invalid_input", "不支持的工作资料类型。");
+      const reference = input.part === "reference" ? compactReferences.find(item => item.referenceId === input.referenceId) : null;
+      if (input.part === "reference" && !reference) throw agentError("reference_not_selected", "这份参考不在当前已确认的选择中。");
+      const length = requireInteger(input.length ?? 12000, { min: 1, max: 49152 });
+      const key = JSON.stringify([input.part, reference?.referenceId]);
+      if (!texts.has(key)) texts.set(key, input.part === "selection"
+        ? JSON.stringify({ selectedCaseIds: context.selectedCaseIds, references: compactReferences, issues: context.issues })
+        : reference ? JSON.stringify(reference) : context.instruction);
+      const text = texts.get(key);
+      return { ...availability, revision, part: input.part, referenceId: reference?.referenceId, format: input.part === "instruction" ? "text" : "json", content: text.slice(offset, offset + length),
+        offset, totalCharacters: text.length, nextOffset: offset + length < text.length ? offset + length : null, untrustedContent: true };
+    }
+    const limit = requireInteger(input.limit ?? 24, { min: 1, max: 100 });
+    const { references, instruction, ...location } = context;
+    return { ...location, ...availability, revision, total: references.length, offset,
+      instruction: { text: instruction.slice(0, 4000), totalCharacters: instruction.length, nextOffset: instruction.length > 4000 ? 4000 : null },
+      nextOffset: offset + limit < references.length ? offset + limit : null,
+      references: references.slice(offset, offset + limit).map(reference => ({
+        referenceId: reference.referenceId, caseId: reference.entryId, assetId: reference.assetId,
+        title: reference.title, alias: reference.alias, scope: reference.scope, sourceType: reference.sourceType,
+        sourceUrl: reference.sourceUrl, memberCaseIds: reference.memberCaseIds, caseSources: reference.caseSources,
+        originalPromptCharacters: reference.originalText.length,
+        referenceKind: reference.referenceKind, characters: JSON.stringify(reference).length,
+        media: reference.media, mediaReadSupported: reference.sourceType !== "temporary"
+      })), untrustedContent: true };
+  };
 }
 
 export async function installWorkspaceReader({ chromeApi, readContext }) {

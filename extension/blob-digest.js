@@ -1,7 +1,21 @@
 import { sha256 } from "./vendor/noble-hashes/sha2.js";
+import { operationBudget, RESOURCE_POLICY } from "./resource-policy.js";
 
-export async function sha256Blob(blob, { onProgress } = {}) {
+const toHex = (bytes) => [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+
+export function nativeDigestMaxBytes(budget) {
+  return Math.floor(operationBudget(budget).workingBytes * RESOURCE_POLICY.nativeDigestFraction);
+}
+
+export async function sha256Blob(blob, { onProgress, budget } = {}) {
   if (!(blob instanceof Blob)) throw new Error("无法计算无效媒体的内容摘要");
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle && blob.size <= nativeDigestMaxBytes(budget)) {
+    const digest = toHex(new Uint8Array(await subtle.digest("SHA-256", await blob.arrayBuffer())));
+    if (onProgress) await onProgress({ completedBytes: blob.size, totalBytes: blob.size });
+    return digest;
+  }
+  // Large originals stream so memory stays bounded regardless of file size.
   const hash = sha256.create();
   const reader = blob.stream().getReader();
   let completedBytes = 0;
@@ -13,7 +27,7 @@ export async function sha256Blob(blob, { onProgress } = {}) {
       completedBytes += value.byteLength;
       if (onProgress) await onProgress({ completedBytes, totalBytes: blob.size });
     }
-    return [...hash.digest()].map((value) => value.toString(16).padStart(2, "0")).join("");
+    return toHex(hash.digest());
   } finally {
     hash.destroy();
     reader.releaseLock();

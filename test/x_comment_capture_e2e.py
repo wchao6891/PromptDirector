@@ -151,8 +151,10 @@ def sidebar_journey(public_video=False):
                     collector.set_viewport_size({'width': width, 'height': 900})
                     assert collector.locator('#page-capture').evaluate('e=>e.scrollWidth<=e.clientWidth'), (theme, width)
                     collector.screenshot(path=str(evidence / f'comment-{theme}-{width}.png'))
+            # The collector now hands the commit to the background save-task pipeline
+            # (START_CAPTURE_SAVE wrapping a COMMIT_PAGE_CAPTURE input), so record that batch.
             collector.evaluate('''()=>{const send=chrome.runtime.sendMessage.bind(chrome.runtime);
-              chrome.runtime.sendMessage=async m=>{if(m.type==='COMMIT_PAGE_CAPTURE')window.savedCapturePayload=m.batch;return send(m)};
+              chrome.runtime.sendMessage=async m=>{if(m.type==='START_CAPTURE_SAVE'&&m.input?.type==='COMMIT_PAGE_CAPTURE')window.savedCapturePayload=m.input.batch;return send(m)};
             }''')
             collector.locator('#page-capture-save').click()
             expect(collector.locator('#page-capture')).to_be_hidden(timeout=15000)

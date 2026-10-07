@@ -72,3 +72,22 @@ test("clearing adopted AI also clears its underlying text without removing analy
   assert.equal(reopened.mediaAssets[0].visionAnalysis.imageFingerprint, "fixture");
   assert.equal(original.mediaAssets[0].visionAnalysis.reconstructionPrompt, "底层AI");
 });
+
+test('explicit video AI prompt edits and clears survive normalization without reviving old reconstruction text', () => {
+  const asset={id:'v',kind:'video',usage:'content'};
+  const entry={text:'原始词',mediaAssets:[asset],videoAnalyses:[{id:'complete',assetId:'v',mode:'visual-reconstruction',reconstructionPrompt:'旧逆推',requestId:'fixture',contractVersion:'fixture',analysisScope:'visual',includeTags:false,tags:[],uncertainties:[],finishReason:'stop'}]};
+  const edited=setEntryMediaPrompt(entry,'v','自己的修订词','ai-suggestion',{preserveOtherSource:true});
+  assert.equal(detailPromptSources(edited,asset).ai,'自己的修订词');
+  const cleared=setEntryMediaPrompt(edited,'v','','ai-suggestion',{preserveOtherSource:true});
+  const reopened=setEntryMediaPrompt(cleared,'v','原始词','manual',{preserveOtherSource:true});
+  assert.equal(detailPromptSources(reopened,asset).ai,'');assert.equal(detailPromptSources(reopened,asset).original,'原始词');
+  assert.deepEqual(entry.videoAnalyses[0].reconstructionPrompt,'旧逆推');
+});
+
+for (const type of ['image-case', 'video-case']) test(`original text stays visible in ${type} without a source flag`, () => {
+  const asset = { id: 'original', kind: type === 'image-case' ? 'image' : 'video' };
+  const entry = { text: '已有原始提示词', classification: { pathIds: [`content:${type}`], status: 'confirmed' }, mediaAssets: [asset] };
+  assert.equal(detailPromptSources(entry, asset).original, entry.text);
+  assert.equal(entry.sourceFacts, undefined);
+  assert.equal(detailPromptSources({ ...entry, sourceFacts: { originalPromptAvailable: false } }, asset).original, '');
+});

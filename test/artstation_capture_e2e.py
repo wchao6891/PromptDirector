@@ -64,7 +64,7 @@ def main():
             assert [m["kind"] for m in candidate["media"]] == ["image", "image", "image", "video"], candidate
             assert candidate["media"][-1]["url"] == VIDEO, candidate
             assert candidate["media"][-1]["sourceKind"] == "video-element", candidate
-            assert collector.evaluate("async () => (await chrome.storage.local.get('entries')).entries") == []
+            assert collector.evaluate("async () => (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries") == []
             batch["selections"] = [{"candidateId": candidate["id"], "includeText": True,
                                     "selectedMediaIds": [m["id"] for m in candidate["media"]], "mediaDecision": "confirmed"}]
             saved = collector.evaluate("async batch => chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch})", batch)

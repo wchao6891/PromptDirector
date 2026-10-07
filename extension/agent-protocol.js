@@ -14,6 +14,7 @@ export const AGENT_HOST = "com.promptdirector.connector";
 export const AGENT_SETTINGS_KEY = "agentConnection";
 export const AGENT_JOB_PREFIX = "agentTask:";
 export const AGENT_UPLOAD_PREFIX = "agentUpload:";
+export const agentPosterAssetId = assetId => `${assetId}:poster`;
 
 export function agentError(code, message) {
   return Object.assign(new Error(message), { code });
