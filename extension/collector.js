@@ -493,6 +493,7 @@ async function extractPageSelection(button) {
       const previousCandidate = previous?.candidates.find(item => item.id === previous.selections[0]?.candidateId);
       if (previousCandidate && (manuallyPickedBatchId === previous.id || response.supplement === "comments")) {
         appendToPageCapture(candidate);
+        if (batch.selectionTemplate) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selectionTemplate: batch.selectionTemplate });
         render();
         return;
       }
@@ -796,7 +797,7 @@ function renderPageCapture() {
   elements.pageCaptureTitle.textContent = t("网页采集");
   elements.pageCaptureHelp.textContent = pageCaptureSupplementRequest ? t("正在读取评论全文…") : scanning ? t("正在扫描…")
     : pageCaptureBatch.status === "saving" ? ""
-    : pageCaptureBatch.error || (!pageCaptureBatch.candidates.length ? t("未识别到内容，可重新扫描或返回选择其他采集方式") : "");
+    : translateUiMessage(pageCaptureBatch.error) || (!pageCaptureBatch.candidates.length ? t("未识别到内容，可重新扫描或返回选择其他采集方式") : "");
   setTaskFeedbackState(elements.pageCaptureHelp, { pending: scanning || Boolean(pageCaptureSupplementRequest), error: Boolean(pageCaptureBatch.error) });
   elements.pageCaptureHelp.hidden = !elements.pageCaptureHelp.textContent;
   const selectedMediaCount = pageCaptureBatch.selections.reduce((count, selection) => count + selection.selectedMediaIds.length, 0);
@@ -835,7 +836,7 @@ function renderPageCapture() {
   if (listMode) {
     const reviewCount = pageCaptureBatch.candidates.filter((candidate) => candidate.batchStructureStatus === "review").length;
     const incomplete = !scanning && pageCaptureBatch.targetCount > pageCaptureBatch.candidates.length;
-    const stopWarning = ["layout-changed", "pagination-failed"].includes(pageCaptureBatch.stopReason);
+    const stopWarning = ["layout-changed", "pagination-failed", "manual-template-page"].includes(pageCaptureBatch.stopReason);
     elements.pageCaptureListSummary.textContent = [
       incomplete ? t("仅取得 {actual}/{target} 个案例", { actual: pageCaptureBatch.candidates.length, target: pageCaptureBatch.targetCount }) : "",
       stopWarning ? pageCaptureStopReasonLabel(pageCaptureBatch.stopReason) : "",
@@ -1416,7 +1417,8 @@ function renderPageCaptureMediaViewer() {
 function pageCaptureStopReasonLabel(value) {
   return ({
     "layout-changed": t("列表结构发生变化，已停止。"),
-    "pagination-failed": t("列表翻页失败，已按当前结果结束。")
+    "pagination-failed": t("列表翻页失败，已按当前结果结束。"),
+    "manual-template-page": t("已按手选范围采集本页；其他页面需重新选取。")
   })[value] || "";
 }
 
@@ -1717,7 +1719,9 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
   pageCaptureRequestId = requestId;
   await withButton(button, async () => {
     try {
-      const representative = mode === "list"
+      // Explicit templates already match the selected DOM scope. A manually
+      // appended draft can contain several cases and is not a one-card shape.
+      const representative = mode === "list" && !pageCaptureBatch?.selectionTemplate
         ? pageCaptureBatch?.candidates.find((candidate) => candidate.id === pageCaptureBatch.selections[0]?.candidateId) || null
         : null;
       const tab = await resolveActivePage(chrome.tabs, chrome.scripting);
@@ -1743,7 +1747,8 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
       pageCaptureBatch = normalizePageCaptureBatch({ ...(pageCaptureBatch || { id: requestId, candidates: [] }), tabId: tab.id, status: "scanning", error: "" });
       render();
       const targetCount = mode === "list" ? Number(elements.pageCaptureTargetCount.value) : 0;
-      const response = await chrome.runtime.sendMessage({ type: "START_PAGE_CAPTURE", mode, targetCount, requestId });
+      const response = await chrome.runtime.sendMessage({ type: "START_PAGE_CAPTURE", mode, targetCount, requestId,
+        ...(mode === "list" && pageCaptureBatch?.selectionTemplate ? { selectionTemplate: pageCaptureBatch.selectionTemplate } : {}) });
       if (pageCaptureRequestId !== requestId) return;
       if (!response?.ok) throw new Error(pageCapturePermissionFailureMessage(response?.message || t("网页采集失败")));
       const candidates = response.batch.candidates.map((candidate) => {
@@ -1801,7 +1806,7 @@ async function startPageCapture(mode, button, { automatic = false } = {}) {
       }
       if (pageCaptureBatch) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, status: "preview", error: error.message });
       pageCaptureSession = null;
-      showFeedback(error.message || t("网页采集失败"), true);
+      showFeedback(pageCaptureBatch ? "" : error.message || t("网页采集失败"), true);
       render();
     } finally {
       cancelledPageCaptureRequests.delete(requestId);

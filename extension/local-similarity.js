@@ -44,7 +44,7 @@ export function* similarityIndexSteps(entries = [], catalogValue, options = {}) 
     const members = entry.memberEntries?.length ? entry.memberEntries : [entry];
     const media = (mediaForEntry(entry) ?? []).filter(asset => asset && asset.usage !== "poster");
     const kinds = new Set(media.map(asset => asset.kind));
-    const domain = kinds.has("image") || kinds.has("video")
+    const domain = options.domainForEntry ? options.domainForEntry(entry, media) : kinds.has("image") || kinds.has("video")
       ? [...kinds].filter(kind => kind !== "attachment").sort().join("+") : "";
     const tagTerms = new Set();
     for (const member of members) for (const assignment of member.facetAssignments ?? []) {

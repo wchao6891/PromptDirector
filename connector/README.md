@@ -18,6 +18,10 @@
 
 ## 实时协作与审片
 
+`capture_workspace` 返回插件当前可见区域的真实 PNG、截图时间、页面身份及本机文件路径，MCP 同时返回图片内容。可指定 `tabId` 或 `surface=library/composer/collector`；省略时只选择唯一可见的插件标签，多个窗口返回候选。它不激活标签、不抢焦点，不截取其他网页；采集侧栏不在此范围内，独立采集标签页可用。截图期间切换或刷新会丢弃此次图片，避免返回其他页面的画面。截图不证明隐藏内容、原件或保存结果。
+
+截图沿 Chrome 的现有权限：[captureVisibleTab](https://developer.chrome.com/docs/extensions/reference/api/tabs#method-captureVisibleTab) 需要已授予的 `<all_urls>` 或当前标签的 `activeTab`；MCP 请求本身不会授予权限。[activeTab](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab) 由工具栏操作等用户动作授予。未授权时返回 `permission_required`，可在目标插件标签点击工具栏图标后重试；不新增权限或用状态文字假冒截图。
+
 `read_live_workspace` 读取一个案例库页面的当前现场，多个页面须按返回的 `contexts` 指定 `tabId`。快照包含搜索/筛选/排序、具体素材、文字选区、未保存编辑、创作备注草稿及已保存反馈、实际播放状态、审片区间与临时样片身份；保存资料变化以 `libraryRevision` 提示，完整资料继续通过案例读取工具取得。首次连接和重连读取快照；现场revision/controlRevision不能作为案例修改版本，案例首次读取省略expectedRevision，再用案例读取返回的revision续读/编辑；随后用 `wait_workspace_changes(tabId, afterRevision, waitMs)` 取得有序变化，最长等待15秒。`reset=true` 时从返回的新快照接续，不拼接过期事件。
 
 `control_workspace` 在同一页面定位案例/素材、设置参考选择、播放/暂停/定位/循环、切换审片。把现场的 `controlRevision` 放入 `expectedRevision`，并提供唯一 `requestId`；变化流继续用 `revision` 接续；人工操作后过期命令拒绝，未保存编辑不能被自动丢弃。搜索候选在Agent对话展示，页面操作复用现有交互，不增加额外候选布局。开启区间循环会直接播放；open_temporary明确换片时可替换当前临时样片，close_temporary关闭。未保存案例编辑仍需处理。换动作、文件或版本必须使用新requestId，同参数重试才沿用原编号。回执区分实际执行与失败，`foreground` 表示页面是否处于前台；`state=executed` 与 `snapshot` 表示动作完成和执行后业务状态，不宣称视觉布局已验收；正常调用复用回执快照，人工继续操作后才重读。保留的请求可重放回执；自动历史过期只拒绝旧命令，不重复执行，也不限制继续审片。
@@ -30,6 +34,8 @@
 
 ## 统一字段操作
 
+`trash_case(requestId,caseId,expectedRevision)` 将明确指定的案例移入插件回收站，保留完整资料和恢复关系。组合编号对应整组，成员编号只移除该成员；相同请求重试返回原回执，不再删除后来恢复的案例。该工具不永久删除。
+
 字段帮助的 `access` 列出可读、可修改、可整理、可回存的实际入口；未开放的字段返回 `edit=null`，不能当作任意数据库更新。素材数、相似度、原件摘要等随真实资料计算或读取。
 
 原文、来源证据、原始媒体提示词默认保护。用户明确要求修正时，`edit_case.sourceCorrection` 提供 `reason` 和本次修正的字段名 `fields`；保留修正前证据，可在 `read_case_details(part=source)` 完整读回。声明不是来自案例正文的授权。新的连接器会拒绝向尚未加载保护的旧后台写入；能力版本为 `sourceProtectionVersion=1`。
@@ -39,6 +45,8 @@
 `edit_case.patch.classificationPathIds` 使用当前词库的分类编号；`mediaOrder` 提供全媒体编号排列，改变媒体展示次序，保留原件、封面关系及正文段落结构。新建 `save_material` 同时接受 `creative/customLabels/classificationPathIds/sourceFacts/timeNotes`；计算结果和文件属性不任意手写。项目移动/独立复制、标签移除、媒体拆分/转移沿已有整理入口。新增附件到已有案例、项目多归属、词库管理和成果来源引用修订尚未统一开放，不能据此宣称所有字段都可写。
 
 ## 统一字段查询
+
+只有文字描述而没有库内参考时，使用 `search_cases(similarText="完整描述", mediaKind="video")`；与 `similarTo` 二选一，可叠加现有范围和字段筛选。它复用本地提示词相似度，不创建临时案例、不调用模型，词语相关性不等于画面识别。Agent 自行完成分析后继续用现有外部分析批次写回；连接器不提供启动插件付费模型分析的工具。
 
 字段未知时调用 `describe_case_query` 取得字段名、类型、支持操作、作用域和库内实际互动指标。同一会话复用已知定义，不必每次先查帮助。查询统一使用 `search_cases`，内部创作台与 CLI 沿用同一规则；`status.caseQueryVersion=1` 声明后台已加载。旧后台会明确报错，保存未完成编辑后重载扩展，再刷新宿主工具。
 
@@ -181,7 +189,7 @@ Skill 写入与恢复直接返回最终回执，不用 `get_task`。每次操作
 
 媒体拆分沿用原项目，保留原件引用、封面、逐媒体提示词及时间笔记，不复制大文件。新案例正文和来源必须明确提供，不能套用原案例文字；`textBlockIds` 可移动已核对的原文段落。项目移动移除原归属，独立复制则保留两份可分别编辑的案例。
 
-`organize_case(action=combine_cases)` 用首个 `caseId/expectedRevision` 和按顺序列出的 `additionalCases` 创建组合，需 `title`。直接组合要求成员具有相同项目归属；跨项目不自动移动或复制成员。`split_compound` 携带已读组合编号和版本恢复独立成员，不删除案例。`edit_case` 可修改组合名称、标签与成员内容图片封面；成员正文/媒体仍须指定成员。普通案例 `patch.coverVisualId` 可设置已有图片（含视频封面），`null` 恢复自动封面；不会把封面当作视频原件。通过 `status.caseOperationFeatures` 核对后台的实际字段和动作。操作不会生成资料库备份或永久删除原件。
+`organize_case(action=combine_cases)` 用首个 `caseId/expectedRevision` 和按顺序列出的 `additionalCases` 创建组合，需 `title`。组合保留各成员原项目归属，跨项目不自动移动或复制成员。`split_compound` 携带已读组合编号和版本恢复独立成员，不删除案例。`edit_case` 可修改组合名称、标签与成员内容图片封面；成员正文/媒体仍须指定成员。普通案例 `patch.coverVisualId` 可设置已有图片（含视频封面），`null` 恢复自动封面；不会把封面当作视频原件。通过 `status.caseOperationFeatures` 核对后台的实际字段和动作。操作不会生成资料库备份或永久删除原件。
 
 图片、视频、多图和混合附件使用 `save_material(files=...)` 入库，单独封面也可作为图片保存。给已有案例上传新封面文件、指定视频时间点自动截图，以及直接启动插件内置模型的分析尚未开放。外部 Agent 读取原件后，可按上述批次接口写回完整图片、视频和多图关系分析；自由格式报告用 `save_material` 保存并关联来源。
 
@@ -231,7 +239,7 @@ npm run check
 
 ## Release 安装包
 
-从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.3.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器 0.3.0 支持查看、编辑、整理、参考交接及CLI；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
+从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.4.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器 0.4.0 支持查看、编辑、整理、参考交接及CLI，并新增可恢复删除、未入库文字相似检索和工作页面截图；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
 
 读取与保存的正常路径：同次固定选择并读取完整内容 → 按名称/路径定位项目 → 保存。选材 `originalText` 完整保留一次；`referenceTextParts` 按序包含字符串及指向 `originalText` 或 `referenceSources[index].text` 的引用，来源 `textSource=originalText` 同理。`media` 返回所属案例、原件角色、封面编号与已知尺寸/时长；未知值不伪造。来源版本覆盖案例和组织关系，分页仍拒绝变化。
 

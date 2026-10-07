@@ -29,7 +29,8 @@ def main():
           entry.facetAssignments=[{nodeId:group.id,source:'manual'},{nodeId:group.id,source:'deepseek_text'}];
           entry.analysisMeta={textRevision:1};
           const job=completeLibraryMaintenanceItem(createLibraryMaintenanceJob({id:'old-complete',paletteAssetIds:['old']}),{ok:true});
-          await chrome.storage.local.set({entries:state.entries,libraryMaintenanceJob:job});
+          const {getLibraryStorage}=await import(chrome.runtime.getURL('library-storage.js'));
+          await getLibraryStorage().set({entries:state.entries,libraryMaintenanceJob:job});
           await savePortableAssetBlob('palette-missing',new Blob([Uint8Array.from(atob(data),c=>c.charCodeAt(0))],{type:'image/gif'}),{checkCapacity:false});
         }''',base64.b64encode((Path(__file__).parent/'fixtures/transfer-media/original.gif').read_bytes()).decode())
         worker=session.context.service_workers[0]
@@ -127,14 +128,14 @@ def main():
         page.locator('#settings-close').click()
         # Existing cached and inline palettes are skipped even if already queued.
         page.evaluate("""async()=>{const {createLibraryMaintenanceJob}=await import(chrome.runtime.getURL('library-maintenance.js'));const {PALETTE_VERSION}=await import(chrome.runtime.getURL('palette.js'));
-          const {entries}=await chrome.storage.local.get('entries');entries.find(e=>e.id==='tag-empty').mediaAssets.push({id:'current-inline',kind:'image',usage:'content',palette:{version:PALETTE_VERSION,colors:['#223344']}});
-          await chrome.storage.local.set({entries,libraryMaintenanceJob:createLibraryMaintenanceJob({paletteAssetIds:['palette-missing','current-inline']})});
+          const {getLibraryStorage}=await import(chrome.runtime.getURL('library-storage.js'));const storage=getLibraryStorage();const {entries}=await storage.get('entries');entries.find(e=>e.id==='tag-empty').mediaAssets.push({id:'current-inline',kind:'image',usage:'content',palette:{version:PALETTE_VERSION,colors:['#223344']}});
+          await storage.set({entries,libraryMaintenanceJob:createLibraryMaintenanceJob({paletteAssetIds:['palette-missing','current-inline']})});
           await chrome.runtime.sendMessage({type:'RESUME_LIBRARY_MAINTENANCE'});}""")
         wait_for_async_condition(page,"""async()=>{const r=await chrome.runtime.sendMessage({type:'GET_LIBRARY_MAINTENANCE_STATUS'});return r.maintenanceJob?.status==='completed';}""")
         assert worker.evaluate('testPaletteCalls')==1
         # Freshly missing media must supersede the completed maintenance job, including failures.
         page.locator('#text-batch-close').click() if page.locator('#text-batch-dialog').is_visible() else None
-        page.evaluate('''async()=>{const {entries}=await chrome.storage.local.get('entries');const e=entries.find(e=>e.id==='tag-empty');e.mediaAssets.push({id:'unavailable',name:'missing.gif',kind:'image',usage:'content',storageMode:'managed',mimeType:'image/gif'});await chrome.storage.local.set({entries});}''')
+        page.evaluate('''async()=>{const {getLibraryStorage}=await import(chrome.runtime.getURL('library-storage.js'));const storage=getLibraryStorage();const {entries}=await storage.get('entries');const e=entries.find(e=>e.id==='tag-empty');e.mediaAssets.push({id:'unavailable',name:'missing.gif',kind:'image',usage:'content',storageMode:'managed',mimeType:'image/gif'});await storage.set({entries});}''')
         page.locator('#open-settings').click();page.locator('[data-settings-tab="tasks"]').click()
         expect(page.locator('#reanalyze-preview')).to_contain_text('1 张图片色卡')
         page.locator('#apply-reanalyze').click()
@@ -145,7 +146,7 @@ def main():
         # Large-library paid action: explicit confirmation of the whole count, zero requests on cancel.
         page.locator('#settings-close').click()
         fixture=[{**outside,'id':f'fee-case-{i}','title':f'费用确认测试 {i}'} for i in range(1764)]
-        page.evaluate("async entries=>chrome.storage.local.set({entries})",fixture)
+        page.evaluate("async entries=>{const {getLibraryStorage}=await import(chrome.runtime.getURL('library-storage.js'));await getLibraryStorage().set({entries});}",fixture)
         page.locator('#open-settings').click();page.locator('[data-settings-tab="tasks"]').click()
         page.locator('#preview-analysis-batch').click()
         expect(page.locator('#analysis-batch-summary')).to_have_text('待补全 1764 个案例')

@@ -1,12 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { parse } from 'acorn';
 import { readFile } from 'node:fs/promises';
 import { ResourceUrlCache } from '../extension/resource-url-cache.js';
 import * as queueModule from '../extension/gallery-preview-queue.js';
 const source = await readFile(new URL('../extension/library.js', import.meta.url), 'utf8');
-const functions = source.slice(source.indexOf('async function hydrateCardImage('), source.indexOf('function renderContentFilters('));
-const dimensions = source.slice(source.indexOf('function imageDimensions('), source.indexOf('function discoveryVisualId('));
+const declarations = new Map(parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body
+  .filter(node => node.type === 'FunctionDeclaration').map(node => [node.id.name, node]));
+const functions = ['hydrateCardImage', 'applyCardImageDimensions', 'createThumbnailUrl', 'cacheImageDimensions',
+  'imageDimensions', 'rememberImageDerivedMetadata', 'loadImageDerivedMetadataForIds'].map(name => {
+  const node = declarations.get(name);
+  assert.ok(node, `preview fixture needs the real ${name} implementation`);
+  return source.slice(node.start, node.end);
+}).join('\n');
 function image(id, top = 0) {
   const wrap = {style: {}, classList: {add() {}}};
   return {dataset: {visualId: id}, src: '', isConnected: true, closest: () => wrap,
@@ -26,6 +33,8 @@ function fixture({cached = false, animated = false, width = 4000, height = 3000,
     window: {innerHeight: 900}, logicalCases: entries, galleryMediaById: new Map(), thumbnailUrls,
     thumbnailRequests: new WeakMap(),
     imageDerivedMetadata: new Map(), imageDerivedMetadataLoaded: true,
+    imageDerivedMetadataDuringLoad: null, imageDerivedMetadataChecked: new Set(), imageDerivedMetadataRequests: new Map(),
+    currentDetailId: '',
     getDerivedMedia: async id => {derivedReads++; return derived.get(id) || (cached ? {thumbnail: thumb, animated} : null);},
     screenshotBlob: async () => {reads++; return original;}, imageNeedsOriginalPlayback: async () => animated,
     saveDerivedMedia: async (id, value) => {derived.set(id, value); return value;}, getDerivedMetadata: async () => null,
@@ -38,7 +47,7 @@ function fixture({cached = false, animated = false, width = 4000, height = 3000,
     document: {createElement: () => {const canvas = {getContext: () => ({drawImage() {}})}; canvases.push(canvas); return canvas;}}, canvasBlob: async () => thumb,
     showPreviewError: img => {img.error = true;}, chrome: {runtime: {sendMessage: async () => {throw Error('unexpected video');}}}
   };
-  vm.createContext(context); vm.runInContext(functions + '\n' + dimensions, context);
+  vm.createContext(context); vm.runInContext(functions, context);
   if (queueModule) {
     context.galleryMediaById = queueModule.indexGalleryMedia(entries, entry => entry.mediaAssets);
     context.thumbnailLoader = queueModule.createGalleryPreviewQueue({concurrency: 2,

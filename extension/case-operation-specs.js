@@ -19,7 +19,7 @@ const identity = { caseId: id, expectedRevision: id };
 const requestId = { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' };
 export const CASE_SEARCH_PROPERTIES = {
   ...CASE_QUERY_PROPERTIES,
-  query: { type: 'string', default: '', description: '可与similarTo合并：按用户明确在意的内容用区分性词过滤，再按文字相似排序。同片名/班底不等于同技法；多个词是交集，同义表达用alternatives。探索任务不强制所有标签一致。' },
+  query: { type: 'string', default: '', description: '可与similarTo或similarText合并：按用户明确在意的内容用区分性词过滤，再按文字相似排序。同片名/班底不等于同技法；多个词是交集，同义表达用alternatives。探索任务不强制所有标签一致。' },
   alternatives: { type: 'array', items: { type: 'string', minLength: 1 }, description: '同义或并列查询做并集；每个查询中的多个词是交集' },
   project: { type: 'string', description: '项目名称或已知ID，包含子项目；同名时指定ID' },
   provider: { type: 'string', minLength: 1, description: '按已保存sourceFacts.provider精确匹配来源平台，不搜索正文提及的平台' },

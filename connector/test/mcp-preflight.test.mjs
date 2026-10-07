@@ -163,3 +163,33 @@ test('one extension session checks capabilities once and re-checks after an upgr
     assert.deepEqual(calls, ['refused:search', 'status'], 'a reloaded older extension never receives a search it would silently ignore');
   } finally { await server.close(); }
 });
+
+test('first-page compatibility applies only to the older backend exact missing-version rejection', async () => {
+  for (const error of [
+    { code: 'invalid_input', message: '读取参考必须携带当前选择的版本。' },
+    { code: 'invalid_input', message: '其他参数错误' },
+    { code: 'selection_changed', message: '读取期间资料已变化' }
+  ]) {
+    const calls = [];
+    const server = createServer(async (operation, input) => {
+      calls.push(operation);
+      if (operation === 'read_workspace_context') return { revision: 'older-selection' };
+      if (!input.expectedRevision) throw Object.assign(new Error(error.message), { code: error.code });
+      assert.equal(input.expectedRevision, 'older-selection');
+      return { revision: 'older-selection', content: '完整原词', nextOffset: null };
+    });
+    try {
+      const tool = server._registeredTools.promptdirector_read_workspace_content;
+      const response = await tool.handler(tool.inputSchema.parse({ part: 'selection' }));
+      if (error.message === '读取参考必须携带当前选择的版本。') {
+        assert(!response.isError);
+        assert.equal(JSON.parse(response.content[0].text).content, '完整原词');
+        assert.deepEqual(calls, ['read_workspace_content', 'read_workspace_context', 'read_workspace_content']);
+      } else {
+        assert(response.isError);
+        assert.equal(JSON.parse(response.content[0].text).code, error.code);
+        assert.deepEqual(calls, ['read_workspace_content']);
+      }
+    } finally { await server.close(); }
+  }
+});

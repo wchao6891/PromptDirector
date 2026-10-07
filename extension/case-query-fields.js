@@ -136,7 +136,7 @@ export function createCaseQueryContext(entries, options = {}) {
   for (const name of ['nodeId', 'name', 'facetId', 'source', 'origin', 'status', 'visualId']) field(`label.${name}`, 'string', name === 'origin' ? 'manual/ai/未知null；由已知赋予来源区分，不借用词库创建来源' : `标签关联${name}；多条件用label作用域限定同一关联`, c => labels(c).map(label => text(label[name])), { scopes: ['case', 'member', 'media', 'label'], multi: true });
   for (const name of ['id', 'name', 'path', 'ancestorIds']) field(`project.${name}`, 'string', name === 'ancestorIds' ? '直接项目及其全部祖先ID；用于子树范围，案例不重复' : `直接归属项目${name}，含成员归属`, c => (c.project ? [c.project] : related(c, 'project').map(r => r.project)).flatMap(p => p[name] ?? null), { scopes: ['case', 'member', 'project'], multi: true });
   for (const name of ['pathIds', 'names', 'path', 'status', 'source']) field(`classification.${name}`, 'string', `已存业务分类${name}；分类路径不与AI视觉标签混淆`, c => (c.classification ? [c] : related(c, 'classification')).flatMap(r => r.classification[name] ?? null), { scopes: ['case', 'member', 'classification'], multi: true });
-  for (const name of ['score', 'prompt', 'palette', 'tags']) field(`similarity.${name}`, 'number', 'similarTo指定参考后计算；证据缺失为null，0为已知不相似；非全库静态字段', c => options.similarities?.get(c.entry.id)?.[name] ?? null, { scopes: ['case'] });
+  for (const name of ['score', 'prompt', 'palette', 'tags']) field(`similarity.${name}`, 'number', 'similarTo或similarText指定参考后计算；证据缺失为null，0为已知不相似；非全库静态字段', c => options.similarities?.get(c.entry.id)?.[name] ?? null, { scopes: ['case'] });
   return { fields, metrics, entries, options, root, related, members, media, documents, derived };
 }
 

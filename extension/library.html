@@ -11,13 +11,6 @@
     <link rel="stylesheet" href="organization.css" />
   </head>
   <body class="modular-library" data-library-state="loading">
-    <div id="library-loading" class="library-loading" role="status" aria-live="polite">
-      <div class="library-loading-bar"></div>
-      <div class="library-loading-body">
-        <div class="library-loading-sidebar"></div>
-        <div class="library-loading-content"><strong data-i18n="正在打开资料库">正在打开资料库</strong><div></div><div></div><div></div></div>
-      </div>
-    </div>
     <header class="topbar">
       <button id="toggle-filters" class="icon-button" type="button" aria-label="展开或收起筛选" data-i18n-aria-label="展开或收起筛选" title="展开或收起筛选" data-i18n-title="展开或收起筛选"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-menu"></use></svg></button>
       <div class="brand product-brand">
@@ -160,6 +153,7 @@
       <div id="sidebar-resizer" class="sidebar-resizer" role="separator" tabindex="0" aria-label="调整项目侧栏宽度" aria-orientation="vertical" aria-valuemin="216" aria-valuemax="420" aria-valuenow="244" data-i18n-aria-label="调整项目侧栏宽度"></div>
 
       <main class="gallery-shell">
+        <div id="library-loading" class="library-loading" role="status" aria-live="polite"><strong data-i18n="正在打开资料库">正在打开资料库</strong></div>
         <p id="feedback" class="ui-feedback-toast" role="status" aria-live="polite"></p>
         <div class="browse-results">
         <section id="project-folder-list" class="project-folder-list" aria-label="子项目" data-i18n-aria-label="子项目"></section>

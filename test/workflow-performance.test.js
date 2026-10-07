@@ -12,7 +12,7 @@ function fixture() {
     mediaAssets: [{ id: `m${i}`, kind: 'video', mimeType: 'video/mp4', byteSize: 2048, durationMs: 5000, width: 1920, height: 1080, storageMode: 'managed' }],
     mediaPrompts: [{ assetId: `m${i}`, text, source: 'manual' }] })), compoundCases: [],
     organizerState: normalizeOrganizerState({ collections: Array.from({ length: 149 }, (_, i) => ({ id: `p${i}`, name: `项目${i}`, entryIds: [], requirements: '完整项目要求'.repeat(12) })) }) };
-  const deps = { loadState: async () => state, enqueue: fn => fn(), storage: { get: async key => ({ [key]: state[key] }), set: async update => Object.assign(state, update) }, getLibraryId: async () => 'fixture', readDerived: async () => null };
+  const deps = { loadState: async () => state, enqueue: fn => fn(), storage: { get: async keys => Object.fromEntries([keys].flat().map(key => [key, state[key]])), set: async update => Object.assign(state, update) }, getLibraryId: async () => 'fixture', readDerived: async () => null };
   return { state, prompts, selection: createReferenceSelection(deps), projects: createProjectOperations(deps) };
 }
 

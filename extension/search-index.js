@@ -24,10 +24,34 @@ export function searchResultVersion(entry, index) {
   }))));
 }
 
-export function buildSearchIndex(entries = [], catalogValue, documentTextByAsset = new Map(), derivedMetadataByAsset = new Map()) {
+export function buildSearchIndex(entries = [], catalogValue, documentTextByAsset = new Map(), derivedMetadataByAsset = new Map(), { lazy = false } = {}) {
   const catalog = normalizeFacetCatalog(catalogValue);
   const nodeById = new Map(catalog.nodes.map((node) => [node.id, node]));
-  return entries.map(entry => indexEntry(entry, catalog, nodeById, documentTextByAsset, derivedMetadataByAsset));
+  return entries.map(entry => lazy
+    ? new DeferredSearchDocument(entry.id, () => indexEntry(entry, catalog, nodeById, documentTextByAsset, derivedMetadataByAsset))
+    : indexEntry(entry, catalog, nodeById, documentTextByAsset, derivedMetadataByAsset));
+}
+
+// A gallery without a query needs only IDs. Build each complete document on its first search,
+// synchronously, so the first query has the same full results as every subsequent query.
+class DeferredSearchDocument {
+  #build;
+  #value;
+  constructor(id, build) { this.id = id; this.#build = build; }
+  #document() {
+    if (!this.#value) { this.#value = this.#build(); this.#build = null; }
+    return this.#value;
+  }
+  get fullText() { return this.#document().fullText; }
+  get sources() { return this.#document().sources; }
+  get notes() { return this.#document().notes; }
+  get tags() { return this.#document().tags; }
+  get colors() { return this.#document().colors; }
+  get kinds() { return this.#document().kinds; }
+  get hasMedia() { return this.#document().hasMedia; }
+  get isNote() { return this.#document().isNote; }
+  get savedDate() { return this.#document().savedDate; }
+  toJSON() { return this.#document(); }
 }
 
 function indexEntry(entry, catalog, nodeById, documentTextByAsset, derivedMetadataByAsset) {

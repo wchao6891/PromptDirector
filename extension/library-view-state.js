@@ -22,11 +22,12 @@ import { facetUndoCount } from './facet-history.js';
 import { normalizeAnalysisBatchJob, analysisBatchSummary, analysisRebuildRecovery } from './analysis-batch.js';
 import { libraryMaintenanceSummary } from './library-maintenance.js';
 import { validLibraryViewSummary } from './library-view-summary.js';
+import { CASE_LIBRARY_REVISION_KEY } from './library-storage.js';
 
 // One storage snapshot for everything used by gallery refresh. Large recovery
 // copies, creative sessions and task histories are read by their own operations.
 export const LIBRARY_VIEW_STORAGE_KEYS = Object.freeze([
-  'schemaVersion', 'entries', 'libraryViewSummary', 'compoundCases', 'settings',
+  'schemaVersion', 'entries', CASE_LIBRARY_REVISION_KEY, 'libraryViewSummary', 'compoundCases', 'settings',
   'taxonomy', 'facetCatalog', 'classificationRules', 'organizerState',
   'uiPreferences', 'composerSettings', 'creativeExperimentSettings', 'importJobs',
   'aiProviderRegistry', 'aiTaskAssignments', 'aiPreferences', 'syncSettings',
@@ -45,11 +46,12 @@ export function libraryCoreNeedsPreparation(stored) {
     || (!stored.batchJob && Boolean(stored.analysisBatchJob));
 }
 
-export function createLibraryViewReader({ storage, prepare, uiLanguage, includeCreativeState = false }) {
+export function createLibraryViewReader({ storage, prepare, uiLanguage, includeCreativeState = false, readonlyEntries = false }) {
   const keys = includeCreativeState ? [...LIBRARY_VIEW_STORAGE_KEYS,
     'composerSessionSummaries', 'creativeRuns', 'creativeJobs', 'creativeSkills', 'activeCreativeResult'] : LIBRARY_VIEW_STORAGE_KEYS;
+  const readSnapshot = () => readonlyEntries ? storage.getSnapshot(keys) : storage.get(keys);
   return async () => {
-    let stored = await storage.get(keys);
+    let stored = await readSnapshot();
     let restoredArchivedFacetCount = 0;
     if (libraryFromNewerVersion(stored)) throw newerLibraryError();
     if (libraryViewNeedsPreparation(stored) || (includeCreativeState && !Array.isArray(stored.composerSessionSummaries))) {
@@ -58,16 +60,16 @@ export function createLibraryViewReader({ storage, prepare, uiLanguage, includeC
       restoredArchivedFacetCount = prepared.restoredArchivedFacetCount || 0;
       // Repair keeps its established full backup/write path. Its response only
       // acknowledges completion; the page then reads one consistent snapshot.
-      stored = await storage.get(keys);
+      stored = await readSnapshot();
       if (libraryCoreNeedsPreparation(stored)) {
         const repaired = await prepare({ summaryOnly: false, creativeSummary: includeCreativeState });
         if (!repaired?.ok) throw new Error(repaired?.message || '无法准备本地案例库');
-        stored = await storage.get(keys);
+        stored = await readSnapshot();
       }
       if (libraryViewNeedsPreparation(stored)) throw new Error('资料库准备未完成，请重新打开案例库');
     }
     const state = projectLibraryViewState(stored, { uiLanguage, restoredArchivedFacetCount });
-    return { ok: true, ...state,
+    return { ok: true, ...state, revision: stored[CASE_LIBRARY_REVISION_KEY],
       ...(includeCreativeState ? {
         composerSessionSummaries: stored.composerSessionSummaries || [],
         creativeRuns: normalizeCreativeRuns(stored.creativeRuns),
@@ -79,9 +81,42 @@ export function createLibraryViewReader({ storage, prepare, uiLanguage, includeC
   };
 }
 
+// Startup can show metadata and complete groups of cases before reading the remaining records.
+// This path never prepares a partial library: older/mixed layouts and final repairs use the
+// established complete reader, including its full migration and backup boundary.
+export function createProgressiveLibraryViewReader(options) {
+  const { storage, uiLanguage } = options;
+  const readComplete = createLibraryViewReader(options);
+  const completeResponse = state => ({ ...state, complete: true, loaded: state.entries.length,
+    total: state.entries.length, entryIds: state.entries.map(entry => entry.id), loadedCompoundCases: state.compoundCases });
+  return async function* (batchOptions = {}) {
+    for await (const page of storage.getSnapshotBatches(LIBRARY_VIEW_STORAGE_KEYS, batchOptions)) {
+      if (page.requiresFullRead) {
+        yield completeResponse(await readComplete());
+        return;
+      }
+      const { stored, entryIds, loaded, total, complete, revision } = page;
+      if (libraryFromNewerVersion(stored)) throw newerLibraryError();
+      if (stored.schemaVersion !== SCHEMA_VERSION || !stored.taxonomy || !stored.facetCatalog || !stored.organizerState
+        || (complete && libraryViewNeedsPreparation(stored))) {
+        yield completeResponse(await readComplete());
+        return;
+      }
+      const state = projectLibraryViewState(stored, { uiLanguage, complete, entryIds });
+      const loadedIds = new Set(state.entries.map(entry => entry.id));
+      const loadedCompoundCases = complete ? state.compoundCases : normalizeCompoundCases(
+        state.compoundCases.filter(compound => Array.isArray(compound.memberEntryIds)
+          && compound.memberEntryIds.every(id => loadedIds.has(id))), state.entries);
+      yield { ok: true, ...state, entries: enrichContentMeanings(state.entries, state.taxonomy),
+        complete, loaded, total, entryIds, revision, loadedCompoundCases };
+    }
+  };
+}
+
 // Shared with the background's full state projection: the page cannot silently
 // diverge on tags, projects, settings, task progress or public AI capabilities.
-export function projectLibraryViewState(stored, { aiConfiguration, uiLanguage, syncStatus = {}, restoredArchivedFacetCount = 0 } = {}) {
+export function projectLibraryViewState(stored, { aiConfiguration, uiLanguage, syncStatus = {}, restoredArchivedFacetCount = 0,
+  complete = true, entryIds } = {}) {
   const entries = Array.isArray(stored.entries) ? stored.entries : [];
   const uiPreferences = normalizeUiPreferences(stored.uiPreferences);
   const locale = resolveLocale(uiPreferences, uiLanguage);
@@ -102,11 +137,11 @@ export function projectLibraryViewState(stored, { aiConfiguration, uiLanguage, s
     entries,
     ...(Object.hasOwn(stored, 'trashState') ? { trashState: normalizeTrashState(stored.trashState) } : {}),
     trashCount: stored.trashState?.items?.length ?? summary?.trashCount ?? 0,
-    compoundCases: normalizeCompoundCases(stored.compoundCases, entries),
+    compoundCases: complete ? normalizeCompoundCases(stored.compoundCases, entries) : structuredClone(Array.isArray(stored.compoundCases) ? stored.compoundCases : []),
     taxonomy: stored.taxonomy,
     facetCatalog: stored.facetCatalog,
     classificationRules: stored.classificationRules,
-    organizerState: normalizeOrganizerState(stored.organizerState, entries.map(entry => entry.id)),
+    organizerState: normalizeOrganizerState(stored.organizerState, complete ? entries.map(entry => entry.id) : entryIds),
     settings: normalizeSettings(stored.settings ?? {}, defaultSettingsForLocale(locale)),
     uiPreferences,
     aiSettings: publicAiSettings(aiRuntime.aiSettings),

@@ -21,27 +21,38 @@ function keys(value, allowed) {
 }
 
 export function prepareCaseQuery(entries, input, options = {}) {
+  const textReference = Object.hasOwn(input, 'similarText');
+  if (textReference && (typeof input.similarText !== 'string' || !input.similarText.trim())) fail('相似参考文字不能为空。');
+  if (textReference && input.similarTo) fail('similarText与similarTo不能同时使用。');
+  const hasSimilarity = textReference || Boolean(input.similarTo);
   const similarities = new Map();
   const context = createCaseQueryContext(entries, { ...options, similarities, sourceFilters: input });
   let similarityCoverage;
   let similarityOrder;
-  if (input.similarTo) {
-    const { caseId, method = 'prompt' } = input.similarTo;
-    const reference = entries.find(entry => entry.id === caseId);
+  if (hasSimilarity) {
+    const { caseId, method = 'prompt' } = textReference ? { caseId: Symbol('unsaved-prompt') } : input.similarTo;
+    const reference = textReference ? { id: caseId } : entries.find(entry => entry.id === caseId);
     if (!reference) fail('参考案例不存在，请重新选择已知caseId。');
     // Only the Agent's prompt query scopes mixed cases to the requested media.
     // The library's exploratory local recommendation engine remains unchanged.
     const promptMode = method === 'prompt';
     const prompts = new Map();
     const promptData = entry => {
-      if (!prompts.has(entry.id)) prompts.set(entry.id, caseQueryPrompt(entry, input.mediaKind));
+      if (!prompts.has(entry.id)) prompts.set(entry.id, entry === reference && textReference
+        ? { text: input.similarText, evidence: { sources: ['provided_text'], characters: input.similarText.length } }
+        : caseQueryPrompt(entry, input.mediaKind));
       return prompts.get(entry.id);
     };
-    const index = createSimilarityIndex(entries, options.facetCatalog, {
-      mediaForEntry: entry => entryMediaAssets(entry).filter(asset => !promptMode || !input.mediaKind || asset.kind === input.mediaKind),
+    const index = createSimilarityIndex(textReference ? [...entries, reference] : entries, options.facetCatalog, {
+      // A supplied text has no media domain of its own. The existing search scope already
+      // limits candidate media; use the same tokenizer/IDF/cosine across those candidates.
+      ...(textReference ? { domainForEntry: (entry, media) => entry === reference || !input.mediaKind
+        || media.some(asset => asset.kind === input.mediaKind) ? 'provided-prompt' : '' } : {}),
+      mediaForEntry: entry => entry === reference && textReference ? [] : entryMediaAssets(entry).filter(asset => !promptMode || !input.mediaKind || asset.kind === input.mediaKind),
       ...(promptMode ? { promptForEntry: entry => promptData(entry).text } : {}),
-      visualForEntry: entry => caseCoverAsset(entry)?.id,
+      visualForEntry: entry => entry === reference && textReference ? undefined : caseCoverAsset(entry)?.id,
       colorsForEntry: entry => {
+        if (entry === reference && textReference) return [];
         const visual = caseCoverAsset(entry);
         return (visual?.palette ?? context.derived.get(visual?.id)?.palette)?.colors ?? [];
       }
@@ -55,11 +66,11 @@ export function prepareCaseQuery(entries, input, options = {}) {
       ...(promptMode ? { promptEvidence: promptData(item.entry).evidence } : {}) });
     const domain = index.profiles.get(caseId)?.domain;
     const comparable = (index.domains.get(domain) ?? []).filter(profile => profile.entry.id !== caseId);
-    similarityCoverage = { referenceCaseId: caseId, method,
-      scope: promptMode && input.mediaKind ? `当前库含${input.mediaKind}的案例，仅比较该类素材提示词；不包含参考自身，未做视觉识别` : '当前库同媒体域；不包含参考自身，未做视觉识别',
+    similarityCoverage = { ...(textReference ? { referenceType: 'provided_text' } : { referenceCaseId: caseId }), method,
+      scope: textReference ? '当前库指定媒体范围的已存提示词与提供文字比较；参考文字未入库、未做视觉识别' : promptMode && input.mediaKind ? `当前库含${input.mediaKind}的案例，仅比较该类素材提示词；不包含参考自身，未做视觉识别` : '当前库同媒体域；不包含参考自身，未做视觉识别',
       ...(promptMode ? { referencePrompt: promptData(reference).evidence } : {}),
       sameDomainCases: comparable.length, comparedCases: ranked.length, unknownExcluded: comparable.length - ranked.length,
-      differentDomainCases: entries.length - comparable.length - 1,
+      differentDomainCases: entries.length - comparable.length - (textReference ? 0 : 1),
       knownPromptPairs: comparable.filter(profile => index.profiles.get(caseId).prompt.size && profile.prompt.size).length,
       knownPalettePairs: comparable.filter(profile => index.profiles.get(caseId).labs.length && profile.labs.length).length,
       knownTagPairs: comparable.filter(profile => index.profiles.get(caseId).tags.size && profile.tags.size).length };
@@ -69,7 +80,7 @@ export function prepareCaseQuery(entries, input, options = {}) {
     const field = context.fields.get(name);
     if (!field) fail(`不支持字段${name}；先调用describe_case_query发现实际字段与互动指标。`);
     if (!field.scopes.includes(scope)) fail(`${name}不能用于${scope}作用域。`);
-    if (name.startsWith('similarity.') && !input.similarTo) fail('相似度字段需要similarTo指定参考caseId和method。');
+    if (name.startsWith('similarity.') && !hasSimilarity) fail('相似度字段需要similarTo或similarText指定参考。');
     return field;
   }
   function values(field, record) { return unique(array(field.read(record))); }
@@ -254,7 +265,7 @@ export function prepareCaseQuery(entries, input, options = {}) {
   }
   return { context, similarities, similarityCoverage,
     execute(candidates) {
-      const matches = candidates.filter(entry => (!input.similarTo || similarities.has(entry.id)) && test(context.root(entry)));
+      const matches = candidates.filter(entry => (!hasSimilarity || similarities.has(entry.id)) && test(context.root(entry)));
       if (ordering.length && !groups) matches.sort((a, b) => {
         for (const order of ordering) {
           const left = scalar(order.definition, context.root(a), order.reduce), right = scalar(order.definition, context.root(b), order.reduce);

@@ -68,7 +68,8 @@ def main():
                 content = call('read_workspace_content', {'expectedRevision':selected['revision'], 'part':'reference', 'referenceId':ref['referenceId']})
                 assert json.loads(content['content'])['originalText'] == '独立原词' + ref['caseId']
                 assert call('resolve_reference', {'reference':ref['reference']})['caseId'] == ref['caseId']
-            bundle = call('read_workspace_content', {'part':'selection', 'expectedRevision':selected['revision'], 'length':49152})
+            bundle = call('read_workspace_content', {'part':'selection', 'length':49152})
+            assert bundle['revision'] == selected['revision']
             bundle_data = json.loads(bundle['content'])
             assert bundle_data['selectedCaseIds'] == ['a','b']
             assert [r['originalText'] for r in bundle_data['references']] == ['独立原词a','独立原词b']
@@ -112,9 +113,8 @@ def main():
             page.locator('.case-card[data-entry-id="a"]').click()
             page.locator('.case-card[data-entry-id="b"]').click()
             selection(['a','b'])
-            # Case-library readers reuse a snapshot until caseLibraryRevision changes; every product write
-            # (library-storage.js) rewrites it together with entries, so the raw fixture deletion does too.
-            page.evaluate("entries => chrome.storage.local.set({entries, caseLibraryRevision: crypto.randomUUID()})", entries[:1])
+            # Remove a selected case through the current record store, preserving the explicit selection.
+            page.evaluate("async entries => {const {getLibraryStorage}=await import('./library-storage.js'); await getLibraryStorage().set({entries});}", [entry for entry in state['entries'] if entry['id'] == 'a'])
             partial = call('read_workspace_context')
             assert partial['completeness'] == 'partial' and partial['selectedCaseCount'] == 2
             assert partial['availableCaseCount'] == 1 and partial['issues'][0]['caseId'] == 'b', partial

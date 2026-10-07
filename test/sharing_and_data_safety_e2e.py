@@ -96,7 +96,9 @@ def main() -> None:
               const linkedFile = await linkedHandle.getFile();
               const {saveLocalAssetHandle} = await import(chrome.runtime.getURL('local-asset-store.js'));
               await saveLocalAssetHandle('linked-local-image', linkedHandle, linkedFile);
-              const stored = await chrome.storage.local.get('entries');
+              const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+              const storage = getLibraryStorage();
+              const stored = await storage.get('entries');
               const linkedEntry = {
                 schemaVersion: 24,
                 id: 'linked-one',
@@ -116,7 +118,7 @@ def main() -> None:
                 }],
                 primaryMediaId: 'linked-local-image'
               };
-              await chrome.storage.local.set({entries: [...stored.entries, linkedEntry]});
+              await storage.set({entries: [...stored.entries, linkedEntry]});
             }"""
         )
         setup.wait_for_function(
@@ -369,7 +371,8 @@ def main() -> None:
                 }
                 const {deleteLocalAssetHandle} = await import(chrome.runtime.getURL('local-asset-store.js'));
                 await deleteLocalAssetHandle('linked-local-image');
-                await chrome.storage.local.set({
+                const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+                await getLibraryStorage().set({
                   entries: [], trashState: {version: 1, items: []},
                   organizerState: {version: 7, collections: []}, compoundCases: [],
                   composerSessions: [], creativeRuns: [], creativeSkills: {version: 1, items: []}
@@ -448,7 +451,9 @@ def main() -> None:
 
         library.evaluate(
             """async () => {
-              const stored = await chrome.storage.local.get(['entries', 'settings']);
+              const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+              const storage = getLibraryStorage();
+              const stored = await storage.get(['entries', 'settings']);
               const localOnly = {
                 ...stored.entries[0],
                 id: 'local-before-exact',
@@ -461,7 +466,7 @@ def main() -> None:
               const aiProviderRegistry = normalizeAiProviderRegistry({
                 providers: {deepseek: {apiKey: 'fixture-private-key', consent: true}}
               });
-              await chrome.storage.local.set({
+              await storage.set({
                 entries: [...stored.entries, localOnly],
                 settings: {...stored.settings, libraryTitle: '本机精确恢复前'},
                 syncSettings: {sentinel: 'keep-local-sync'},
@@ -491,7 +496,8 @@ def main() -> None:
         expect(library.locator("#data-safety-feedback")).to_contain_text("本机可用空间不足", timeout=15_000)
         capacity_state = library.evaluate(
             """async () => {
-              const stored = await chrome.storage.local.get(['entries', 'libraryReplacementRecoveryPoint']);
+              const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+              const stored = await getLibraryStorage().get(['entries', 'libraryReplacementRecoveryPoint']);
               return {
                 entryIds: stored.entries.map((entry) => entry.id),
                 hasRecoveryPoint: Boolean(stored.libraryReplacementRecoveryPoint)
@@ -564,10 +570,12 @@ def main() -> None:
         # keep both cases, their independent prompts and the original bytes.
         library.evaluate(
             """async () => {
-              const {entries} = await chrome.storage.local.get('entries');
+              const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+              const storage = getLibraryStorage();
+              const {entries} = await storage.get('entries');
               const original = entries.find(entry => entry.mediaAssets?.some(asset => asset.kind === 'image'));
               window.__beforeSharedBackupEntries = entries;
-              await chrome.storage.local.set({entries: [...entries, {
+              await storage.set({entries: [...entries, {
                 ...original, id: 'shared-original-case', title: '共享原件独立案例', text: '独立正文必须保留'
               }]});
               window.__installBackupRoot();
@@ -587,11 +595,13 @@ def main() -> None:
         )
         assert shared_backup["complete"] and shared_backup["mediaCount"] > 0, shared_backup
         assert shared_backup["owners"] == 1 and shared_backup["text"] == "独立正文必须保留", shared_backup
-        library.evaluate("() => chrome.storage.local.set({entries: window.__beforeSharedBackupEntries})")
+        library.evaluate("async () => (await import(chrome.runtime.getURL('library-storage.js'))).getLibraryStorage().set({entries: window.__beforeSharedBackupEntries})")
 
         library.evaluate(
             """async () => {
-              const stored = await chrome.storage.local.get('entries');
+              const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+              const storage = getLibraryStorage();
+              const stored = await storage.get('entries');
               const linked = {
                 ...stored.entries[0],
                 id: 'unreadable-linked-case',
@@ -628,7 +638,7 @@ def main() -> None:
                 }],
                 primaryMediaId: 'unreadable-linked-asset-two'
               };
-              await chrome.storage.local.set({entries: [...stored.entries, linked, linkedTwo]});
+              await storage.set({entries: [...stored.entries, linked, linkedTwo]});
               window.__installBackupRoot();
             }"""
         )

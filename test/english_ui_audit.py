@@ -13,15 +13,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import re
+import tempfile
+from playwright.sync_api import expect
 from pathlib import Path
 
 from e2e_support import base_entry, extension_session
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--widths", default="1440,1100,390")
-parser.add_argument("--json", type=Path)
-args = parser.parse_args()
-WIDTHS = [int(value) for value in args.widths.split(",")]
+WIDTHS = [1440, 1100, 390]
 
 COLLECT = r"""(state) => {
   // Chinese characters and full-width punctuation such as “：” or “（”.
@@ -139,7 +138,154 @@ def open_each_menu(page, state, report):
         page.evaluate("index => { const summary = document.querySelectorAll('details > summary')[index]; if (summary) summary.parentElement.open = false; }", index)
 
 
+def audit_dynamic_states(run, library, audit, findings):
+    """Open real dynamic UI paths. Cancel destructive/paid actions at their dialogs."""
+    run.context.set_default_timeout(5000)
+    def dialog(page, action, state):
+        action()
+        panel = page.locator('#promptdirector-app-dialog')
+        expect(panel).to_be_visible()
+        print(f'  visiting {state}: {panel.inner_text()}', file=sys.stderr, flush=True)
+        audit(page, state)
+        panel.get_by_role('button', name='Cancel', exact=True).click()
+        expect(panel).not_to_be_visible()
+
+    def group(name, work):
+        try:
+            work()
+        except Exception as error:
+            findings.append({'kind':'workflow', 'text':str(error)[:450], 'at':name, 'width':WIDTHS[0], 'state':name})
+            print(f'  workflow blocked {name}: {error}', file=sys.stderr, flush=True)
+        finally:
+            library.keyboard.press('Escape')
+            if library.locator('#share-cancel').is_visible():
+                library.locator('#share-cancel').click()
+            library.goto(library.url.split('?')[0], wait_until='networkidle')
+            expect(library.locator('body')).to_have_attribute('data-library-state','ready')
+
+    def batch():
+        library.locator('#select-cases').click()
+        library.locator('.case-card[data-entry-id="case-0"]').click()
+        library.locator('.case-card[data-entry-id="case-1"]').click()
+        dialog(library,lambda:library.locator('#selection-trash').click(),'batch trash confirmation')
+        library.locator('#selection-more-menu > summary').click()
+        dialog(library,lambda:library.locator('#selection-combine').click(),'batch combine dialog')
+    group('batch',batch)
+
+    def projects():
+        row=library.locator('.project-row').filter(has=library.locator('.project-menu')).first
+        for label,state in [('Rename','project rename'),('Delete project only','project delete only'),('Delete project and cases','project delete with cases'),('Move to…','project move')]:
+            def click(label=label):
+                row.locator('details > summary').evaluate('node=>node.click()')
+                row.get_by_role('button',name=label,exact=True).click()
+            dialog(library,click,state)
+    group('projects',projects)
+
+    def trash():
+        response=library.evaluate("()=>chrome.runtime.sendMessage({type:'DELETE_ENTRY',entryId:'case-13'})")
+        assert response.get('ok'),response
+        library.locator('#open-trash').click()
+        expect(library.locator('.trash-item')).to_have_count(1)
+        dialog(library,lambda:library.locator('.trash-item-actions .quiet-danger').click(),'trash permanent item')
+        dialog(library,lambda:library.locator('#trash-empty').click(),'trash empty confirmation')
+    group('trash',trash)
+
+    def detail():
+        library.locator('.case-card[data-entry-id="case-multi"]').click()
+        expect(library.locator('#detail-drawer')).to_have_attribute('aria-hidden','false')
+        editor=library.locator('.entry-editor-inline')
+        editor.locator('summary').click()
+        audit(library,'detail edit case')
+        # Media deletion is exposed in the same actual media action menu as normal use.
+        buttons=library.locator('.media-remove-action')
+        expect(buttons).not_to_have_count(0)
+        dialog(library,lambda:buttons.first.evaluate('node=>node.click()'),'detail remove media')
+    group('detail',detail)
+
+    def settings():
+        library.locator('#open-settings').evaluate('node=>node.click()')
+        library.locator('[data-settings-tab="layout"]').click()
+        dialog(library,lambda:library.locator('#layout-create').click(),'settings new layout')
+        library.locator('#layout-reset').click()
+        audit(library,'settings layout reset')
+        library.locator('[data-settings-tab="shortcuts"]').click()
+        library.locator('#shortcut-reset').click()
+        audit(library,'settings shortcuts reset')
+        library.locator('[data-settings-tab="rules"]').click()
+        library.locator('[data-analysis-kind="composer"]').click()
+        library.locator('#composer-agent-instruction').fill('Custom agent instructions for audit')
+        library.locator('#save-composer-agent').click()
+        expect(library.locator('#composer-agent-save-state')).to_have_text('Saved')
+        dialog(library,lambda:library.locator('#restore-composer-agent').click(),'settings restore agent rules')
+        library.locator('#composer-task-method').fill('Custom task instructions for audit')
+        library.locator('#composer-settings-form [type=submit]').click()
+        expect(library.locator('#composer-task-save-state')).to_have_text('Saved')
+        dialog(library,lambda:library.locator('#restore-composer-task').click(),'settings restore task rules')
+    group('settings',settings)
+
+    def skills():
+        created=library.evaluate(r"""()=>chrome.runtime.sendMessage({type:'CREATE_CREATIVE_SKILL',skill:{callName:'audit-method',description:'English audit material',skillMarkdown:'# Audit method\n\nOriginal material stays unchanged.'}})""")
+        assert created.get('ok'),created
+        page=run.open_page('skills.html',wait_until='networkidle')
+        try:
+            page.locator('.skill-card').first.click()
+            expect(page.locator('#skill-detail')).to_be_visible()
+            audit(page,'skill detail')
+            page.locator('#skill-detail-edit').click()
+            audit(page,'skill edit')
+            dialog(page,lambda:page.locator('#skill-delete').click(),'skill delete confirmation')
+        finally:page.close()
+    group('skills',skills)
+
+    def composer():
+        saved=library.evaluate("""()=>chrome.runtime.sendMessage({type:'UPSERT_COMPOSER_SESSION',session:{id:'english-audit-session',title:'Audit conversation',messages:[{id:'audit-user',role:'user',content:'Original audit conversation text'}]}})""")
+        assert saved.get('ok'),saved
+        page=run.open_page('composer.html',wait_until='networkidle')
+        try:
+            expect(page.locator('.composer-session-menu')).not_to_have_count(0)
+            page.locator('.composer-session-menu > summary').first.focus()
+            page.locator('.composer-session-menu > summary').first.click()
+            dialog(page,lambda:page.locator('.composer-session-delete').first.click(),'composer delete conversation')
+            page.locator('#composer-reference-open').click()
+            audit(page,'composer reference selection')
+            page.keyboard.press('Escape')
+        finally:page.close()
+    group('composer',composer)
+
+    def capture():
+        from generic_capture_template_details_e2e import PAGE
+        origin='https://wchao6891.github.io'
+        run.context.route(origin+'/**',lambda route:route.fulfill(body=PAGE,content_type='text/html'))
+        source=run.context.new_page();source.goto(origin+'/dynamic-audit')
+        page=run.open_page('collector.html',wait_until='networkidle')
+        try:
+            page.evaluate("()=>chrome.storage.local.set({capturePermissionOnboarding:{version:1,acknowledgedAt:'2026-10-07T00:00:00Z',clipboardIncluded:true}})")
+            source.bring_to_front();page.locator('#start-selection').evaluate('node=>node.click()')
+            expect(source.locator('#promptdirector-content-picker')).to_be_attached()
+            source.locator('.wanted .card p').first.click()
+            expect(page.locator('.page-capture-item')).to_have_count(1)
+            audit(page,'capture manual preview')
+            source.locator('[data-promptdirector-capture-template]').evaluate("node=>node.removeAttribute('data-promptdirector-capture-template')")
+            page.locator('#page-capture-mode').select_option('list')
+            page.locator('#page-capture-target-count').fill('3')
+            source.bring_to_front();page.locator('#page-capture-list-run').evaluate('node=>node.click()')
+            expect(page.locator('#page-capture-help')).to_contain_text('Your selection is no longer available')
+            audit(page,'capture expired selection')
+        finally:source.close();page.close()
+    group('capture',capture)
+
+
 def main():
+    global WIDTHS
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--widths", default="1440,1100,390")
+    parser.add_argument("--json", type=Path)
+    parser.add_argument("--dynamic-only", action="store_true")
+    parser.add_argument("--evidence-dir", type=Path)
+    args = parser.parse_args()
+    WIDTHS = [int(value) for value in args.widths.split(",")]
+    out = args.evidence_dir or Path(tempfile.mkdtemp(prefix="pd-english-audit-evidence-"))
+    out.mkdir(parents=True, exist_ok=True)
     findings = []
     with extension_session("pd-english-audit-", viewport={"width": WIDTHS[0], "height": 900}) as run:
         setup = run.open_page("collector.html")
@@ -157,6 +303,8 @@ def main():
                     reopen()
                     page.wait_for_timeout(150)
                 found = page.evaluate(COLLECT, state)
+                if args.dynamic_only:
+                    page.screenshot(path=str(out / f"{re.sub(r'[^a-zA-Z0-9]+', '-', state)}-{width}.png"))
                 findings.extend({**item, "width": width} for item in found)
             page.set_viewport_size({"width": WIDTHS[0], "height": 900})
             page.wait_for_timeout(150)
@@ -164,6 +312,11 @@ def main():
         library = run.open_page("library.html")
         library.wait_for_selector('body[data-library-state="ready"]')
         library.wait_for_timeout(800)
+        if args.dynamic_only:
+            audit_dynamic_states(run, library, audit, findings)
+            print(f"Screenshots: {out}")
+            write_report(findings, args.json)
+            return
         audit(library, "library")
         open_each_menu(library, "library", lambda state, reopen: audit(library, state, reopen))
         # Sidebar project actions, management mode and its menus.
@@ -236,6 +389,10 @@ def main():
             open_each_menu(page, state, lambda s, reopen, page=page: audit(page, s, reopen))
             page.close()
 
+    write_report(findings, args.json)
+
+
+def write_report(findings, json_path):
     unique = {}
     for item in findings:
         key = (item["kind"], item["text"], item["at"])
@@ -244,9 +401,9 @@ def main():
     rows = sorted(unique.values(), key=lambda item: (item["kind"], item["at"], item["text"]))
     for item in rows:
         print(f"[{item['kind']}] {item['text']!r}  at {item['at']}  widths={sorted(item['widths'])}  states={sorted(item['states'])[:3]}")
-    print({kind: sum(1 for item in rows if item["kind"] == kind) for kind in ("chinese", "overflow", "wrapped")})
-    if args.json:
-        args.json.write_text(json.dumps([{**item, "widths": sorted(item["widths"]), "states": sorted(item["states"])} for item in rows], ensure_ascii=False, indent=2))
+    print({kind: sum(1 for item in rows if item["kind"] == kind) for kind in ("chinese", "overflow", "wrapped", "workflow")})
+    if json_path:
+        json_path.write_text(json.dumps([{**item, "widths": sorted(item["widths"]), "states": sorted(item["states"])} for item in rows], ensure_ascii=False, indent=2))
     sys.exit(1 if rows else 0)
 
 

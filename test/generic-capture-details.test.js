@@ -119,3 +119,61 @@ test('one slow detail page times out alone without stopping the rest of the batc
     assert.deepEqual(results.map(r => r.error), ['详情读取超时', '详情暂时不可读取']);
   } finally { Object.assign(globalThis, saved); }
 });
+
+test('verified video details replace the selected poster, preserve document identity and pair full original prompts', async () => {
+  const { capturedMediaPrompts } = await import('../extension/page-capture-repair.js');
+  const { normalizePageCaptureBatch } = await import('../extension/page-capture.js');
+  const before = normalizePageCaptureBatch(snapshot());
+  const prompt = 'First motion line\nSecond original line';
+  const enriched = applyGenericCaptureDetails(before, [{ ...detail,
+    matchedSources: ['https://example.com/a.png'], originalPrompt: prompt,
+    media: { kind: 'video', url: 'https://example.com/original.mp4', posterUrl: 'https://example.com/a.png',
+      variants: [{ url: 'https://example.com/original.mp4', sourceKind: 'video-element' }] },
+    blocks: [{ kind: 'paragraph', text: prompt }]
+  }]);
+  const c = normalizePageCaptureCandidate(enriched.candidates[0]);
+  assert.equal(c.media.length, 1);
+  assert.equal(c.media[0].id, 'a', 'the user selected this identity before details were read');
+  assert.equal(c.media[0].kind, 'video');
+  assert.equal(c.media[0].url, 'https://example.com/original.mp4', 'old poster variants must never win normalization');
+  assert.equal(c.media[0].originalPrompt, prompt);
+  assert.ok(c.articleDocument.blocks.filter(b => b.assetId === 'a').every(b => b.kind === 'video' && b.sourceUrl.endsWith('original.mp4')));
+  const selection = { candidateId: c.id, includeText: true, selectedTextBlockIds: before.candidates[0].textBlocks.map(b => b.id), selectedMediaIds: ['a'], mediaDecision: 'confirmed' };
+  const saved = applyPageCaptureSelections({ candidates: [c], selections: [remapDetailTextSelection(before.candidates[0], c, selection)] })[0];
+  assert.deepEqual(capturedMediaPrompts(saved, new Map([['a', 'stored-video']])), [{ assetId: 'stored-video', text: prompt, source: 'webpage', textRevision: 1 }]);
+  const mediaOnly = applyPageCaptureSelections({ candidates: [c], selections: [{ ...selection, includeText: false }] })[0];
+  assert.equal(mediaOnly.media[0].originalPrompt, undefined, 'explicitly excluding text still wins');
+});
+
+test('details with another work identity cannot upgrade a selected poster or attach its prompt', () => {
+  const before = snapshot();
+  const enriched = applyGenericCaptureDetails(before, [{ ...detail, matchedSources: ['https://example.com/unrelated.png'],
+    originalPrompt: 'Unrelated work', media: { kind: 'video', url: 'https://example.com/unrelated.mp4' } }]);
+  assert.equal(enriched.candidates[0].media[0].kind, 'image');
+  assert.equal(enriched.candidates[0].media[0].originalPrompt, undefined);
+  assert.doesNotMatch(enriched.candidates[0].contentText, /Unrelated work/);
+});
+
+test('opting into details for a media-only selection saves its first original text; excluded existing text stays excluded', () => {
+  const before = normalizePageCaptureCandidate({ ...snapshot().candidates[0], contentText: '', textBlocks: [],
+    articleDocument: { blocks: [{ id: 'media', kind: 'image', assetId: 'a', sourceOrder: 0 }] } });
+  const after = normalizePageCaptureCandidate(applyGenericCaptureDetails({ adapter: 'generic', candidates: [before] },
+    [{ ...detail, matchedSources: ['https://example.com/a.png'] }]).candidates[0]);
+  const selection = { candidateId: before.id, includeText: false, selectedTextBlockIds: [], selectedMediaIds: ['a'] };
+  const enabled = remapDetailTextSelection(before, after, selection);
+  assert.equal(enabled.includeText, true);
+  assert.ok(enabled.selectedTextBlockIds.length);
+  const excluded = remapDetailTextSelection(normalizePageCaptureCandidate({ ...snapshot().candidates[0],
+    contentText: 'Existing text the user excluded', textBlocks: [{ id: 'excluded', kind: 'section', text: 'Existing text the user excluded' }] }), after, selection);
+  assert.equal(excluded.includeText, false);
+  assert.deepEqual(excluded.selectedTextBlockIds, []);
+});
+
+test('only a lightweight generic page selection template survives batch normalization', async () => {
+  const { normalizePageCaptureBatch } = await import('../extension/page-capture.js');
+  const selectionTemplate = { sourceUrl: 'https://example.com/list', marker: 'selected-card', html: '<big>must not persist</big>' };
+  assert.deepEqual(normalizePageCaptureBatch({ ...snapshot(), selectionTemplate }).selectionTemplate,
+    { sourceUrl: selectionTemplate.sourceUrl, marker: selectionTemplate.marker });
+  assert.equal(normalizePageCaptureBatch({ ...snapshot(), adapter: 'jimeng', selectionTemplate }).selectionTemplate, null);
+  assert.equal(normalizePageCaptureBatch({ ...snapshot(), selectionTemplate, stopReason: 'manual-template-page' }).stopReason, 'manual-template-page');
+});

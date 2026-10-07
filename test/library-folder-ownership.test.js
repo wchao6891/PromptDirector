@@ -4,6 +4,8 @@ import { planFolderOwnership, planCaseCopies, needsFolderOwnershipMigration } fr
 import { projectPortableMedia } from '../extension/library-portable-media.js';
 import { caseSemanticFingerprint, reconcileLibrarySemanticIdentity } from '../extension/library-semantic-identity.js';
 import { collectRetainedLocalAssetIds } from '../extension/import-staging.js';
+import { expandLogicalCaseIds } from '../extension/compound-cases.js';
+import { moveEntriesBetweenCollections } from '../extension/organizer.js';
 
 function fixture() {
   return { entries: [{ id: 'a', title: '人工标题', text: '正文', customLabels: ['人工标签'],
@@ -33,18 +35,39 @@ test('legacy multi-folder cases retain every location and original references; c
   assert.equal(result.state.entries[0].articleDocument.blocks[0].assetId, 'asset');
 });
 
-test('a compound visible through different members in legacy folders becomes complete independent compositions', () => {
+test('a compound spanning members with separate project owners is already valid and never triggers implicit copies', () => {
   const source = fixture();
   source.entries.push({ id: 'b', title: '镜头二', text: '第二段', mediaAssets: [] });
   source.compoundCases = [{ id: 'pair', title: '完整组合', memberEntryIds: ['b', 'a'], coverVisualId: 'asset', customLabels: ['组合标签'] }];
   source.organizerState.collections[1].entryIds = ['b'];
-  const result = planFolderOwnership(source).state;
-  assert.equal(result.compoundCases.length, 2);
-  assert.deepEqual(result.compoundCases[0].memberEntryIds, ['b', 'a']);
-  assert.equal(result.compoundCases[1].title, '完整组合');
-  assert.deepEqual(result.organizerState.collections[0].entryIds, ['b', 'a']);
-  assert.deepEqual(result.organizerState.collections[1].entryIds, result.compoundCases[1].memberEntryIds);
-  assert.equal(new Set(result.organizerState.collections.flatMap(c => c.entryIds)).size, 4);
+  assert.equal(needsFolderOwnershipMigration(source), false);
+  const result = planFolderOwnership(source);
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.state, source);
+});
+
+test('a truly shared legacy member still migrates without converting unrelated cross-project compositions', () => {
+  const source = fixture();
+  source.entries.push({id:'b',text:'成员B',mediaAssets:[]},{id:'shared',text:'旧多项目资料',mediaAssets:[]});
+  source.compoundCases=[{id:'pair',title:'跨项目组合',memberEntryIds:['a','b']}];
+  source.organizerState.collections[0].entryIds=['a','shared'];
+  source.organizerState.collections[1].entryIds=['b','shared'];
+  assert.equal(needsFolderOwnershipMigration(source),true);
+  const result=planFolderOwnership(source);
+  assert.equal(result.copies.length,1);assert.equal(result.copies[0].sourceCaseId,'shared');
+  assert.deepEqual(result.state.compoundCases,source.compoundCases);
+  assert.deepEqual(result.state.organizerState.collections.map(c=>c.entryIds[0]),['a','b']);
+  assert.equal(needsFolderOwnershipMigration(result.state),false);
+});
+
+test('a legacy compound whose physical member is genuinely shared retains its established copy conversion', () => {
+  const source=fixture();source.entries.push({id:'b',text:'另一成员',mediaAssets:[]});
+  source.compoundCases=[{id:'pair',title:'旧组合',memberEntryIds:['a','b']}];
+  source.organizerState.collections[1].entryIds.push('b');
+  const result=planFolderOwnership(source);
+  assert.equal(result.copies.length,1);assert.equal(result.state.compoundCases.length,2);
+  assert.deepEqual(result.state.compoundCases[0].memberEntryIds,['a','b']);
+  assert.equal(needsFolderOwnershipMigration(result.state),false);
 });
 
 test('explicit copies in the same folder stay independent after content reconciliation and project-free sharing', () => {
@@ -57,6 +80,34 @@ test('explicit copies in the same folder stay independent after content reconcil
   const copy = result.state.entries.find(e => e.id === 'copy');
   result.state.entries = [copy];
   assert.ok(collectRetainedLocalAssetIds(result.state).has('asset'), 'deleting the original must not release the copy media');
+});
+
+test('explicitly copying or moving a cross-project group still includes every member and preserves original media', () => {
+  const source = fixture();
+  source.entries.push({ id: 'b', text: '第二成员原词', mediaAssets: [] });
+  source.compoundCases = [{ id: 'pair', title: '跨项目组合', memberEntryIds: ['a', 'b'] }];
+  source.organizerState.collections[1].entryIds = ['b'];
+  const before = structuredClone(source);
+  const memberIds = expandLogicalCaseIds(['pair'], source.compoundCases);
+  let serial = 0;
+  const copied = planCaseCopies(source, memberIds, 'q', { idFactory: () => `copy-${++serial}` });
+  assert.deepEqual(source, before);
+  assert.equal(copied.copies.length, 1);
+  assert.equal(copied.state.entries.length, 4);
+  const group = copied.state.compoundCases[1];
+  assert.equal(group.memberEntryIds.length, 2);
+  group.memberEntryIds.forEach((id, index) => {
+    const copy = copied.state.entries.find(entry => entry.id === id);
+    assert.equal(copy.text, source.entries[index].text);
+    assert.deepEqual(copy.mediaAssets, source.entries[index].mediaAssets);
+  });
+  assert.deepEqual(copied.state.organizerState.collections.map(c => c.entryIds), [['a'], ['b', ...group.memberEntryIds]]);
+  assert.equal(needsFolderOwnershipMigration(copied.state), false);
+  const moved = moveEntriesBetweenCollections(source.organizerState, null, 'q', memberIds);
+  assert.deepEqual(moved.collections[0].entryIds, []);
+  assert.deepEqual(new Set(moved.collections[1].entryIds), new Set(['a', 'b']));
+  assert.deepEqual(source, before);
+  assert.equal(needsFolderOwnershipMigration({ ...source, organizerState: moved }), false);
 });
 
 test('invalid members or identity collisions abort the entire plan without changing the source', () => {

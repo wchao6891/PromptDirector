@@ -12,7 +12,7 @@ import { setEntryMediaPrompt, addTimeNote, removeTimeNote, setCaseCover, visualS
 import { createCompoundCase, updateCompoundCase, splitCompoundCase } from './compound-cases.js';
 import { uniqueNames } from './facets.js';
 import { moveEntriesBetweenCollections } from './organizer.js';
-import { planCaseCopies, assertCompoundProjectScope } from './library-folder-ownership.js';
+import { planCaseCopies } from './library-folder-ownership.js';
 import { agentError } from './agent-protocol.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
 import { caseAnalysisCoverage } from './analysis-coverage.js';
@@ -20,6 +20,7 @@ import { caseAnalysisCoverage } from './analysis-coverage.js';
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const hash = value => sha256Blob(new Blob([JSON.stringify(canonical(value))]));
+export const caseOperationFingerprint = hash;
 const fail = (code, message) => { throw agentError(code, message); };
 function entryFor(state, id) {
   const entry = state.entries.find(item => item.id === id);
@@ -42,7 +43,7 @@ const compoundRevision = (state, compound) => {
     return { entry, organization: memberships.get(id) };
   }) });
 };
-async function operationCase(state, id) {
+export async function operationCase(state, id) {
   const compound = state.compoundCases?.find(item => item.id === id);
   const entry = compound || entryFor(state, id);
   return { caseId: id, title: entry.title, revision: compound ? await compoundRevision(state, compound) : await caseRevision(state, entry) };
@@ -253,7 +254,6 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
       await checkedEntry(state, item.caseId, item.expectedRevision);
       if (organization(state, item.caseId).compounds.length) fail('compound_member', '成员已在另一个组合中，请先拆开原组合');
     }
-    assertCompoundProjectScope(state, ids);
     if (input.coverVisualId && !state.entries.some(e => ids.includes(e.id) && e.mediaAssets?.some(a => a.id === input.coverVisualId && a.kind === 'image' && a.usage !== 'poster'))) fail('asset_not_in_case', '组合封面必须是成员中的内容图片');
     const result = createCompoundCase(state.compoundCases, state.entries, {
       id: idFactory(), title: input.title, memberEntryIds: ids, coverVisualId: input.coverVisualId, now

@@ -13,6 +13,7 @@ import { createAgentLibrary } from '../../extension/agent-library.js';
 import { startNativeHost } from '../native-host.mjs';
 import { callExtension } from '../bridge-client.mjs';
 import { receiveMedia, stageFiles } from '../transfers.mjs';
+import { TOOL_TITLES } from '../agent-guidance.mjs';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
@@ -144,7 +145,7 @@ test('SDK client performs real stdio MCP handshake and discovers bounded tools',
   try {
     await client.connect(transport);
     const list = await client.listTools();
-    assert.equal(list.tools.length, 33);
+    assert.deepEqual(list.tools.map(tool => tool.name).sort(), Object.keys(TOOL_TITLES).map(name => `promptdirector_${name}`).sort());
     assert(list.tools.some(tool => tool.name === 'promptdirector_capture_url'));
     const organize = list.tools.find(tool => tool.name === 'promptdirector_organize_case').inputSchema.properties;
     assert(organize.action.enum.includes('combine_cases'));
@@ -223,7 +224,8 @@ test('installer creates a reviewable private runtime and origin-bound registrati
 
     assert(!JSON.stringify(paired).includes('secret'));
     const client = new Client({ name: 'installed-runtime-test', version: '1' });
-    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.equal((await client.listTools()).tools.length, 33); }
+    try { await client.connect(new StdioClientTransport(paired.mcp)); assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(),
+      Object.keys(TOOL_TITLES).map(name => `promptdirector_${name}`).sort()); }
     finally { await client.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -231,7 +233,7 @@ test('installer creates a reviewable private runtime and origin-bound registrati
 test('CLI discovers the same MCP operations without a second command registry', {timeout:5000}, async () => {
   const {callFromCli}=await import('../call.mjs');
   const result=await callFromCli('list');
-  assert.equal(result.tools.length,33);
+  assert.deepEqual(result.tools.map(tool => tool.name).sort(), Object.keys(TOOL_TITLES).map(name => `promptdirector_${name}`).sort());
   assert(result.tools.some(tool=>tool.name==='promptdirector_read_workspace_context'));
   await assert.rejects(callFromCli('not_a_real_operation'), /not|unknown|不存在/i);
 });
@@ -250,9 +252,9 @@ test('MCP save returns completion in one tool round; lost wait replies and old r
     calls.push(message.operation);
     const { requestId } = message.input;
     let result, error;
-    if (message.operation === 'read_workspace_context') result = { revision: 'current-selection', selectedCaseCount: 2 };
+    if (message.operation === 'read_workspace_context') assert.fail('The current extension serves content and revision in one read');
     else if (message.operation === 'read_workspace_content') {
-      assert.equal(message.input.expectedRevision, 'current-selection');
+      if (message.input.expectedRevision) assert.equal(message.input.expectedRevision, 'current-selection');
       if (selectionChanged) error = { code: 'selection_changed', message: 'Selection changed between the reads' };
       else result = { revision: 'current-selection', content: 'complete original prompts', nextOffset: null };
     } else if (message.operation === 'save_material') {
@@ -288,7 +290,7 @@ test('MCP save returns completion in one tool round; lost wait replies and old r
     const read = args => client.callTool({ name: 'promptdirector_read_workspace_content', arguments: args });
     const full = await read({ part: 'selection' });
     assert.equal(JSON.parse(full.content[0].text).content, 'complete original prompts');
-    assert.deepEqual(calls, ['read_workspace_context', 'read_workspace_content']);
+    assert.deepEqual(calls, ['read_workspace_content']);
     calls.length = 0;
     assert.equal((await read({ part: 'selection', offset: 1 })).isError, true);
     assert.equal((await read({ part: 'reference', referenceId: 'ref' })).isError, true);

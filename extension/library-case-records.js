@@ -3,7 +3,7 @@
 // list through library-storage.js, which translates to and from this layout.
 export const CASE_RECORD_PREFIX = 'case:';
 export const CASE_INDEX_KEY = 'caseIndex';
-// The list exactly as stored before the first switch to per-case records, kept untouched for recovery.
+// The pre-switch list retained for recovery; permanent deletion also prunes its corresponding cases.
 export const LEGACY_ENTRIES_KEY = 'legacyEntries';
 export const CASE_INDEX_LAYOUT = 1;
 export const ENTRIES_KEY = 'entries';
@@ -57,13 +57,29 @@ export function caseText(value) {
 
 const sameIds = (left, right) => left.length === right.length && left.every((id, index) => id === right[index]);
 
-// Compares against the last stored text of each case and returns only what must be written.
-export function planCaseWrite(entries, storedIds, storedText) {
-  const records = {}, text = new Map();
+// Storage may reorder object fields. Compare their values without sorting or serializing every
+// case's full text on every edit. Stored snapshots are private copies, never caller-owned objects.
+export function sameCaseValue(left, right) {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left)) return left.length === right.length && left.every((value, i) => sameCaseValue(value, right[i]));
+  if (Object.prototype.toString.call(left) !== '[object Object]' || Object.prototype.toString.call(right) !== '[object Object]'
+    || typeof left.toJSON === 'function' || typeof right.toJSON === 'function') return caseText(left) === caseText(right);
+  const keys = Object.keys(left), otherKeys = Object.keys(right);
+  return keys.length === otherKeys.length && keys.every(key => Object.hasOwn(right, key) && sameCaseValue(left[key], right[key]));
+}
+
+// Only changed cases need a new independent snapshot; unchanged cases reuse the verified copy.
+export function planCaseWrite(entries, storedIds, storedValues) {
+  const records = {}, values = new Map();
   for (const entry of entries) {
-    const serialized = caseText(entry);
-    text.set(entry.id, serialized);
-    if (storedText.get(entry.id) !== serialized) records[caseRecordKey(entry.id)] = entry;
+    const stored = storedValues.get(entry.id);
+    if (sameCaseValue(stored, entry)) values.set(entry.id, stored);
+    else {
+      records[caseRecordKey(entry.id)] = entry;
+      values.set(entry.id, structuredClone(entry));
+    }
   }
   const ids = entries.map(entry => entry.id);
   const kept = new Set(ids);
@@ -72,7 +88,7 @@ export function planCaseWrite(entries, storedIds, storedText) {
     index: sameIds(ids, storedIds) ? null : caseIndexFor(entries),
     removedKeys: storedIds.filter(id => !kept.has(id)).map(caseRecordKey),
     ids,
-    text
+    values
   };
 }
 
@@ -80,7 +96,15 @@ export function planCaseWrite(entries, storedIds, storedText) {
 // cases, so listeners never see the layout. `newValue` is absent; listeners re-read what they need.
 export function translateCaseChanges(changes) {
   const keys = Object.keys(changes);
-  if (!keys.some(key => isCaseRecordKey(key) || key === CASE_INDEX_KEY)) return changes;
+  if (!keys.some(key => isCaseRecordKey(key) || key === CASE_INDEX_KEY)) {
+    // Clearing an older list beside unchanged records emits no record/index change in Chrome.
+    // Re-read to distinguish that cleanup from a genuinely empty, still-unsplit library.
+    if (Array.isArray(changes[ENTRIES_KEY]?.newValue) && !changes[ENTRIES_KEY].newValue.length) {
+      const { newValue: _entries, ...change } = changes[ENTRIES_KEY];
+      return { ...changes, [ENTRIES_KEY]: change };
+    }
+    return changes;
+  }
   const translated = {}, cases = {}, removedCaseIds = [];
   let caseIds;
   for (const key of keys) {
@@ -100,6 +124,9 @@ export function translateCaseChanges(changes) {
 // Applies a translated case change to the list a page already shows. Returns null when the change
 // cannot be applied on its own (a case whose position the page does not know), so the caller reads again.
 export function applyCaseChanges(currentEntries, change) {
+  // Publishing a staged upgrade changes the plain list and index together. The records were
+  // verified earlier, so their contents must be read instead of reusing the page's old cases.
+  if (Object.hasOwn(change, 'oldValue')) return null;
   const byId = new Map(currentEntries.map(entry => [entry.id, entry]));
   const changed = Object.entries(change.cases ?? {});
   if (!change.caseIds && changed.some(([id]) => !byId.has(id))) return null;

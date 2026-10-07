@@ -40,7 +40,7 @@ def main():
         expect(library.locator('#trash-dialog')).not_to_be_visible()
         result = library.evaluate('''async()=>{
           const {getMediaBlob,getDerivedMedia,getDerivedMetadata}=await import('./media-store.js');
-          const state=await chrome.storage.local.get(['trashState','folderOwnershipBackup','libraryReplacementRecoveryPoint','pendingTrashCleanup']);
+          const state=await chrome.storage.local.get(['trashState','folderOwnershipBackup','libraryReplacementRecoveryPoint','pendingTrashCleanup','legacyEntries']);
           const files={};for(const id of ['exclusive','old-exclusive','shared','unrelated-old']) files[id]={
             original:!!await getMediaBlob(id),derived:!!await getDerivedMedia(id),metadata:!!await getDerivedMetadata(id)};
           return {state,files};
@@ -53,6 +53,7 @@ def main():
         assert 'pendingTrashCleanup' not in result['state'], result
         assert [e['id'] for e in result['state']['folderOwnershipBackup']['state']['entries']] == ['unrelated'], result
         assert [e['id'] for e in result['state']['libraryReplacementRecoveryPoint']['state']['entries']] == ['unrelated'], result
+        assert [e['id'] for e in result['state']['legacyEntries']] == ['live'], result
         # Deleting the last live owner must now release the previously shared file.
         await_result = library.evaluate("async()=>{await chrome.runtime.sendMessage({type:'BATCH_MOVE_TO_TRASH',entryIds:['live']});return chrome.runtime.sendMessage({type:'EMPTY_TRASH'});}")
         assert await_result['ok'], await_result
@@ -60,7 +61,7 @@ def main():
 
         # Force a real IndexedDB failure after metadata commits, then restart the worker.
         retry = {**gone, 'id': 'retry-case', 'mediaAssets': [asset('retry')], 'primaryMediaId': 'retry'}
-        library.evaluate("async entry=>chrome.storage.local.set({entries:[entry]})", retry)
+        library.evaluate("async entry=>(await import('./library-storage.js')).getLibraryStorage().set({entries:[entry]})", retry)
         library.evaluate("async()=>chrome.runtime.sendMessage({type:'BATCH_MOVE_TO_TRASH',entryIds:['retry-case']})")
         worker = session.context.service_workers[0]
         worker.evaluate('''()=>{

@@ -27,4 +27,6 @@ Keep personal Agent instructions in the Git-ignored `AGENTS.override.md`. Codex 
 
 `npm run verify` runs source checks, historical data compatibility, packaged Chromium journeys and an upgrade rehearsal using a previous release. `npm run check:compat` checks the supported data formats. `npm run package:release` builds the Store upload variant. These commands do not publish a release or upload to the Store.
 
+`npm run check:i18n` checks English catalog coverage for shared-dialog text, translation calls and local translation helpers. It is part of `verify:source` and the unit tests. Keep user-authored titles, prompts, tags and field values unchanged; use `t(...)` only for interface copy. Run the directed browser localization tests when changing dynamic dialogs or controls.
+
 See [data compatibility](DATA_COMPATIBILITY.md), [capture support](CAPTURE_SUPPORT.md) and [known limitations](KNOWN_LIMITATIONS.md) for product behavior.

@@ -14,7 +14,7 @@ function fixture({ readDerived = async () => null } = {}) {
     mediaPrompts: [{ assetId:i ? 'video' : 'image', text:`独立原词${id}`, source:'manual' }]
   })), compoundCases: [], aiSettings: { apiKey: 'must-not-expose' } };
   let queue = Promise.resolve();
-  const api = createReferenceSelection({ storage: { get: async key => ({ [key]: data[key] }), set: async values => Object.assign(data, structuredClone(values)) },
+  const api = createReferenceSelection({ storage: { get: async keys => Object.fromEntries([keys].flat().map(key => [key, data[key]])), set: async values => Object.assign(data, structuredClone(values)) },
     loadState: async () => data, readDerived, getLibraryId: async () => 'library',
     enqueue: work => { const next = queue.then(work, work); queue = next.catch(() => {}); return next; } });
   return { data, api };

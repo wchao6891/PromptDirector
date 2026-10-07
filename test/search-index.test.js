@@ -60,3 +60,32 @@ test("6000 imported cases reuse one prepared vocabulary and tolerate empty media
   assert.equal(index.length, 6000);
   assert.ok(elapsedMs < 500, `large search index should build inside 500ms, took ${elapsedMs.toFixed(1)}ms`);
 });
+
+test('opening an unfiltered gallery does not scan every full prompt before any search is requested', () => {
+  let bodyReads = 0;
+  const entry = { id: 'long-reference', title: '镜头参考', get text() { bodyReads++; return 'CAMERA 原词'; }, mediaAssets: [] };
+  const index = buildSearchIndex([entry], createDefaultFacetCatalog(), new Map(), new Map(), { lazy: true });
+  assert.equal(bodyReads, 0, 'initial gallery rows should not prepare unused full-text search');
+  assert.deepEqual([...searchIndexedEntries(index, '')], ['long-reference']);
+  assert.equal(bodyReads, 0);
+  assert.deepEqual([...searchIndexedEntries(index, 'camera')], ['long-reference']);
+  const preparedReads = bodyReads;
+  assert.ok(preparedReads > 0);
+  assert.deepEqual([...searchIndexedEntries(index, '原词')], ['long-reference']);
+  assert.equal(bodyReads, preparedReads, 'successive searches reuse the prepared document');
+});
+
+test('deferred first search preserves complete prompts, document text and every structured filter', () => {
+  const entry = { id: 'reference', title: '镜头 Σ ΟΣ İ', text: 'CAMERA 雨夜', savedAt: '2026-10-07T12:00:00Z',
+    customLabels: ['Film'], url: 'https://example.com/case', timeNotes: [{ text: '加速' }],
+    mediaAssets: [{ id: 'clip', kind: 'video', usage: 'content', storageMode: 'managed' }],
+    mediaPrompts: [{ assetId: 'clip', text: 'UNABRIDGED 原词' }] };
+  const catalog = createDefaultFacetCatalog(), documents = new Map([['clip', 'DOCUMENT 全文']]);
+  const metadata = new Map([['clip', { palette: { colors: ['#123ABC'] } }]]);
+  const eager = buildSearchIndex([entry], catalog, documents, metadata);
+  const deferred = buildSearchIndex([entry], catalog, documents, metadata, { lazy: true });
+  for (const query of ['', 'camera 原词', 'document', 'οσ', 'type:video tag:film source:example.com',
+    'color:123abc note:加速 date:2026-10 has:media', '不存在', 'type:image', 'has:note']) {
+    assert.deepEqual([...searchIndexedEntries(deferred, query)], [...searchIndexedEntries(eager, query)], query);
+  }
+});

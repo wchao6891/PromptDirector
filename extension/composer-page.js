@@ -1,3 +1,4 @@
+import { createReferenceWindow } from './composer-reference-window.js';
 import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { setTaskFeedbackState } from "./task-feedback.js";
@@ -168,11 +169,6 @@ let workspaceMode = "references";
 let feedbackTimer = 0;
 const COMPOSER_TITLE_MAX_CHARACTERS = 36;
 const thumbnailUrls = new Map();
-let referenceVideoCleanups = [];
-function releaseReferenceVideos() {
-  referenceVideoCleanups.forEach(release => release());
-  referenceVideoCleanups = [];
-}
 const openJudgmentIds = new Set();
 const judgmentFeedbackById = new Map();
 const imageObserver = new IntersectionObserver((items) => {
@@ -182,6 +178,26 @@ const imageObserver = new IntersectionObserver((items) => {
     hydrateCaseImage(item.target);
   }
 }, { rootMargin: "240px" });
+const referenceCaseWindow = createReferenceWindow(elements.composerCaseList, {
+  createCard: createCaseOption,
+  releaseCard: releaseReferenceCard
+});
+function releaseReferenceCard(card) {
+  const images = [...card.querySelectorAll('img')];
+  for (const image of images) imageObserver.unobserve(image);
+  const retained = new Set([...document.querySelectorAll('img')].filter(image => !card.contains(image)).map(image => image.src));
+  for (const image of images) {
+    const key = image.dataset.thumbnailKey || image.dataset.visualId;
+    const url = thumbnailUrls.get(key);
+    if (!url || retained.has(url)) continue;
+    URL.revokeObjectURL(url);
+    thumbnailUrls.delete(key);
+  }
+  for (const surface of card.querySelectorAll('.composer-case-select-preview')) {
+    surface.releaseVideo?.();
+  }
+}
+
 
 bindEvents();
 void installWorkspaceReader({ chromeApi: chrome, readContext: () => {
@@ -316,7 +332,7 @@ function bindEvents() {
     if (event.key === "Escape") closeComposerModelMenu();
   });
   addEventListener("beforeunload", () => {
-    releaseReferenceVideos();
+    referenceCaseWindow.destroy();
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   });
   getLibraryStorage().subscribe((changes) => {
@@ -2148,10 +2164,10 @@ function setReferenceWorkspaceMode(mode) {
 }
 
 function closeReferenceWorkspace() {
-  releaseReferenceVideos();
   if (elements.composerReferenceWorkspace.contains(document.activeElement)) {
     elements.composerReferenceOpen.focus({ preventScroll: true });
   }
+  referenceCaseWindow.suspend();
   elements.composerReferenceWorkspace.inert = true;
   elements.composerReferenceWorkspace.setAttribute("aria-hidden", "true");
   elements.composerReferenceWorkspace.hidden = true;
@@ -2173,7 +2189,7 @@ function renderReferencePicker() {
     renderProjectFilter();
     renderCasePicker();
     renderReferenceSelection();
-  } else renderSkills();
+  } else { referenceCaseWindow.suspend(); renderSkills(); }
 }
 
 function renderProjectFilter() {
@@ -2228,7 +2244,6 @@ function renderSkills() {
 }
 
 function renderCasePicker() {
-  releaseReferenceVideos();
   const query = elements.composerReferenceSearch.value.trim().toLocaleLowerCase();
   const projectId = elements.composerReferenceProjectFilter.value;
   const projectIds = projectId
@@ -2241,10 +2256,11 @@ function renderCasePicker() {
     return `${entry.title ?? ""}\n${entry.text ?? ""}\n${primaryVisionDescription(entry)}\n${composerDocumentTextByEntryId.get(entry.id) || ""}`.toLocaleLowerCase().includes(query);
   });
   if (!eligible.length) {
+    referenceCaseWindow.suspend();
     elements.composerCaseList.replaceChildren(rawTextEl("p", "composer-reference-empty", t("没有匹配的可用案例。")));
     return;
   }
-  elements.composerCaseList.replaceChildren(...eligible.map(createCaseOption));
+  referenceCaseWindow.set(eligible);
 }
 
 function createCaseOption(entry) {
@@ -2268,7 +2284,7 @@ function createCaseOption(entry) {
     const assetId = referencePreviewAssetIds.get(entry.id);
     setDraftAssetSelected(entry.id, assetId || "", checkbox.checked);
     const asset = referenceAssets.find((item) => item.id === assetId);
-    if (asset?.kind === "video") renderCasePicker();
+    if (asset?.kind === "video") referenceCaseWindow.refresh(entry.id);
     else syncCaseOptionSelection(option, entry);
     renderReferenceSelection();
   });
@@ -2282,7 +2298,7 @@ function createCaseOption(entry) {
     const selected = assetId ? referenceDraftSelections.get(entry.id)?.has(assetId) === true : referenceDraftSelections.has(entry.id);
     setDraftAssetSelected(entry.id, assetId || "", !selected);
     const asset = referenceAssets.find((item) => item.id === assetId);
-    if (asset?.kind === "video") renderCasePicker();
+    if (asset?.kind === "video") referenceCaseWindow.refresh(entry.id);
     else syncCaseOptionSelection(option, entry);
     renderReferenceSelection();
   });
@@ -2335,7 +2351,7 @@ function createCaseOption(entry) {
       assetCheckbox.addEventListener("change", () => {
         referencePreviewAssetIds.set(entry.id, asset.id);
         setDraftAssetSelected(entry.id, asset.id, assetCheckbox.checked);
-        if (asset.kind === "video") renderCasePicker();
+        if (asset.kind === "video") referenceCaseWindow.refresh(entry.id);
         else {
           renderCasePreviewImage(option, entry, asset.id);
           syncCaseOptionSelection(option, entry);
@@ -2382,7 +2398,7 @@ function composerVideoSourceOptions(entry, asset) {
     const label = rawTextEl("span", "", labelText);
     input.addEventListener("change", () => {
       input.checked ? selected.add(part.id) : selected.delete(part.id);
-      renderCasePicker();
+      referenceCaseWindow.refresh(entry.id);
       renderReferenceSelection();
     });
     option.dataset.assetId = asset.id;
@@ -2425,6 +2441,7 @@ function renderCasePreviewImage(option, entry, assetId) {
   const asset = previewReferenceAsset(entry, assetId);
   if (!asset) return surface.replaceChildren(rawTextEl("span", "", t("文字资料")));
   surface.releaseVideo?.();
+  surface.releaseVideo = null;
   if (asset.kind === "video") {
     const cover = el("span", "composer-video-cover");
     surface.replaceChildren(cover);
@@ -2432,7 +2449,6 @@ function renderCasePreviewImage(option, entry, assetId) {
     const hover = asset.storageMode !== "reference"
       ? bindVideoHoverPreview(surface, { loadBlob: () => getMediaBlob(asset.id) }) : null;
     surface.releaseVideo = () => { releaseCover(); hover?.destroy(); };
-    referenceVideoCleanups.push(surface.releaseVideo);
     return;
   }
   const displayAsset = asset;
@@ -2561,8 +2577,9 @@ async function hydrateCaseImage(image) {
     const derived = image.dataset.thumbnailKey ? await getDerivedMedia(visualId) : null;
     const blob = derived?.thumbnail instanceof Blob ? derived.thumbnail : await getScreenshotBlob(visualId);
     if (!blob || !image.isConnected) return;
-    const url = URL.createObjectURL(blob);
-    thumbnailUrls.set(image.dataset.thumbnailKey || visualId, url);
+    const key = image.dataset.thumbnailKey || visualId;
+    const url = thumbnailUrls.get(key) || URL.createObjectURL(blob);
+    thumbnailUrls.set(key, url);
     image.src = url;
   } catch {
     image.closest(".composer-case-select-preview")?.replaceChildren(rawTextEl("span", "", t("截图读取失败")));
@@ -3004,7 +3021,7 @@ function creativeOutputCard(run, output) {
     const editCapabilities = composerImageEditCapabilities(composerSession?.generationAiProfile, composerVisionSettings);
     const edit = textEl("button", "button-secondary", "编辑");
     edit.disabled = !editCapabilities.whole;
-    edit.title = edit.disabled ? "请切换到已验证支持图片编辑的 OpenAI 或米醋服务" : "";
+    edit.title = edit.disabled ? t("请切换到已验证支持图片编辑的 OpenAI 或米醋服务") : "";
     edit.addEventListener("click", () => openCreativeImageWorkspace(run.id, output.visual.id, true));
     secondaryActions.append(edit);
   }

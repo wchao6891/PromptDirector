@@ -8,18 +8,21 @@ const [html, source, styles] = await Promise.all([
   readFile(new URL("../extension/library.css", import.meta.url), "utf8")
 ]);
 
-test("first paint shows one stable loading shell without fake library counts", () => {
+test("first paint keeps the real shell visible with an inline loading status and no fake counts", () => {
   assert.match(html, /<body[^>]*data-library-state="loading"/);
   assert.match(html, /id="library-loading"[\s\S]*正在打开资料库/);
   assert.doesNotMatch(html, /正在读取本地案例/);
   assert.doesNotMatch(html, /id="result-count">0 个案例/);
   assert.doesNotMatch(html, /id="pending-count">0</);
-  assert.match(styles, /body\[data-library-state="loading"\][\s\S]*\.library-loading/);
+  assert.match(html, /<main class="gallery-shell">\s*<div id="library-loading"/);
+  assert.doesNotMatch(styles, /body\[data-library-state="loading"\]\s*>[^}]*visibility:\s*hidden/);
+  assert.doesNotMatch(styles, /\.library-loading\s*\{[^}]*position:\s*fixed/);
 });
 
 test("core cases render before PDF derived cache and the cache cannot trigger a full gallery refresh", () => {
   const refresh = source.slice(source.indexOf("async function refreshLibrary"), source.indexOf("async function loadDocumentDerivedCache"));
-  assert.ok(refresh.indexOf("renderGallery();") < refresh.indexOf("loadDocumentDerivedCache(entries)"));
+  const render = refresh.indexOf("renderGallery(");
+  assert.ok(render >= 0 && render < refresh.indexOf("loadDocumentDerivedCache(entries)"));
   assert.doesNotMatch(refresh, /await loadDocumentDerivedCache\(entries\)/);
   assert.match(refresh, /dataset\.libraryState/);
 

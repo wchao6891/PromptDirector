@@ -5,9 +5,13 @@ description: 通过 PromptDirector 工具搜索创意案例、读取原始素材
 
 日常直接完成委托并简短交付结果，不逐工具播报；长任务只报告实际进展、阻塞或必要决定。工具/函数名、参数、编号、协议状态和内部路径留在内部，除非用户明确要求诊断；“测试一下”不自动开启技术详报。用户要求的全文、提示词、来源及可用文件链接完整提供，不能为了简短删减创作内容。失败说明实际影响，不隐藏未完成工作。
 
+用户要查看插件界面时用capture_workspace返回真实图片，可传tabId或surface；默认选择唯一可见插件标签。只覆盖本插件案例库/创作台/独立采集页，不切换焦点或截取其他网页。歧义返回候选；permission_required按Chrome提示授权，不把业务状态当截图。截图是当时可见区域，不代表保存成功或完整原件。
+
+用户明确要求移除案例时用trash_case，带read_case_details取得的expectedRevision和固定requestId，移入可恢复回收站；重试同请求不会重复删除已恢复案例，不永久删除。Agent自行分析后沿外部analysis batch写回，MCP不启动插件付费模型。
+
 同时需要案例多个部分时用 read_case_details(parts=[overview,source,media]) 一次取得同一版本；只需要某一部分仍用part，二者不混用，续页保持parts与expectedRevision。原件不包含在此响应中。当前案例的新截图先刷新media，通过derivedFromAssetId/frameTimeMs/capturedAt定位，再read_media查看；不先扫描本机目录，不凭旧清单宣称截图不存在。
 
-结构化查库在字段未知时用describe_case_query发现字段/类型/作用域与实际互动指标，同一会话复用，再用search_cases的where（all/any/not或scope+where）、select、orderBy、groupBy/aggregates、similarTo；不让用户写数据库语法。成员/素材/来源/标签/项目条件需要同一记录关联时用scope，不能拼造不同组合成员的作者、原词、媒体或标签。原词/AI词分开，正文提及不是已赋予标签。缺失不作0；多值排序/数值统计明确reduce=min/max且互动限定provider，不隐式合计多个帖子。分组同域字段来自同一关系记录，每组案例去重，统计基于全匹配集。select完整正文保留；过大用read_case同文版本分页，不自行缩短。找相似先理解用户在意的内容维度；同片名/作者/班底/模板重合不证明目标内容相似，原词字段可能实际是网页镜头说明。参考与候选文字已显示关键差异时据此筛选、降级或说明，不把相反技法推荐成最相似。明确限制可用query/alternatives或where与similarTo合并查询，探索任务保留有用差异，不用所有标签一致作死规则。找相似用similarTo指定参考，默认prompt，按用户所需mediaKind比较完整提示词；原词优先、已存AI词标明来源，缺词才按需补其他依据（hasPrompt=false缩小补查范围）。省略select保留候选摘要/来源/媒体/相似依据，避免仅取标题后逐条补读。Agent按任务、相关性和证据缺口决定limit与是否继续，有足够依据即交付，不固定调用次数，不为凑数扫库或把local/prompt/tags依次调用；关键词变体可用alternatives合并。提示词足够时不默认下载封面或观看视频；用户明确要求视觉核验仍应执行。说明证据缺失与coverage，0分不算匹配，摘要不冒充全文，不声称做了未发生的视觉识别。status.caseQueryVersion=1才有此能力，旧后台明确失败需手动重载。详细字段与例子见README。
+结构化查库在字段未知时用describe_case_query发现字段/类型/作用域与实际互动指标，同一会话复用，再用search_cases的where（all/any/not或scope+where）、select、orderBy、groupBy/aggregates、similarTo；不让用户写数据库语法。成员/素材/来源/标签/项目条件需要同一记录关联时用scope，不能拼造不同组合成员的作者、原词、媒体或标签。原词/AI词分开，正文提及不是已赋予标签。缺失不作0；多值排序/数值统计明确reduce=min/max且互动限定provider，不隐式合计多个帖子。分组同域字段来自同一关系记录，每组案例去重，统计基于全匹配集。select完整正文保留；过大用read_case同文版本分页，不自行缩短。找相似先理解用户在意的内容维度；同片名/作者/班底/模板重合不证明目标内容相似，原词字段可能实际是网页镜头说明。参考与候选文字已显示关键差异时据此筛选、降级或说明，不把相反技法推荐成最相似。明确限制可用query/alternatives或where与similarTo合并查询，探索任务保留有用差异，不用所有标签一致作死规则。已有案例用similarTo指定参考；只有完整文字描述则用similarText，二者互斥，不先创建临时案例、不调用模型；这是本地词语相关性。默认prompt，按用户所需mediaKind比较完整提示词；原词优先、已存AI词标明来源，缺词才按需补其他依据（hasPrompt=false缩小补查范围）。省略select保留候选摘要/来源/媒体/相似依据，避免仅取标题后逐条补读。Agent按任务、相关性和证据缺口决定limit与是否继续，有足够依据即交付，不固定调用次数，不为凑数扫库或把local/prompt/tags依次调用；关键词变体可用alternatives合并。提示词足够时不默认下载封面或观看视频；用户明确要求视觉核验仍应执行。说明证据缺失与coverage，0分不算匹配，摘要不冒充全文，不声称做了未发生的视觉识别。status.caseQueryVersion=1才有此能力，旧后台明确失败需手动重载。详细字段与例子见README。
 
 
 以用户当前请求确定查询、收藏或回存的范围。工具前缀为 promptdirector_。优先使用宿主已发现的 MCP 工具；若宿主缓存旧清单或只提供命令行，可用本 SKILL 同目录的 `call.mjs` 调用同一服务：`node <连接器目录>/call.mjs list` 发现工具，`node <连接器目录>/call.mjs read_workspace_context` 读取选择，参数走标准输入 JSON。路径以本文件实际安装位置为准；不要让用户重复传参考来补宿主工具缓存。

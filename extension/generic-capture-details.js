@@ -13,6 +13,7 @@ export async function collectGenericCaptureDetails(requests, options) {
   runtime?.onMessage?.addListener(cancel);
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
   const url = (value, base) => {
+    if (!value) return '';
     try { const parsed = new URL(value, base); return /^https?:$/.test(parsed.protocol) ? parsed.href : ''; } catch { return ''; }
   };
   try {
@@ -41,20 +42,63 @@ export async function collectGenericCaptureDetails(requests, options) {
           const decoder = new TextDecoder();
           const html = chunks.map(chunk => decoder.decode(chunk, { stream: true })).join('') + decoder.decode();
           const doc = new DOMParser().parseFromString(html, 'text/html');
+          // Some sites make the complete original itself a click-to-copy control.
+          // Keep that material before removing UI controls and their labels.
+          for (const button of doc.querySelectorAll('button')) {
+            const originals = [...button.querySelectorAll('pre,code,video')].filter(node => !node.parentElement.closest('pre,code,video'));
+            if (originals.length) button.replaceWith(...originals);
+          }
           for (const node of doc.querySelectorAll('script,style,template,noscript,nav,footer,form,button,input,[hidden],[aria-hidden="true"]')) node.remove();
           const root = request.fragment ? doc.body : doc.querySelector('article,main,[role="main"]');
           if (!root) throw new Error('未找到详情正文');
           const sources = new Set(request.sources);
-          const detailMedia = [...root.querySelectorAll('img,video,source')].filter(node =>
-            !node.closest('aside,[role="navigation"]') && !/^(?:avatar|logo|icon)$/i.test(clean(node.getAttribute('alt'))));
+          const detailMedia = [...root.querySelectorAll('img,video')].filter(node =>
+            !node.closest('[role="navigation"]') && !/^(?:avatar|logo|icon)$/i.test(clean(node.getAttribute('alt'))));
+          const sourceValues = node => [...new Set([node, ...node.querySelectorAll('source')].flatMap(item =>
+            ['src', 'data-src', 'poster'].map(attr => item.hasAttribute(attr) ? url(item.getAttribute(attr), request.url) : '')).filter(Boolean))];
           const principal = detailMedia[0];
-          const matchedSources = principal ? [...new Set([principal, ...principal.querySelectorAll('source')].flatMap(node =>
-            ['src', 'data-src', 'poster'].map(attr => node.hasAttribute(attr) ? url(node.getAttribute(attr), request.url) : ''))
-            .filter(source => sources.has(source)))] : [];
+          let matchedSources = principal ? sourceValues(principal).filter(source => sources.has(source)) : [];
+          // A canonical work page may omit poster= while its thumbnail embeds the
+          // complete video asset name. Use that exact name relation only for its
+          // principal video; a recommendation elsewhere never establishes identity.
+          if (!matchedSources.length && principal?.matches('video')
+            && url(doc.querySelector('link[rel="canonical"]')?.getAttribute('href'), request.url) === request.url) {
+            const videos = sourceValues(principal);
+            matchedSources = [...sources].filter(source => videos.some(video => {
+              const imageUrl = new URL(source), videoUrl = new URL(video);
+              if (imageUrl.origin !== videoUrl.origin) return false;
+              const stem = value => decodeURIComponent(value.pathname.split('/').pop()).replace(/\.[^.]+$/, '');
+              const imageName = stem(imageUrl), videoName = stem(videoUrl);
+              return videoName && (imageName === videoName || imageName.endsWith(`-${videoName}`));
+            }));
+          }
           if (!matchedSources.length) throw new Error('无法确认详情对应当前媒体');
+          let media;
+          if (principal.matches('video')) {
+            const variants = [...new Set([principal, ...principal.querySelectorAll('source')].flatMap(node =>
+              ['src', 'data-src'].map(attr => url(node.getAttribute(attr), request.url))).filter(Boolean))]
+              .map(source => ({ url: source, sourceKind: 'video-element' }));
+            if (!variants.length) throw new Error('详情视频尚未提供可读取的原件地址');
+            media = { kind: 'video', url: variants[0].url, variants,
+              posterUrl: url(principal.getAttribute('poster'), request.url), captureMethod: 'source', sourceKind: 'video-element',
+              ...(/\.m3u8(?:[?#]|$)/i.test(variants[0].url) ? { streamUrl: variants[0].url } : {}) };
+          }
+          const promptHeading = [...root.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]')]
+            .find(node => /^(?:original prompt|prompt(?: it)?|原始提示词|提示词)[:：]?$/i.test(clean(node.textContent)));
+          const promptParts = [];
+          const originalParts = [];
+          for (let node = promptHeading?.nextElementSibling; node; node = node.nextElementSibling) {
+            if (node.matches('h1,h2,h3,h4,h5,h6,[role="heading"],dl,table') || node.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]')) break;
+            for (const original of node.matches('pre,code') ? [node] : node.querySelectorAll('pre,code')) {
+              if (!original.parentElement.closest('pre,code')) originalParts.push((original.textContent || '').replace(/\r\n?/g, '\n').trim());
+            }
+            const text = (node.textContent || '').replace(/\r\n?/g, '\n').trim();
+            if (text) promptParts.push(text);
+          }
+          const originalPrompt = (originalParts.length ? originalParts : promptParts).join('\n\n');
           // Preserve prose in unsemantic layouts as well as paragraphs and credits.
           for (const node of root.querySelectorAll('div,section')) {
-            if (clean(node.textContent) && !node.querySelector('div,section,p,h1,h2,h3,h4,h5,h6,ul,ol,dl,blockquote,table')) {
+            if (clean(node.textContent) && !node.querySelector('div,section,p,h1,h2,h3,h4,h5,h6,ul,ol,dl,blockquote,pre,code,table')) {
               const p = doc.createElement('p'); p.innerHTML = node.innerHTML; node.replaceWith(p);
             }
           }
@@ -62,7 +106,7 @@ export async function collectGenericCaptureDetails(requests, options) {
           const blocks = [];
           for (const node of root.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,dt,dd,blockquote,pre,figcaption,td,th')) {
             if (node.parentElement?.closest('p,li,blockquote,pre,td,th')) continue;
-            const text = clean(node.textContent);
+            const text = node.matches('pre') ? (node.textContent || '').replace(/\r\n?/g, '\n').trim() : clean(node.textContent);
             // Card detail titles are captions, not new article section boundaries.
             if (text) blocks.push({ kind: 'paragraph', text });
           }
@@ -72,11 +116,11 @@ export async function collectGenericCaptureDetails(requests, options) {
             if (!sourceUrl || link.getAttribute('href').startsWith('#')) continue;
             const label = clean(link.textContent || link.title || link.getAttribute('aria-label') || link.querySelector('[title]')?.getAttribute('title') || link.getAttribute('download')) || sourceUrl;
             const context = clean(link.closest('li,dd,p')?.textContent);
-            if (/original source|original work|原始来源|原作|原始作品/i.test(context)) originalWorkUrl ||= sourceUrl;
+            if (/original source|original work|原始来源|原作|原始作品/i.test(context || label)) originalWorkUrl ||= sourceUrl;
             blocks.push({ kind: 'link', sourceUrl, label });
           }
           if (!blocks.length) throw new Error('详情没有可读取的文字');
-          results.push({ url: request.url, title, blocks, originalWorkUrl, matchedSources });
+          results.push({ url: request.url, title, blocks, originalWorkUrl, matchedSources, ...(media ? { media } : {}), ...(originalPrompt ? { originalPrompt } : {}) });
         } catch (error) {
           results.push({ url: request.url, error: timedOut ? '详情读取超时' : stopped ? '详情读取已停止' : error.message });
         } finally {
@@ -129,7 +173,10 @@ export function applyGenericCaptureDetails(snapshot, results) {
         ...detail.blocks, { kind: 'link', label: '案例详情', sourceUrl: detail.url }
       ]);
       extraByAsset.set(item.id, blocks);
-      return { ...item, sourceTitle: success[0]?.title || item.sourceTitle,
+      const upgraded = success.find(detail => detail.media)?.media;
+      return { ...item, ...(upgraded ? { ...upgraded, width: 0, height: 0, dataUrl: '', previewDataUrl: '' } : {}),
+        ...(success.find(detail => detail.originalPrompt) ? { originalPrompt: success.find(detail => detail.originalPrompt).originalPrompt } : {}),
+        sourceTitle: success[0]?.title || item.sourceTitle,
         originalWorkUrl: success.find(detail => detail.originalWorkUrl)?.originalWorkUrl || item.originalWorkUrl, detailBlockIds: [] };
     });
     const mediaById = new Map(media.map(item => [item.id, item]));
@@ -140,10 +187,15 @@ export function applyGenericCaptureDetails(snapshot, results) {
     const blocks = sourceBlocks.flatMap(block => {
       const extra = (extraByAsset.get(block.assetId) || []).map((detail, index) => ({ ...detail, id: `${block.id}:detail:${index}` }));
       mediaById.get(block.assetId)?.detailBlockIds.push(...extra.map(detail => detail.id));
-      return [block, ...extra];
+      const asset = mediaById.get(block.assetId);
+      return [asset ? { ...block, kind: asset.kind, sourceUrl: asset.url,
+        ...(asset.posterUrl ? { posterUrl: asset.posterUrl } : {}) } : block, ...extra];
     }).map((block, sourceOrder) => ({ ...block, sourceOrder }));
     const articleDocument = { version: 1, blocks };
-    return { ...candidate, media, articleDocument, contentText: articleDocumentText(articleDocument),
+    return { ...candidate, media, articleDocument,
+      ...(media.some(item => item.originalPrompt) ? { sourceFacts: { ...candidate.sourceFacts, originalPromptAvailable: true } } : {}),
+      ...(media.some(item => item.kind === 'video') ? { pageType: 'video' } : {}),
+      contentText: articleDocumentText(articleDocument),
       textBlocks: blocks.filter(block => block.text).map(block => ({ id: block.id, kind: 'section', text: block.text, sourceOrder: block.sourceOrder })),
       possibleOmissions: [...(candidate.possibleOmissions || []), ...warnings],
       completeness: warnings.length ? 'partial' : candidate.completeness };
@@ -160,11 +212,14 @@ export function remapDetailTextSelection(before, after, selection) {
   const selectedTexts = before.textBlocks.filter(block => selected.has(block.id)).map(block => block.text).filter(Boolean);
   const detailIds = new Set(after.media.flatMap(item => item.detailBlockIds || []));
   const selectedDetails = new Set(after.media.filter(item => selection.selectedMediaIds.includes(item.id)).flatMap(item => item.detailBlockIds || []));
+  // No initial prose is different from explicitly excluding existing prose:
+  // checking "read details" adds the first text for a media-only selection.
+  const includeText = selection.includeText || !before.textBlocks.length;
   const selectedTextBlockIds = after.textBlocks.filter(block => {
-    if (!selection.includeText) return false;
+    if (!includeText) return false;
     if (detailIds.has(block.id)) return selectedDetails.has(block.id);
     if (allSelected || selected.has(block.id)) return true;
     return !oldIds.has(block.id) && selectedTexts.some(text => block.text.includes(text));
   }).map(block => block.id);
-  return { ...selection, selectedTextBlockIds };
+  return { ...selection, includeText, selectedTextBlockIds };
 }

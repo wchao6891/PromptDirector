@@ -28,23 +28,21 @@ def main() -> None:
             },
         )
         worker = session.context.service_workers[0]
-        worker.evaluate("""corrected => {
+        worker.evaluate("""() => {
           globalThis.analysisFixtureCalls = 0;
           const realFetch = globalThis.fetch;
           globalThis.fetch = async (...args) => {
-            if (!String(args[0]).includes('api.deepseek.com')) return realFetch(...args);
-            if (!String(args[0]).includes('chat/completions')) return new Response(JSON.stringify({data:[]}));
+            const url = String(args[0]?.url || args[0]);
+            if (!url.includes('chat/completions')) return realFetch(...args);
             analysisFixtureCalls++;
-            const {facetCatalog} = await chrome.storage.local.get('facetCatalog');
-            const tags = corrected && analysisFixtureCalls > 1
-              ? facetCatalog.nodes.filter(n => !n.parentId && n.status !== 'archived').slice(0,6).map(n => ({g:n.id,t:''}))
-              : [{g:'invalid.path',t:'非法测试标签'}];
+            // Both the initial result and its correction must remain invalid.
+            const tags = [{g:'invalid.path',t:'非法测试标签'}];
             return new Response(JSON.stringify({model:'deepseek-v4-flash',
               choices:[{finish_reason:'stop',message:{content:JSON.stringify({tags})}}],
               usage:{prompt_tokens:20,completion_tokens:4,total_tokens:24}}),
               {status:200,headers:{'Content-Type':'application/json'}});
           };
-        }""", False)
+        }""")
         library = session.open_page("library.html", wait_until="networkidle")
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
@@ -59,15 +57,20 @@ def main() -> None:
           const s = await chrome.runtime.sendMessage({type:'GET_STATE'});
           return s.analysisBatchJob && !['running','paused'].includes(s.analysisBatchJob.status) ? s : null;
         }""")
+
+        # The open task panel must update without a page reload.
         expect(library.locator("#analysis-batch-summary")).to_contain_text("完成 0/1 · 失败 1")
+
         assert result["analysisBatchJob"]["counts"]["failed"] == 1
         assert result["analysisBatchJob"]["requestAttempts"] == 1
         assert result["analysisBatchJob"]["outputCorrectionRequests"] == 1
         assert result["entries"] == before["entries"], "非法结果不得改写案例"
         assert result["facetCatalog"] == before["facetCatalog"], "非法结果不得改写正式标签库"
+
         library.reload(wait_until="networkidle")
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
+
         expect(library.locator("#analysis-batch-summary")).to_contain_text("完成 0/1 · 失败 1")
         library.wait_for_timeout(1_500)
         assert worker.evaluate("analysisFixtureCalls") == 2, "重新打开页面不得自动重试付费请求"
@@ -75,7 +78,8 @@ def main() -> None:
         expect(library.locator("#promptdirector-app-dialog")).to_contain_text("API 费用")
         library.locator("#promptdirector-app-dialog").get_by_role("button", name="取消", exact=True).click()
         assert worker.evaluate("analysisFixtureCalls") == 2
-        print({"requests": 2, "invalid_results_unchanged": True, "failed_committed_once": True, "retry_cancel_zero_requests": True})
+        print({"requests": 2, "invalid_results_unchanged": True, "failed_committed_once": True,
+               "live_status_updated": True, "retry_cancel_zero_requests": True})
 
 
 if __name__ == "__main__":

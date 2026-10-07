@@ -100,7 +100,7 @@ def main():
                 panel.locator("textarea").fill("人工编辑 AI 提示词")
                 panel.get_by_role("button", name="保存", exact=True).click()
                 expect(panel.locator(".prompt-read-body")).to_have_text("人工编辑 AI 提示词")
-                stored = page.evaluate("id => chrome.storage.local.get('entries').then(s => s.entries.find(e => e.id === id))", entry["id"])
+                stored = page.evaluate("async id => {const{getLibraryStorage}=await import('./library-storage.js');return (await getLibraryStorage().get('entries')).entries.find(e=>e.id===id)}", entry["id"])
                 assert stored["text"] == entry["text"], "AI 编辑不能覆盖原始内容"
                 rules_action = panel.get_by_role("button", name="编辑分析规则", exact=True)
                 rules_action.hover()
@@ -158,7 +158,7 @@ def main():
         ai_panel.locator("textarea").fill("第三张 AI 人工修订")
         ai_panel.get_by_role("button", name="保存", exact=True).click()
         expect(ai_panel.locator(".prompt-read-body")).to_have_text("第三张 AI 人工修订")
-        stored = page.evaluate("() => chrome.storage.local.get('entries').then(s => s.entries.find(e => e.id === 'multi-image'))")
+        stored = page.evaluate("async () => {const{getLibraryStorage}=await import('./library-storage.js');return (await getLibraryStorage().get('entries')).entries.find(e=>e.id==='multi-image')}")
         assert stored["text"] == "案例共享"
         assert next(p for p in stored["mediaPrompts"] if p["assetId"] == "multi-2")["source"] == "ai-suggestion"
         assert next(p for p in stored["mediaPrompts"] if p["assetId"] == "multi-1")["text"] == "第二张原始"

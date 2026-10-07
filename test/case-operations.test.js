@@ -1,3 +1,4 @@
+import { AGENT_CASE_ACTION_SPECS } from '../extension/agent-case-action-specs.js';
 import {ANALYSIS_BATCH_SPECS} from '../extension/analysis-batch-specs.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,10 +104,25 @@ test('compound edits and split check member edits and project changes; compound 
   run.data.entries[1].text = '人工成员新文字';
   await assert.rejects(run.api.execute('edit_case', { ...patch, requestId: 'stale-title', expectedRevision: fresh.revision }), { code: 'case_conflict' });
 });
-test('cross-project combination without an explicit destination cannot trigger implicit folder copies or move originals', async () => {
-  const run = service(library()), input = await combineInput(run), before = structuredClone(run.data);
-  await assert.rejects(run.api.execute('organize_case', input), { code: 'compound_project_conflict' });
-  assert.equal(run.commits, 0); assert.deepEqual(run.data, before);
+test('cross-project combination survives migration and split without copying or moving original cases', async () => {
+  const run = service(migrateLibraryState(library()).state), input = await combineInput(run);
+  const before = structuredClone(run.data);
+  const saved = await run.api.execute('organize_case', input);
+  assert.equal(saved.ok, true);
+  assert.deepEqual(run.data.entries, before.entries);
+  assert.deepEqual(run.data.organizerState, before.organizerState);
+  const reread = migrateLibraryState(run.data);
+  assert.equal(reread.folderOwnershipMigrated, false);
+  assert.deepEqual(reread.state.entries, before.entries);
+  assert.deepEqual(reread.state.organizerState, before.organizerState);
+  assert.equal(reread.state.compoundCases.length, 1);
+  Object.assign(run.data, reread.state);
+  const compoundId = saved.cases[0].caseId;
+  await run.api.execute('organize_case', { requestId: 'cross-project-split', caseId: compoundId,
+    expectedRevision: (await run.api.read({caseId:compoundId})).revision, action:'split_compound' });
+  assert.deepEqual(run.data.entries, before.entries);
+  assert.deepEqual(run.data.organizerState, before.organizerState);
+  assert.equal(run.data.compoundCases.length, 0);
 });
 test('cover changes preserve original media and annotations, reject foreign assets and can restore automatic selection', async () => {
   const run = service(library()), before = structuredClone(run.data.entries[0]);
@@ -290,7 +306,7 @@ test('composer and MCP share schemas; composer cannot edit unknown cases and rep
       if (name === 'read_case_details') return run.api.read(input);
       const result = await run.api.execute(name, input); controller.abort(); return result;
     }, onEvent: e => events.push(e) });
-  assert.deepEqual(wrapper.specs.map(s => s.parameters), [...CASE_OPERATION_SPECS, ...PROJECT_OPERATION_SPECS, SAVE_TEXT_MATERIAL_SPEC, ...ANALYSIS_BATCH_SPECS].map(s => s.parameters));
+  assert.deepEqual(wrapper.specs.map(s => s.parameters), [...CASE_OPERATION_SPECS, ...AGENT_CASE_ACTION_SPECS, ...PROJECT_OPERATION_SPECS, SAVE_TEXT_MATERIAL_SPEC, ...ANALYSIS_BATCH_SPECS].map(s => s.parameters));
   assert((await wrapper.execute('read_case_details', { caseId: 'old' }, {})).data.error);
   await wrapper.execute('search_cases', {}, {});
   const read = (await wrapper.execute('read_case_details', { caseId: 'old' }, {})).data;

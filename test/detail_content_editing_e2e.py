@@ -79,7 +79,7 @@ def main():
         expect(reader).to_contain_text('保存后的文章正文。')
         expect(reader.get_by_role('button', name='编辑正文', exact=True)).to_be_focused()
         assert reader.evaluate('e=>e===window.articleReader && e.querySelector("img")===window.articleImage'), '文章保存不应重建媒体'
-        stored = page.evaluate("async()=>{const {entries}=await chrome.storage.local.get('entries');return entries.find(e=>e.id==='article-edit')}")
+        stored = page.evaluate("async()=>{const{getLibraryStorage}=await import('./library-storage.js');const {entries}=await getLibraryStorage().get('entries');return entries.find(e=>e.id==='article-edit')}")
         assert stored['text'] == '保存后的文章正文。'
         assert any(block.get('assetId') == 'article-image-0' for block in stored['articleDocument']['blocks'])
         page.locator('#detail-close').click()

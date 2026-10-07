@@ -1,4 +1,5 @@
 import { createGalleryPreviewQueue, cardPreviewPriority, indexGalleryMedia } from './gallery-preview-queue.js';
+import { MAX_PALETTE_COLORS } from './palette.js';
 import { startPhase } from "./perf-trace.js";
 import { eagleDirectorySource, readEagleDirectory, readEaglePackage } from './eagle-import.js';
 import { createMediaStage } from './staged-media.js';
@@ -11,14 +12,19 @@ import { skillFileOwners, skillPackageFiles } from './skill-files.js';
 import { createTransientFeedback } from "./transient-feedback.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { getLibraryStorage } from "./library-storage.js";
-import { applyCaseChanges } from "./library-case-records.js";
+import { createSearchIndexWarmup } from "./library-search-warmup.js";
+import { sortBrowseCases } from "./library-browse-index.js";
+import { mergeLibraryEntryChange, libraryChangedEntryIds, createLocalCaseEditTracker } from "./library-entry-changes.js";
 const libraryStorage = getLibraryStorage();
-import { createLibraryViewReader, enrichContentMeanings } from './library-view-state.js';
-const readLibraryViewState = createLibraryViewReader({
+import { createLibraryViewReader, createProgressiveLibraryViewReader, enrichContentMeanings } from './library-view-state.js';
+const libraryViewReaderOptions = {
+  readonlyEntries: true,
   storage: libraryStorage,
   prepare: ({ summaryOnly, creativeSummary } = {}) => chrome.runtime.sendMessage({ type: 'PREPARE_LIBRARY_VIEW_STATE', summaryOnly, creativeSummary }),
   uiLanguage: chrome.i18n.getUILanguage()
-});
+};
+const readLibraryViewState = createLibraryViewReader(libraryViewReaderOptions);
+const readProgressiveLibraryView = createProgressiveLibraryViewReader(libraryViewReaderOptions);
 import { createBlobDigestCache } from "./blob-digest.js";
 import { installWorkspaceReader, libraryWorkspaceReferences } from "./workspace-context.js";
 import { createSelectionWriter, REFERENCE_SELECTION_KEY } from "./reference-selection.js";
@@ -191,6 +197,7 @@ import {
   modelConcurrencyLimit
 } from "./ai-provider-registry.js";
 import { buildSearchIndex, searchIndexedEntries } from "./search-index.js";
+import { parseSearchQuery } from "./search-query.js";
 import {
   mediaReferenceProviderLabel,
   officialMediaEmbedUrl,
@@ -239,6 +246,7 @@ import {
 import {
   LIBRARY_RETURN_STORAGE_KEY,
   createLibraryReturnRestore,
+  parseLibraryReturnSnapshot,
   serializeLibraryReturnSnapshot
 } from "./navigation-state.js";
 import { CURATED_SUBMISSION_URL } from "./curated-config.js";
@@ -367,6 +375,9 @@ const documentDerived = new ResourceCache({ maxEntries: previewCacheEntries, max
 let imageDerivedMetadata = new Map();
 let imageDerivedMetadataLoaded = false;
 let imageDerivedMetadataLoadPromise = null;
+let imageDerivedMetadataDuringLoad = null;
+const imageDerivedMetadataRequests = new Map();
+const imageDerivedMetadataChecked = new Set();
 const loadingDocumentPreviews = new Map();
 const documentPreviewQueue = [];
 const documentPreviewConcurrency = Math.max(1, Math.min(2, Math.floor((navigator.hardwareConcurrency || 2) / 4)));
@@ -378,6 +389,13 @@ let compoundCases = [];
 let logicalCases = [];
 let libraryRefreshGeneration = 0;
 let libraryLoadingIssue = '';
+let libraryStartupPending = true;
+let libraryFullyLoaded = false;
+let libraryLoadProgress = null;
+let startupBrowseEntries = null;
+let displayedLibraryRevision = null;
+let startupBrowseCompounds = [];
+let startupBrowsePlan = null;
 let taxonomy = { nodes: [] };
 let classificationRules = [];
 let facetCatalog = { facets: [], nodes: [] };
@@ -539,7 +557,11 @@ let similarityWarmup = 0;
 let similarityBuild = null;
 // Each idle slice works at most about half a 60 Hz frame, so scrolling and clicks stay responsive
 // while a large library is indexed.
-const SIMILARITY_SLICE_MS = 8;
+const LIBRARY_INDEX_SLICE_MS = 8;
+const searchIndexWarmup = createSearchIndexWarmup({
+  requestIdle: typeof requestIdleCallback === "function" ? callback => requestIdleCallback(callback) : null,
+  cancelIdle: handle => cancelIdleCallback(handle), now: () => performance.now(), sliceMs: LIBRARY_INDEX_SLICE_MS
+});
 function markSimilarityIndexStale() {
   localSimilarityIndexStale = true;
   similarityBuild = null;
@@ -549,9 +571,9 @@ function scheduleSimilarityWarmup() {
   if (similarityWarmup || typeof requestIdleCallback !== "function") return;
   similarityWarmup = requestIdleCallback(() => {
     similarityWarmup = 0;
-    if (!localSimilarityIndexStale) return;
+    if (!localSimilarityIndexStale || !imageDerivedMetadataLoaded) return;
     similarityBuild ??= similarityIndexSteps(logicalCases, facetCatalog, similarityIndexOptions());
-    const end = performance.now() + SIMILARITY_SLICE_MS;
+    const end = performance.now() + LIBRARY_INDEX_SLICE_MS;
     while (performance.now() < end) {
       const step = similarityBuild.next();
       if (!step.done) continue;
@@ -602,6 +624,12 @@ let externalLibraryRefreshPending = false;
 // refresh must re-read everything (projects, combinations, batch state or an unknown change).
 let pendingEntriesChange = null;
 let pendingFullLibraryRefresh = false;
+const localCaseEdits = createLocalCaseEditTracker();
+const LOCAL_CASE_EDIT_TYPES = new Set([
+  "UPDATE_ENTRY_TITLE", "UPDATE_ENTRY_TEXT", "UPDATE_ENTRY_ARTICLE_TEXT", "UPDATE_ENTRY_CUSTOM_LABELS",
+  "UPDATE_VIDEO_RECONSTRUCTION_PROMPT", "UPDATE_VISION_RECONSTRUCTION_PROMPT",
+  "UPDATE_ENTRY_MEDIA_PROMPT", "APPLY_ENTRY_MEDIA_PROMPT_SUGGESTIONS"
+]);
 let workspaceLibraryRevision = 0;
 let liveWorkspace = null;
 let extensionUpdateStatus = null;
@@ -657,17 +685,23 @@ window.addEventListener("scroll", () => {
 }, { passive: true });
 libraryStorage.subscribe((changes) => {
   if (changes[REFERENCE_SELECTION_KEY]?.newValue) void referenceSelectionWriter.observe(changes[REFERENCE_SELECTION_KEY].newValue);
+  if (["entries", "organizerState", "compoundCases", "batchJob"].some(key => changes[key])) {
+    workspaceLibraryRevision++;
+    liveWorkspace?.observe('library');
+  }
+  if (changes.entries) {
+    const entryChange = localCaseEdits.observe(changes.entries);
+    changes = { ...changes, entries: entryChange };
+  }
   const changedKeys = ["entries", "organizerState", "compoundCases", "batchJob"].filter((key) => changes[key]);
   if (!changedKeys.length) return;
   if (changedKeys.length === 1 && changedKeys[0] === "entries" && Array.isArray(changes.entries.newValue)) {
-    pendingEntriesChange = changes.entries.newValue;
-  } else if (changedKeys.length === 1 && changes.entries.caseLayout && document.body.dataset.libraryState === "ready") {
+    pendingEntriesChange = mergeLibraryEntryChange(pendingEntriesChange, entries, changes.entries);
+  } else if (changedKeys.length === 1 && changes.entries?.caseLayout && document.body.dataset.libraryState === "ready") {
     // Per-case storage names only the changed cases; changes arriving together build on each other.
-    pendingEntriesChange = applyCaseChanges(pendingEntriesChange ?? entries, changes.entries);
+    pendingEntriesChange = mergeLibraryEntryChange(pendingEntriesChange, entries, changes.entries);
     if (!pendingEntriesChange) pendingFullLibraryRefresh = true;
   } else pendingFullLibraryRefresh = true;
-  workspaceLibraryRevision++;
-  liveWorkspace?.observe('library');
   externalLibraryRefreshPending = true;
   scheduleExternalLibraryRefresh();
 });
@@ -742,6 +776,12 @@ const layoutSettings = mountLayoutSettings(document.querySelector('#settings-lay
   }
 });
 bindEvents();
+document.addEventListener("click", event => {
+  if (libraryFullyLoaded || !event.target.closest?.('#select-cases, #open-settings, #create-collection, #manage-facets, #add-menu, .project-menu')) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  showFeedback(t("案例尚未加载完成，请稍候"));
+}, true);
 const libraryTopbar = document.querySelector(".topbar");
 const libraryToolbarObserver = new ResizeObserver(() => {
   document.documentElement.style.setProperty("--library-topbar-height", `${libraryTopbar.getBoundingClientRect().height}px`);
@@ -766,12 +806,13 @@ void refreshExtensionUpdateStatus().then(async () => {
   } catch (error) { showUpdateFeedback(error.message, true); }
 });
 try {
-  await refreshLibrary();
+  await openLibraryProgressively();
   await openRequestedLibraryTarget();
   await resumeImportJob();
   openRequestedSettings();
 } catch (error) {
   libraryLoadingIssue = error?.message || String(error);
+  document.body.dataset.libraryState = "error";
   const status = document.querySelector('#library-loading strong');
   if (status) status.textContent = t("无法打开资料库：{reason}", { reason: translateUiMessage(error?.message || String(error)) });
   console.error('PromptDirector library startup', error);
@@ -780,6 +821,7 @@ try {
 window.addEventListener("pagehide", saveLibraryReturnSnapshot);
 
 window.addEventListener("unload", () => {
+  searchIndexWarmup.cancel();
   galleryMasonry?.destroy();
   if (mediaHydrationFrame) cancelAnimationFrame(mediaHydrationFrame);
   if (maintenancePollTimer) clearTimeout(maintenancePollTimer);
@@ -791,14 +833,14 @@ function scheduleExternalLibraryRefresh() {
   if (document.hidden || externalLibraryRefreshTimer) return;
   externalLibraryRefreshTimer = window.setTimeout(async () => {
     externalLibraryRefreshTimer = 0;
-    if (!externalLibraryRefreshPending) return;
+    if (!externalLibraryRefreshPending || localCaseEdits.pending || libraryStartupPending) return;
     externalLibraryRefreshPending = false;
     const entriesChange = pendingEntriesChange;
     const full = pendingFullLibraryRefresh || !entriesChange || document.body.dataset.libraryState !== "ready";
     pendingEntriesChange = null;
     pendingFullLibraryRefresh = false;
     if (full) await refreshLibrary();
-    else await applyLibraryEntriesChange(entriesChange);
+    else await applyLibraryEntriesChange(entriesChange.entries, entriesChange);
   }, 80);
 }
 
@@ -1316,38 +1358,130 @@ function bindEvents() {
   });
 }
 
-async function refreshLibrary() {
-  const refreshGeneration = ++libraryRefreshGeneration;
-  const doneRefresh = startPhase("library", "refresh");
-  const doneReading = startPhase("library", "wait:read");
-  let response;
-  try {
-    const [state, _derived, diagnosticState, dragIdentity] = await Promise.all([
-      readLibraryViewState(),
-      loadImageDerivedMetadata(),
-      chrome.storage.local.get("analysisDiagnostics"),
-      chrome.runtime.sendMessage({ type: 'GET_LIBRARY_IDENTITY' }).catch(error => ({ message: error.message }))
-    ]);
-    doneReading();
-    response = state;
-    response.dragIdentity = dragIdentity;
-    analysisDiagnostics = normalizeAnalysisDiagnostics(diagnosticState.analysisDiagnostics);
+function renderLibraryLoadProgress() {
+  const status = document.querySelector('#library-loading strong');
+  if (!status || (libraryFullyLoaded && !libraryLoadingIssue)) return;
+  status.textContent = libraryLoadingIssue
+    ? t("无法打开资料库：{reason}", { reason: translateUiMessage(libraryLoadingIssue) })
+    : elements.searchInput.value.trim() && libraryLoadProgress?.loaded
+      ? t("正在加载其余案例，搜索结果仍在补齐")
+      : libraryLoadProgress
+        ? t("正在加载案例 {loaded}/{total}", libraryLoadProgress)
+        : t("正在打开资料库");
+}
+
+function startupCasePriority({ ids, stored }) {
+  if (stored.browseEntries) {
+    if (startupBrowseEntries !== stored.browseEntries) startupBrowsePlan = null;
+    startupBrowseEntries = stored.browseEntries;
+    startupBrowseCompounds = stored.compoundCases ?? [];
+    return currentStartupBrowseOrder().flatMap(entry => entry.memberEntryIds ?? [entry.id]);
+  }
+  const params = new URLSearchParams(location.search);
+  let snapshot;
+  try { snapshot = parseLibraryReturnSnapshot(sessionStorage.getItem(LIBRARY_RETURN_STORAGE_KEY)); } catch {}
+  const projectId = selectedCollectionId || params.get('project') || snapshot?.collectionId;
+  const projects = stored.organizerState ?? { collections: [] };
+  const projectIds = projectId ? collectionEntryIds(projects, projectId, { subtree: uiPreferences.includeSubprojects }) : [];
+  const requested = params.get('case');
+  const requestedIds = stored.compoundCases?.find(item => item.id === requested)?.memberEntryIds ?? (requested ? [requested] : []);
+  return [...requestedIds, ...projectIds, ...ids];
+}
+
+async function openLibraryProgressively() {
+  const doneStartup = startPhase("library", "startup");
+  let doneFirstCases = startPhase("library", "firstCases");
+  // Establish the requested scope before the empty metadata frame renders its sort controls.
+  const startupRoute = new URLSearchParams(location.search);
+  const requestedProject = startupRoute.get('project');
+  if (requestedProject || startupRoute.get('case')) {
+    try { sessionStorage.removeItem(LIBRARY_RETURN_STORAGE_KEY); } catch {}
+  }
+  if (requestedProject) selectedCollectionId = requestedProject;
+  // Identity and diagnostics do not determine which cases can be seen first.
+  void chrome.runtime.sendMessage({ type: 'GET_LIBRARY_IDENTITY' }).then(response => {
+    if (response?.ok) dragLibraryId = response.identity.libraryId;
+  }).catch(error => showFeedback(error.message, true));
+  void chrome.storage.local.get('analysisDiagnostics').then(stored => {
+    analysisDiagnostics = normalizeAnalysisDiagnostics(stored.analysisDiagnostics);
     analysisDiagnosticStartedAt = analysisDiagnostics[0]?.at || 0;
     renderAnalysisDiagnostics();
+  });
+  try {
+    for await (const response of readProgressiveLibraryView({
+      batchSize: ({ loaded }) => Math.max(PAGE_SIZE, loaded), selectIds: startupCasePriority, useBrowseIndex: true
+    })) {
+      libraryLoadProgress = { loaded: response.loaded, total: response.total };
+      await refreshLibrary({ response, progressive: true });
+      if (response.entries.length && doneFirstCases) { doneFirstCases(); doneFirstCases = null; }
+      const route = new URLSearchParams(location.search);
+      if (route.get('case') ? logicalCases.some(entry => entry.id === route.get('case'))
+        : route.get('project') && organizerState.collections.some(project => project.id === route.get('project'))) {
+        await openRequestedLibraryTarget();
+      }
+      // Commit the first cards to the screen and service input before reading the next batch.
+      await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    }
   } catch (error) {
-    document.body.dataset.libraryState = "ready";
+    if (error.code !== 'CASE_RECORDS_CHANGED') throw error;
+    // A writer changed the snapshot mid-read. Keep the visible cases while reading its new version.
+    startupBrowseEntries = null;
+    startupBrowsePlan = null;
+    await refreshLibrary({ progressive: true });
+  } finally {
+    doneFirstCases?.();
+    doneStartup();
+    libraryStartupPending = false;
+    startupBrowseEntries = null;
+    startupBrowseCompounds = [];
+    startupBrowsePlan = null;
+    if (externalLibraryRefreshPending) scheduleExternalLibraryRefresh();
+  }
+}
+
+async function refreshLibrary({ response: suppliedResponse, progressive = false } = {}) {
+  const refreshGeneration = ++libraryRefreshGeneration;
+  const doneRefresh = startPhase("library", "refresh");
+  const doneReading = suppliedResponse ? () => {} : startPhase("library", "wait:read");
+  let response = suppliedResponse;
+  try {
+    if (!response) {
+      const [state, diagnosticState, dragIdentity] = await Promise.all([
+        readLibraryViewState(),
+        chrome.storage.local.get("analysisDiagnostics"),
+        chrome.runtime.sendMessage({ type: 'GET_LIBRARY_IDENTITY' }).catch(error => ({ message: error.message }))
+      ]);
+      doneReading();
+      response = state;
+      response.dragIdentity = dragIdentity;
+      analysisDiagnostics = normalizeAnalysisDiagnostics(diagnosticState.analysisDiagnostics);
+      analysisDiagnosticStartedAt = analysisDiagnostics[0]?.at || 0;
+      renderAnalysisDiagnostics();
+    } else doneReading();
+  } catch (error) {
+    libraryLoadingIssue = error?.message || "无法读取本地案例库";
+    document.body.dataset.libraryState = "error";
+    renderLibraryLoadProgress();
     showFeedback(error?.message || "无法读取本地案例库", true);
     return;
   }
   if (!response?.ok) {
-    document.body.dataset.libraryState = "ready";
+    libraryLoadingIssue = response?.message || "无法读取本地案例库";
+    document.body.dataset.libraryState = "error";
+    renderLibraryLoadProgress();
     showFeedback(response?.message || "无法读取本地案例库", true);
     return;
   }
   if (refreshGeneration !== libraryRefreshGeneration) return;
+  const complete = response.complete !== false;
+  // A queued notification can describe the complete snapshot we just displayed.
+  // Still read its current version, but reuse the cards when no case/catalog changed.
+  const preserveCards = Boolean(complete && response.revision && response.revision === displayedLibraryRevision);
+  libraryFullyLoaded = complete;
+  if (!complete) document.body.dataset.libraryState = "partial";
   entries = response.entries ?? [];
-  dragLibraryId = response.dragIdentity?.ok ? response.dragIdentity.identity.libraryId : '';
-  if (!referenceSelectionInitialized) {
+  if (response.dragIdentity) dragLibraryId = response.dragIdentity.ok ? response.dragIdentity.identity.libraryId : '';
+  if (complete && !referenceSelectionInitialized) {
     try {
       const selection = await referenceSelectionWriter.initialize();
       referenceSelectionInitialized = true;
@@ -1357,7 +1491,7 @@ async function refreshLibrary() {
       }
     } catch (error) { showFeedback(error.message, true); }
   }
-  compoundCases = normalizeCompoundCases(response.compoundCases, entries);
+  compoundCases = normalizeCompoundCases(response.loadedCompoundCases ?? response.compoundCases, entries);
   taxonomy = response.taxonomy ?? { nodes: [] };
   classificationRules = response.classificationRules ?? [];
   facetCatalog = normalizeFacetCatalog(response.facetCatalog);
@@ -1374,13 +1508,13 @@ async function refreshLibrary() {
   aiProviderRegistry = response.aiProviderRegistry ?? aiProviderRegistry;
   aiTaskAssignments = response.aiTaskAssignments ?? aiTaskAssignments;
   aiPreferences = response.aiPreferences ?? aiPreferences;
-  if (!aiModelCatalogRefreshStarted) {
+  if (complete && !aiModelCatalogRefreshStarted) {
     aiModelCatalogRefreshStarted = true;
     void refreshAiModelCatalogsForSession();
   }
   composerSettings = normalizeComposerSettings(response.composerSettings);
   creativeExperimentSettings = response.creativeExperimentSettings ?? creativeExperimentSettings;
-  void chrome.runtime.sendMessage({ type: 'GET_LIBRARY_VIEW_STATUS' }).then(status => {
+  if (complete) void chrome.runtime.sendMessage({ type: 'GET_LIBRARY_VIEW_STATUS' }).then(status => {
     if (refreshGeneration !== libraryRefreshGeneration || !status?.ok) return;
     syncStatus = status.syncStatus ?? {};
   }).catch(error => console.error('PromptDirector sync status', error));
@@ -1413,20 +1547,38 @@ async function refreshLibrary() {
     showFeedback("项目不存在", true);
   }
   sanitizeSelections();
-  for (const card of caseCardCache.values()) cardVideoPreviews.get(card)?.stop();
-  caseCardCache.clear();
+  if (!progressive && !preserveCards) {
+    for (const card of caseCardCache.values()) cardVideoPreviews.get(card)?.stop();
+    caseCardCache.clear();
+  }
   listMetadataCache = new WeakMap();
   listTagNames = null;
+  // A restored color filter needs its complete index; ordinary browsing only needs first-screen ratios.
+  if (complete && parseSearchQuery(elements.searchInput.value).filters.some(filter => filter.name === "color")) await loadImageDerivedMetadata();
+  if (refreshGeneration !== libraryRefreshGeneration) return;
   const doneDeriving = startPhase("library", "derive");
   rebuildLibraryDerivedState();
   doneDeriving();
   updateSelectionBar();
   const doneRendering = startPhase("library", "render");
-  renderGallery();
+  renderGallery({ preserveViewport: progressive || preserveCards, preserveCards });
+  if (!imageDerivedMetadataLoaded) {
+    const images = [...elements.caseList.querySelectorAll('img[data-visual-id]')];
+    await loadImageDerivedMetadataForIds(images.map(image => image.dataset.visualId))
+      .catch(error => showFeedback(error.message || "无法读取本机资料", true));
+    if (refreshGeneration !== libraryRefreshGeneration) return;
+    for (const image of images) applyCardImageDimensions(image, imageDimensions({ id: image.dataset.visualId }));
+    if ((progressive || preserveCards) && galleryMasonry) galleryMasonry.resize();
+    else layoutBrowseCards();
+  }
   doneRendering();
   doneRefresh();
   libraryLoadingIssue = '';
+  renderLibraryLoadProgress();
+  if (!complete) return;
+  displayedLibraryRevision = response.revision ?? null;
   document.body.dataset.libraryState = "ready";
+  void loadImageDerivedMetadata().catch(error => showFeedback(error.message || "无法读取本机资料", true));
   if (!elements.searchInput.value.trim()) restoreLibraryScrollPosition();
   const cacheGeneration = ++documentCacheGeneration;
   void loadDocumentDerivedCache(entries).then(changed => {
@@ -1437,7 +1589,7 @@ async function refreshLibrary() {
     updateCachedDocumentCards();
     if (elements.searchInput.value.trim()) scheduleSearchRender();
   }).catch(() => undefined).finally(() => restoreLibraryScrollPosition());
-  await renderOpenLibraryPanels();
+  await renderOpenLibraryPanels({ detailChanged: !progressive && !preserveCards });
   scheduleMaintenanceStatusPoll();
   if (response.restoredArchivedFacetCount) {
     showFeedback(`已自动恢复 ${response.restoredArchivedFacetCount} 个误归档维度，原案例标签没有丢失`);
@@ -1456,20 +1608,11 @@ async function renderOpenLibraryPanels({ detailChanged = true } = {}) {
 // Another page or the background changed only cases. Apply the delivered list directly instead of
 // re-reading the library, and rebuild cards and search rows only for the cases that changed, so
 // unchanged cards keep their nodes and loaded images.
-async function applyLibraryEntriesChange(nextEntries) {
+async function applyLibraryEntriesChange(nextEntries, { changedEntryIds: knownIds = null, orderChanged = false, refreshDetail = true } = {}) {
   ++libraryRefreshGeneration;
   const done = startPhase("library", "refreshIncremental");
-  // Compare stored fields only: page entries may or may not carry the derived content meaning.
-  const storedJson = (entry) => JSON.stringify({ ...entry, contentRole: undefined, contentTypeName: undefined });
-  const previous = new Map(entries.map((entry) => [entry.id, entry]));
-  const changedEntryIds = new Set();
-  for (const entry of nextEntries) {
-    const before = previous.get(entry.id);
-    if (!before || storedJson(before) !== storedJson(entry)) changedEntryIds.add(entry.id);
-    previous.delete(entry.id);
-  }
-  for (const id of previous.keys()) changedEntryIds.add(id);
-  if (!changedEntryIds.size) {
+  const changedEntryIds = libraryChangedEntryIds(entries, nextEntries, knownIds);
+  if (!changedEntryIds.size && !orderChanged) {
     done();
     return;
   }
@@ -1489,16 +1632,53 @@ async function applyLibraryEntriesChange(nextEntries) {
   }
   updateSelectionBar();
   renderGallery();
-  await renderOpenLibraryPanels({ detailChanged: affectedIds.has(currentDetailId) });
+  await renderOpenLibraryPanels({ detailChanged: refreshDetail && affectedIds.has(currentDetailId) });
   done();
 }
 
-async function loadImageDerivedMetadata() {
-  if (imageDerivedMetadataLoaded) return imageDerivedMetadata;
-  imageDerivedMetadataLoadPromise ||= getAllDerivedMetadata().catch(() => new Map());
-  imageDerivedMetadata = await imageDerivedMetadataLoadPromise;
-  imageDerivedMetadataLoaded = true;
-  return imageDerivedMetadata;
+function rememberImageDerivedMetadata(id, metadata) {
+  imageDerivedMetadata.set(id, metadata);
+  imageDerivedMetadataDuringLoad?.set(id, metadata);
+  if (currentDetailId) {
+    const palette = elements.detailContent.querySelector(".detail-header-section > .detail-palette");
+    const entry = logicalCases.find(item => item.id === currentDetailId);
+    if (entry && palette?.dataset.paletteId === id) updateDetailPalette(palette, entry);
+  }
+}
+
+async function loadImageDerivedMetadataForIds(ids) {
+  if (imageDerivedMetadataLoaded) return;
+  await Promise.all([...new Set(ids)].filter(id => id && !imageDerivedMetadataChecked.has(id)).map(id => {
+    if (!imageDerivedMetadataRequests.has(id)) {
+      const before = imageDerivedMetadata.get(id);
+      imageDerivedMetadataRequests.set(id, getDerivedMetadata(id).then(metadata => {
+        if (metadata && imageDerivedMetadata.get(id) === before) rememberImageDerivedMetadata(id, metadata);
+        imageDerivedMetadataChecked.add(id);
+      }).finally(() => imageDerivedMetadataRequests.delete(id)));
+    }
+    return imageDerivedMetadataRequests.get(id);
+  }));
+}
+
+async function loadImageDerivedMetadata({ refresh = false } = {}) {
+  if (imageDerivedMetadataLoaded && !refresh) return imageDerivedMetadata;
+  if (imageDerivedMetadataLoadPromise) return imageDerivedMetadataLoadPromise;
+  imageDerivedMetadataDuringLoad = new Map();
+  imageDerivedMetadataLoadPromise = getAllDerivedMetadata().then(metadata => {
+    // A scan can finish after a new palette or dimensions have been saved by a visible consumer.
+    for (const [id, value] of imageDerivedMetadataDuringLoad) metadata.set(id, value);
+    imageDerivedMetadata = metadata;
+    imageDerivedMetadataLoaded = true;
+    markSimilarityIndexStale();
+    rebuildLibrarySearchIndex();
+    gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
+    if (document.body.dataset.libraryState === "ready" && elements.searchInput.value.trim()) scheduleSearchRender();
+    return metadata;
+  }).finally(() => {
+    imageDerivedMetadataLoadPromise = null;
+    imageDerivedMetadataDuringLoad = null;
+  });
+  return imageDerivedMetadataLoadPromise;
 }
 
 async function loadDocumentDerivedCache(entryValues) {
@@ -1561,40 +1741,81 @@ function currentSimilarityIndex() {
 function rebuildLibrarySearchIndex(changedLogicalIds = null) {
   const reusable = changedLogicalIds ? librarySearchIndexById : new Map();
   const stale = logicalCases.filter((entry) => !reusable.has(entry.id) || changedLogicalIds?.has(entry.id));
-  const rebuilt = new Map(buildSearchIndex(stale, facetCatalog, documentSearchText(), imageDerivedMetadata)
+  const rebuilt = new Map(buildSearchIndex(stale, facetCatalog, documentSearchText(), imageDerivedMetadata, { lazy: true })
     .map((item) => [item.id, item]));
   librarySearchIndexById = new Map(logicalCases.map((entry) => [entry.id, rebuilt.get(entry.id) ?? reusable.get(entry.id)]));
+  if (libraryFullyLoaded) searchIndexWarmup.start(librarySearchIndexById.values());
 }
 
 function searchIndexForEntries(entryValues) {
   return entryValues.map((entry) => librarySearchIndexById.get(entry.id)).filter(Boolean);
 }
 
-function renderGallery() {
-  cancelCaseOrderDrag();
+function browseScopeEntries(sourceCases) {
   const assignedEntryIds = unassignedViewActive
     ? new Set(organizerState.collections.flatMap((collection) => collection.entryIds))
     : null;
   const isVisibleInLibrary = createLibraryVisibilityReader(organizerState);
   const modeEntries = selectedCollectionId || selectionMode === "project" || unassignedViewActive
-    ? logicalCases
-    : logicalCases.filter((entry) => (entry.memberEntryIds ?? [entry.id])
+    ? sourceCases
+    : sourceCases.filter((entry) => (entry.memberEntryIds ?? [entry.id])
       .some(isVisibleInLibrary));
   const projectEntryIds = selectedCollectionId && selectionMode !== "project"
     ? new Set(selectionMode === "vision" || uiPreferences.includeSubprojects
       ? collectionEntryIds(organizerState, selectedCollectionId, { subtree: true })
       : organizerState.collections.find((item) => item.id === selectedCollectionId)?.entryIds ?? [])
     : null;
-  let galleryEntries = unassignedViewActive
+  return unassignedViewActive
     ? modeEntries.filter((entry) => (entry.memberEntryIds ?? [entry.id]).every((id) => !assignedEntryIds.has(id)))
     : projectEntryIds
     ? modeEntries.filter((entry) => entry.memberEntryIds
       ? entry.memberEntryIds.some((id) => projectEntryIds.has(id))
       : projectEntryIds.has(entry.id))
     : modeEntries;
+}
+
+function structuredBrowseEntries(galleryEntries) {
+  const libraryContentIds = new Set(taxonomy.nodes
+    .filter(item => item.visibility !== CONTENT_TYPE_VISIBILITY.categoryOnly).map(item => item.id));
+  const browseEntries = selectedContentId ? galleryEntries : galleryEntries.filter(entry => isEntryPending(entry)
+    || entryContentTypeIds(entry).some(id => libraryContentIds.has(id)));
+  return filterEntries(browseEntries, { query: "", contentId: selectedContentId,
+    facetSelections: selectedFacets, pendingOnly: elements.pendingFilter.checked }, facetCatalog);
+}
+
+function currentStartupBrowseOrder() {
+  if (!startupBrowseEntries) return [];
+  const signature = JSON.stringify([caseSortMode, selectedCollectionId, unassignedViewActive,
+    selectionMode, uiPreferences.includeSubprojects, selectedContentId, [...selectedFacets].map(([id, values]) => [id, [...values]]),
+    elements.pendingFilter.checked, currentLocale()]);
+  if (startupBrowsePlan?.signature === signature) return startupBrowsePlan.entries;
+  const project = organizerState.collections.find(item => item.id === selectedCollectionId);
+  const sorted = sortBrowseCases(startupBrowseEntries, startupBrowseCompounds, {
+    mode: caseSortMode, projectEntryIds: project?.entryIds ?? [], facetCatalog,
+    typeLabel: entry => entryContentTypeIds(entry).map(contentLabel).join(" · ")
+  });
+  const ordered = structuredBrowseEntries(browseScopeEntries(sorted));
+  startupBrowsePlan = { signature, entries: ordered };
+  return ordered;
+}
+
+function loadedStartupPrefix(galleryEntries) {
+  if (libraryFullyLoaded || !startupBrowseEntries) return galleryEntries;
+  const loaded = new Map(galleryEntries.map(entry => [entry.id, entry]));
+  const prefix = [];
+  for (const entry of currentStartupBrowseOrder()) {
+    if (!loaded.has(entry.id)) break;
+    prefix.push(loaded.get(entry.id));
+  }
+  return prefix;
+}
+
+function renderGallery({ preserveViewport = false, preserveCards = false } = {}) {
+  cancelCaseOrderDrag();
+  const galleryEntries = browseScopeEntries(logicalCases);
   indexedGalleryEntries = galleryEntries;
   gallerySearchIndex = searchIndexForEntries(galleryEntries);
-  renderGalleryResults({ refreshNavigation: true });
+  renderGalleryResults({ refreshNavigation: true, preserveViewport, preserveCards });
 }
 
 function scheduleSearchRender() {
@@ -1610,40 +1831,37 @@ function renderStructuredFilterResults() {
   renderGalleryResults({ refreshNavigation: false });
 }
 
-function renderGalleryResults({ refreshNavigation }) {
+function renderGalleryResults({ refreshNavigation, preserveViewport = false, preserveCards = false }) {
+  if (libraryFullyLoaded && !imageDerivedMetadataLoaded && parseSearchQuery(elements.searchInput.value).filters.some(filter => filter.name === "color")) {
+    void loadImageDerivedMetadata().then(() => renderGalleryResults({ refreshNavigation }))
+      .catch(error => showFeedback(error.message || "无法读取本机资料", true));
+    return;
+  }
   galleryGeneration += 1;
   const generation = galleryGeneration;
   loadObserver.disconnect();
   if (loadCheckFrame) cancelAnimationFrame(loadCheckFrame);
   const galleryEntries = indexedGalleryEntries;
   const pendingCount = galleryEntries.filter(isEntryPending).length;
-  if (!pendingCount) elements.pendingFilter.checked = false;
+  if (libraryFullyLoaded && !pendingCount) elements.pendingFilter.checked = false;
   pendingSwitch.hidden = !pendingCount;
-  if (selectedContentId && !galleryEntries.some((entry) => entryContentTypeIds(entry).includes(selectedContentId))) {
+  if (libraryFullyLoaded && selectedContentId && !galleryEntries.some((entry) => entryContentTypeIds(entry).includes(selectedContentId))) {
     selectedContentId = "";
   }
   const query = elements.searchInput.value.trim();
-  const libraryContentIds = new Set(taxonomy.nodes
-    .filter((item) => item.visibility !== CONTENT_TYPE_VISIBILITY.categoryOnly)
-    .map((item) => item.id));
-  const browseEntries = selectedContentId
-    ? galleryEntries
-    : galleryEntries.filter((entry) => isEntryPending(entry)
-      || entryContentTypeIds(entry).some((id) => libraryContentIds.has(id)));
-  const hasStructuredFilters = Boolean(selectedContentId || selectedFacets.size || elements.pendingFilter.checked);
-  if (!query && !hasStructuredFilters) visibleEntries = browseEntries;
-  else {
-    const searchMatches = query ? searchIndexedEntries(gallerySearchIndex, query) : null;
-    visibleEntries = filterEntries(searchMatches
-      ? browseEntries.filter((entry) => searchMatches.has(entry.id))
-      : browseEntries, {
-      query: "",
-      contentId: selectedContentId,
-      facetSelections: selectedFacets,
-      pendingOnly: elements.pendingFilter.checked
-    }, facetCatalog);
-  }
+  const anchor = preserveViewport && window.scrollY > 0
+    ? [...elements.caseList.children].find(card => card.getBoundingClientRect().bottom > libraryTopbar.getBoundingClientRect().bottom)
+    : null;
+  const anchorTop = anchor?.getBoundingClientRect().top;
+  const previousVisibleEntries = visibleEntries;
+  const previousRenderedCount = preserveViewport ? renderedCount : PAGE_SIZE;
   syncGallerySortControl();
+  const browseEntries = structuredBrowseEntries(galleryEntries);
+  if (query && !libraryFullyLoaded) visibleEntries = [];
+  else if (query) {
+    const searchMatches = searchIndexedEntries(gallerySearchIndex, query);
+    visibleEntries = browseEntries.filter(entry => searchMatches.has(entry.id));
+  } else visibleEntries = loadedStartupPrefix(browseEntries);
   const project = selectedCollectionId
     ? organizerState.collections.find((item) => item.id === selectedCollectionId)
     : null;
@@ -1654,10 +1872,23 @@ function renderGalleryResults({ refreshNavigation }) {
     columnValues: listMetadata,
     projectEntryIds: project?.entryIds ?? []
   });
+  // A later startup batch extends the sorted prefix. Keep its existing virtual
+  // records, columns and decoded images instead of building the first page again.
+  const appendOnly = preserveViewport && (startupBrowseEntries || preserveCards) && previousVisibleEntries.length > 0
+    && previousVisibleEntries.length <= visibleEntries.length
+    && previousVisibleEntries.every((entry, index) => entry.id === visibleEntries[index].id);
   visibleEntryById = new Map(visibleEntries.map(entry => [entry.id, entry]));
-  renderedCount = 0;
-  imageObserver.disconnect();
-  reconcileInitialCaseCards();
+  if (!appendOnly) {
+    renderedCount = 0;
+    imageObserver.disconnect();
+    const anchorIndex = anchor ? visibleEntries.findIndex(entry => entry.id === anchor.dataset.entryId) : -1;
+    reconcileInitialCaseCards(Math.max(PAGE_SIZE, previousRenderedCount, anchorIndex + 1));
+  } else {
+    for (const card of elements.caseList.children) {
+      const entry = visibleEntryById.get(card.dataset.entryId);
+      if (entry) syncCaseCardInteraction(card, entry);
+    }
+  }
   const folderProjects = project && uiPreferences.includeSubprojects ? [] : childProjects;
   renderProjectFolderCards(folderProjects);
   if (refreshNavigation) {
@@ -1669,7 +1900,8 @@ function renderGalleryResults({ refreshNavigation }) {
   }
   syncStructuredFilterControls();
   renderActiveFilters();
-  layoutBrowseCards();
+  if (!appendOnly) layoutBrowseCards();
+  if (anchor?.isConnected) window.scrollBy(0, anchor.getBoundingClientRect().top - anchorTop);
   observePendingCardMedia([...elements.caseList.children]);
   scheduleVisibleMediaHydration();
   renderedCount = galleryMasonry?.count ?? elements.caseList.children.length;
@@ -1679,7 +1911,7 @@ function renderGalleryResults({ refreshNavigation }) {
     loadObserver.observe(elements.loadSentinel);
     scheduleLoadCheck(generation);
   });
-  elements.emptyState.hidden = visibleEntries.length > 0 || folderProjects.length > 0;
+  elements.emptyState.hidden = !libraryFullyLoaded || visibleEntries.length > 0 || folderProjects.length > 0;
   elements.emptyLibrary.hidden = logicalCases.length > 0;
   elements.emptyFilter.hidden = logicalCases.length === 0;
   renderEmptyFilter();
@@ -1687,10 +1919,11 @@ function renderGalleryResults({ refreshNavigation }) {
     ? t("未归项目")
     : project?.name || libraryTitleForLocale(settings.libraryTitle, currentLocale());
   elements.libraryTitle.title = elements.libraryTitle.textContent;
-  elements.resultCount.textContent = project
+  elements.resultCount.textContent = !libraryFullyLoaded ? "" : project
     ? `${translateUiMessage(`${visibleEntries.length} 个案例`)} · ${childProjects.length} ${t("子项目")}`
     : translateUiMessage(`${visibleEntries.length} 个案例`);
-  elements.pendingCount.textContent = String(pendingCount);
+  elements.pendingCount.textContent = libraryFullyLoaded ? String(pendingCount) : "";
+  renderLibraryLoadProgress();
 }
 
 async function saveBrowsePreference(change) {
@@ -1798,8 +2031,8 @@ function toggleCaseOrderManagement() {
   renderGalleryResults({ refreshNavigation: false });
 }
 
-function reconcileInitialCaseCards() {
-  const desired = visibleEntries.slice(0, PAGE_SIZE).map(caseCardForEntry);
+function reconcileInitialCaseCards(count = PAGE_SIZE) {
+  const desired = visibleEntries.slice(0, count).map(caseCardForEntry);
   for (const [index, card] of desired.entries()) {
     const current = elements.caseList.children[index];
     if (current !== card) elements.caseList.insertBefore(card, current ?? null);
@@ -2189,7 +2422,7 @@ function startCaseOrderDrag(drag) {
   drag.setSuppressClick(true);
   drag.card.classList.add("case-order-dragging");
   elements.caseList.classList.add("is-case-order-dragging");
-  drag.preview = rawTextEl("div", "case-order-drag-preview", drag.entry.title || "未命名案例");
+  drag.preview = rawTextEl("div", "case-order-drag-preview", drag.entry.title || t("未命名案例"));
   document.body.append(drag.preview);
   positionCaseOrderDragPreview(drag);
 }
@@ -2522,7 +2755,7 @@ function renderProjectFilters() {
     filter.tabIndex = 0;
     filter.disabled = ["project", "vision", "combine"].includes(selectionMode);
     filter.setAttribute("aria-pressed", String(selectedCollectionId === collection.id));
-    filter.setAttribute("aria-label", `${collection.name} ${logicalCount}`);
+    filter.setAttribute("aria-label", libraryFullyLoaded ? `${collection.name} ${logicalCount}` : collection.name);
     const meta = el("span", "project-filter-meta");
     meta.append(rawTextEl("span", "project-filter-count", String(logicalCount)));
     filter.addEventListener("click", () => {
@@ -2774,6 +3007,7 @@ async function deleteProjectCollectionWithEntries(collection, button) {
 }
 
 async function enterProjectSelection(collectionId) {
+  if (!libraryFullyLoaded) return showFeedback(t("案例尚未加载完成，请稍候"));
   const collection = organizerState.collections.find((item) => item.id === collectionId);
   if (!collection) return showFeedback("项目不存在", true);
   if (!await closeDetail()) return;
@@ -2800,6 +3034,7 @@ async function enterProjectSelection(collectionId) {
 }
 
 async function enterVisionSelection(collection) {
+  if (!libraryFullyLoaded) return showFeedback(t("案例尚未加载完成，请稍候"));
   if (visionBatchJob && ["running", "paused"].includes(visionBatchJob.status)) {
     renderVisionBatchDialog();
     if (!elements.visionBatchDialog.open) elements.visionBatchDialog.showModal();
@@ -2822,6 +3057,7 @@ async function enterVisionSelection(collection) {
 }
 
 async function enterSelectMode({ entryId } = {}) {
+  if (!libraryFullyLoaded) { showFeedback(t("案例尚未加载完成，请稍候")); return false; }
   if (!await closeDetail()) return false;
   let savedSelection;
   try {
@@ -3379,9 +3615,8 @@ async function saveCompoundSelection() {
     : { type: "CREATE_COMPOUND_CASE", title: title.trim(), memberEntryIds };
   const response = await perform(elements.projectSelectionSave, message, false);
   if (!response?.ok) return;
-  selectionMode = "";
-  selectedCaseIds.clear();
-  updateSelectionBar();
+  exitSelectionMode();
+  await referenceSelectionWriter.flush();
   await refreshLibrary();
 }
 
@@ -3647,7 +3882,7 @@ function applyLibraryReturnSnapshot(snapshot) {
 }
 
 function restoreLibraryScrollPosition() {
-  if (!Number.isFinite(libraryReturnScrollY)) return;
+  if (!libraryFullyLoaded || !Number.isFinite(libraryReturnScrollY)) return;
   const generation = galleryGeneration;
   requestAnimationFrame(() => {
     if (generation !== galleryGeneration || !Number.isFinite(libraryReturnScrollY)) return;
@@ -3937,6 +4172,7 @@ function showVisionBatchFeedback(message, isError = false) {
 }
 
 function openSettingsDialog(tab = "general", analysisKind = activeAnalysisKind) {
+  if (!libraryFullyLoaded) { showFeedback(t("案例尚未加载完成，请稍候")); return; }
   activeSettingsTab = tab;
   if (tab === "rules" && analysisKind) activeAnalysisKind = analysisKind;
   renderSettingsPanels({ resetActiveScroll: true });
@@ -5398,6 +5634,7 @@ async function hydrateCardImage(image) {
   if (thumbnailRequests.has(image)) return thumbnailRequests.get(image);
   const request = (async () => {
     try {
+      await loadImageDerivedMetadataForIds([visualId]);
       applyCardImageDimensions(image, imageDimensions({ id: visualId }));
       const url = await thumbnailLoader.request(visualId, image);
       if (url && image.isConnected) {
@@ -5510,7 +5747,7 @@ async function cacheImageDimensions(visualId, blob, dimensionsValue = null) {
     mimeType: blob.type,
     byteSize: blob.size
   }).catch(() => null);
-  if (saved) imageDerivedMetadata.set(visualId, saved);
+  if (saved) rememberImageDerivedMetadata(visualId, saved);
 }
 
 function renderContentFilters(sourceEntries = entries) {
@@ -5528,7 +5765,7 @@ function renderContentFilters(sourceEntries = entries) {
     button.type = "button";
     button.dataset.contentFilterId = id;
     button.setAttribute("aria-pressed", String(selectedContentId === id));
-    button.setAttribute("aria-label", `${name} ${count}`);
+    button.setAttribute("aria-label", libraryFullyLoaded ? `${name} ${count}` : name);
     const meta = el("span", "content-filter-meta");
     meta.append(rawTextEl("span", "content-filter-count", String(count)));
     if (item.visibility === CONTENT_TYPE_VISIBILITY.categoryOnly) {
@@ -6032,7 +6269,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   content.append(primary);
   // When cases changed since the similarity index was built, show the case first and add its
   // similar cases right after, instead of holding the whole detail until the index is rebuilt.
-  const deferDiscovery = localSimilarityIndexStale;
+  const deferDiscovery = localSimilarityIndexStale || !imageDerivedMetadataLoaded;
   const discovery = deferDiscovery ? null : createLocalDiscovery(entry);
   if (discovery) content.append(discovery.section);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
@@ -6042,7 +6279,9 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   elements.detailContent.replaceChildren(content);
   if (resetScroll) elements.detailContent.scrollTop = 0;
   discovery?.mount();
-  if (deferDiscovery) requestAnimationFrame(() => setTimeout(() => {
+  if (deferDiscovery) requestAnimationFrame(() => setTimeout(async () => {
+    try { await loadImageDerivedMetadata(); }
+    catch (error) { showFeedback(error.message || "无法读取本机资料", true); return; }
     if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId || !content.isConnected) return;
     const deferred = createLocalDiscovery(entry);
     if (!deferred) return;
@@ -6150,8 +6389,8 @@ function createLocalDiscovery(entry) {
       const asset = primaryMediaAsset(item.entry);
       media.classList.add("local-discovery-fallback");
       media.append(
-        rawTextEl("span", "document-type-badge", asset?.sourceFormat?.toLocaleUpperCase("en-US") || asset?.kind || "案例"),
-        rawTextEl("strong", "case-text-title", item.entry.title || asset?.sourceTitle || "未命名案例")
+        rawTextEl("span", "document-type-badge", asset?.sourceFormat?.toLocaleUpperCase("en-US") || asset?.kind || t("案例")),
+        rawTextEl("strong", "case-text-title", item.entry.title || asset?.sourceTitle || t("未命名案例"))
       );
     }
     button.setAttribute("aria-label", t("查看相似案例：{title}；{reason}", { title: item.entry.title || t("未命名案例"), reason: item.reason }));
@@ -6230,6 +6469,7 @@ async function renderCompoundDetail(entry, content, body) {
   body.append(createDetailHeader(entry), createCompoundActions(entry), createCompoundOrganizer(entry));
   for (const [index, member] of entry.memberEntries.entries()) {
     const section = el("section", "compound-part");
+    section.dataset.memberEntryId = member.id;
     const heading = el("div", "compound-part-heading");
     const title = el("div", "");
     const memberTitle = rawTextEl("h3", "", member.title);
@@ -6358,7 +6598,7 @@ async function createCapturedPostView(entryValue) {
     save.addEventListener("click", async () => {
       save.disabled = true;
       try {
-        const response = await chrome.runtime.sendMessage({
+        const response = await sendCaseEditMessage({
           type: "UPDATE_ENTRY_TEXT",
           entryId: entry.id,
           text: textarea.value,
@@ -6367,7 +6607,7 @@ async function createCapturedPostView(entryValue) {
         if (!response?.ok) throw new Error(response?.message || "帖子文字保存失败");
         promptEditState = null;
         showFeedback(response.message);
-        await refreshLibrary();
+        section.replaceWith(await createCapturedPostView(response.entry));
       } catch (error) {
         showFeedback(error.message || "帖子文字保存失败", true);
         save.disabled = false;
@@ -6580,11 +6820,10 @@ async function createArticleDocumentReader(entryValue) {
       entry.sourceFacts?.publishedAt ? formatDate(entry.sourceFacts.publishedAt) : ""].filter(Boolean),
     onCopy: button => copyTextWithFeedback(button, entry.text, "已复制", "浏览器未允许复制，请选中文字后复制"),
     onSave: async patches => {
-      const response = await chrome.runtime.sendMessage({ type: "UPDATE_ENTRY_ARTICLE_TEXT", entryId: entry.id,
+      const response = await sendCaseEditMessage({ type: "UPDATE_ENTRY_ARTICLE_TEXT", entryId: entry.id,
         textRevision: entryTextRevision(entry), patches });
       if (!response?.ok) throw new Error(response?.message || t("正文保存失败"));
       Object.assign(entry, response.entry);
-      await refreshLibrary();
       showFeedback(response.message);
       return response.entry;
     }
@@ -6962,6 +7201,8 @@ function refreshActiveDetailAssetSections(entry) {
   if (!body) return;
   const currentEditor = body.querySelector(".entry-editor-inline");
   const activeAssetId = activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId || "";
+  const palette = body.querySelector(".detail-header-section > .detail-palette");
+  if (palette) updateDetailPalette(palette, entry);
   if (currentEditor && currentEditor.dataset.assetId !== activeAssetId) {
     replaceDetailSection(currentEditor, createEntryEditor(entry, { inline: true }));
   } else {
@@ -6975,7 +7216,15 @@ function refreshActiveDetailAssetSections(entry) {
 
 }
 
-elements.detailContent.addEventListener("prompt-edit-finished", () => {
+elements.detailContent.addEventListener("prompt-edit-finished", event => {
+  const member = event.target.closest(".compound-part");
+  if (member) {
+    const entry = entries.find(item => item.id === member.dataset.memberEntryId);
+    const prompt = member.querySelector(":scope > .prompt-section");
+    if (entry && prompt) replaceDetailSection(prompt, createPromptSection(entry, { compoundMember: true }));
+    if (entry) member.querySelector(":scope > .entry-editor")?.updateEntry?.(entry);
+    return;
+  }
   const entry = logicalCases.find(item => item.id === currentDetailId);
   if (entry) refreshActiveDetailAssetSections(entry);
 });
@@ -7338,9 +7587,9 @@ async function createMediaViewer(asset, imageUrl, entry) {
     wrap.append(rawTextEl("p", "document-error", asset.extractionWarnings.join("；")));
   }
   if (assetFormatForExtension(asset.sourceFormat)?.preserveOnly) {
-    wrap.append(rawTextEl("p", "detail-placeholder", "原文件已保存，可下载后使用对应软件打开"));
+    wrap.append(rawTextEl("p", "detail-placeholder", t("原文件已保存，可下载后使用对应软件打开")));
   } else if (asset.sourceFormat === "docx" && !String(entry.text || "").trim() && asset.extractionWarnings?.length) {
-    wrap.append(rawTextEl("p", "detail-placeholder", "正文未提取，请下载原文档查看"));
+    wrap.append(rawTextEl("p", "detail-placeholder", t("正文未提取，请下载原文档查看")));
   } else if (asset.mimeType === "application/pdf") {
     try {
       wrap.append(await createPdfViewer(blob, entry.title));
@@ -7372,7 +7621,7 @@ function createManagedSourceFileViewer(asset) {
     rawTextEl("strong", "asset-file-title", asset.sourceTitle || t("创作源文件")),
     rawTextEl("p", "asset-file-path", asset.relativePath || t("本机资料")),
     rawTextEl("p", "asset-file-meta", mediaMetadataText(asset)),
-    rawTextEl("p", "asset-inert-note", "这是归档源文件。PromptDirector 不会执行或内嵌打开它。"),
+    rawTextEl("p", "asset-inert-note", t("这是归档源文件。PromptDirector 不会执行或内嵌打开它。")),
   );
   return panel;
 }
@@ -7831,7 +8080,43 @@ function createDetailHeader(entry) {
   const title = rawTextEl("h2", "detail-title", entry.title);
   title.title = entry.title;
   section.append(title, createEntryEditor(entry, { inline: true }));
+  const palette = el("div", "palette detail-palette");
+  palette.setAttribute("aria-label", t("色卡"));
+  updateDetailPalette(palette, entry);
+  section.append(palette);
   return section;
+}
+
+function updateDetailPalette(palette, entry) {
+  const assets = entryMediaAssets(entry);
+  const active = assets.find(asset => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId)) || primaryMediaAsset(entry);
+  const visual = active?.kind === "image" ? active : active?.kind === "video" ? posterAssetForVideo(entry, active) : null;
+  palette.dataset.paletteId = visual?.id || "";
+  const sync = () => {
+    const stored = visual?.palette?.colors ?? imageDerivedMetadata.get(visual?.id)?.palette?.colors;
+    const colors = Array.isArray(stored) ? stored.filter(Boolean).slice(0, MAX_PALETTE_COLORS) : [];
+    const identity = JSON.stringify(colors);
+    if (palette.dataset.colors === identity) return;
+    palette.dataset.colors = identity;
+    palette.hidden = !colors.length;
+    palette.replaceChildren(...colors.map(color => {
+      const swatch = el("button", "swatch");
+      swatch.type = "button";
+      swatch.title = t("复制颜色");
+      swatch.setAttribute("aria-label", t("复制颜色"));
+      swatch.style.setProperty("--palette-color", color);
+      swatch.addEventListener("click", () => writeClipboardText(color)
+        .then(() => showFeedback(t("已复制")))
+        .catch(() => showFeedback(t("复制失败，请允许剪贴板权限后重试"), true)));
+      return swatch;
+    }));
+  };
+  sync();
+  if (visual?.id && !visual.palette?.colors?.length && !imageDerivedMetadataChecked.has(visual.id)) {
+    void loadImageDerivedMetadataForIds([visual.id]).then(() => {
+      if (palette.isConnected && palette.dataset.paletteId === visual.id) sync();
+    }).catch(() => {});
+  }
 }
 
 function createDetailQuickOrganization(entry) {
@@ -7979,13 +8264,11 @@ async function saveDetailCustomLabels(entry, button, requested, previous) {
       removeLabels
     }, false);
   if (!response?.ok) return null;
-  consumePendingExternalLibraryRefresh(mark);
+  if (entry.compoundCase) consumePendingExternalLibraryRefresh(mark);
   if (entry.compoundCase && response.compoundCase) {
     compoundCases = compoundCases.map((item) => item.id === response.compoundCase.id ? response.compoundCase : item);
-  } else if (Array.isArray(response.entries)) {
-    entries = response.entries;
+    rebuildLibraryDerivedState();
   }
-  rebuildLibraryDerivedState();
   return entry.compoundCase ? response.compoundCase?.customLabels ?? requested : response.entry?.customLabels ?? requested;
 }
 
@@ -8495,7 +8778,7 @@ function renderImportProjectOptions(rootName = "") {
   importTagEditor.input.value = "";
   importTagEditor.setValues(pendingLocalImport?.customLabels ?? []);
   elements.importProjectHint.textContent = rootName
-    ? "已按根文件夹建议项目；可以修改或清空。"
+    ? t("已按根文件夹建议项目；可以修改或清空。")
     : "";
 }
 
@@ -9340,10 +9623,10 @@ function createPromptRulesAction(kind) {
 }
 
 async function savePromptPanel(message) {
-  const response = await chrome.runtime.sendMessage(message);
+  const response = await sendCaseEditMessage(message);
   if (!response?.ok) throw new Error(translateUiMessage(response?.message) || t("提示词保存失败"));
   showFeedback(response.message);
-  await refreshLibrary();
+  if (!LOCAL_CASE_EDIT_TYPES.has(message.type) || !response.entry) await refreshLibrary();
 }
 
 function createMediaPromptSection(entry, asset, options) {
@@ -9826,6 +10109,14 @@ function createEntryEditor(entry, options = {}) {
     titleField.dataset.dirty = "false";
     const response = await perform(saveTitle, { type: "UPDATE_ENTRY_TITLE", entryId: entry.id, title: title.trim() });
     if (!response) syncTitleDirty();
+    else if (response.entry) {
+      entry.title = response.entry.title;
+      titleInput.value = response.entry.title;
+      const heading = elements.detailContent.querySelector('.detail-title');
+      if (heading && currentDetailId === entry.id) heading.textContent = response.entry.title;
+      const memberHeading = section.closest(".compound-part")?.querySelector(".compound-part-heading h3");
+      if (memberHeading) memberHeading.textContent = memberHeading.title = response.entry.title;
+    }
     return response;
   });
   const titleRow = el("div", "entry-edit-row");
@@ -11531,7 +11822,7 @@ function scheduleMaintenanceStatusPoll() {
 
 function handleLibraryMaintenanceMessage(message) {
   if (message?.type === "LIBRARY_DERIVED_METADATA_UPDATED" && message.assetId && message.metadata) {
-    imageDerivedMetadata.set(message.assetId, message.metadata);
+    rememberImageDerivedMetadata(message.assetId, message.metadata);
     return;
   }
   if (message?.type === "LIBRARY_MAINTENANCE_PROGRESS") {
@@ -11540,13 +11831,7 @@ function handleLibraryMaintenanceMessage(message) {
     recheckCompletedMaintenance();
     if (elements.settingsDialog.open && activeSettingsTab === "tasks") renderBatchManager();
     if (maintenanceJob?.status === "completed") {
-      void getAllDerivedMetadata().then((metadata) => {
-        imageDerivedMetadata = metadata;
-        imageDerivedMetadataLoaded = true;
-        markSimilarityIndexStale();
-        rebuildLibrarySearchIndex();
-        gallerySearchIndex = searchIndexForEntries(indexedGalleryEntries);
-      }).catch(() => undefined);
+      void loadImageDerivedMetadata({ refresh: true }).catch(error => showFeedback(error.message || "无法读取本机资料", true));
     }
     scheduleMaintenanceStatusPoll();
   }
@@ -11613,14 +11898,47 @@ async function saveLibrarySettings() {
   button.disabled = true;
 }
 
+async function sendCaseEditMessage(message) {
+  if (!LOCAL_CASE_EDIT_TYPES.has(message.type)) return chrome.runtime.sendMessage(message);
+  const token = localCaseEdits.begin((pendingEntriesChange?.entries ?? entries).find(entry => entry.id === message.entryId) ?? { id: message.entryId });
+  let finished = false;
+  try {
+    const response = await chrome.runtime.sendMessage(message);
+    const latest = localCaseEdits.finish(token, response?.ok ? response.entry : null, { changed: response?.changed });
+    finished = true;
+    if (!response?.ok || !response.entry) return response;
+    // Remove only this exact echo. A later edit of the same case or any other pending case stays queued.
+    if (pendingEntriesChange?.changedEntryIds?.has(response.entry.id)
+      && localCaseEdits.matches(pendingEntriesChange.entries.find(entry => entry.id === response.entry.id), response.entry)) {
+      pendingEntriesChange.changedEntryIds.delete(response.entry.id);
+      if (!pendingEntriesChange.changedEntryIds.size && !pendingEntriesChange.orderChanged && !pendingFullLibraryRefresh) {
+        pendingEntriesChange = null;
+        externalLibraryRefreshPending = false;
+      }
+    }
+    // A coalesced snapshot from another case may predate this response; keep its other changes
+    // but advance this one case so the later scheduled render cannot roll it back.
+    const replaceSaved = values => latest
+      ? values.map(entry => entry.id === latest.id ? latest : entry)
+      : values.filter(entry => entry.id !== response.entry.id);
+    if (pendingEntriesChange) pendingEntriesChange.entries = replaceSaved(pendingEntriesChange.entries);
+    const nextEntries = replaceSaved(entries);
+    await applyLibraryEntriesChange(nextEntries, { changedEntryIds: new Set([response.entry.id]), refreshDetail: false });
+    return latest ? { ...response, entry: latest } : { ok: false, message: "案例不存在" };
+  } finally {
+    if (!finished) localCaseEdits.finish(token, null);
+    if (externalLibraryRefreshPending) scheduleExternalLibraryRefresh();
+  }
+}
+
 async function perform(button, message, refresh = true) {
   button.disabled = true;
   try {
-    const response = await chrome.runtime.sendMessage(message);
+    const response = await sendCaseEditMessage(message);
     if (!response?.ok) throw new Error(response?.message || "操作失败");
     showFeedback(response.message || "操作完成");
     if (response.canUndoFacetUpdate) transientFeedback.revealRecovery(elements.facetRecoveryActions);
-    if (refresh) await refreshLibrary();
+    if (refresh && (!LOCAL_CASE_EDIT_TYPES.has(message.type) || !response.entry)) await refreshLibrary();
     return response;
   } catch (error) {
     showFeedback(error.message, true);

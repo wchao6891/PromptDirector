@@ -35,6 +35,9 @@ import { createCaseLibraryReader } from "./case-library-state.js";
 import { projectLibraryViewState, enrichContentMeanings } from "./library-view-state.js";
 import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, completeLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
 import { createAgentWorkspace } from "./agent-workspace.js";
+import { createWorkspaceScreenshot, WORKSPACE_SCREENSHOT_SPEC } from './workspace-screenshot.js';
+import { createCaseTrashOperations } from './case-trash-operations.js';
+import { AGENT_CASE_ACTION_SPECS } from './agent-case-action-specs.js';
 import { createReferenceSelection } from "./reference-selection.js";
 import { createCaseOperations } from "./case-operations.js";
 import { CASE_OPERATION_SPECS, CASE_SEARCH_PROPERTIES } from './case-operation-specs.js';
@@ -48,7 +51,7 @@ import { collectFeishuDocument } from "./feishu-document-capture.js";
 import { saveComposerToolDraft, preserveSavedToolDrafts } from './composer-tool-drafts.js';
 import { renderPageCaptureRegionPreview, clearPageCapturePageState } from "./page-capture-highlight.js";
 import { collectLibTvPublicPayload, normalizeLibTvPublicPayload } from "./libtv-capture.js";
-import { updateArticleText } from "./article-edit.js";
+import { createCaseEditor, touchEntry, stringListsEqual, userVisibleEntryEqual } from "./case-editor.js";
 import { showPageToast } from "./capture-region.js";
 import { analysisRequestCounts } from "./analysis-retry-policy.js";
 import { articleDocumentText, finalizeArticleDocumentAssets } from "./article-document.js";
@@ -60,7 +63,7 @@ import {
   createSourceRule
 } from "./classifier.js";
 import { casesLostByMigration, migrateLibraryState, needsMigration } from "./migration.js";
-import { planCaseCopies, assertCompoundProjectScope } from "./library-folder-ownership.js";
+import { planCaseCopies } from "./library-folder-ownership.js";
 import { remapEntryMediaIds } from "./library-portable-media.js";
 import {
   CONTENT_TYPE_VISIBILITY,
@@ -91,7 +94,6 @@ import {
   applyAnalysisCandidates,
   applyAnalysisImport,
   applyTextAnalysisTags,
-  editVisionReconstructionPrompt,
   rejectAnalysisCandidate,
   undoVisionAnalysis,
   setManualAssignment
@@ -164,8 +166,7 @@ import { findPersistedVisionAnalysis } from "./vision-analysis-cache.js";
 import {
   analysisRevisionMeta,
   entryTextRevision,
-  markEntryTextChanged,
-  updateEntryText
+  markEntryTextChanged
 } from "./analysis-revision.js";
 import { applyDetailOrganizationMappings, applyFixedAnalysisTags } from "./tag-taxonomy.js";
 import {
@@ -235,13 +236,11 @@ import {
   addEntryMedia,
   addTimeNote,
   currentVideoReconstruction,
-  editCurrentVideoReconstruction,
   entryMediaAssets,
   normalizeEntryMedia,
   setCaseCover,
   removeEntryMedia,
   removeTimeNote,
-  setEntryMediaPrompt,
   setPrimaryMedia,
   updateLocalAssetReferenceMetadata
 } from "./media.js";
@@ -555,6 +554,7 @@ let activePageCapture = null;
 let syncApplyInProgress = false;
 const commitLocalChanges = createLibraryCommitter({ storage: libraryStorage, syncedKeys: SYNCED_STORAGE_KEYS,
   syncMetaKey: STORAGE_KEYS.syncMeta, markDirty: markSyncMetaDirty, isSyncApplying: () => syncApplyInProgress });
+const caseEditor = createCaseEditor({ commitCase: (entryId, transform) => commitLocalChanges.updateCase(entryId, transform) });
 const stagedMedia = createStagedMediaRegistry({
   storage: libraryStorage,
   activeDocuments: async () => (await chrome.runtime.getContexts({})).map(context => context.documentId),
@@ -621,6 +621,8 @@ const agentLibrary = createAgentLibrary({
 });
 const projectOperations = createProjectOperations({ loadState: readState, loadReadState: readCaseLibraryState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
 const caseOperations = createCaseOperations({ loadState: readState, loadReadState: readCaseLibraryState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const workspaceScreenshot = createWorkspaceScreenshot({ chromeApi: chrome });
+const caseTrashOperations = createCaseTrashOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
 const libraryIdentity = createBrowserLibraryIdentity({ storage: libraryStorage,
   getLegacyId: async () => (await agentConnection.prepare()).instanceId });
 const externalAnalysisBatches = createExternalAnalysisBatches({storage:libraryStorage,loadState:readState,
@@ -723,7 +725,7 @@ async function executeAgentOperation(operation, input) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
       extensionVersion: chrome.runtime.getManifest().version, analysisResultVersion: 2, analysisResultFields: ANALYSIS_RESULT_FIELDS, skillPackageLimits: skillPackageLimits(),
       caseOperationFeatures: Object.fromEntries(CASE_OPERATION_SPECS.filter(spec => spec.name !== 'read_case_details').map(spec => [spec.name, spec.name === 'edit_case' ? Object.keys(spec.parameters.properties.patch.properties) : spec.parameters.properties.action.enum])),
-      workspaceSyncVersion: 6, sourceProtectionVersion: 1, capabilities: [...WORKSPACE_OPERATION_SPECS.map(spec => spec.name), ...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "describe_case_query", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation", "creative", "customLabels", "classificationPathIds", "sourceFacts", "timeNotes"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, caseTextReadVersion: 2, caseQueryVersion: 1, searchFilters: Object.keys(CASE_SEARCH_PROPERTIES) };
+      workspaceSyncVersion: 6, sourceProtectionVersion: 1, capabilities: [WORKSPACE_SCREENSHOT_SPEC.name, ...AGENT_CASE_ACTION_SPECS.map(spec => spec.name), ...WORKSPACE_OPERATION_SPECS.map(spec => spec.name), ...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "describe_case_query", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation", "creative", "customLabels", "classificationPathIds", "sourceFacts", "timeNotes"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, caseTextReadVersion: 2, caseQueryVersion: 1, searchFilters: Object.keys(CASE_SEARCH_PROPERTIES) };
     case "manage_analysis_batch":
     case "list_analysis_batches":
     case "read_analysis_batch":
@@ -741,11 +743,13 @@ async function executeAgentOperation(operation, input) {
     case "read_workspace_context":
     case "read_workspace_content": return agentWorkspace.read(input);
     case "show_case": return agentWorkspace.show(input);
+    case "capture_workspace": return workspaceScreenshot.capture(input);
     case 'read_review_media':
     case 'read_live_workspace':
     case 'wait_workspace_changes':
     case 'control_workspace': return agentWorkspace.live(operation, input);
     case "read_case_details": return caseOperations.read(input);
+    case "trash_case": return caseTrashOperations.execute(input);
     case "edit_case":
     case "organize_case": return caseOperations.execute(operation, input);
     case "describe_case_query": return agentLibrary.describeQuery();
@@ -976,6 +980,7 @@ async function handleMessage(message, interaction = {}) {
         return saveMaterial(input, requestId);
       }
       if (message.operation === "read_case_details") return caseOperations.read(message.input);
+      if (message.operation === "trash_case") return caseTrashOperations.execute(message.input);
       if (!["edit_case", "organize_case"].includes(message.operation)) throw new Error("未知案例操作");
       return caseOperations.execute(message.operation, message.input);
     }
@@ -1093,13 +1098,14 @@ async function handleMessage(message, interaction = {}) {
         cancelLabel: translateForLocale("取消选取", resolveLocale((await libraryStorage.get("uiPreferences")).uiPreferences, chrome.i18n.getUILanguage())) }] });
       if (!picked?.result?.html) return { ok: false, cancelled: true };
       const [captured] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageCaptureSnapshot,
-        args: [{ serializeErrors: true, sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
+        args: [{ serializeErrors: true, sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html,
+          selectionTemplate: picked.result.selectionTemplate, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
       return { ok: true, supplement: picked.result.supplement, batch: { ...readPageCaptureInjectionResult(captured), tabId: tab.id } };
     }
     case "READ_PAGE_CAPTURE_DETAILS":
       return enqueueCapture(() => readGenericPageCaptureDetails(message));
     case "START_PAGE_CAPTURE":
-      return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount, message.requestId));
+      return enqueueCapture(async () => startPageCapture(message.mode, message.targetCount, message.requestId, message.selectionTemplate));
     case "READ_PAGE_CAPTURE_SUPPLEMENT":
       return { ok: true, supplement: await readPageCaptureSupplement(message.supplement, chrome, { sourceTabId: message.sourceTabId, sourceUrl: message.sourceUrl }) };
     case "CANCEL_PAGE_CAPTURE":
@@ -1616,7 +1622,7 @@ async function captureWorkspace() {
   };
 }
 
-async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId = "") {
+async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId = "", selectionTemplate = null) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) {
     return { ok: false, message: RESTRICTED_PAGE_MESSAGE };
@@ -1650,7 +1656,7 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
       const visitedUrls = new Set();
       for (let pageIndex = 0; pageIndex < targetCount && !activePageCapture?.cancelled; pageIndex += 1) {
         visitedUrls.add(currentTab.url);
-        const snapshot = await collectPageCaptureTab(currentTab, { sessionId, requestId, mode: "whole", maxCandidates: targetCount, listMode: true });
+        const snapshot = await collectPageCaptureTab(currentTab, { sessionId, requestId, mode: "whole", maxCandidates: targetCount, listMode: true, selectionTemplate });
         if (!adapter) adapter = snapshot.adapter;
         else if (snapshot.adapter !== adapter) {
           stopReason = "layout-changed";
@@ -1668,6 +1674,12 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
         }
         if (candidates.size >= targetCount) {
           stopReason = "target-reached";
+          break;
+        }
+        // A manual template belongs to the selected live document. Keep its successful
+        // candidates instead of navigating away and invalidating the selection.
+        if (selectionTemplate) {
+          stopReason = "manual-template-page";
           break;
         }
         const nextUrl = await findNextPageCaptureListUrl(currentTab.id, currentTab.url);
@@ -1742,7 +1754,9 @@ async function startPageCapture(mode = "loaded", targetCountValue = 0, requestId
   }
   return {
     ok: true,
-    message: `已识别 ${batch.candidates.length} 项网页内容，请确认后保存`,
+    message: batch.stopReason === "manual-template-page"
+      ? `已按手选范围识别本页 ${batch.candidates.length} 项内容，请确认后保存；其他页面需重新选取`
+      : `已识别 ${batch.candidates.length} 项网页内容，请确认后保存`,
     batch
   };
 }
@@ -1807,6 +1821,7 @@ async function collectPageCaptureTab(tab, options) {
       maxScrollSteps: PAGE_CAPTURE_LIMITS.maxScrollSteps,
       listMode: options.listMode === true,
       genericGroupingRequested: options.genericGroupingRequested === true,
+      selectionTemplate: options.selectionTemplate,
       mediaTimeoutMs: PAGE_CAPTURE_LIMITS.navigationTimeoutMs,
       maxInlinePixelDataCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters,
       maxCanvasPixels: operationBudget().maxImagePixels,
@@ -2628,7 +2643,6 @@ async function startCaptureForCase(caseId, partEntryId = "") {
 
 async function createCompoundCaseAction(message) {
   const state = await readState();
-  assertCompoundProjectScope(state, message.memberEntryIds || []);
   const result = createCompoundCase(state.compoundCases, state.entries, {
     id: message.compoundCaseId,
     title: message.title,
@@ -2642,7 +2656,6 @@ async function createCompoundCaseAction(message) {
 
 async function updateCompoundCaseAction(message) {
   const state = await readCaseLibraryState();
-  if (message.memberEntryIds) assertCompoundProjectScope(state, message.memberEntryIds);
   const labelsEdited = message.customLabels !== undefined || Array.isArray(message.addLabels) || Array.isArray(message.removeLabels);
   const current = state.compoundCases.find(item => item.id === message.compoundCaseId);
   const result = updateCompoundCase(state.compoundCases, state.entries, message.compoundCaseId, {
@@ -6351,60 +6364,19 @@ async function failVideoAnalysisAction(message) {
 }
 
 async function updateVideoReconstructionPrompt(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const updated = editCurrentVideoReconstruction(current, message.assetId, message.reconstructionPrompt);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "AI 视觉逆推提示词已保存", entry: updated, entries };
+  return caseEditor.videoReconstruction(message);
 }
 
 async function updateVisionReconstructionPrompt(entryId, visualIdValue, reconstructionPrompt) {
-  const state = await readState();
-  const current = findEntry(state, entryId);
-  const visualId = String(visualIdValue ?? "").trim() || primaryVisual(current)?.id;
-  const visual = normalizeEntryVisuals(current).visuals.find((item) => item.id === visualId);
-  if (!visual?.visionAnalysis) throw new Error("这张截图还没有可编辑的反推提示词");
-  const temporary = editVisionReconstructionPrompt({ visionAnalysis: visual.visionAnalysis }, reconstructionPrompt);
-  const updated = updateEntryVisual(current, visual.id, (item) => ({ ...item, visionAnalysis: temporary.visionAnalysis }));
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "反推提示词已保存", entry: updated, entries };
+  return caseEditor.visionReconstruction({ entryId, visualId: visualIdValue, reconstructionPrompt });
 }
 
 async function updateEntryMediaPromptAction(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const preserveAiSource = message.preserveAiSource === true
-    && current.mediaPrompts?.some(item => item.assetId === message.assetId && item.source === "ai-suggestion");
-  const next = setEntryMediaPrompt(current, message.assetId, message.text, preserveAiSource ? "ai-suggestion" : "manual", { preserveOtherSource: true });
-  const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return {
-    ok: true,
-    message: String(message.text ?? "").trim() ? "独立提示词已保存" : "已恢复使用案例共享提示词",
-    entry: updated
-  };
+  return caseEditor.mediaPrompt(message);
 }
 
 async function applyEntryMediaPromptSuggestions(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const suggestions = Array.isArray(message.suggestions) ? message.suggestions : [];
-  let updated = current;
-  let appliedCount = 0;
-  for (const item of suggestions) {
-    const text = String(item?.text ?? "").trim();
-    if (!text) continue;
-    updated = setEntryMediaPrompt(updated, item.assetId, text, "ai-suggestion");
-    appliedCount += 1;
-  }
-  if (!appliedCount) return { ok: false, message: "没有需要保存的逐图提示词" };
-  updated = touchEntry(updated);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: `已确认并保存 ${appliedCount} 条逐图提示词`, entry: updated };
+  return caseEditor.mediaPromptSuggestions(message);
 }
 
 async function undoEntryVisionAnalysis(entryId) {
@@ -6458,47 +6430,19 @@ async function updateEntryFacet(message) {
 }
 
 async function updateCaseArticle(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const next = updateArticleText(current, message.patches, message.textRevision);
-  const updated = userVisibleEntryEqual(current, next) ? next : touchEntry(next);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: state.entries.map(entry => entry.id === current.id ? updated : entry) });
-  return { ok: true, message: "正文已保存", entry: updated };
+  return caseEditor.article(message);
 }
 
 async function updateCaseText(message) {
-  const state = await readState();
-  const current = findEntry(state, message.entryId);
-  const next = updateEntryText(current, message.text, message.textRevision);
-  const updated = next.text === current.text ? next : touchEntry(next);
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return {
-    ok: true,
-    message: updated.text === current.text ? "提示词没有变化" : "提示词已保存，需要时可重新分析标签",
-    entry: updated
-  };
+  return caseEditor.text(message);
 }
 
 async function updateCaseTitle(message) {
-  const state = await readCaseLibraryState();
-  const current = findEntry(state, message.entryId);
-  const title = String(message.title ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  if (!title) return { ok: false, message: "案例标题不能为空" };
-  const updated = title === current.title ? current : touchEntry({ ...current, title });
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: title === current.title ? "标题没有变化" : "标题已保存", entry: updated };
+  return caseEditor.title(message);
 }
 
 async function updateEntryCustomLabels(message) {
-  const state = await readCaseLibraryState();
-  const current = findEntry(state, message.entryId);
-  const customLabels = editedLabels(current.customLabels, message);
-  const updated = stringListsEqual(customLabels, current.customLabels) ? current : touchEntry({ ...current, customLabels });
-  const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
-  await commitLocalChanges({ [STORAGE_KEYS.entries]: entries });
-  return { ok: true, message: "标签已保存", entry: updated, entries };
+  return caseEditor.customLabels(message);
 }
 
 async function batchAddCustomLabels(message) {
@@ -8145,38 +8089,10 @@ function findEntry(state, entryId) {
   return entry;
 }
 
-function touchEntry(entry, updatedAt = new Date().toISOString()) {
-  return { ...entry, libraryUpdatedAt: updatedAt };
-}
-
 function touchEntries(entriesValue, entryIdsValue, updatedAt = new Date().toISOString()) {
   const entryIds = new Set(Array.isArray(entryIdsValue) ? entryIdsValue : []);
   if (!entryIds.size) return entriesValue;
   return entriesValue.map((entry) => entryIds.has(entry.id) ? touchEntry(entry, updatedAt) : entry);
-}
-
-function stringListsEqual(leftValue, rightValue) {
-  const left = Array.isArray(leftValue) ? leftValue : [];
-  const right = Array.isArray(rightValue) ? rightValue : [];
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function userVisibleEntryEqual(left = {}, right = {}) {
-  return JSON.stringify({
-    title: left.title,
-    text: left.text,
-    customLabels: left.customLabels ?? [],
-    classification: left.classification ?? null,
-    facetAssignments: left.facetAssignments ?? [],
-    mediaPrompts: left.mediaPrompts ?? []
-  }) === JSON.stringify({
-    title: right.title,
-    text: right.text,
-    customLabels: right.customLabels ?? [],
-    classification: right.classification ?? null,
-    facetAssignments: right.facetAssignments ?? [],
-    mediaPrompts: right.mediaPrompts ?? []
-  });
 }
 
 function userVisibleEntryChanges(beforeValue, afterValue) {

@@ -5,11 +5,12 @@ import { readFile } from "node:fs/promises";
 const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
 
-test("finishing a compound selection exits selection mode before the gallery refreshes", () => {
+test("finishing a compound selection clears its saved reference selection before the gallery refreshes", () => {
   const block = functionBlock("async function saveCompoundSelection()", "async function saveProjectSelection()");
   assert.match(block, /perform\(elements\.projectSelectionSave, message, false\)/);
-  assert.ok(block.indexOf('selectionMode = ""') < block.indexOf("await refreshLibrary()"));
-  assert.ok(block.indexOf("selectedCaseIds.clear()") < block.indexOf("await refreshLibrary()"));
+  assert.ok(block.indexOf('exitSelectionMode()') > block.indexOf('if (!response?.ok) return;'));
+  assert.ok(block.indexOf('await referenceSelectionWriter.flush()') > block.indexOf('exitSelectionMode()'));
+  assert.ok(block.indexOf('await referenceSelectionWriter.flush()') < block.indexOf('await refreshLibrary()'));
 });
 
 test("compound details expose direct primary-case and cover-image actions", () => {

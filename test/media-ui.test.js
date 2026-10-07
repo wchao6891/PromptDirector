@@ -193,7 +193,7 @@ test("similar material stays local, image-led, and free of project-age resurfaci
 });
 
 test("the home wall shows every library-visible content type and hides only explicit category-only types", () => {
-  const gallery = source.slice(source.indexOf("function renderGalleryResults"), source.indexOf("function projectManualOrderAvailable"));
+  const gallery = source.slice(source.indexOf("function structuredBrowseEntries"), source.indexOf("function projectManualOrderAvailable"));
   assert.match(gallery, /CONTENT_TYPE_VISIBILITY\.categoryOnly/);
   assert.match(gallery, /const browseEntries = selectedContentId/);
   assert.match(gallery, /isEntryPending\(entry\)/);

@@ -3,10 +3,11 @@ import { normalizeTrashState, takeTrashItems } from './trash.js';
 import { removeEntryMedia } from './media.js';
 import { LOCAL_ASSET_REFERENCE_RECORD_TYPE } from './local-media.js';
 import { removeEntriesFromCompoundCases } from './compound-cases.js';
+import { LEGACY_ENTRIES_KEY } from './library-case-records.js';
 
 // Local recovery snapshots are not a second recycle bin after permanent deletion.
 const SNAPSHOT_KEYS = ['folderOwnershipBackup', 'libraryReplacementRecoveryPoint',
-  'migrationBackup', 'upgradeBackup', 'classificationResetBackup', 'creativeFacetMigrationBackupV5'];
+  'migrationBackup', 'upgradeBackup', 'classificationResetBackup', 'creativeFacetMigrationBackupV5', LEGACY_ENTRIES_KEY];
 export const TRASH_HISTORY_KEYS = [...SNAPSHOT_KEYS,
   'facetUndo', 'visionAnalysisUndo', 'analysisBatchUndo', 'lastSaveUndo'];
 export const TRASH_CLEANUP_KEY = 'pendingTrashCleanup';
@@ -75,14 +76,14 @@ export function planTrashCleanup(state, itemIds, extraRetainedIds = []) {
   for (const key of SNAPSHOT_KEYS) {
     const value = state[key];
     if (!value || typeof value !== 'object') continue;
-    const before = value.state ?? value;
+    const before = snapshotState(value);
     const after = pruneSnapshot(before);
     const kept = libraryStoredAssetIds(after);
     for (const asset of libraryStoredAssets(before)) if (!kept.has(asset.id)) {
       candidates.add(asset.id);
       if (asset.recordType === LOCAL_ASSET_REFERENCE_RECORD_TYPE) localReferences.add(asset.id);
     }
-    changes[key] = value.state ? { ...value, state: after } : after;
+    changes[key] = Array.isArray(value) ? after.entries : value.state ? { ...value, state: after } : after;
   }
   const recovery = changes.libraryReplacementRecoveryPoint;
   if (recovery) recovery.retainedAssetIds = (recovery.retainedAssetIds ?? []).filter(id => !candidates.has(id));
@@ -113,13 +114,14 @@ export function planTrashCleanup(state, itemIds, extraRetainedIds = []) {
 export function retainedTrashCleanupAssets(state, extraIds = []) {
   const retained = libraryStoredAssetIds(state, { includeLocalOnly: true });
   for (const key of SNAPSHOT_KEYS) {
-    for (const id of libraryStoredAssetIds(state[key]?.state ?? state[key] ?? {})) retained.add(id);
+    for (const id of libraryStoredAssetIds(snapshotState(state[key]))) retained.add(id);
   }
   if (state.lastSaveUndo?.backupEntryId) retained.add(state.lastSaveUndo.backupEntryId);
   for (const id of extraIds) retained.add(id);
   return retained;
 }
 
+function snapshotState(value) { return Array.isArray(value) ? { entries: value } : value?.state ?? value ?? {}; }
 function assets(value) { return value?.mediaAssets ?? value?.visuals ?? []; }
 function mentions(value, ids) {
   if (typeof value === 'string') return ids.has(value);

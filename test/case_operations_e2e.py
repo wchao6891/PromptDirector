@@ -179,7 +179,7 @@ def main():
               const entry=applied.state.entries.find(e=>e.id===caseId), analysis=entry.visionAnalysis;
               delete entry.visionAnalysis;
               applied.state.entries=applied.state.entries.map(e=>e.id===caseId?updateEntryVisual(entry,'first-image',a=>({...a,visionAnalysis:analysis})):e);
-              await chrome.storage.local.set({entries:applied.state.entries,facetCatalog:applied.state.facetCatalog});
+              await (await import('./library-storage.js')).getLibraryStorage().set({entries:applied.state.entries,facetCatalog:applied.state.facetCatalog});
             }''', {'caseId': receiver_id, 'group': group})
             deleted = page.evaluate('''async caseId => chrome.runtime.sendMessage({type:'DELETE_ENTRY_VISUAL',entryId:caseId,visualId:'first-image'})''', receiver_id)
             assert deleted['ok'], deleted

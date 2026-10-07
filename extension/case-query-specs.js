@@ -5,6 +5,7 @@ const object = properties => ({ type: 'object', properties, additionalProperties
 export const QUERY_OPERATORS = ['eq', 'ne', 'contains', 'startsWith', 'in', 'gt', 'gte', 'lt', 'lte', 'between', 'exists'];
 const nested = { type: 'object', additionalProperties: true };
 export const CASE_QUERY_PROPERTIES = {
+  similarText: { type: 'string', minLength: 1, description: '使用尚未入库的完整文字或提示词找本地文字相似案例，不创建临时案例、不调用模型。与similarTo互斥，可结合mediaKind/query/where。相似分数是提示词词语重合，不是画面相似概率；缺词案例不参加比较，coverage如实列出。' },
   where: { ...object({ field: id, op: { enum: QUERY_OPERATORS }, value: {},
     all: { type: 'array', items: nested, minItems: 1 }, any: { type: 'array', items: nested, minItems: 1 }, not: nested,
     scope: { enum: ['member', 'source', 'media', 'label', 'project', 'classification'] }, where: nested }),
@@ -20,4 +21,4 @@ export const CASE_QUERY_PROPERTIES = {
   similarTo: { ...object({ caseId: id, method: { enum: ['prompt', 'local', 'palette', 'tags'], default: 'prompt' } }), required: ['caseId'],
     description: '按参考找相似，默认prompt按完整提示词的词语重合排序，不是画面相似概率；片名/班底/模板也会贡献分数，须按用户目标判断摘要中的关键差异，必要时合并query/where筛选。逐素材原词优先、缺失用已存AI词并标来源；指定mediaKind时仅比较该类素材，混合案例也可匹配纯视频/图片。候选含摘要及coverage。缺词才补其他依据，不默认看图/视频。local/palette/tags保留本地同媒体域规则；无证据为null，0为没有已知词语重合。' }
 };
-export const CASE_QUERY_DESCRIPTION = '找相似优先similarTo与所需mediaKind，省略select保留候选依据；limit由任务所需候选量决定，足够回答即交付，不必读完分页。where组合字段、orderBy排序、groupBy/aggregates统计；字段不明时才describe_case_query，同一会话复用已知定义。条件在全匹配集执行后分页；续页携带revision并保持参数，缺失不当0，原词与AI词分别查询。';
+export const CASE_QUERY_DESCRIPTION = '找相似用similarTo或未入库文字similarText，并指定所需mediaKind，省略select保留候选依据；limit由任务所需候选量决定，足够回答即交付，不必读完分页。where组合字段、orderBy排序、groupBy/aggregates统计；字段不明时才describe_case_query，同一会话复用已知定义。条件在全匹配集执行后分页；续页携带revision并保持参数，缺失不当0，原词与AI词分别查询。';

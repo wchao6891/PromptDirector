@@ -294,3 +294,42 @@ test('authored annotations are searchable and discover their edit/save rules wit
   const found=await library.search({where:{field:'creative.notes',op:'contains',value:'第二镜'},select:['creative.purpose'],query:''});
   assert.equal(found.total,1);
 });
+
+test('an unsaved text reference ranks existing prompt evidence without adding a virtual case to results or changing originals', async()=>{
+  const values=[entry('match',{text:'aerial tilt up seamless transition'}),entry('other',{text:'garden flower painting'}),entry('missing',{text:'',sourceFacts:{originalPromptAvailable:false}})];
+  const before=structuredClone(values),f=fixture(values);
+  const result=await f.external.search({similarText:'aerial tilt up seamless transition',mediaKind:'video',limit:1});
+  assert.deepEqual(ids(result),['match']);assert.ok(result.cases[0].similarity.score>0.99);
+  assert.equal(result.similarityCoverage.referenceType,'provided_text');
+  assert.equal(result.similarityCoverage.comparedCases,2);assert.equal(result.similarityCoverage.unknownExcluded,1);
+  assert.equal(result.similarityCoverage.referenceCaseId,undefined);assert.match(result.cases[0].similarity.reason,/非画面相似度/);
+  const next=await f.external.search({similarText:'aerial tilt up seamless transition',mediaKind:'video',limit:1,offset:result.nextOffset,expectedRevision:result.revision});
+  assert.deepEqual(ids(next),['other']);assert.equal(next.cases[0].similarity.score,0);
+  assert.deepEqual(f.state.entries,before);
+});
+
+test('unsaved prompt similarity reuses exact media filtering, structured conditions, and internal workspace search',async()=>{
+  const mixed=entry('mixed',{text:'intro',mediaAssets:[{id:'v',kind:'video'},{id:'i',kind:'image'}],mediaPrompts:[
+    {assetId:'v',source:'webpage',text:'car chase'},{assetId:'i',source:'webpage',text:'rose flower'}]});
+  const video=entry('video',{text:'car chase'}),image=entry('image',{text:'rose flower',mediaAssets:[{id:'pic',kind:'image'}]});
+  const f=fixture([mixed,video,image]);const query={similarText:'car chase',mediaKind:'video',where:{field:'similarity.score',op:'gt',value:0}};
+  const external=await f.external.search(query);assert.deepEqual(new Set(ids(external)),new Set(['mixed','video']));
+  const internal=await f.internal.execute('search_cases',query,{callId:'unsaved'});
+  assert.deepEqual(new Set(internal.data.candidates.map(row=>row.caseId)),new Set(['mixed','video']));
+  assert.equal(normalizeLibraryToolState(f.session().libraryTools).events.at(-1).search.similarText,'car chase');
+  await assert.rejects(f.external.search({...query,similarTo:{caseId:'video'}}),/不能同时|互斥/);
+  await assert.rejects(f.external.search({similarText:'   '}),/文字|为空/);
+});
+
+test('unsaved reference uses the full text, compares available original and AI evidence across media, and invalidates changed-input paging',async()=>{
+  const text='common words '.repeat(100)+' orbital palace';
+  const values=[entry('plain',{text,mediaAssets:[]}),entry('image',{text,mediaAssets:[{id:'image',kind:'image'}]}),
+    entry('ai',{text:'',sourceFacts:{originalPromptAvailable:false},mediaPrompts:[{assetId:'ai-video',source:'ai-suggestion',text}]}),entry('other',{text:'common words'})];
+  const f=fixture(values);const query={similarText:text,limit:1};const found=await f.external.search(query);
+  assert.equal(found.similarityCoverage.referencePrompt.characters,text.length);
+  assert.equal(found.total,4);assert.ok(found.cases[0].similarity.score>0.99);
+  const all=await f.external.search({similarText:text});
+  assert.equal(all.cases.some(item=>item.caseId==='plain'),true);
+  assert.deepEqual(all.cases.find(item=>item.caseId==='ai').similarity.promptEvidence.sources,['ai']);
+  await assert.rejects(f.external.search({...query,similarText:text+' new source',offset:1,expectedRevision:found.revision}),e=>e.code==='search_changed');
+});

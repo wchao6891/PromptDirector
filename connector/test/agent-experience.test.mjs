@@ -57,3 +57,34 @@ test('the actual MCP schema and handler combine three complete case sections int
     assert.equal(JSON.parse(combined.content).media[0].frameTimeMs, 21373);
   } finally { await server.close(); }
 });
+
+test('three selected cases reach the MCP caller in one bridge request and continuations do not rebuild their material', async () => {
+  const { createReferenceSelection, REFERENCE_SELECTION_KEY } = await import('../../extension/reference-selection.js');
+  const { CASE_LIBRARY_REVISION_KEY } = await import('../../extension/library-storage.js');
+  const entries = ['a', 'b', 'c'].map(id => ({ id, title: id, text: `完整原词${id}`.repeat(100), mediaAssets: [] }));
+  const stored = { [REFERENCE_SELECTION_KEY]: { version: 1, revision: 1, caseIds: ['a', 'b', 'c'] }, [CASE_LIBRARY_REVISION_KEY]: 'library:1' };
+  let loads = 0; const calls = [];
+  const selection = createReferenceSelection({
+    storage: { get: async keys => Object.fromEntries([keys].flat().map(key => [key, stored[key]])) },
+    loadState: async () => { loads++; return { entries, compoundCases: [] }; },
+    readDerived: async () => null, getLibraryId: async () => 'fixture', enqueue: fn => fn()
+  });
+  const server = createServer(async (operation, input) => { calls.push(operation); return selection.read(input); });
+  try {
+    const tool = server._registeredTools.promptdirector_read_workspace_content;
+    const read = async input => {
+      const response = await tool.handler(tool.inputSchema.parse(input));
+      assert(!response.isError, JSON.stringify(response)); return JSON.parse(response.content[0].text);
+    };
+    const first = await read({ part: 'selection', length: 100 });
+    assert.deepEqual(calls, ['read_workspace_content']); assert.equal(loads, 1);
+    let text = first.content, offset = first.nextOffset;
+    while (offset !== null) {
+      const next = await read({ part: 'selection', expectedRevision: first.revision, offset, length: 100 });
+      text += next.content; offset = next.nextOffset;
+    }
+    assert.equal(loads, 1);
+    assert.deepEqual(JSON.parse(text).references.map(ref => ref.originalText), entries.map(entry => entry.text));
+    assert(calls.every(operation => operation === 'read_workspace_content'));
+  } finally { await server.close(); }
+});

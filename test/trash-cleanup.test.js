@@ -120,6 +120,23 @@ test('a historical copy belonging to another case remains recoverable and does n
   assert.deepEqual(plan.changes.folderOwnershipBackup.state.entries, [item('other', ['shared']).snapshot]);
 });
 
+test('permanent deletion prunes the pre-split case copy without deleting another historical case shared original', async () => {
+  const kept = item('other', ['shared']).snapshot;
+  const f = fixture({ entries: [], trashState: { items: [item('gone', ['shared', 'current-only'])] },
+    legacyEntries: [item('gone', ['shared', 'old-only']).snapshot, kept] });
+  await f.context.emptyTrashAction();
+  assert.deepEqual(f.state.legacyEntries, [kept], 'permanent deletion must also remove the pre-split recovery copy');
+  assert.deepEqual(f.deleted.sort(), ['current-only', 'old-only']);
+  assert.ok(TRASH_HISTORY_KEYS.includes('legacyEntries'), 'the background must load this recovery copy before deleting originals');
+});
+
+test('retrying cleanup protects originals still referenced by the pre-split recovery copy', async () => {
+  const f = fixture({ entries: [], legacyEntries: [item('other', ['shared']).snapshot],
+    pendingTrashCleanup: { mediaIds: ['shared', 'exclusive'], localReferenceIds: [], screenshotEntryIds: [] } });
+  await f.context.resumeTrashCleanup();
+  assert.deepEqual(f.deleted, ['exclusive']);
+});
+
 test('permanently deleting a case also purges its separately trashed media and stale project membership', () => {
   const state = { entries: [], trashState: { items: [item('gone', ['original']),
     { id: 'trash:media:gone:video', kind: 'media', targetId: 'video', deletedAt: '2026-10-05T00:00:00Z',

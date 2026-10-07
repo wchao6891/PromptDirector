@@ -28,8 +28,11 @@ async function getMediaBlob(id) {
         (extension / 'library-agent-workspace.js').write_text(source.replace(original, gate))
         with extension_session('pd-review-race-', extension_dir=extension) as run:
             page = run.open_page('library.html')
-            run.seed_storage(page, {'entries': []})
+            # This test starts in an established empty library; first-run restore onboarding
+            # is a separate dialog flow and would correctly block Agent control.
+            run.seed_storage(page, {'entries': [], 'dataSafetyOnboardingSeen': True})
             page.reload()
+            expect(page.locator('body')).to_have_attribute('data-library-state', 'ready')
             worker = run.context.service_workers[0]
 
             def call(operation, data=None):

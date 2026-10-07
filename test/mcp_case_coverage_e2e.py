@@ -46,11 +46,8 @@ def main():
             combine_input = {'requestId': 'cross-project-combine', 'caseId': 'pictures', 'expectedRevision': first['revision'],
                 'action': 'combine_cases', 'title': '图片视频组合', 'coverVisualId': 'image',
                 'additionalCases': [{'caseId': 'video', 'expectedRevision': read('video')['revision']}]}
-            assert call('organize_case', combine_input)['code'] == 'compound_project_conflict'
-            # The ordinary combine path uses same-project members. An explicit
-            # project operation moves the fixture first; combo must add no moves.
-            assert call('organize_case', {'requestId': 'explicit-move', 'caseId': 'video', 'expectedRevision': read('video')['revision'],
-                'action': 'move_project', 'projectId': 'p'})['ok']
+            # Combining establishes a relation while each physical member keeps
+            # its own project. No explicit or implicit move is needed.
             original = page.evaluate("async () => (await chrome.runtime.sendMessage({type:'GET_STATE'}))")
             combined = call('organize_case', {**combine_input, 'requestId': 'combine', 'expectedRevision': read('pictures')['revision'],
                 'additionalCases': [{'caseId': 'video', 'expectedRevision': read('video')['revision']}]})

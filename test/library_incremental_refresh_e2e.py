@@ -16,7 +16,8 @@ SEED = """async (count) => {
     savedAt: new Date(Date.UTC(2026, 8, 1, 0, 0, i)).toISOString(),
     classification: {pathIds: ['content:image-case'], status: 'confirmed', source: 'manual'},
     mediaAssets: [], customLabels: ['参考'], timeNotes: []}));
-  await chrome.storage.local.set({schemaVersion: SCHEMA_VERSION, entries, facetCatalog: createDefaultFacetCatalog(),
+  const {getLibraryStorage}=await import('./library-storage.js');
+  await getLibraryStorage().set({schemaVersion: SCHEMA_VERSION, entries, facetCatalog: createDefaultFacetCatalog(),
     organizerState: createDefaultOrganizerState(), compoundCases: [], trashState: {version: 1, items: []}});
 }"""
 
@@ -47,6 +48,14 @@ def main():
           const get = chrome.storage.local.get.bind(chrome.storage.local);
           chrome.storage.local.get = keys => { if ([keys].flat().includes('entries')) window.pdFullReads++; return get(keys); }; }""")
         library.wait_for_timeout(1500)  # let the opening refresh settle before marking card nodes
+        library.evaluate("""() => { window.pdSerializedCases = [];
+          const stringify = JSON.stringify;
+          JSON.stringify = function(value, ...rest) {
+            if (value && typeof value === 'object' && typeof value.id === 'string'
+                && value.id.startsWith('case-') && typeof value.text === 'string') window.pdSerializedCases.push(value.id);
+            return stringify.call(JSON, value, ...rest);
+          };
+        }""")
         library.evaluate("() => document.querySelectorAll('#case-list .case-card').forEach(card => { card.pdOriginal = true; })")
         edited = set()
         for step in range(12):
@@ -66,6 +75,7 @@ def main():
         kept = library.evaluate("""edited => [...document.querySelectorAll('#case-list .case-card')]
           .filter(card => !edited.includes(card.dataset.entryId)).every(card => card.pdOriginal === true)""", sorted(edited))
         full_reads = library.evaluate("window.pdFullReads")
+        serialized = library.evaluate("window.pdSerializedCases")
         incremental_search = [search(library, "改名案例"), search(library, "新标签3")]
 
         fresh = run.open_page("library.html")
@@ -77,6 +87,7 @@ def main():
         assert incremental == expected, {"incremental": incremental, "fresh": expected}
         assert incremental_search == expected_search, (incremental_search, expected_search)
         assert kept, "unchanged cards must keep their nodes and loaded previews"
+        assert not (set(serialized) - edited), f"untouched original cases must not be serialized during precise updates: {len(serialized)} serializations"
         assert full_reads == 0, f"case-only changes must not re-read the whole library ({full_reads})"
         print({"edits": 12, "equal_to_fresh_load": True, "unchanged_cards_kept": True, "library_rereads": full_reads,
                "search_results": [len(item) for item in incremental_search]})

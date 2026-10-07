@@ -97,3 +97,41 @@ export async function receiveMedia(input, call, root = connectorRoot()) {
     return result;
   } catch (error) { await handle.close().catch(() => {}); await unlink(temp).catch(() => {}); throw error; }
 }
+
+// A viewport capture is ephemeral, unlike a case original. Its opaque capture identity fixes
+// all chunks to one browser frame; no original-media cache or repeated digest is involved.
+export async function receiveWorkspaceScreenshot(input, call, root = connectorRoot()) {
+  const first = await call('capture_workspace', input);
+  if (first.state !== 'captured') return first;
+  if (first.offset !== 0 || typeof first.screenshotId !== 'string' || !first.screenshotId
+    || first.mimeType !== 'image/png' || !Number.isSafeInteger(first.byteSize) || first.byteSize <= 0) {
+    throw new Error('插件截图回包无效。');
+  }
+  const parts = [];
+  let offset = 0, part = first;
+  while (true) {
+    if (part.screenshotId !== first.screenshotId || part.offset !== offset || part.byteSize !== first.byteSize
+      || part.tabId !== first.tabId || part.surface !== first.surface || part.capturedAt !== first.capturedAt
+      || part.mimeType !== first.mimeType || typeof part.data !== 'string') throw new Error('插件截图分块不一致。');
+    const bytes = Buffer.from(part.data, 'base64');
+    if (!bytes.length || offset + bytes.length > first.byteSize) throw new Error('插件截图分块长度无效。');
+    parts.push(bytes);
+    offset += bytes.length;
+    if (part.nextOffset === null) break;
+    if (part.nextOffset !== offset) throw new Error('插件截图分块位置无效。');
+    part = await call('capture_workspace', { screenshotId: first.screenshotId, offset });
+  }
+  if (offset !== first.byteSize) throw new Error('插件截图未完整接收。');
+  const bytes = Buffer.concat(parts);
+  if (!bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('插件截图不是PNG图像。');
+  await ensurePrivateRoot(root);
+  const directory = join(root, 'files');
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const path = join(directory, `workspace-${randomUUID()}.png`);
+  const handle = await open(path, 'wx', 0o600);
+  try { await handle.writeFile(bytes); }
+  catch (error) { await handle.close(); await unlink(path).catch(() => {}); throw error; }
+  await handle.close();
+  const { data, nextOffset, offset: _offset, ...metadata } = first;
+  return { ...metadata, path, image: { data: bytes.toString('base64'), mimeType: 'image/png' } };
+}

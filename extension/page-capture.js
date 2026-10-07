@@ -104,6 +104,10 @@ export function normalizePageCaptureBatch(value = {}) {
     tabId: Number.isInteger(Number(value.tabId)) ? Number(value.tabId) : null,
     sourceUrl: safeUrl(value.sourceUrl),
     adapter: clean(value.adapter) || "generic",
+    selectionTemplate: (!value.adapter || value.adapter === "generic") && safeUrl(value.selectionTemplate?.sourceUrl) && clean(value.selectionTemplate?.marker)
+      ? { sourceUrl: safeUrl(value.selectionTemplate.sourceUrl), marker: clean(value.selectionTemplate.marker),
+        ...(Array.isArray(value.selectionTemplate.mediaSources) && value.selectionTemplate.mediaSources.length
+          ? { mediaSources: [...new Set(value.selectionTemplate.mediaSources.map(safeUrl).filter(Boolean))] } : {}) } : null,
     captureMode: value.captureMode === "list" ? "list" : "single",
     articleSplit: value.articleSplit === true,
     detailsRead: value.detailsRead === true,
@@ -111,7 +115,7 @@ export function normalizePageCaptureBatch(value = {}) {
     saveMode: value.saveMode === "combined" ? "combined" : value.saveMode === "multiple" ? "multiple" : value.captureMode === "list" ? "" : "single",
     combinedTitle: clean(value.combinedTitle),
     targetCount: positiveInteger(value.targetCount, 0),
-    stopReason: ["target-reached", "no-new-items", "no-next-page", "layout-changed", "pagination-failed", "cancelled"].includes(value.stopReason) ? value.stopReason : "",
+    stopReason: ["target-reached", "no-new-items", "no-next-page", "manual-template-page", "layout-changed", "pagination-failed", "cancelled"].includes(value.stopReason) ? value.stopReason : "",
     status: ["preview", "scanning", "saving", "completed", "cancelled", "failed"].includes(value.status) ? value.status : "preview",
     sessionMediaAllowed: value.sessionMediaAllowed !== false,
     candidates,
@@ -700,9 +704,23 @@ export async function collectPageCaptureSnapshot(options = {}) {
   let wholePage = options.mode === "whole";
   const originalScroll = { x: window.scrollX, y: window.scrollY };
   let xSourceScroll = null;
+  let selectedTemplateNode = null;
 
   try {
+    if (options.listMode && options.selectionTemplate) {
+      const template = options.selectionTemplate;
+      selectedTemplateNode = [...document.querySelectorAll('[data-promptdirector-capture-template]')]
+        .find(node => node.getAttribute('data-promptdirector-capture-template') === template.marker);
+      if (selectedTemplateNode && template.mediaSources?.length) {
+        selectedTemplateNode = templateMediaPeers(selectedTemplateNode)
+          .find(node => templateMediaSources(node).some(source => template.mediaSources.includes(source)));
+      }
+      if (template.sourceUrl !== location.href || !template.marker || !selectedTemplateNode || detectAdapter(location.hostname).id !== 'generic') {
+        throw Object.assign(new Error('手选范围已失效，请在当前页面重新选择一个案例'), { code: 'CAPTURE_TEMPLATE_EXPIRED' });
+      }
+    }
     if (options.manualContentHtml) {
+      genericCapture = detectAdapter(location.hostname).id === "generic";
       const root = document.createElement("div");
       root.innerHTML = options.manualContentHtml;
       maxMedia = Math.max(maxMedia, root.querySelectorAll("img,video,iframe,canvas").length);
@@ -721,7 +739,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         candidate.media = candidate.media.map(item => ({ ...item, id: ids.get(item.id) }));
         candidate.articleDocument.blocks = candidate.articleDocument.blocks.map(block => ({ ...block, assetId: ids.get(block.assetId) || block.assetId }));
       }
-      return { id: sessionId, sourceUrl: location.href, candidates: candidate ? [candidate] : [], capturedAt };
+      return { id: sessionId, sourceUrl: location.href, adapter: "generic", selectionTemplate: genericCapture ? options.selectionTemplate : null, candidates: candidate ? [candidate] : [], capturedAt };
     }
     if (options.xSupplementUrl) return { supplement: await readXSupplement(options.xSupplementUrl) };
     const editedRegion = options.editedRegion && typeof options.editedRegion === "object" ? options.editedRegion : null;
@@ -761,6 +779,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       return { id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id, candidates: [], capturedAt, siteStatus: "partial" };
     }
     if (editedRoot) {
+      genericCapture = adapter.id === "generic";
       const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: 0 });
       const candidate = candidateForRoot(editedRoot, 0, {
         adapter, metadata, structured, article: null, siteData: null, canonicalUrl, pageType, maxMedia
@@ -828,6 +847,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
     // Only unadapted pages use this document path. Dedicated adapters and manual
     // selections retain their existing roots, visibility rules and loading flow.
     genericCapture = adapter.id === "generic" && !siteData && !pageSelection && !editedRoot;
+    const template = genericCapture && options.listMode && options.selectionTemplate
+      ? createSelectionTemplatePlan() : null;
+    if (template) contentRoot = null;
     if (genericCapture && options.genericGroupingRequested) wholePage = true;
     if (genericCapture && !options.listMode) {
       const mains = [...document.querySelectorAll("main,[role=main]")]
@@ -842,7 +864,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       }
     }
     // A single semantic article is a document, not a feed of its paragraphs.
-    const semanticArticles = !contentRoot && !siteData && !pageSelection && adapter.id === "generic"
+    const semanticArticles = !template && !contentRoot && !siteData && !pageSelection && adapter.id === "generic"
       ? [...document.querySelectorAll("main article,[role=main] article,article[role=document],[role=document]")]
         .filter(node => (node.matches("[role=document]") || node.querySelector("h1")) && !node.closest("nav,aside,[role=navigation],[role=complementary]") && !node.parentElement?.closest("article,[role=document]"))
       : [];
@@ -893,15 +915,15 @@ export async function collectPageCaptureSnapshot(options = {}) {
       if (contentRoot || siteData?.pageKind === "detail") return [];
       const current = [];
       const pinRoots = adapter.id === "pinterest" && !/^\/pin\//u.test(location.pathname) ? [...document.querySelectorAll('[data-test-id="pinWrapper"]')] : [];
-      const adapterRoots = pinRoots.length ? pinRoots : adapter.cardSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
-      const repeatedRoots = adapterRoots.length > 1 || pinRoots.length ? [] : collectRepeatedCardRoots(maxCandidates);
-      const cardRoots = [...adapterRoots, ...repeatedRoots];
-      const roots = [...new Set(cardRoots)].filter(isContentRoot);
+      const adapterRoots = template ? [] : pinRoots.length ? pinRoots : adapter.cardSelectors.flatMap((selector) => [...document.querySelectorAll(selector)]);
+      const repeatedRoots = template || adapterRoots.length > 1 || pinRoots.length ? [] : collectRepeatedCardRoots(maxCandidates);
+      const cardRoots = template ? selectionTemplateRoots(template) : [...adapterRoots, ...repeatedRoots];
+      const roots = template ? cardRoots : [...new Set(cardRoots)].filter(isContentRoot);
       const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: roots.length });
       for (const [index, root] of roots.entries()) {
         const candidate = candidateForRoot(root, index, {
           adapter, metadata, structured, article: null, siteData: null, canonicalUrl,
-          pageType: options.listMode || pinRoots.length ? "gallery" : pageType, maxMedia
+          pageType: options.listMode || pinRoots.length ? "gallery" : pageType, maxMedia, templateCard: template?.cards.get(root)
         });
         if (candidate) current.push(candidate);
       }
@@ -928,7 +950,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const capturedCards = [...accumulated.values()];
     const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: capturedCards.length });
     const pageRoot = contentRoot || document.body;
-    const bodyCandidate = candidateForRoot(pageRoot, 0, {
+    const bodyCandidate = template ? null : candidateForRoot(pageRoot, 0, {
       adapter, metadata, structured, article: contentRoot ? null : article, siteData, pageSelection, canonicalUrl,
       pageType: contentRoot ? "article" : siteData?.pageType || pageType, maxMedia: documentMediaLimit, pageRoot, contentRoot
     });
@@ -938,7 +960,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         bodyCandidate.articleDocument?.blocks || [], bodyCandidate.media);
     }
     if (bodyCandidate) await attachViewportFallbacks([bodyCandidate]);
-    const regionCandidates = !contentRoot && !siteData && !pageSelection && !["feed", "gallery"].includes(pageType)
+    const regionCandidates = !template && !contentRoot && !siteData && !pageSelection && !["feed", "gallery"].includes(pageType)
       ? collectSubjectRegionRoots(positiveInteger(options.maxRegionCandidates, 5)).flatMap((root, index) => {
           const candidate = candidateForRoot(root, index, {
             adapter, metadata, structured, article: null, siteData: null, canonicalUrl, pageType, maxMedia
@@ -947,7 +969,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         })
       : [];
     if (regionCandidates.length) await attachViewportFallbacks(regionCandidates);
-    const candidates = capturedCards.length > 0 && (adapter.id === "pinterest" && !/^\/pin\//u.test(location.pathname) && !siteData && !pageSelection || capturedCards.length > 1 && (options.listMode || ["feed", "gallery"].includes(pageType)))
+    const candidates = template ? capturedCards.slice(0, maxCandidates) : capturedCards.length > 0 && (adapter.id === "pinterest" && !/^\/pin\//u.test(location.pathname) && !siteData && !pageSelection || capturedCards.length > 1 && (options.listMode || ["feed", "gallery"].includes(pageType)))
       ? capturedCards.slice(0, maxCandidates)
       : regionCandidates.length ? regionCandidates
         : bodyCandidate ? [bodyCandidate] : capturedCards.slice(0, maxCandidates);
@@ -962,6 +984,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       id: sessionId,
       sourceUrl: canonicalUrl,
       adapter: adapter.id,
+      ...(template ? { selectionTemplate: options.selectionTemplate } : {}),
       candidates,
       capturedAt
     };
@@ -1609,12 +1632,16 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const capturePost = context.adapter.id === "x" && !context.pageSelection && !options.editedRegion?.token;
     const post = capturePost ? xPostContent(root) : null;
     if (capturePost && !post) return null;
-    const cardLink = isPageRoot || context.pageType === "article" ? "" : safeHttpUrl(root.querySelector("a[href]")?.href);
+    const cardLink = isPageRoot || context.pageType === "article" ? "" : context.templateCard
+      ? genericDetailReferences(root)[0]?.url || safeHttpUrl(context.templateCard.querySelector('a[href]')?.href)
+        || genericDetailReferences(context.templateCard.querySelector('img,video') || context.templateCard)[0]?.url || ''
+      : safeHttpUrl(root.querySelector("a[href]")?.href);
     const canonicalUrl = adapterFields.canonicalUrl || cardLink || safeHttpUrl(siteData?.canonicalUrl) || context.canonicalUrl;
     const structured = context.structured.find((item) => sameUrl(item.url || item.mainEntityOfPage, canonicalUrl)) || (isPageRoot ? context.structured[0] : null) || {};
     let title = cleanText(isPageRoot
       ? options.feishuDocument?.title || siteData?.title || (genericCapture ? root.querySelector("h1")?.textContent || context.metadata.title : "") || (context.contentRoot ? adapterFields.title : "") || context.article?.title || structured.headline || structured.name || (context.pageType === "post" ? "" : context.metadata.title)
       : adapterFields.title || root.querySelector("h1,h2,h3,[role=heading]")?.textContent || structured.headline || structured.name || (context.pageType === "post" ? "" : root.querySelector("img[alt]")?.alt));
+    if (!title && context.templateCard) title = cleanText(context.templateCard.querySelector('h1,h2,h3,[role=heading]')?.textContent || root.getAttribute('alt'));
     const pageSelection = isPageRoot ? context.pageSelection : null;
     const articleText = context.pageType === "article" ? context.article?.textContent : "";
     // One work can place its gallery and prompt in sibling regions, outside ordinary article markup.
@@ -1808,6 +1835,58 @@ export async function collectPageCaptureSnapshot(options = {}) {
       if (accepted.length >= limit) break;
     }
     return accepted;
+  }
+
+  function createSelectionTemplatePlan() {
+    const selected = selectedTemplateNode;
+    // A deliberate selection supplies the scope: inspect its ancestors rather
+    // than relying on site-specific names such as grid, wall, list or gallery.
+    let card = selected.matches('img,video') ? selected.parentElement : selected;
+    while (card?.parentElement && card !== document.body) {
+      const peers = [...card.parentElement.children].filter(peer => repeatedCardShape(peer) === repeatedCardShape(card) && isContentRoot(peer));
+      if (peers.length > 1) break;
+      card = card.parentElement;
+    }
+    if (card === document.body || !card?.parentElement) card = null;
+    if (!card) throw Object.assign(new Error('所选内容没有可确认的重复案例，请选择列表中的一个案例'), { code: 'CAPTURE_TEMPLATE_NOT_REPEATABLE' });
+    const path = [];
+    for (let node = selected; node !== card; node = node.parentElement) {
+      const media = node.matches('img,video');
+      path.unshift({ tag: media ? 'media' : node.tagName,
+        index: media ? templateMediaPeers(node.parentElement).findIndex(peer => templateMediaSources(peer).some(source => templateMediaSources(node).includes(source)))
+          : [...node.parentElement.children].filter(peer => peer.tagName === node.tagName).indexOf(node) });
+    }
+    return { parent: card.parentElement, shape: repeatedCardShape(card), path, cards: new WeakMap() };
+  }
+
+  function selectionTemplateRoots(template) {
+    if (!template.parent.isConnected) throw Object.assign(new Error('列表结构已变化，请重新选择案例'), { code: 'CAPTURE_TEMPLATE_EXPIRED' });
+    return [...template.parent.children].filter(card => repeatedCardShape(card) === template.shape).map(card => {
+      let selected = card;
+      for (const step of template.path) selected = selected && (step.tag === 'media' ? templateMediaPeers(selected) : [...selected.children].filter(node => node.tagName === step.tag))[step.index];
+      if (!selected) throw Object.assign(new Error('列表内容与手选范围不一致，请重新选择案例'), { code: 'CAPTURE_TEMPLATE_LAYOUT_CHANGED' });
+      template.cards.set(selected, card);
+      return selected;
+    });
+  }
+
+  function templateMediaSources(node) {
+    return [node, ...node.querySelectorAll('source')].flatMap(item => [item.currentSrc, item.src, item.poster]).filter(Boolean);
+  }
+
+  function templateMediaPeers(parent) {
+    const groups = [];
+    for (const node of [...parent.children].filter(child => child.matches('img,video'))) {
+      const sources = templateMediaSources(node);
+      const existing = groups.findIndex(peer => templateMediaSources(peer).some(source => sources.includes(source)));
+      if (existing < 0) groups.push(node);
+      else if (node.matches('video')) groups[existing] = node;
+    }
+    return groups;
+  }
+
+  function repeatedCardShape(root) {
+    return [root.tagName, root.getAttribute('role') || '', [...root.classList].sort().join('.')].join(':');
   }
 
   function collectRepeatedCardRoots(limit) {
@@ -2102,7 +2181,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const downloadCards = [...(blockRoot.querySelectorAll?.(".rde-asset-embed") || [])];
     const selector = "h1,h2,h3,h4,h5,h6,p,ul,ol,blockquote,pre,code[data-language],table,figcaption,img,video,iframe,a[href],.rde-asset-embed";
     const structuralContainers = "p,ul,ol,blockquote,pre,code[data-language],table,figcaption";
-    const elements = [...(blockRoot?.querySelectorAll?.(selector) || [])];
+    const elements = [...(genericCapture && options.selectionTemplate && blockRoot?.matches?.(selector) ? [blockRoot] : []), ...(blockRoot?.querySelectorAll?.(selector) || [])];
     for (const element of elements) {
       if (isPageChrome(element)) continue;
       const tagName = cleanText(element.tagName).toLowerCase();
@@ -2451,9 +2530,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function genericDetailReferences(element) {
-    if (!genericCapture) return [];
+    if (!genericCapture || element.closest("[data-promptdirector-detail-blocked]")) return [];
     const owner = element.closest("[hx-get],[data-hx-get],a[href]");
-    if (!owner || owner.closest("form,[hx-post],[hx-delete],[hx-put],[hx-patch],[hx-include],[hx-vals],[data-hx-vals]")) return [];
+    if (!owner || owner.closest("[data-promptdirector-detail-blocked],form,[hx-post],[hx-delete],[hx-put],[hx-patch],[hx-include],[hx-vals],[data-hx-vals]")) return [];
     const fragment = owner.hasAttribute("hx-get") || owner.hasAttribute("data-hx-get");
     const raw = fragment ? owner.getAttribute("hx-get") || owner.getAttribute("data-hx-get") : owner.getAttribute("href");
     if (!raw || raw.startsWith("#") || owner.hasAttribute("download")) return [];
@@ -2468,7 +2547,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function collectMedia(root, limit) {
     const media = [];
-    for (const [elementIndex, element] of [...root.querySelectorAll("img,video,iframe,canvas")].entries()) {
+    for (const [elementIndex, element] of [...(genericCapture && options.selectionTemplate && root.matches("img,video,iframe,canvas") ? [root] : []), ...root.querySelectorAll("img,video,iframe,canvas")].entries()) {
       if (isExcludedMedia(element)) continue;
       if (element.matches?.("img") && playerForCompanionPoster(element, root)) continue;
       if (element instanceof HTMLCanvasElement) {
@@ -2830,7 +2909,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function isContentRoot(root) {
     if (!(root instanceof HTMLElement) || root.closest("nav,aside,header,[role=banner]")) return false;
-    return cleanText(root.innerText).length > 20 || root.querySelector("img,video,iframe,canvas");
+    return cleanText(root.innerText).length > 20 || root.querySelector("img,video,iframe,canvas") || genericCapture && options.selectionTemplate && root.matches("img,video,iframe,canvas");
   }
 
   function sameUrl(value, expected) {
