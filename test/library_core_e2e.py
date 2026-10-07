@@ -91,12 +91,12 @@ def main() -> None:
 
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
-        before_preview = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging'])")
+        before_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         library.locator(".advanced-reanalysis > summary").click()
         library.locator("#preview-analysis-reanalyze").click()
         expect(library.locator("#analysis-batch-details")).to_contain_text("3 次请求")
         expect(library.locator("#analysis-batch-details")).to_contain_text("全部成功前只暂存")
-        after_preview = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging'])")
+        after_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         assert json.dumps(after_preview, sort_keys=True, ensure_ascii=False) == json.dumps(before_preview, sort_keys=True, ensure_ascii=False)
 
         library.evaluate(
@@ -142,9 +142,9 @@ def main() -> None:
         expect(library.locator("#apply-staged-analysis-rebuild")).to_be_hidden()
         expect(library.locator("#retry-analysis-failures")).to_be_hidden()
         partial_state = library.evaluate(
-            """async () => chrome.storage.local.get([
+            """async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get([
               'entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging', 'analysisBatchUndo'
-            ])"""
+            ]))"""
         )
         partial_entries = {entry["id"]: entry for entry in partial_state["entries"]}
         assert partial_state["batchJob"]["partialApplied"] is True
@@ -190,10 +190,10 @@ def main() -> None:
         library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
         expect(library.locator("#cancel-analysis-batch")).to_be_visible()
-        before_cancel = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog'])")
+        before_cancel = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog']))")
         library.locator("#cancel-analysis-batch").click()
         expect(library.locator("#batch-status-badge")).to_contain_text("上次已取消")
-        after_cancel = library.evaluate("async () => chrome.storage.local.get(['entries', 'facetCatalog', 'analysisRebuildStaging'])")
+        after_cancel = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'analysisRebuildStaging']))")
         assert "analysisRebuildStaging" not in after_cancel
         assert json.dumps({"entries": after_cancel["entries"], "facetCatalog": after_cancel["facetCatalog"]}, sort_keys=True, ensure_ascii=False) == json.dumps(before_cancel, sort_keys=True, ensure_ascii=False)
         library.locator("#settings-close").click()

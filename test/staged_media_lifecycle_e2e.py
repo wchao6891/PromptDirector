@@ -10,7 +10,7 @@ FILE = {'name': 'original.png', 'mimeType': 'image/png', 'buffer': PNG}
 SNAP = '''async()=>{
  const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('prompt-case-collector');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
  const rows=await new Promise((resolve,reject)=>{const tx=db.transaction('media','readonly'),s=tx.objectStore('media'),rows=[];const r=s.openCursor();r.onsuccess=()=>{const c=r.result;if(!c)return resolve(rows);rows.push({id:c.key,size:c.value.size});c.continue()};r.onerror=()=>reject(r.error)});db.close();
- const s=await chrome.storage.local.get(['entries','stagedMediaWrites']);return {rows,entries:s.entries||[],stages:s.stagedMediaWrites||{}};
+ const s=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','stagedMediaWrites']));return {rows,entries:s.entries||[],stages:s.stagedMediaWrites||{}};
 }'''
 
 def settled(page):
@@ -45,7 +45,7 @@ with extension_session('pd-staged-media-') as run:
     expect(page.locator('#import-supported-count')).to_have_text('1')
     expect(page.locator('#import-skipped-count')).to_have_text('1')
     page.locator('#import-start').click()
-    wait_for_async_condition(page, "async()=>(await chrome.storage.local.get('entries')).entries?.length===1")
+    wait_for_async_condition(page, "async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries?.length===1")
     expect(page.locator('#import-dialog')).not_to_be_visible(); settled(page)
     assert page.locator('dialog[open]').count() == 0, 'no failure modal should trap the user'
     page.evaluate('()=>{chrome.runtime.sendMessage=window.realSend}')
@@ -55,7 +55,7 @@ with extension_session('pd-staged-media-') as run:
     prepare(page); expect(page.locator('#import-duplicate-count')).to_have_text('1')
     assert len(page.evaluate(SNAP)['rows']) == 1, 'known duplicates must not copy another original during preview'
     page.locator('#import-file-list input').check(); page.locator('#import-start').click()
-    wait_for_async_condition(page, "async()=>(await chrome.storage.local.get('entries')).entries?.length===2")
+    wait_for_async_condition(page, "async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries?.length===2")
     expect(page.locator('#import-dialog')).not_to_be_visible(); settled(page)
     copies = page.evaluate(SNAP)
     assert len(copies['rows']) == 1 and len({e['id'] for e in copies['entries']}) == 2, copies

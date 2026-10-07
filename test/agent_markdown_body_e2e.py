@@ -27,7 +27,7 @@ def main():
         expect(reader.locator("strong").first).to_have_text("先锁定空间")
         expect(reader.locator("ul li")).to_have_count(2)
         expect(reader.get_by_role("link", name="来源")).to_have_attribute("href", "https://example.com/")
-        stored = page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries[0]")
+        stored = page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries[0]")
         original_text = stored["articleDocument"]["blocks"][0]["text"]
         reader.get_by_role("button", name="编辑正文", exact=True).click()
         editor = reader.get_by_role("textbox", name="编辑正文段落")
@@ -35,7 +35,7 @@ def main():
         editor.fill("## 不应保存的临时修改")
         reader.get_by_role("button", name="取消", exact=True).click()
         expect(reader.locator("h1")).to_have_text("白模方法")
-        assert page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries[0].text") == stored["text"]
+        assert page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries[0].text") == stored["text"]
         reader.get_by_role("button", name="编辑正文", exact=True).click()
         updated_text = text.replace("# 白模方法", "# 白模方法修订")
         reader.get_by_role("textbox", name="编辑正文段落").fill(updated_text)
@@ -44,7 +44,7 @@ def main():
         page.reload()
         page.locator('.case-card').filter(has_text='白模创作方法').click()
         expect(reader.locator("h1")).to_have_text("白模方法修订")
-        saved = page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries[0]")
+        saved = page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries[0]")
         assert saved["text"] == updated_text, {"saved": saved["text"], "expected": updated_text, "block": saved["articleDocument"]["blocks"][0]}
         assert saved["articleDocument"]["blocks"][0]["mimeType"] == "text/markdown"
         assert saved["mediaAssets"] == stored["mediaAssets"]

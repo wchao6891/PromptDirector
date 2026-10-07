@@ -61,7 +61,7 @@ def main(mode='all'):
             p.keyboard.press('m'); expect(panel).to_be_visible(timeout=2000)
             panel.locator('textarea').fill('图片反馈'); p.keyboard.press('Enter')
             expect(panel.locator('form')).to_have_attribute('data-dirty', 'false')
-            assert p.evaluate("async()=>{const s=await chrome.storage.local.get('entries');return s.entries.find(e=>e.id==='one').timeNotes.some(n=>n.text==='图片反馈')}")
+            assert p.evaluate("async()=>{const s=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));return s.entries.find(e=>e.id==='one').timeNotes.some(n=>n.text==='图片反馈')}")
             panel.get_by_role('button', name='收起备注', exact=True).click()
             results['imageShortcutAndSave'] = True
         if mode in ['all', 'positions']:
@@ -132,7 +132,7 @@ def main(mode='all'):
             if out:
                 p.screenshot(path=str(out/'temporary-note-remembered.png'))
             temp_note.get_by_role('button', name='收起备注', exact=True).click(); p.locator('#temporary-review-close').click()
-            assert p.evaluate("async()=>(await chrome.storage.local.get('entries')).entries.every(e=>e.text==='原词保持')")
+            assert p.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.every(e=>e.text==='原词保持')")
             results.update(sharedGripStyle=True, positionsSurviveCasesAndReload=True, narrowViewportSafe=True,
                            customKeyInImageDetail=True, staleSettingsKeepPositions=True, temporarySharesPosition=True)
         print(results)

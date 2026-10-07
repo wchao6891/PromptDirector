@@ -80,6 +80,21 @@ def main() -> None:
 
         composer = session.open_page("composer.html?session=video-session-e2e")
 
+        # A storage notification can rebuild the editor before the preceding save
+        # reply arrives. Keep that reply pending while the user clears the judgment.
+        composer.evaluate("""() => {
+          const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+          let judgments = 0;
+          chrome.runtime.sendMessage = async message => {
+            const number = message.type === 'UPDATE_CREATIVE_JUDGMENT' ? ++judgments : 0;
+            const result = await send(message);
+            if (number === 2) {
+              await new Promise(resolve => { window.releasePreviousJudgment = resolve; });
+              window.previousJudgmentReleased = true;
+            }
+            return result;
+          };
+        }""")
         video = composer.locator(".composer-result-video")
         expect(video).to_be_visible(timeout=15_000)
         expect(composer.get_by_role("button", name="保存到灵感库", exact=True)).to_be_visible()
@@ -101,6 +116,22 @@ def main() -> None:
         assert judgment["keep"] == "保留稳定构图和节奏" and judgment["improve"] == "增加主体动作", judgment
         composer.get_by_role("button", name="清空", exact=True).click()
         expect(composer.locator(".composer-result-judgment-feedback")).to_have_text("本次人工判断已清空")
+        composer.wait_for_function("() => typeof window.releasePreviousJudgment === 'function'")
+        composer.evaluate("() => window.releasePreviousJudgment()")
+        composer.wait_for_function("() => window.previousJudgmentReleased === true")
+        # Observe a real subsequent refresh, so stale feedback in the per-result
+        # cache cannot hide behind the detached editor that handled the old reply.
+        composer.evaluate("""async () => {
+          window.judgmentBeforeRefresh = document.querySelector('.composer-result-judgment-feedback');
+          const {composerSessions} = await chrome.storage.local.get('composerSessions');
+          await chrome.storage.local.set({composerSessions: composerSessions.map(item => ({
+            ...item, updatedAt: new Date().toISOString()
+          }))});
+        }""")
+        composer.wait_for_function("() => !window.judgmentBeforeRefresh.isConnected")
+        expect(composer.locator(".composer-result-judgment-feedback")).to_have_text("本次人工判断已清空")
+        expect(composer.get_by_label("值得保留")).to_have_value("")
+        expect(composer.get_by_label("需要改进")).to_have_value("")
         assert composer.evaluate(
             "() => chrome.storage.local.get('creativeRuns').then(value => value.creativeRuns[0].outputs[0].judgment)"
         ) is None
@@ -126,7 +157,7 @@ def main() -> None:
         expect(composer.get_by_role("button", name="已保存到灵感库", exact=True)).to_be_visible()
         saved = composer.evaluate(
             """async () => {
-              const stored = await chrome.storage.local.get(['entries', 'creativeRuns']);
+              const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'creativeRuns']));
               const visualId = stored.creativeRuns[0].outputs[0].visual.id;
               return {
                 visualId,

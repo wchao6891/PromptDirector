@@ -55,7 +55,7 @@ def main(mode='all'):
             return
         p.wait_for_function("()=>[...document.querySelectorAll('.case-card img')].some(i=>i.complete&&i.naturalWidth)")
         if mode == 'article':
-            original = p.evaluate("async()=> (await chrome.storage.local.get('entries')).entries")
+            original = p.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries")
             p.evaluate('()=>{window.blockDecode=true;window.decodeCalls=0}')
             first.dispatch_event("click")
             expect(p.locator('.article-document-reader')).to_contain_text('Read before decoding offscreen originals', timeout=2000)
@@ -64,7 +64,7 @@ def main(mode='all'):
             image = p.locator('.article-document-image')
             image.scroll_into_view_if_needed()
             p.wait_for_function("()=>{const i=document.querySelector('.article-document-image');return i.complete&&i.naturalWidth}")
-            assert p.evaluate("async()=> (await chrome.storage.local.get('entries')).entries") == original
+            assert p.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries") == original
             p.locator('#detail-close').click()
             first.dispatch_event('click')
             expect(p.locator('.article-document-reader')).to_contain_text('Read before decoding offscreen originals')

@@ -41,13 +41,13 @@ def main():
         page.wait_for_function('()=>Boolean(window.saveResult)')
         result=page.evaluate('window.saveResult')
         assert result['ok'] and result['results'][0]['status']=='partial', result
-        entries=page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries")
+        entries=page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries")
         assert len(entries)==1 and any(asset['kind']=='video' for asset in entries[0]['mediaAssets']),entries
         assert 'captureWarnings' not in entries[0]['sourceFacts'], entries
         assert result['results'][0]['warnings'], result
         expect(page.locator('#page-capture')).to_be_hidden()
         expect(page.locator('#feedback')).to_contain_text('已保存')
-        assert len(page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries"))==1
+        assert len(page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries"))==1
         expect(page.locator('#feedback')).not_to_have_class(re.compile(r'\berror\b'))
         workspace=page.evaluate("async()=>chrome.runtime.sendMessage({type:'GET_CAPTURE_WORKSPACE'})")
         assert workspace['draft']['fragments']==[],workspace
@@ -57,7 +57,7 @@ def main():
         page.locator('#page-capture-save').click()
         expect(page.locator('#feedback')).to_contain_text('模拟保存失败')
         expect(page.locator('#page-capture')).to_be_visible()
-        assert len(page.evaluate("async()=> (await chrome.storage.local.get('entries')).entries"))==1
+        assert len(page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries"))==1
         print({'case_saved':True,'diagnostics_not_in_case':True,'saved_sidebar_cleared':True,'unsaved_content_preserved':True})
 
 

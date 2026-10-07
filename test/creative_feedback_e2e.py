@@ -164,7 +164,7 @@ def main() -> None:
                 expect(composer.locator(".composer-result-card")).to_contain_text("本次生成结果")
                 composer.locator(".composer-result-card").get_by_role("button", name="保存到灵感库").click()
                 expect(composer.locator("#composer-feedback")).to_contain_text("灵感库")
-                stored = composer.evaluate("""async () => chrome.storage.local.get(['entries', 'creativeRuns'])""")
+                stored = composer.evaluate("""async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'creativeRuns']))""")
                 assert len(stored["entries"]) == 1
                 assert stored["entries"][0]["creationMeta"]["promptVersionId"] == "prompt-one"
                 assert len(stored["creativeRuns"]) == 1

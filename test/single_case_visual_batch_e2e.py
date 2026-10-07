@@ -188,7 +188,7 @@ def main() -> None:
                 await saveMediaBlob(`visual-batch-${{index}}`, assetBlob, {{checkCapacity: false}});
                 contentHashes.push(await imageFingerprint(assetBlob));
               }}
-              const stored = await chrome.storage.local.get('entries');
+              const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({{getLibraryStorage}}) => getLibraryStorage().get('entries'));
               const entry = stored.entries[0];
               entry.mediaAssets.forEach((asset, index) => {{ asset.contentHash = contentHashes[index]; }});
               entry.mediaAssets[0].visionAnalysis = {{
@@ -209,7 +209,7 @@ def main() -> None:
                 model: 'old-model',
                 createdAt: '2026-08-01T00:00:00.000Z'
               }};
-              await chrome.storage.local.set({{entries: stored.entries}});
+              await import(chrome.runtime.getURL('library-storage.js')).then(({{getLibraryStorage}}) => getLibraryStorage().set({{entries: stored.entries}}));
             }}"""
         )
 
@@ -244,12 +244,12 @@ def main() -> None:
         expect(suggestions).to_contain_text("确认更新图片提示词", timeout=15_000)
         expect(suggestions).to_contain_text("用户复制、采集、导入或手动编辑的提示词不会被覆盖")
         expect(suggestions.locator("textarea")).to_have_count(1)
-        before_confirm = library.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries[0].mediaPrompts)")
+        before_confirm = library.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(value => value.entries[0].mediaPrompts)")
         assert next(item for item in before_confirm if item["assetId"] == "visual-batch-3")["text"] == "旧版简短分析提示词"
         suggestions.get_by_role("button", name="确认替换").click()
         expect(suggestions).not_to_be_visible()
 
-        stored = library.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries[0])")
+        stored = library.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(value => value.entries[0])")
         analyses = [asset.get("visionAnalysis") for asset in stored["mediaAssets"]]
         assert all(analysis and analysis["version"] == 2 for analysis in analyses), analyses
         assert analyses[0]["createdAt"] == "2026-08-01T00:00:00.000Z"

@@ -41,7 +41,7 @@ def main():
             const result=await chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch,
               ...(manual?{contentTypeExplicit:true,contentTypeId:'content:video-case'}:{})});
             if (!result.ok || !result.results?.[0]?.entryId) throw new Error(JSON.stringify(result));
-            const stored=await chrome.storage.local.get('entries');
+            const stored=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
             const entry=stored.entries.find(e=>e.id===result.results[0].entryId);
             results.push({id,preview:preview.pathIds[0],saved:entry.classification.pathIds[0],entryId:entry.id});
           }

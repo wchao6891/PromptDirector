@@ -104,14 +104,14 @@ def run_jimeng_flow(home_html: bytes, detail_html: bytes) -> None:
 
         collector.evaluate("() => document.querySelector('#page-capture-save').click()")
         expect(collector.locator("#page-capture")).to_be_hidden(timeout=8000)
-        home_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        home_saved = collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries)")
         assert len(home_saved) == 1, home_saved
         assert home_saved[0]["sourceFacts"]["author"] == "AIGC大叔", home_saved[0]
         assert home_saved[0]["sourceFacts"]["itemId"] == WORK_ID, home_saved[0]
         assert home_saved[0]["title"] != "即梦AI - 一站式AI创作平台", home_saved[0]
         assert len(home_saved[0].get("mediaAssets", [])) == 1, home_saved[0]
 
-        collector.evaluate("() => chrome.storage.local.set({entries: [], captureDraft: {}})")
+        collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries: [], captureDraft: {}}))")
         fixture.goto(DETAIL_URL, wait_until="networkidle")
         fixture.evaluate("""() => {
           const range = document.createRange();
@@ -138,7 +138,7 @@ def run_jimeng_flow(home_html: bytes, detail_html: bytes) -> None:
 
         collector.evaluate("() => document.querySelector('#save-draft').click()")
         expect(collector.locator("#start-state")).to_be_visible(timeout=8000)
-        detail_saved = collector.evaluate("() => chrome.storage.local.get('entries').then(({entries}) => entries)")
+        detail_saved = collector.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(({entries}) => entries)")
         assert len(detail_saved) == 1, detail_saved
         assert detail_saved[0]["sourceFacts"]["author"] == "AIGC大叔", detail_saved[0]
         assert detail_saved[0]["sourceFacts"]["model"] == "4.7", detail_saved[0]

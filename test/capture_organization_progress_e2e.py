@@ -138,11 +138,11 @@ def main(on_download=None):
         except Exception:
             print({'events':p.evaluate('()=>captureProgressEvents'),
                    'transport':worker.evaluate('()=>({fetch:captureFixture.lastFetch,gates:[...captureFixture.gates.keys()]})'),
-                   'storage':p.evaluate("async()=>(await chrome.storage.local.get('entries')).entries")},flush=True)
+                   'storage':p.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries")},flush=True)
             raise
         known=p.locator('#feedback progress').evaluate('e=>({value:e.value,max:e.max,busy:e.getAttribute("aria-busy")})')
         assert known['value']==len(video)//2 and known['max']==len(video) and known['busy']=='true', known
-        assert p.evaluate("async()=>(await chrome.storage.local.get('entries')).entries.length")==0
+        assert p.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.length")==0
         expect(p.locator('#page-capture-save')).to_have_text('取消保存')
         expect(p.locator('#page-capture-save')).to_be_enabled()
         expect(p.locator('#page-capture-help')).to_be_hidden()
@@ -155,7 +155,7 @@ def main(on_download=None):
         expect(p.locator('#feedback')).to_contain_text('正在入库',timeout=30000)
         assert p.locator('#feedback progress').get_attribute('value') is None
         assert p.evaluate('()=>window.progressNodeBefore===document.querySelector("#feedback progress")')
-        assert p.evaluate("async()=>(await chrome.storage.local.get('entries')).entries.length")==0
+        assert p.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.length")==0
         p.screenshot(path=str(out/'writing-after-download.png'))
         worker.evaluate("()=>globalThis.captureFixture.gates.get('commit')()")
         expect(p.locator('#page-capture')).to_be_hidden(timeout=30000)

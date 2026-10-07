@@ -116,7 +116,7 @@ def main():
         panel.screenshot(path=str(Path(tempfile.gettempdir()) / 'promptdirector-capture-sidebar-implemented.png'))
         panel.locator('.page-capture-confirm').first.click()
         expect(page.locator('[data-promptdirector-capture-highlight]')).to_have_count(0)
-        assert panel.evaluate("() => chrome.storage.local.get('entries').then(s => s.entries.length)") == 0
+        assert panel.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(s => s.entries.length)") == 0
         print({'rescan': '--highlight' not in sys.argv, 'selectPreservesScroll': True, 'contentAttachedOutline': True,
                'innerScrollAndResize': True, 'cancelDirectSelection': True, 'lateResponseIgnored': True,
                'saveVisibleAt320And390': True, 'clearRemovesHighlight': True})

@@ -64,6 +64,7 @@ def main() -> None:
             sources.append({"path": path, "id": identity, "size": size, "sha256": digest})
         print("Generated real ZIP32-boundary and DEFLATE fixtures", flush=True)
         page = session.open_page("library.html", wait_until="networkidle")
+        expect(page.locator("body")).to_have_attribute("data-library-state", "ready")
         page.locator("#open-settings").click()
         page.locator('[data-settings-tab="general"]').click()
         page.locator("#library-package-file").set_input_files([str(item["path"]) for item in sources])

@@ -79,7 +79,7 @@ def run_protocol(protocol):
         assert failed['activeTurn']['partialText'] == '不完整内容'
         assert failed['activeTurn']['status'] == 'failed'
         assert [m for m in failed['messages'] if m['role'] == 'assistant'] == [m for m in completed['messages'] if m['role'] == 'assistant']
-        saved = page.evaluate("async()=>(await chrome.storage.local.get('entries')).entries[0]")
+        saved = page.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries[0]")
         assert saved['text'] == entry['text']
         print(json.dumps({'protocol': protocol, 'originalImageSent': True, 'replyPersisted': True, 'incompleteReplyRejected': True, 'requests': len(requests), 'paidRequests': 0}))
 

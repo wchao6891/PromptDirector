@@ -171,6 +171,7 @@ const COMPOSER_TITLE_MAX_CHARACTERS = 36;
 const thumbnailUrls = new Map();
 const openJudgmentIds = new Set();
 const judgmentFeedbackById = new Map();
+const judgmentRequestById = new Map();
 const imageObserver = new IntersectionObserver((items) => {
   for (const item of items) {
     if (!item.isIntersecting) continue;
@@ -3070,6 +3071,8 @@ function creativeJudgmentEditor(run, output) {
   const clear = textEl("button", "button-secondary", "清空");
   clear.disabled = !output.judgment;
   const persist = async (judgment) => {
+    const request = Symbol();
+    judgmentRequestById.set(judgmentId, request);
     save.disabled = true;
     clear.disabled = true;
     try {
@@ -3079,6 +3082,9 @@ function creativeJudgmentEditor(run, output) {
         visualId: output.visual.id,
         judgment
       });
+      // Storage notifications can rebuild this editor before its request returns.
+      // A newer edit in that editor owns both the result and its feedback.
+      if (judgmentRequestById.get(judgmentId) !== request) return;
       if (!response?.ok) throw new Error(response?.message || t("判断保存失败"));
       creativeRuns = response.creativeRuns ?? creativeRuns;
       const feedbackMessage = t(response.message || (response.judgment ? "本次人工判断已保存" : "本次人工判断已清空"));
@@ -3087,7 +3093,10 @@ function creativeJudgmentEditor(run, output) {
       save.textContent = t(response.judgment ? "保存修改" : "保存判断");
       clear.disabled = !response.judgment;
     } finally {
-      save.disabled = false;
+      if (judgmentRequestById.get(judgmentId) === request) {
+        judgmentRequestById.delete(judgmentId);
+        save.disabled = false;
+      }
     }
   };
   save.addEventListener("click", () => safely(() => persist({ keep: keep.value, improve: improve.value }))());

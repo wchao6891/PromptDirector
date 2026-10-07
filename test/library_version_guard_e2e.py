@@ -36,7 +36,7 @@ def main():
         page.evaluate("async payload => { await chrome.storage.local.clear(); await chrome.storage.local.set(payload); }",
                       {"schemaVersion": schema - 1, "entries": older_entries, "migrationBackup": nested, "uiPreferences": {"locale": "en"}})
         page.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'})")
-        stored = page.evaluate("() => chrome.storage.local.get(['schemaVersion', 'entries', 'migrationBackup', 'upgradeBackup'])")
+        stored = page.evaluate("async () => (await import('./library-storage.js')).getLibraryStorage().get(['schemaVersion', 'entries', 'migrationBackup', 'upgradeBackup'])")
         backup = stored["upgradeBackup"]
         assert stored["migrationBackup"] == nested, "the first-ever backup is never replaced"
         assert stored["schemaVersion"] == schema

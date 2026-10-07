@@ -14,7 +14,7 @@ def main():
             'customLabels': ['My label'], 'timeNotes': [{'id': 'note', 'text': 'My feedback', 'startSeconds': 1}]}],
             'uiPreferences': {'locale': 'zh-CN', 'theme': 'dark', 'motion': 'reduced',
                 'floatingPanelPositions': {'tagEditor': {'left': .3, 'top': .2}}}})
-        original = setup.evaluate("async()=> (await chrome.storage.local.get('entries')).entries")
+        original = setup.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries")
         p = run.open_page('library.html')
         p.locator('#open-settings').click()
         p.locator('[data-settings-tab=layout]').click()
@@ -94,7 +94,7 @@ def main():
         assert preferences['shortcuts']['addFeedback'] == 'N'
         assert len(preferences['layoutPresets']) == 2, 'Reset erased saved user configurations'
         assert preferences['theme'] == 'dark' and preferences['locale'] == 'zh-CN'
-        assert p.evaluate("async()=> (await chrome.storage.local.get('entries')).entries") == original
+        assert p.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries") == original
         p.reload(); p.locator('#open-settings').click(); p.locator('[data-settings-tab=layout]').click()
         expect(panel.locator('[name=detailPanelRatio]')).to_have_value('')
         p.locator('[data-settings-tab=shortcuts]').click()

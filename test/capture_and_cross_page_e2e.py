@@ -31,7 +31,7 @@ def main() -> None:
         expect(collector.locator("#feedback")).to_contain_text("已保存为新案例")
         saved = collector.evaluate(
             """async () => {
-              const entries = (await chrome.storage.local.get('entries')).entries;
+              const entries = (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries;
               return entries.find((entry) => entry.title === '跨页采集验收');
             }"""
         )

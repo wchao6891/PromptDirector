@@ -73,7 +73,7 @@ def main():
                 return send(message);
               };
             }''', status)
-            page.locator('#add-page-capture' if status == 'pending' else '#start-page-capture').click()
+            page.locator('#add-page-capture:visible, #start-page-capture:visible').click()
             page.locator('.page-capture-confirm').click()
             page.locator('#page-capture-save').click()
             expect(page.locator('#page-capture')).to_be_hidden(timeout=30000)

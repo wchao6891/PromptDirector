@@ -95,7 +95,7 @@ def main() -> None:
             first_job_id,
         )
         assert undo["ok"], undo
-        entries_after_undo = observer.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries || [])")
+        entries_after_undo = observer.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(value => value.entries || [])")
         assert not entries_after_undo, entries_after_undo
 
         canceled = observer.evaluate(
@@ -168,7 +168,7 @@ def main() -> None:
             retry["job"]["id"],
         )
         assert retry_undo["ok"], retry_undo
-        final_entries = observer.evaluate("() => chrome.storage.local.get('entries').then(value => value.entries || [])")
+        final_entries = observer.evaluate("() => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(value => value.entries || [])")
         assert not final_entries, final_entries
 
         print({

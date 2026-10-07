@@ -38,7 +38,7 @@ def main():
         expect(page.locator('#manager-feedback')).to_be_hidden()
         page.locator('#facet-recovery-actions summary').click()
         # Add after the historical snapshot, then use the actual undo button.
-        setup.evaluate("async entry => {const s=await chrome.storage.local.get('entries');await chrome.storage.local.set({entries:[...s.entries,entry]});}", later)
+        setup.evaluate("async entry => {const s=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[...s.entries,entry]}));}", later)
         page.locator('#undo-facet').click()
         expect(page.locator('#manager-feedback')).to_contain_text('已撤回')
         current = state(setup)
@@ -93,7 +93,7 @@ def main():
           const entry = {...structuredClone(s.entries[0]), id:'just-saved', title:'撤回保存',
             mediaAssets:[{id:'retained-media',kind:'image',storageMode:'managed',mimeType:'image/png'}],primaryMediaId:'retained-media'};
           await media.saveMediaBlob('retained-media', new Blob(['original-media'],{type:'image/png'}));
-          await chrome.storage.local.set({entries:[...s.entries,entry],lastSaveUndo:history.createEntrySaveUndo(entry)});
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[...s.entries,entry],lastSaveUndo:history.createEntrySaveUndo(entry)}));
           const undo = await chrome.runtime.sendMessage({type:'UNDO_LAST'});
           if (!undo.ok) throw new Error(undo.message);
           const after = await chrome.runtime.sendMessage({type:'GET_STATE'});
@@ -110,7 +110,7 @@ def main():
           const s=await chrome.runtime.sendMessage({type:'GET_STATE'});
           const entry=s.entries.find(entry=>entry.id==='just-saved');
           const undo=createEntrySaveUndo(entry);
-          await chrome.storage.local.set({entries:s.entries.map(item=>item.id===entry.id?{...item,text:'用户后来编辑'}:item),lastSaveUndo:undo});
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:s.entries.map(item=>item.id===entry.id?{...item,text:'用户后来编辑'}:item),lastSaveUndo:undo}));
           const result=await chrome.runtime.sendMessage({type:'UNDO_LAST'});
           return {result,entries:(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries};
         }""")
@@ -166,7 +166,7 @@ def main():
           const entry=applied.state.entries.find(entry=>entry.id==='just-saved');
           const analysis=entry.visionAnalysis;delete entry.visionAnalysis;
           applied.state.entries=applied.state.entries.map(item=>item.id===entry.id?updateEntryVisual(entry,'retained-media',visual=>({...visual,visionAnalysis:analysis})):item);
-          await chrome.storage.local.set({entries:applied.state.entries,facetCatalog:applied.state.facetCatalog,visionAnalysisUndo:{'just-saved':applied.undo}});
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:applied.state.entries,facetCatalog:applied.state.facetCatalog,visionAnalysisUndo:{'just-saved':applied.undo}}));
           const undo=await chrome.runtime.sendMessage({type:'UNDO_VISION_ANALYSIS',entryId:'just-saved'});
           const after=await chrome.runtime.sendMessage({type:'GET_STATE'});
           const blob=await (await import('./media-store.js')).getMediaBlob('retained-media');

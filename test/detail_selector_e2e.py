@@ -74,7 +74,7 @@ def main():
         p.get_by_role('button',name='编辑原始提示词',exact=True).click();p.locator('.original-prompt-panel textarea').fill('单图人工修订')
         p.locator('.original-prompt-panel').get_by_role('button',name='保存',exact=True).click()
         expect(p.locator('.original-prompt-panel .prompt-read-body')).to_have_text('单图人工修订')
-        stored=p.evaluate("()=>chrome.storage.local.get('entries').then(s=>s.entries.find(e=>e.id==='single'))")
+        stored=p.evaluate("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(s=>s.entries.find(e=>e.id==='single'))")
         assert stored['text']==single['text'] and stored['sourceFacts']==single['sourceFacts']
         assert next(x for x in stored['mediaPrompts'] if x['source']=='webpage')['text']=='单图来源原词'
         assert next(x for x in stored['mediaPrompts'] if x['source']=='manual')['text']=='单图人工修订'
@@ -88,7 +88,7 @@ def main():
         memberships=p.evaluate("()=>chrome.storage.local.get('organizerState').then(s=>s.organizerState.collections.filter(c=>c.entryIds.includes('case')).map(c=>c.id).sort())")
         assert memberships==['p1'], ('勾选另一个项目是移动，案例只在一个项目里', memberships)
         expect(tree.locator('[data-collection-id=leaf]')).to_have_attribute('aria-checked','false')
-        entry_count=p.evaluate("()=>chrome.storage.local.get('entries').then(s=>s.entries.filter(e=>e.id==='case').length)")
+        entry_count=p.evaluate("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(s=>s.entries.filter(e=>e.id==='case').length)")
         assert entry_count==1, '移动不复制也不丢失案例'
         print(json.dumps({'actualAlphaOnly':True,'solidFootersBothThemes':True,'conditionalTabs':True,'treeKeyboardSearchSaveRollback':True,'tagEditorAnchorStable':[1440,900,390],'singleSourceEvidencePreserved':True,'evidence':str(out)}))
 

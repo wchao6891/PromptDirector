@@ -63,14 +63,14 @@ def main():
         # An older exporter strips optional media fields. Viewing its original
         # must recover parameter visibility without restoring a cleared prompt.
         stored = page.evaluate("""async () => {
-          const {entries}=await chrome.storage.local.get('entries');
+          const {entries}=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
           for (const entry of entries) for (const asset of entry.mediaAssets ?? []) delete asset.generationInfo;
-          await chrome.storage.local.set({entries});return entries;
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries}));return entries;
         }""")
         page.goto(f'chrome-extension://{session.extension_id}/library.html?case={entry_id}', wait_until='networkidle')
         expect(page.get_by_role('button', name='来源信息', exact=True)).to_have_attribute('aria-description', re.compile('.*18446744073709551615.*', re.S))
         expect(page.locator('.original-prompt-panel .prompt-read-body')).to_be_hidden()
-        assert page.evaluate("async () => (await chrome.storage.local.get('entries')).entries") == stored
+        assert page.evaluate("async () => (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries") == stored
         # The existing confirmation dialog resolves before any new case commit.
         for action in ['跳过','覆盖']:
             page.evaluate("""async ({asset,action}) => {

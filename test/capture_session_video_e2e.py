@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory(prefix='session-video-extension-') as temp:
           const c={id:'selected',pageType:'video',title:'Session video',canonicalUrl:work,contentText:'Preserve this prompt',media:[{id:'video',kind:'video',url,posterUrl:poster,sourceKind:'site-original'}]};
           const batch=normalizePageCaptureBatch({tabId:tab.id,sourceUrl:work,sessionMediaAllowed:true,candidates:[c],selections:[{candidateId:c.id,includeText:true,selectedMediaIds:['video'],mediaDecision:'confirmed'}]});
           const response=await chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch});
-          const entries=(await chrome.storage.local.get('entries')).entries;
+          const entries=(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries;
           const e=entries.find(e=>e.id===response.results?.[0]?.entryId);
           const {savedPageCaptureCandidateIds}=await import('./capture-additions.js');
           const {getMediaBlob}=await import('./media-store.js');
@@ -47,7 +47,7 @@ with tempfile.TemporaryDirectory(prefix='session-video-extension-') as temp:
           const c={id:'failed',pageType:'video',title:'Partial session video',canonicalUrl:work+'&failed=1',contentText:'Retain this prompt',media:[{id:'failed-video',kind:'video',url,posterUrl:poster,sourceKind:'site-original'}]};
           const batch=normalizePageCaptureBatch({tabId:tab.id,sourceUrl:work,sessionMediaAllowed:true,candidates:[c],selections:[{candidateId:c.id,includeText:true,selectedMediaIds:['failed-video'],mediaDecision:'confirmed'}]});
           const response=await chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch});
-          const entries=(await chrome.storage.local.get('entries')).entries;
+          const entries=(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries;
           const e=entries.find(e=>e.id===response.results?.[0]?.entryId);
           const video=e?.mediaAssets.find(a=>a.kind==='video');
           const {getMediaBlob}=await import('./media-store.js');

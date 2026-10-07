@@ -1427,6 +1427,9 @@ async function openLibraryProgressively() {
     // A writer changed the snapshot mid-read. Keep the visible cases while reading its new version.
     startupBrowseEntries = null;
     startupBrowsePlan = null;
+    // Cards created from the interrupted version must not survive its replacement.
+    for (const card of caseCardCache.values()) cardVideoPreviews.get(card)?.stop();
+    caseCardCache.clear();
     await refreshLibrary({ progressive: true });
   } finally {
     doneFirstCases?.();

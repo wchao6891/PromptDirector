@@ -96,7 +96,7 @@ def main() -> None:
         # One missing local media item is isolated, named to the user, and does not block healthy data.
         setup.evaluate(
             """async () => {
-              const stored = await chrome.storage.local.get(['entries', 'syncMeta']);
+              const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'syncMeta']));
               const missing = {
                 ...stored.entries[0],
                 id: 'sync-missing-case',
@@ -108,14 +108,14 @@ def main() -> None:
                 }],
                 primaryMediaId: 'sync-missing-asset'
               };
-              await chrome.storage.local.set({
+              await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({
                 entries: [...stored.entries, missing],
                 syncMeta: {
                   ...stored.syncMeta,
                   localDirty: true,
                   dirtyAssetIds: [...new Set([...(stored.syncMeta?.dirtyAssetIds || []), 'sync-missing-asset'])]
                 }
-              });
+              }));
             }"""
         )
         salvaged = setup.evaluate("async () => chrome.runtime.sendMessage({type: 'SYNC_NOW'})")

@@ -54,7 +54,7 @@ def main():
         assert call('loadContinuation', {'model': 'fixture-model', 'protocol': 'chat_completions'})['data'] == checkpoint
         call('clearContinuation', None)
         assert call('loadContinuation', {'model': 'fixture-model', 'protocol': 'chat_completions'})['data'] is None
-        stored = page.evaluate("async () => chrome.storage.local.get(['entries','composerSessions'])")
+        stored = page.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','composerSessions']))")
         assert original in json.dumps(stored['entries'], ensure_ascii=False)
         assert stored['composerSessions'][0]['toolContinuations']['other-request']['marker'] == '保留另一个任务'
         assert not run.page_errors, run.page_errors

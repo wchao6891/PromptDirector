@@ -58,7 +58,7 @@ def main(mode='all'):
             bounds=row.bounding_box();assert bounds['x']>=0 and bounds['x']+bounds['width']<=390,bounds
             p.set_viewport_size({'width':1440,'height':900})
             field=org.get_by_role('textbox',name='添加标签',exact=True);field.fill('拖动后的标签');field.press('Enter');expect(field).to_have_value('')
-            p.wait_for_function("()=>chrome.storage.local.get('entries').then(s=>s.entries.find(e=>e.id==='case').customLabels.includes('拖动后的标签'))")
+            p.wait_for_function("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(s=>s.entries.find(e=>e.id==='case').customLabels.includes('拖动后的标签'))")
             field.press('Escape');p.get_by_role('button',name='关闭详情',exact=True).click()
             p.locator('#open-settings').click();dialog=p.locator('#settings-dialog');before=dialog.bounding_box();header=dialog.locator('.ui-dialog-header').bounding_box()
             for delta in [-100,-200]:

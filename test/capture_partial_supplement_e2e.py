@@ -40,7 +40,9 @@ def main():
             if(['PREVIEW_PAGE_CAPTURE_REGION','CLEAR_PAGE_CAPTURE_MARKERS'].includes(m.type))return {ok:true};
             // Saves run through the background save-task pipeline (START_CAPTURE_SAVE); record the
             // finished task's result as read back by the collector.
-            const result=await send(m);const task=m.type==='GET_CAPTURE_SAVE_TASK'?result?.task:null;
+            const result=await send(m);
+            if(m.type==='ACK_CAPTURE_SAVE' && result?.ok)window.lastSaveAcknowledged=m.id;
+            const task=m.type==='GET_CAPTURE_SAVE_TASK'?result?.task:null;
             if(task?.input?.type==='COMMIT_PAGE_CAPTURE' && ['completed','failed','confirmation'].includes(task.status))window.lastSave=task.result;
             return result;
           };
@@ -49,7 +51,10 @@ def main():
         expect(page.locator('#preview-state')).to_be_visible()
         page.locator('#add-page-capture').click();page.locator('.page-capture-confirm').click()
         page.locator('#page-capture-save').click()
-        page.wait_for_function('()=>Boolean(window.lastSave)')
+        # The task result arrives before collector cleanup; ACK follows removal of
+        # saved draft items. The button leaves busy only after refresh/render finish.
+        page.wait_for_function('()=>Boolean(window.lastSave && window.lastSaveAcknowledged)')
+        expect(page.locator('#page-capture-save')).not_to_have_attribute('aria-busy','true')
         snapshot=page.evaluate('''async()=>({result:window.lastSave,
           draft:(await chrome.runtime.sendMessage({type:'GET_CAPTURE_WORKSPACE'})).draft,
           entries:(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries})''')

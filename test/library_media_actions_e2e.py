@@ -147,7 +147,7 @@ def main() -> None:
         original_editor.get_by_role("textbox", name="添加当前媒体提示词", exact=True).fill("第十五张的独立原始")
         original_editor.get_by_role("button", name="保存", exact=True).click()
         expect(library.locator(".media-original-prompt-panel .prompt-read-body")).to_have_text("第十五张的独立原始")
-        stored = library.evaluate("async()=>{const {entries}=await chrome.storage.local.get('entries');return entries[0]}")
+        stored = library.evaluate("async()=>{const {entries}=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));return entries[0]}")
         assert next(p for p in stored["mediaPrompts"] if p["text"] == "第十五张的独立原始")["assetId"] == "multi-image-15"
         library.locator(".entry-editor-inline > summary").click()
 

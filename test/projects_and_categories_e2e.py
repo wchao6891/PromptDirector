@@ -226,7 +226,7 @@ def main() -> None:
         expect(library.locator("#manager-feedback")).to_contain_text("1 条案例已转移")
         transferred = library.evaluate(
             """async (contentId) => {
-              const state = await chrome.storage.local.get(['entries', 'taxonomy']);
+              const state = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'taxonomy']));
               return {
                 pathIds: state.entries.find(item => item.id === 'project-case').classification.pathIds,
                 deleted: !state.taxonomy.nodes.some(item => item.id === contentId)

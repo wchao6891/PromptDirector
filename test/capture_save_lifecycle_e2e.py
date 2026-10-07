@@ -24,7 +24,7 @@ def scenario(run, page, worker, out, video):
     assert worker.evaluate('()=>captureFixture.requests[0].signal.aborted')
     expect(page.locator('#page-capture-save')).to_have_text('保存案例')
     expect(page.locator('#page-capture-save')).to_be_enabled()
-    assert len(page.evaluate("async()=>(await chrome.storage.local.get('entries')).entries"))==1
+    assert len(page.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries"))==1
     expect(page.locator('#feedback')).to_contain_text('待保存内容已保留')
     expect(page.locator('#page-capture-help')).to_have_text('')
     page.screenshot(path=str(out/'cancelled-retained.png'))

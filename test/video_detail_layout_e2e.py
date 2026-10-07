@@ -197,8 +197,8 @@ def main() -> None:
         setup.evaluate("""async entry => {
           const {saveMediaBlob}=await import(chrome.runtime.getURL('media-store.js'));
           await saveMediaBlob(entry.primaryMediaId,new Blob([new Uint8Array([0,0,0,0])],{type:'video/mp4'}),{checkCapacity:false});
-          const {entries}=await chrome.storage.local.get('entries');
-          await chrome.storage.local.set({entries:[...entries,entry]});
+          const {entries}=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));
+          await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[...entries,entry]}));
         }""", broken)
         library.reload(wait_until="networkidle")
         damaged_card = library.locator('.case-card[data-entry-id="broken-video-layout"]')

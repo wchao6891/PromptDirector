@@ -11,7 +11,7 @@ def scenario(run,page,worker,out,video):
     wait_for_async_condition(page, "async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'})).task?.status==='committing'", timeout=30000)
     task=page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'})).task")
     assert len(task['checkpoints'])==1
-    assert len(page.evaluate("async()=>(await chrome.storage.local.get('entries')).entries"))==0
+    assert len(page.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries"))==0
     # Stop only the service worker in this disposable test profile, keeping the
     # installed extension and persistent cache. The next collector wakes it.
     cdp=run.context.new_cdp_session(page)

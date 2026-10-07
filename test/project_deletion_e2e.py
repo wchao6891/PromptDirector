@@ -65,7 +65,7 @@ def main() -> None:
 
         deleted = library.evaluate(
             """async () => {
-              const state = await chrome.storage.local.get(['entries', 'organizerState', 'trashState']);
+              const state = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'organizerState', 'trashState']));
               const {getMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
               const blob = await getMediaBlob('project-delete-image');
               return {
@@ -92,7 +92,7 @@ def main() -> None:
         expect(library.locator("#trash-feedback")).to_contain_text("已恢复")
         restored = library.evaluate(
             """async () => {
-              const state = await chrome.storage.local.get(['entries', 'organizerState', 'trashState']);
+              const state = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'organizerState', 'trashState']));
               const collection = state.organizerState.collections.find(item => item.id === 'collection:project-delete');
               const {getMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
               return {
