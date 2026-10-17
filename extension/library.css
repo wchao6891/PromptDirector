@@ -1865,3 +1865,5 @@ html.detail-open:has(.detail-sidebar-mode.open:not(.is-reviewing)) body { overfl
 .layout-config-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
 .layout-config-row select { flex: 1; min-width: 0; }
 .layout-config-row .icon-button { flex-shrink: 0; }
+
+.setting-help { color: var(--muted); font-size: 11px; line-height: 1.5; margin: 4px 0; }

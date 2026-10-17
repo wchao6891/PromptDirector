@@ -28,7 +28,7 @@ export async function readPageCaptureSupplement(item, api, { sourceTabId, source
           supplement = readPageCaptureInjectionResult(result).supplement;
           if ((await api.tabs.get(source.id)).url !== sourceUrl) throw new Error('采集页面已改变；当前草稿已保留');
         } catch (error) {
-          if (error.code !== 'X_POST_NOT_MOUNTED') throw error;
+          if (!['X_POST_NOT_MOUNTED', 'X_POST_TEXT_INCOMPLETE'].includes(error.code)) throw error;
         }
       }
     }

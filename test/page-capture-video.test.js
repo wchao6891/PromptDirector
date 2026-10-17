@@ -45,3 +45,13 @@ test('expired media and HTML responses are explicit failures, without automatic 
   assert.equal(calls, 1);
   await assert.rejects(downloadPageCaptureVideo('https://cdn.example.com/movie.mp4', {fetchImpl: async () => new Response('<html>Login</html>', {headers: {'content-type': 'video/mp4'}})}), /有效视频/);
 });
+
+test('a CDN partial-content response cannot masquerade as a complete original video', async () => {
+  await assert.rejects(downloadPageCaptureVideo('https://cdn.example.com/movie.mp4', { fetchImpl: async () => new Response(video, {
+    status: 206, headers: { 'content-type': 'video/mp4', 'content-range': `bytes 0-${video.byteLength - 1}/${video.byteLength * 2}` }
+  }) }), /只返回了视频片段/u);
+  const complete = await downloadPageCaptureVideo('https://cdn.example.com/movie.mp4', { fetchImpl: async () => new Response(video, {
+    status: 206, headers: { 'content-type': 'video/mp4', 'content-range': `bytes 0-${video.byteLength - 1}/${video.byteLength}` }
+  }) });
+  assert.equal(complete.size, video.byteLength);
+});

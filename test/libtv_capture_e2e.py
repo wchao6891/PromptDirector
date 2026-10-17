@@ -65,7 +65,7 @@ def main():
             assert workflow['candidates'][0]['contentText'] == 'Original node prompt'
             assert workflow['candidates'][0]['media'][0]['url'] == f'{CDN}/video.mp4'
             assert workflow['candidates'][1]['media'][0]['url'] == f'{CDN}/original.png'
-            # A failed video download keeps a real source poster and a visible failure.
+            # A failed original keeps the text and pending video, without inventing a player.
             run.context.route(f'{CDN}/video.mp4', lambda route: route.fulfill(status=503, body='Unavailable'))
             workflow['candidates'] = workflow['candidates'][:1]
             workflow['candidates'][0]['media'][0]['posterUrl'] = f'{CDN}/cover.png'
@@ -74,9 +74,15 @@ def main():
             assert partial['ok'] and partial['results'][0]['status'] == 'partial', partial
             assert any('HTTP 503' in w for w in partial['results'][0]['warnings']), partial
             failed_entry = collector.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.find(e=>e.id===id)", partial['results'][0]['entryId'])
-            reference = next(a for a in failed_entry['mediaAssets'] if a['kind'] == 'video')
-            assert reference['storageMode'] == 'reference' and reference.get('posterAssetId'), failed_entry
-            assert any(a['id'] == reference['posterAssetId'] and a['storageMode'] == 'managed' for a in failed_entry['mediaAssets'])
+            assert not any(a['kind'] == 'video' for a in failed_entry['mediaAssets']), failed_entry
+            assert partial['results'][0]['pendingMediaIds'] == [workflow['candidates'][0]['media'][0]['id']], partial
+            assert failed_entry['text'] == 'Original node prompt', failed_entry
+            # Recovery completes the same case with a real original.
+            run.context.route(f'{CDN}/video.mp4', lambda route: route.fulfill(body=video, content_type='video/mp4'))
+            retried = collector.evaluate("async()=>{const task=(await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'})).task;return chrome.runtime.sendMessage({...task.input,saveRequestId:task.id});}")
+            assert retried['ok'] and retried['results'][0]['entryId'] == failed_entry['id'], retried
+            recovered = collector.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.find(e=>e.id===id)", failed_entry['id'])
+            assert any(a['kind']=='video' and a['storageMode']=='managed' for a in recovered['mediaAssets']), recovered
             print({'publicWorks': 2, 'originalVideoSaved': True, 'descriptionNotPrompt': True, 'repeatNotDuplicated': True, 'publicWorkflowNodes': 2})
 
 

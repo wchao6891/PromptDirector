@@ -18,20 +18,38 @@
       const node = pending.pop();
       if (!node || typeof node !== "object") continue;
       const legacy = node.legacy || node;
-      if (String(node.rest_id || legacy.id_str || "") === postId && legacy.extended_entities?.media) {
-        const media = legacy.extended_entities.media.filter(item =>
-          !item.source_status_id_str || item.source_status_id_str === postId).flatMap(item => {
-          const variants = (item.video_info?.variants || []).flatMap(variant => {
-            const url = mediaUrl(variant.url);
-            return url && ["video/mp4", "application/x-mpegURL"].includes(variant.content_type)
-              ? [{ url, mimeType: variant.content_type, bitrate: Number(variant.bitrate) || 0 }] : [];
+      if (String(node.rest_id || legacy.id_str || "") === postId) {
+        const own = node.result || node;
+        const quoted = own.quoted_status_result?.result || own.quoted_tweet_results?.result;
+        const media = [own, quoted].filter(Boolean).flatMap(tweet => {
+          const details = tweet.legacy || tweet;
+          const ownerId = String(tweet.rest_id || details.id_str || '');
+          return (tweet.media_entities2 || details.extended_entities?.media || []).filter(item =>
+            !item.source_status_id_str || item.source_status_id_str === ownerId).flatMap(item => {
+            let workUrl = '';
+            if (ownerId !== postId) {
+              try {
+                const url = new URL(item.expanded_url);
+                if (url.protocol !== 'https:' || !/^(?:www\.)?(?:x|twitter)\.com$/u.test(url.hostname)
+                  || url.username || url.password || url.pathname.match(/^\/[^/]+\/status\/(\d+)\/video\/\d+$/u)?.[1] !== ownerId) return [];
+                url.pathname = url.pathname.replace(/\/video\/\d+$/u, ''); url.search = ''; url.hash = '';
+                workUrl = url.href;
+              } catch { return []; }
+            }
+            const variants = (item.video_info?.variants || []).flatMap(variant => {
+              const url = mediaUrl(variant.url);
+              return url && ['video/mp4', 'application/x-mpegURL'].includes(variant.content_type)
+                && !/\/(?:vid|aud)\/[^/]+\/\d+\/\d+\//u.test(new URL(url).pathname)
+                ? [{ url, mimeType: variant.content_type, bitrate: Number(variant.bitrate) || 0 }] : [];
+            });
+            variants.sort((a, b) => Number(b.mimeType === 'video/mp4') - Number(a.mimeType === 'video/mp4') || b.bitrate - a.bitrate);
+            return variants.length ? [{ id: String(item.id_str || ''), posterUrl: String(item.media_url_https || ''), variants,
+              ...(workUrl ? { workUrl } : {}) }] : [];
           });
-          variants.sort((a, b) => Number(b.mimeType === "video/mp4") - Number(a.mimeType === "video/mp4") || b.bitrate - a.bitrate);
-          return variants.length ? [{ id: String(item.id_str || ""), posterUrl: String(item.media_url_https || ""), variants }] : [];
         }).slice(0, maxMedia);
         if (media.length) { state.media = media; state.stop(); return; }
       }
-      // A quote is its own post; matching by ID above prevents reply/quote substitution.
+      // A quote is its own post; matching by ID above prevents unrelated reply/quote substitution.
       pending.push(...Object.values(node).filter(value => value && typeof value === "object"));
     }
   };

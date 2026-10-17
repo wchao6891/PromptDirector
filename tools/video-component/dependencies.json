@@ -1,0 +1,31 @@
+{
+  "nodeVersion": "22.23.3",
+  "ytDlpVersion": "2026.08.19",
+  "ffmpegVersion": "8.0.3",
+  "artifacts": {
+    "node-mac-arm64": {
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-darwin-arm64.tar.gz",
+      "sha256": "23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53"
+    },
+    "node-mac-x64": {
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-darwin-x64.tar.gz",
+      "sha256": "8a677b0219178efd6eb0e475457c4afb452b521a92f6e67845a73bd85727f2a8"
+    },
+    "node-win-x64": {
+      "url": "https://nodejs.org/dist/v22.23.3/win-x64/node.exe",
+      "sha256": "9c9245166b4a8e182e0b797da9c20136117ff24368eaff1fec8343a123c8db0e"
+    },
+    "yt-win": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_win.zip",
+      "sha256": "30b4c14aafab6082becff7881e41b76df46dc43ea7633479410a91e29da492bf"
+    },
+    "yt-mac": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos.zip",
+      "sha256": "07e54b0865303c864006925913bce2604f8ee8cc6f18699bac9c309f9328a6d8"
+    },
+    "ffmpeg-source": {
+      "url": "https://ffmpeg.org/releases/ffmpeg-8.0.3.tar.xz",
+      "sha256": "6136812ea6d4e68bdba27e33c2a94382711cdf4f8602ffef056ff792bd6f9818"
+    }
+  }
+}

@@ -36,6 +36,7 @@
     "check:hash": "node tools/hash-runtime.mjs --check",
     "build:capture-runtime": "node tools/capture-runtime.mjs",
     "check:capture-runtime": "node tools/capture-runtime.mjs --check",
+    "package:video-component": "node tools/video-component/build.mjs",
     "package:connector": "node tools/package-connector.mjs",
     "package:distribution": "npm run package && npm run package:release && node tools/prepare-public-release.mjs",
     "build:video-frames": "node tools/video-frame-runtime.mjs",

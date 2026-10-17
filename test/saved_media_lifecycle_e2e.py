@@ -24,7 +24,8 @@ with extension_session('pd-commit-cleanup-audit-') as run:
  page.locator('#skill-zip-file').set_input_files({'name':'next-method.md','mimeType':'text/markdown','buffer':b'# Next method\nContinue after the failed reply.\n'})
  wait_for_async_condition(page,"async()=>(await chrome.storage.local.get('creativeSkills')).creativeSkills?.items.length===2")
  composer=run.open_page('composer.html')
- expect(composer.locator('#composer-instruction')).to_be_visible()
+ # A visible disabled field precedes session initialization; upload only once the real composer is ready.
+ expect(composer.locator('#composer-instruction')).to_be_enabled()
  composer.evaluate(HOOK,'ADD_TEMP_REFERENCES')
  composer.locator('#composer-attachment-files').set_input_files({'name':'audit.png','mimeType':'image/png','buffer':PNG})
  wait_for_async_condition(composer,'()=>window.auditCommitted===true')

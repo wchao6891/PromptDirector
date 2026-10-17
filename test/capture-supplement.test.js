@@ -102,3 +102,20 @@ test('a selected reply with an unresolved video preserves the draft instead of c
   assert.deepEqual(calls.at(-1),['remove',2]);
   assert.equal(item.text,'preview');assert.equal(media[1].url,'blob:pending');
 });
+
+
+test('a reply that cannot expand in the source thread is read from that exact reply page, preserving the original tab and draft', async () => {
+  const sourceUrl = 'https://x.com/director/status/123';
+  const full = 'Complete author prompt. '.repeat(400);
+  const { api, calls } = fixture({ supplement: { sourceUrl: item.sourceUrl, text: full, partial: false } });
+  api.tabs.get = async id => ({ id, url: id === 1 ? sourceUrl : item.sourceUrl, status: 'complete' });
+  const read = api.scripting.executeScript;
+  api.scripting.executeScript = async options => options.target.tabId === 1
+    ? [{ result: { captureError: { code: 'X_POST_TEXT_INCOMPLETE', message: 'Reply did not expand' } } }] : read(options);
+  const result = await readPageCaptureSupplement(item, api, { sourceTabId: 1, sourceUrl });
+  assert.equal(result.text, full);
+  assert.equal(result.sourceUrl, item.sourceUrl);
+  assert.deepEqual(calls.filter(call => call[0] === 'create'), [['create', { url: item.sourceUrl, active: false }]]);
+  assert.deepEqual(calls.at(-1), ['remove', 2]);
+  assert.equal(item.text, 'preview');
+});

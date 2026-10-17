@@ -20,6 +20,8 @@ with extension_session('pd-review-commits-') as run:
       const mixedSaved=await chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch:mixed,contentTypeExplicit:true,contentTypeId:'content:image-case'});
       const mixedEntries=(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries;
       const mixedTypes=mixedSaved.results.map(r=>mixedEntries.find(e=>e.id===r.entryId).classification.pathIds[0]);
+      // This branch checks explicitly chosen online HLS playback, not an original-file fallback.
+      await chrome.runtime.sendMessage({type:'UPDATE_UI_PREFERENCES',preferences:{videoOnlineOnly:true}});
       const resource=videoResource({tabId:1,statusCode:200,url:'https://media.example.com/playlist.m3u8',responseHeaders:[{name:'Content-Type',value:'application/vnd.apple.mpegurl'}]});
       const discovered=addDiscoveredVideos({sourceUrl:'https://example.com/review-player',candidates:[{id:'review-hls',title:'Review HLS fixture',canonicalUrl:'https://example.com/review-player',pageType:'video',media:[]}]},[resource]);
       discovered.selections=[{candidateId:'review-hls',selectedMediaIds:[discovered.candidates[0].media[0].id],mediaDecision:'confirmed'}];

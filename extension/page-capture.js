@@ -799,7 +799,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         siteStatus: siteData.completeness === "complete" ? "complete" : "partial"
       };
     }
-    if ((assetDetail || ["jimeng", "youtube", "bilibili", "midjourney", "pinterest"].includes(siteData?.adapter)) && siteData.pageKind === "detail" && !pageSelection) {
+    if ((assetDetail || ["jimeng", "youtube", "bilibili", "douyin", "midjourney", "pinterest"].includes(siteData?.adapter)) && siteData.pageKind === "detail" && !pageSelection) {
       return {
         id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id,
         candidates: Array.isArray(siteData.candidates) ? siteData.candidates.slice(0, 1) : [],
@@ -1557,7 +1557,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
           }
         };
         const observer = new MutationObserver(check);
-        const timer = setTimeout(() => finish(null, new Error("未能取得评论全文，请检查登录、网络或原评论是否仍可展开；当前草稿已保留")), Math.max(1, deadline - Date.now()));
+        const timer = setTimeout(() => finish(null, Object.assign(new Error("未能取得评论全文，请检查登录、网络或原评论是否仍可展开；当前草稿已保留"), { code: 'X_POST_TEXT_INCOMPLETE' })), Math.max(1, deadline - Date.now()));
         observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
         cancellation.signal.addEventListener("abort", abort, { once: true });
         if (cancelled) abort(); else check();
@@ -3002,6 +3002,9 @@ function uniqueMedia(values) {
       url,
       posterUrl,
       ...(safeUrl(value.streamUrl) ? { streamUrl: safeUrl(value.streamUrl) } : {}),
+      ...(safeUrl(value.videoStreams?.videoUrl) && safeUrl(value.videoStreams?.audioUrl) ? { videoStreams: {
+        videoUrl: safeUrl(value.videoStreams.videoUrl), audioUrl: safeUrl(value.videoStreams.audioUrl)
+      } } : {}),
       ...(dataUrl ? { dataUrl } : {}),
       ...(previewDataUrl ? { previewDataUrl } : {}),
       ...(normalizeFallbackRect(value?.fallbackRect) ? { fallbackRect: normalizeFallbackRect(value.fallbackRect) } : {}),

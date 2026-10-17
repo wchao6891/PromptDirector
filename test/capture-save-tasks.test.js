@@ -14,6 +14,34 @@ function fixture(execute) {
 const aborted = signal => new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
 const input = { type: 'COMMIT_PAGE_CAPTURE', saveRequestId: 'task-a', batch: { candidates: [{ id: 'original', contentText: '完整原词' }] } };
 
+test('first-time component setup keeps the exact selection, metadata and downloaded originals through restart and auto-resume', async () => {
+  let installed = false, downloads = 0, saves = 0;
+  const execute = async (request, progress) => {
+    const blob = await progress.media('complete-original', () => { downloads++; return new Blob(['original']); });
+    assert.equal(await blob.text(), 'original');
+    if (!installed) throw Object.assign(new Error('install required'), { code: 'video_component_required' });
+    assert.deepEqual(request.batch, input.batch); assert.equal(request.collectionId, 'chosen-project');
+    saves++; return { ok: true };
+  };
+  const f = fixture(execute);
+  assert.equal((await f.tasks.run({ ...input, collectionId: 'chosen-project' })).code, 'video_component_required');
+  assert.equal((await f.tasks.get()).status, 'waiting-component');
+  const restarted = f.create(execute); installed = true;
+  assert.equal((await restarted.get()).status, 'waiting-component');
+  assert.equal(await restarted.resumeVideo(), true);
+  for (let i = 0; i < 30 && (await restarted.get()).status !== 'completed'; i++) await new Promise(setImmediate);
+  assert.equal((await restarted.get()).status, 'completed'); assert.equal(downloads, 1); assert.equal(saves, 1);
+  assert.equal(await restarted.resumeVideo(), false);
+});
+
+test('explicitly cancelling component wait preserves the capture and prevents installation from saving it later', async () => {
+  const f = fixture(async () => { throw Object.assign(new Error('install required'), { code: 'video_component_required' }); });
+  await f.tasks.run(input); assert.equal((await f.tasks.cancel(input.saveRequestId)).ok, true);
+  assert.equal((await f.tasks.get()).status, 'cancelled');
+  assert.deepEqual((await f.tasks.get()).input.batch, input.batch);
+  assert.equal(await f.tasks.resumeVideo(), false);
+});
+
 test('closing the UI leaves a durable save whose next UI can read and cancel it without a write queue wait', async () => {
   let started;
   const began = new Promise(resolve => { started = resolve; });

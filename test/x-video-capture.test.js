@@ -110,3 +110,55 @@ test('the public-page and normal-response paths share one read deadline instead 
   const result=await resolveXVideoSources(snapshot,{id:1,url:snapshot.candidates[0].canonicalUrl},api,{readHtml:async()=>{now+=PAGE_CAPTURE_LIMITS.navigationTimeoutMs;return '';}});
   assert.equal(result,snapshot);assert.deepEqual(actions,[],'an exhausted read must preserve the draft instead of starting another full wait');
 });
+
+
+test('a quoted video in current X serialized JSON keeps its own post and resolves only by matching poster', async () => {
+  const root = 'https://x.com/creator/status/123', quoted = 'https://x.com/creator/status/100';
+  const media = { expanded_url: quoted + '/video/1', media_url_https: 'https://pbs.twimg.com/amplify_video_thumb/555/img/cover.jpg',
+    video_info: { variants: [variant('full', 10)] } };
+  const payload = { data: { tweet: { rest_id: '123', result: { rest_id: '123', quoted_tweet_results: { rest_id: '100', result: { rest_id: '100', media_entities2: [media] } } } } } };
+  const html = '<script>($R=>$R[1]={kind:"GraphQLRequestStream.Completed",result:{value:' + JSON.stringify(JSON.stringify(payload)) + '}})($R["tsr"])</script>';
+  const sources = xVideoSourcesFromHtml(html, root);
+  assert.equal(sources.media.length, 1);
+  const snapshot = { candidates: [{ canonicalUrl: root, media: [{ id: 'quoted', kind: 'video', isQuoted: true, url: '', posterUrl: media.media_url_https },
+    { id: 'other', kind: 'video', isQuoted: true, url: '', posterUrl: 'https://pbs.twimg.com/other.jpg' }] }] };
+  const result = await resolveXVideoSources(snapshot, { id: 1, url: root }, {}, { readHtml: async () => html, allowTabReload: false });
+  assert.equal(result.candidates[0].media[0].url, 'https://video.twimg.com/full.mp4');
+  assert.equal(result.candidates[0].media[0].originalWorkUrl, quoted);
+  assert.equal(result.candidates[0].media[1].url, '');
+  assert.equal(xVideoSourcesFromHtml(html, 'https://x.com/creator/status/999').media.length, 0);
+});
+
+test('normal logged-in responses retain the current post direct quoted video when anonymous metadata is unavailable', async () => {
+  const root = post('123', 'images');
+  root.legacy.extended_entities.media = [];
+  const quoted = post('100', 'quoted');
+  quoted.legacy.extended_entities.media[0].expanded_url = 'https://x.com/director/status/100/video/1';
+  root.quoted_status_result = { result: quoted };
+  const { scope } = observer({ data: [post('456', 'reply'), root] });
+  await scope.fetch('/i/api/graphql/fixture');
+  for (let n = 0; n < 30 && !scope.__PROMPTDIRECTOR_X_VIDEO__.done; n++) await new Promise(resolve => setTimeout(resolve, 5));
+  const state = scope.__PROMPTDIRECTOR_X_VIDEO__;
+  assert.equal(state.media.length, 1);
+  assert.equal(state.media[0].variants[0].url, 'https://video.twimg.com/quoted-hd.mp4');
+  assert.equal(state.media[0].workUrl, 'https://x.com/director/status/100');
+  state.stop();
+});
+
+test('saving an unresolved selection uses a temporary logged-in page after metadata HTTP 403 and leaves the user source tab untouched', async () => {
+  const work = 'https://x.com/director/status/123', quoted = 'https://x.com/director/status/100';
+  const actions = [];
+  const events = { addListener() {}, removeListener() {} };
+  const api = { tabs: { onUpdated: events, onRemoved: events,
+    create: async options => { actions.push(['create', options]); return { id: 2 }; },
+    get: async id => ({ id, status: 'complete', url: work }),
+    reload: async id => actions.push(['reload', id]), remove: async id => actions.push(['remove', id]) },
+    scripting: { unregisterContentScripts: async () => {}, registerContentScripts: async () => {},
+      executeScript: async () => [{ result: { postId: '123', media: [{ workUrl: quoted, posterUrl: 'https://pbs.twimg.com/quoted.jpg', variants: [{ url: 'https://video.twimg.com/quoted.mp4', mimeType: 'video/mp4' }] }] } }] } };
+  const snapshot = { candidates: [{ canonicalUrl: work, media: [{ id: 'v', kind: 'video', url: '', isQuoted: true, posterUrl: 'https://pbs.twimg.com/quoted.jpg' }] }] };
+  const result = await resolveXVideoSources(snapshot, { id: 1, url: work }, api, {
+    allowTabReload: false, allowTemporaryTab: true, readHtml: async () => { throw new Error('HTTP 403'); }
+  });
+  assert.equal(result.candidates[0].media[0].url, 'https://video.twimg.com/quoted.mp4');
+  assert.deepEqual(actions, [['create', { url: work, active: false }], ['remove', 2]]);
+});

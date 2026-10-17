@@ -103,8 +103,8 @@ export function createCaptureSaveTasks({ storage, execute, notify, cleanup = asy
         job.record = { ...job.record, status: result.promptConflicts?.length ? 'confirmation' : result.ok ? 'completed' : 'failed',
           canCancel: false, result, message: result.message };
       } catch (error) {
-        job.record = { ...job.record, status: controller.signal.aborted ? 'cancelled' : 'failed', canCancel: false,
-          result: { ok: false, message: error.message }, message: error.message };
+        job.record = { ...job.record, status: controller.signal.aborted ? 'cancelled' : error.code === 'video_component_required' ? 'waiting-component' : 'failed', canCancel: error.code === 'video_component_required' && !controller.signal.aborted,
+          result: { ok: false, message: error.message, ...(error.code ? { code: error.code } : {}) }, message: error.message };
       } finally {
         progress.close();
         try { await persist(job.record); } finally { live = null; announce(job.record); }
@@ -122,7 +122,18 @@ export function createCaptureSaveTasks({ storage, execute, notify, cleanup = asy
     get,
     async start(input) { const job = await start(input); return { ok: true, id: job.record.id }; },
     async run(input) { const job = await start(input); return job.done; },
+    async resumeVideo() {
+      const task = await get();
+      if (task?.status !== 'waiting-component') return false;
+      await start(task.input); return true;
+    },
     async cancel(id) {
+      const waiting = await get();
+      if (!live && waiting?.id === id && waiting.status === 'waiting-component') {
+        const { input, ...record } = waiting;
+        await persist({ ...record, status: 'cancelled', canCancel: false, message: '保存已取消，待保存内容已保留' });
+        announce(record); return { ok: true };
+      }
       if (!live || live.record.id !== id) return { ok: false, message: '保存任务已结束，请重新读取' };
       if (!live.record.canCancel) return { ok: false, message: '正在完成入库，请稍候' };
       live.controller.abort(new DOMException('保存已取消，待保存内容已保留', 'AbortError'));

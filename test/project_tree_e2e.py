@@ -46,6 +46,17 @@ def project_box(page, project_id, child=''):
     }""", arg={'id':project_id,'child':child}).json_value()
 
 
+def scroll_project_into_view(page, project_id):
+    # Like project_box, find and use the current row in the same browser turn.
+    # scroll_into_view_if_needed keeps a handle that storage refresh can detach.
+    page.wait_for_function("""id => {
+      const row=document.querySelector(`.project-row[data-collection-id="${CSS.escape(id)}"]`);
+      if (!row) return false;
+      row.scrollIntoView({block:'nearest',inline:'nearest'});
+      return true;
+    }""", arg=project_id)
+
+
 def main():
     # Synthetic long library exercises distances; never touches the installed profile.
     projects = [dict(id=f'p{i}', name=f'项目 {i:03}', parentId=None, order=i, entryIds=[]) for i in range(100)]
@@ -79,7 +90,7 @@ def main():
         assert row(page,'child').locator('.project-filter').bounding_box()['width'] > 100
         page.locator('#collapse-projects').click()
         # A distant target is chosen by name, with no long drag or full expansion.
-        row(page,'p99').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p99')
         dialog = move_dialog(page,'p99','000','项目 000','before')
         dialog.get_by_role('button',name='移动',exact=True).click()
         expect(dialog).to_have_count(0)
@@ -87,14 +98,14 @@ def main():
         page.locator('#project-move-undo').click()
         expect(page.locator('.project-filter-name').first).to_have_text('项目 000')
         # Menu at the bottom of the viewport must stay reachable.
-        row(page,'p99').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p99')
         row(page,'p99').locator('summary').click()
         panel = row(page,'p99').locator('.project-menu-panel')
         expect(panel.get_by_role('button',name='移动到…',exact=True)).to_be_in_viewport()
         assert panel.bounding_box()['y'] >= 0
         page.keyboard.press('Escape')
         # Move a whole subtree and undo without changing membership.
-        row(page,'p0').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p0')
         dialog = move_dialog(page,'p0','001','项目 001')
         dialog.get_by_role('button',name='移动',exact=True).click()
         expect(dialog).to_have_count(0)
@@ -116,7 +127,7 @@ def main():
         expect(page.locator('#project-order-status')).to_contain_text('已撤销')
         page.locator('#collapse-projects').click()
         # Direct pointer drag, without a manage-mode click.
-        row(page,'p0').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p0')
         drag_to(page,'p2','p1','before')
         page.mouse.up()
         expect(page.locator('.project-filter-name').nth(1)).to_have_text('项目 002')
@@ -144,7 +155,7 @@ def main():
         page.keyboard.press('Escape')
         page.mouse.up()
         # Failure is explicit and does not claim success or change data.
-        row(page,'p2').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p2')
         dialog = move_dialog(page,'p2','001','项目 001')
         page.evaluate("""() => {window.originalSend=chrome.runtime.sendMessage;chrome.runtime.sendMessage=(m,...args)=>m.type==='MOVE_COLLECTION'?Promise.resolve({ok:false,message:'模拟项目保存失败'}):window.originalSend.call(chrome.runtime,m,...args)}""")
         baseline = state(page)
@@ -153,14 +164,14 @@ def main():
         assert state(page) == baseline
         dialog.get_by_role('button',name='取消',exact=True).click()
         page.evaluate('() => {chrome.runtime.sendMessage=window.originalSend}')
-        row(page,'p0').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p0')
         # Keep toolbar reachable after a long scroll and menu usable in a narrow window.
-        row(page,'p99').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p99')
         expect(page.locator('#collapse-projects')).to_be_in_viewport()
         page.set_viewport_size({'width':760,'height':740})
         if not row(page,'p99').is_visible():
             page.locator('#toggle-filters').click()
-        row(page,'p99').scroll_into_view_if_needed()
+        scroll_project_into_view(page,'p99')
         row(page,'p99').locator('summary').click()
         expect(row(page,'p99').get_by_role('button',name='移动到…',exact=True)).to_be_in_viewport()
         page.keyboard.press('Escape')

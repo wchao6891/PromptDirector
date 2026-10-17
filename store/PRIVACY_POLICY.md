@@ -19,6 +19,7 @@
 
 - 案例文字、媒体、来源、标签、色卡、创作 Skill、设置和 API Key 默认保存在浏览器扩展的本地存储中。
 - 截图裁剪、压缩、缩略图、色卡提取、资料整理和 ZIP 分享包生成在本机完成。
+- 用户保存所选抖音、YouTube 或 Bilibili 视频时，可由已安装的本机组件解析作品地址并向原网站下载、合并音视频。只传入本次作品与媒体地址，不读取整库 Cookie、登录请求头或 AI 密钥，不调用付费解析网站；暂存视频在传输完成、取消或连接关闭后清理，正式原件保存在资料库。
 - 网页采集在当前标签页本地识别正文与媒体并展示预览。用户可以直接点选内容、添加遗漏内容、排除错误内容或撤销调整。“保存案例”按钮是当前内容方案的最终授权，用户也可以选择“只保存正文”。
 - 用户明确启动同一列表批量采集后，扩展可在当前标签页滚动公开列表，并沿同一来源的列表分页链接继续采集；不会自动进入作品详情页，也不会绕过登录、验证码、付费墙、访问控制或反自动化限制。完成后会返回原列表页，并以实际识别数量和停止原因结束。
 - 预检会显示主体内识别到的公开媒体地址和预览，但不会在最终保存动作前把媒体写入案例或请求媒体域名权限。只有最终保存方案中的媒体会尝试读取原始文件；图片、视频或封面的直接读取失败时，扩展可让当前网页使用已有登录会话读取用户所选媒体。扩展不读取、导出、保存或传输 Cookie、Token 与登录请求头。
@@ -59,16 +60,17 @@
 - `activeTab`：仅在用户主动触发的当前标签页操作中访问页面内容；用户明确启动列表批量采集时，可在同一标签页内滚动或沿列表分页继续，并在结束后返回原列表页。
 - `alarms`：安排本地后台任务的延后、轮询或恢复，不用于跟踪用户。
 - `contextMenus`：提供右键收藏入口。
-- `downloads`：将用户请求的备份、分享包或媒体保存到本机。
+- `downloads`：将用户请求的备份、分享包、媒体或视频组件安装包保存到本机。
 - `offscreen`：在本机处理截图、媒体、文档或 ZIP 等需要后台页面完成的操作。
 - `sidePanel`：在 Chrome 侧边栏显示扩展的收藏与创作界面。
 - `scripting`：仅在用户主动启动采集、选图或截图工具时向当前页面注入所需脚本。
 - `storage` 与 `unlimitedStorage`：保存用户主动收藏的资料、媒体、设置和本地 AI 服务配置。
 - `https://wchao6891.github.io/*`：读取 PromptDirector 官方精选目录、目录指标、封面和只读预览数据。
-- `https://github.com/*`：读取用户明确选择保存的官方精选 Release 包，并打开公开的问题反馈或投稿页面；本地开发版还会读取官方更新版本，并在用户确认后下载程序更新包。
-- `https://objects.githubusercontent.com/*` 与 `https://release-assets.githubusercontent.com/*`：跟随 GitHub Release 的受信下载链读取用户明确选择的精选包及其媒体，或本地开发版的程序更新包；不会读取其他 GitHub 账号数据。
+- `https://github.com/*`：读取用户明确选择保存的官方精选 Release 包，并打开公开的问题反馈或投稿页面；本地开发版还会读取官方更新版本，并在用户确认后下载程序更新包；视频组件安装时读取官方组件安装包。
+- `https://objects.githubusercontent.com/*` 与 `https://release-assets.githubusercontent.com/*`：跟随 GitHub Release 的受信下载链读取用户明确选择的精选包及其媒体，或本地开发版的程序更新包及用户选择的视频组件安装包；不会读取其他 GitHub 账号数据。
 - 可选的 `<all_urls>`：不在安装时授予。只有用户主动使用需要相应站点权限的采集功能或保存第三方 AI 服务、自定义兼容接口时，扩展才会请求相应域名的运行时权限。启用 Agent 连接时会申请网站访问权限，以便配对的 Agent 按指令在独立标签页采集网址；不会记录或上传浏览历史。
-- 可选的 `nativeMessaging`：只在用户启用 Agent 连接时申请，用于与用户安装的本机连接器通信。配对的 Agent 可以按指令搜索案例、读取选定原件、采集网址及回存材料，不能通过该接口读取 AI 服务密钥。断开连接后拒绝新请求，已提交任务继续执行。
+- 可选的 `downloads.open`：仅在用户选择安装视频组件时申请，供用户点击“打开安装包”直接打开已下载的官方组件安装包；不会自动执行下载的文件。
+- 可选的 `nativeMessaging`：在用户启用 Agent 连接或安装本机视频解析组件时申请，用于与用户安装的本机程序通信。配对的 Agent 可以按指令搜索案例、读取选定原件、采集网址及回存材料，不能通过该接口读取 AI 服务密钥。断开 Agent 连接后拒绝新的 Agent 请求，已提交任务继续执行；本机视频解析独立于 Agent 开关，只在用户保存所选视频时调用。
 - 可选的 `clipboardRead`：只在用户明确触发需要读取剪贴板内容的功能时请求。
 - 可选的 `declarativeNetRequestWithHostAccess`：只在用户已授予相应站点访问权限、且功能需要按该权限处理网络请求时使用。
 
@@ -89,6 +91,8 @@ PromptDirector is a local-first Chrome extension for collecting, organizing, sea
 PromptDirector handles data only when the user explicitly captures, imports, exports, analyzes, generates, or composes with it. This can include selected website text and resources, source URLs and attribution, screenshots, user prompts and notes, projects, tags, Creative Skills, settings, and credentials for AI services chosen by the user.
 
 Cases, media, tags, settings, Creative Skills, and API keys are stored in the browser's local extension storage by default. Image processing, document extraction, archive creation, and offline previews run locally. API keys are excluded from exports, shared packages, drafts, diagnostics, and logs.
+
+When the user saves a selected Douyin, YouTube or Bilibili video, an installed local component may resolve its work URL, download from the original platform and merge audio and video. Only the selected work and media URLs are passed to this component. It does not export browser cookies, login request headers or AI keys, or use paid parsing services. Temporary video files are removed after transfer, cancellation or connection closure; saved originals remain in the library.
 
 ## Optional external services
 
@@ -113,16 +117,17 @@ PromptDirector complies with the Limited Use requirements of the Chrome Web Stor
 - `activeTab`: access the current page only after a user starts capture, visual selection, or another page action.
 - `alarms`: schedule or resume local background work; never for tracking.
 - `contextMenus`: provide the explicit right-click capture entry.
-- `downloads`: save a user-requested backup, share package, or media file.
+- `downloads`: save a user-requested backup, share package, media file, or video component installer.
 - `offscreen`: perform local screenshot, media, document, or ZIP work that needs a background document.
 - `sidePanel`: show capture and creation controls in the Chrome side panel.
 - `scripting`: inject the required capture, selection, or screenshot code only after a user starts that action.
 - `storage` and `unlimitedStorage`: retain the user's selected references, media, settings, and local AI configuration.
 - `https://wchao6891.github.io/*`: read the official curated catalog, metrics, covers, and read-only previews.
-- `https://github.com/*`: read an official curated Release package selected by the user and open public feedback or submission pages. Local development builds also check official versions and download program updates after user confirmation.
-- `https://objects.githubusercontent.com/*` and `https://release-assets.githubusercontent.com/*`: follow GitHub's trusted Release download chain for user-selected curated packages and media, or local development program updates; no other GitHub account data is read.
+- `https://github.com/*`: read an official curated Release package selected by the user and open public feedback or submission pages. Local development builds also check official versions and download program updates after user confirmation. Video component setup reads the official component installer.
+- `https://objects.githubusercontent.com/*` and `https://release-assets.githubusercontent.com/*`: follow GitHub's trusted Release download chain for user-selected curated packages and media, or local development program updates and user-selected video component installers; no other GitHub account data is read.
 - Optional `<all_urls>`: not granted at installation. Ordinary capture and AI settings request the necessary origins. Enabling Agent connection requests website access so the paired Agent can capture user-requested URLs in a dedicated tab; browsing history is not recorded or uploaded.
-- Optional `nativeMessaging`: requested when the user enables Agent connection, to communicate with the locally installed connector. A paired Agent can search cases, read selected originals, capture URLs and save materials. This interface does not expose AI service credentials. Disconnecting rejects new requests; submitted tasks continue.
+- Optional `downloads.open`: requested only when the user chooses to install the video component, so their explicit Open installer click can open the downloaded official installer. Downloaded files are not executed automatically.
+- Optional `nativeMessaging`: requested when the user enables Agent connection or installs local video extraction, to communicate with the locally installed programs. A paired Agent can search cases, read selected originals, capture URLs and save materials. This interface does not expose AI service credentials. Disconnecting Agent connection rejects new Agent requests; submitted tasks continue. Local video extraction operates independently and runs only when the user saves selected videos.
 - Optional `clipboardRead`: requested only for a user-triggered feature that reads clipboard content.
 - Optional `declarativeNetRequestWithHostAccess`: requested only when a user-granted site permission and the chosen feature require a bounded network rule.
 

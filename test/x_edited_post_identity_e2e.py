@@ -33,7 +33,8 @@ def verify(port):
           fn: (await import('./page-capture.js')).collectPageCaptureSnapshot.toString(),
           adapters: (await import('./page-capture-adapter-registry.js')).PAGE_CAPTURE_ADAPTERS
         })""")
-        run.seed_storage(setup, {'entries': []})
+        # Identity/recapture uses an explicit player reference, without a fake downloadable video.
+        run.seed_storage(setup, {'entries': [], 'uiPreferences': {'videoOnlineOnly': True}})
         page = run.context.new_page()
         candidates = []
         for author, post_id in [('first', '101'), ('second', '202')]:
@@ -78,7 +79,7 @@ def verify(port):
         old = {**entries[0], 'id': 'old-copy', 'url': 'https://x.com/first/status/101/history',
                'sourceFacts': {**entries[0]['sourceFacts'], 'itemId': 'history'}}
         removed = {**old, 'id': 'deleted-copy'}
-        run.seed_storage(setup, {'entries': [old, removed], 'organizerState': {'collections': [
+        run.seed_storage(setup, {'entries': [old, removed], 'uiPreferences': {'videoOnlineOnly': True}, 'organizerState': {'collections': [
             {'id': 'elsewhere', 'name': 'Other project', 'entryIds': ['old-copy']},
             {'id': 'target', 'name': 'Capture project', 'entryIds': ['deleted-copy']}]}})
         assert setup.evaluate("() => chrome.runtime.sendMessage({type:'DELETE_ENTRY',entryId:'deleted-copy'})")['ok']

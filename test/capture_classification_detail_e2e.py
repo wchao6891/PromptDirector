@@ -8,7 +8,7 @@ from e2e_support import extension_session
 def main():
     with extension_session('capture-classification-detail-', viewport={'width':1280,'height':844}) as run:
         page=run.open_page('collector.html')
-        run.seed_storage(page, {'entries': [], 'uiPreferences': {'locale':'zh-CN','motion':'reduced'}})
+        run.seed_storage(page, {'entries': [], 'uiPreferences': {'locale':'zh-CN','motion':'reduced','videoOnlineOnly':True}})
         results=page.evaluate('''async()=>{
           const {saveScreenshotBlob}=await import('./image-store.js');
           const {normalizePageCaptureBatch,applyPageCaptureSelections}=await import('./page-capture.js');

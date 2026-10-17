@@ -19,6 +19,7 @@ import { createProjectOperations } from "./project-operations.js";
 import { createBrowserLibraryIdentity } from "./library-identity.js";
 import { validateProjectOperation } from "./project-operation-specs.js";
 import { collectVideoPagePayload, normalizeVideoPagePayload } from "./video-page-capture.js";
+import { collectDouyinVideoPayload } from './douyin-video-capture.js';
 import { installVideoDiscovery, addDiscoveredVideos } from "./video-discovery.js";
 import { pickPageContent } from "./page-content-picker.js";
 import { CAPTURE_SAVED_TEXT_KEY, createTextCandidate } from "./capture-text-candidate.js";
@@ -373,6 +374,9 @@ import {
 import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
 import { enrichPinterestCandidates, readPinterestHtml } from "./pinterest-capture.js";
 import { downloadPageCaptureVideo } from "./page-capture-video.js";
+import { resolveCapturedVideoOriginal } from './captured-video-original.js';
+import { downloadNativeVideo, nativeVideoStatus } from './native-video.js';
+import { createVideoComponentSetup } from './video-component-setup.js';
 import { createDownloadAhead } from "./capture-download-ahead.js";
 import { createCaptureAssetIndex } from "./capture-asset-index.js";
 import { resolveXVideoSources } from "./x-video-capture.js";
@@ -609,6 +613,12 @@ const captureSaveTasks = createCaptureSaveTasks({ storage: libraryStorage,
   cleanup: ids => enqueue(() => deleteUnreferencedMedia(ids)),
   notify: message => chrome.runtime.sendMessage(message),
   execute: (message, progress) => runCaptureSave(message, progress)
+});
+const videoComponentSetup = createVideoComponentSetup({ storage: libraryStorage,
+  inspect: nativeVideoStatus, platform: () => chrome.runtime.getPlatformInfo(),
+  homepage: chrome.runtime.getManifest().homepage_url, downloads: chrome.downloads,
+  resume: () => captureSaveTasks.resumeVideo(),
+  notify: state => chrome.runtime.sendMessage({ type: 'VIDEO_COMPONENT_SETUP_CHANGED', state }).catch(() => {})
 });
 
 const readCaseLibraryState = createCaseLibraryReader({ storage: libraryStorage, readFullState: readState });
@@ -1256,6 +1266,24 @@ async function handleMessage(message, interaction = {}) {
         await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
         return { ok: true, uiPreferences };
       });
+    case 'GET_NATIVE_VIDEO_STATUS':
+      return { ok: true, ...(await nativeVideoStatus()) };
+    case 'START_VIDEO_COMPONENT_SETUP':
+      return { ok: true, state: await videoComponentSetup.start({ restart: message.restart === true }) };
+    case 'CONTINUE_VIDEO_COMPONENT_SETUP':
+      return { ok: true, state: await videoComponentSetup.continue() };
+    case 'GET_VIDEO_COMPONENT_SETUP': {
+      let state = await videoComponentSetup.get();
+      if (['downloading', 'review', 'installing'].includes(state.phase)) state = await videoComponentSetup.check();
+      else if (['idle', 'ready'].includes(state.phase)) {
+        try {
+          const result = await nativeVideoStatus();
+          state = { phase: result.updateRequired ? 'update' : result.available ? 'ready' : 'idle' };
+        }
+        catch { state = { phase: 'idle' }; }
+      }
+      return { ok: true, state };
+    }
     case 'UPDATE_LAYOUT_PREFERENCES':
       return enqueue(async () => {
         const stored = await libraryStorage.get(STORAGE_KEYS.uiPreferences);
@@ -1892,8 +1920,18 @@ async function waitForPageCaptureTab(tabId, expectedUrl) {
 async function readPageCaptureSiteData(tab, { installObserver = true, maxCandidates = PAGE_CAPTURE_LIMITS.maxCandidates } = {}) {
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) return null;
   try {
-    if (/^(?:www\.)?(?:youtube\.com|bilibili\.com)$/u.test(new URL(tab.url).hostname)) {
-      const [video] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: collectVideoPagePayload });
+    if (/^(?:www\.)?(?:youtube\.com|bilibili\.com|douyin\.com)$/u.test(new URL(tab.url).hostname)) {
+      const douyin = new URL(tab.url).hostname.endsWith('douyin.com');
+      let [video] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: douyin ? collectDouyinVideoPayload : collectVideoPagePayload });
+      // Active capture only: browser load completion can precede the player's
+      // React commit. Stop if navigation changes instead of binding stale data.
+      const deadline = Date.now() + PAGE_CAPTURE_LIMITS.navigationTimeoutMs;
+      while (douyin && video?.result && !video.result.resolved && Date.now() < deadline) {
+        if (activePageCapture?.cancelled) break;
+        await new Promise(resolve => setTimeout(resolve, 200));
+        if ((await chrome.tabs.get(tab.id)).url !== tab.url) throw new Error('采集期间网页已切换，请重新读取当前作品');
+        [video] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: collectDouyinVideoPayload });
+      }
       const payload = normalizeVideoPagePayload(video?.result, tab.url);
       if (payload) return payload;
     }
@@ -2106,7 +2144,7 @@ async function fetchPageCaptureImage(url, { onProgress, signal }) {
 // The plain network download each item would start first, so it can begin while earlier items are
 // written. Items restored from a save checkpoint, local files and page-session fallbacks are not
 // fetched ahead; they keep their existing path.
-function pageCaptureDownloadPlan(media, candidate, progress) {
+function pageCaptureDownloadPlan(media, candidate, progress, videoOnlineOnly = false) {
   const cached = key => progress.mediaCached?.(key) === true;
   if (["document", "attachment"].includes(media.kind)) {
     const supported = media.kind === "attachment"
@@ -2116,9 +2154,10 @@ function pageCaptureDownloadPlan(media, candidate, progress) {
     return { key: `document:${media.url}`, start: options => fetchBoundedMedia(media.url, { ...pageCaptureDocumentDownloadOptions(media), ...options }) };
   }
   if (media.kind === "video") {
+    if (videoOnlineOnly || media.videoStreams) return null;
     if (!media.url || cached(`video:${candidate.id}:${media.id}:${media.url}`)) return null;
     return { key: `video:${media.url}`, start: options => downloadPageCaptureVideo(media.url, {
-      ...options, declaredVideo: ["site-original", "video-element"].includes(media.sourceKind) }) };
+      ...options, mimeType: media.mimeType, declaredVideo: ["site-original", "video-element"].includes(media.sourceKind) }) };
   }
   if (media.localAssetId || cached(`image:${candidate.id}:${media.id}:${media.url || "pixels"}`)) return null;
   const [url] = pageCaptureMediaFetchCandidates(media);
@@ -2147,6 +2186,17 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
   const mediaCount = selected.reduce((count, candidate) => count + candidate.media.length, 0);
   let mediaOffset = 0;
   const state = await enqueue(() => readState());
+  const videoOnlineOnly = state.uiPreferences?.videoOnlineOnly === true;
+  // Saved previews and picker fragments share the same source resolution as
+  // whole-page/MCP capture. Match selected X media by poster and post ownership.
+  if (!videoOnlineOnly) for (let index = 0; index < selected.length; index++) {
+    progress.signal?.throwIfAborted();
+    const candidate = selected[index];
+    const snapshot = await resolveXVideoSources({ candidates: [candidate] },
+      { id: batch.tabId, url: candidate.canonicalUrl }, chrome, { allowTabReload: false, allowTemporaryTab: true,
+        cancelled: () => Boolean(progress.signal?.aborted) });
+    selected[index] = snapshot.candidates[0];
+  }
   const loadMedia = (key, load) => progress.media ? progress.media(key, load) : load();
   const results = [];
   let entries = [...state.entries];
@@ -2175,7 +2225,7 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
       }
       const candidateMedia = repair?.pending || candidate.media;
       const downloadAhead = createDownloadAhead({ signal: progress.signal });
-      downloadAhead.plan(candidateMedia.map(media => pageCaptureDownloadPlan(media, candidate, progress)));
+      downloadAhead.plan(candidateMedia.map(media => pageCaptureDownloadPlan(media, candidate, progress, videoOnlineOnly)));
       try {
       for (const [mediaIndex, media] of candidateMedia.entries()) {
         progress.signal?.throwIfAborted();
@@ -2263,14 +2313,11 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
           };
           try {
             progress.stage('download', context);
-            const blob = await loadMedia(`video:${candidate.id}:${media.id}:${media.url}`, () => (downloadAhead.take(`video:${media.url}`, onProgress) ?? downloadPageCaptureVideo(media.url, {
-              onProgress, signal: progress.signal,
-              declaredVideo: ["site-original", "video-element"].includes(media.sourceKind)
-            })).catch(async error => {
-              progress.signal?.throwIfAborted();
-              if (batch.sessionMediaAllowed === false) throw error;
-              try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.url, "video", progress, context)).blob; }
-              catch (sessionError) { throw new Error(`${userMessage(error)}；${userMessage(sessionError)}`); }
+            const blob = videoOnlineOnly ? null : await loadMedia(`video:${candidate.id}:${media.id}:${media.url}`, () => resolveCapturedVideoOriginal(media, candidate, {
+              signal: progress.signal, onProgress,
+              download: (url, options) => downloadAhead.take(`video:${url}`, onProgress) ?? downloadPageCaptureVideo(url, options),
+              downloadNative: downloadNativeVideo,
+              ...(batch.sessionMediaAllowed !== false ? { downloadSession: async url => (await fetchSelectedPageSessionMedia(batch, candidate, url, 'video', progress, context)).blob } : {})
             }));
             if (blob) {
               progress.stage('verify', context);
@@ -2313,15 +2360,15 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
             progress.signal?.throwIfAborted();
                 warnings.push(`${media.alt || candidate.title}：视频已保存，封面生成失败（${userMessage(error)}）`);
               }
-            } else if (playbackMode === "source") {
-              warnings.push(`${media.alt || candidate.title}：来源未提供直接视频文件，已保留在线来源`);
             }
           } catch (error) {
           progress.signal?.throwIfAborted();
             progress.signal?.throwIfAborted();
+            if (error.code === 'video_component_required') throw error;
             failedMediaIds.add(media.id);
-            warnings.push(`${media.alt || candidate.title}：视频本地副本未保存，已保留来源链接（${userMessage(error)}）`);
+            warnings.push(`${media.alt || candidate.title}：视频原件未保存（${userMessage(error)}）`);
           }
+          if (!videoOnlineOnly && videoAsset.storageMode !== 'managed') continue;
           if (!videoAsset.posterAssetId && media.posterUrl) {
             try {
               const posterContext = { ...context, kind: 'poster' };
@@ -2433,6 +2480,14 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
         });
         entries = entries.map(item => item.id === entry.id ? entry : item);
         results.push({ candidateId: candidate.id, status: warnings.length ? "partial" : "saved", repaired: true, entryId: entry.id, title: entry.title, warnings,
+          ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
+        continue;
+      }
+      // A selected work's description alone is not a saved video case. Keep the
+      // full draft for retry; explicit text-only saves still have no video here.
+      if (candidate.pageType === 'video' && candidate.media.some(media => media.kind === 'video')
+        && failedMediaIds.size && !mediaAssets.some(asset => asset.usage !== 'poster')) {
+        results.push({ candidateId: candidate.id, status: 'failed', title: candidate.title, warnings,
           ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
         continue;
       }

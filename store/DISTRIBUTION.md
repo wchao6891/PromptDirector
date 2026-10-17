@@ -47,7 +47,8 @@ Help visual creators capture web visuals with their prompts, media, and notes as
 - `https://objects.githubusercontent.com/*`: follow GitHub's Release download path for selected curated content.
 - `https://release-assets.githubusercontent.com/*`: download selected curated Release archives and media after integrity checks.
 - Optional `<all_urls>`: not granted at installation. Capture and AI settings request the necessary origins. Enabling Agent connection requests website access so the paired Agent can capture user-requested URLs in a dedicated tab; this does not monitor browsing.
-- Optional `nativeMessaging`: requested only when enabling Agent connection; communicates with the separately installed local connector for case search, original-file access, requested capture and material saving.
+- Optional `downloads.open`: requested when the user installs the video component; the explicit Open installer action opens the downloaded official installer. Files are never opened automatically.
+- Optional `nativeMessaging`: requested when enabling Agent connection or installing the video component. Agent connection supports case search, original-file access, requested capture and material saving. Independent local video extraction resolves and merges selected video originals without Agent pairing.
 - Optional `clipboardRead`: read clipboard content only when the user triggers the relevant action.
 - Optional `declarativeNetRequestWithHostAccess`: create bounded media-read rules only on origins the user already granted.
 

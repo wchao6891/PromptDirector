@@ -6,6 +6,8 @@
 
 ## 当前参考与引用
 
+视频原件采集使用独立的[视频组件](../docs/VIDEO_COMPONENT.md)，在采集侧栏按提示安装即可，不需要 Agent 配对或预装开发工具。组件安装包自带解析和音画合并工具，不修改 Agent 的注册、配对或配置。
+
 在案例库使用多选选择参考，选择自动保存；外部Agent直接调用 `read_workspace_content(part=selection)` 读取完整参考，首次第一页可省略版本，续页携带返回的 `revision`。只需概览时使用 `read_workspace_context`。无需进入创作台、导出或发送参考；已有创作台可通过显式页面上下文接续。内部模型API不是外部调用前置。
 
 `resolve_reference` 接受名称链接中的 `#pd-reference=…` 片段，或 `promptdirector://reference?v=1&library=…&case=…&asset=…`，校验身份后再调用现有原文、结构和媒体接口，无需访问链接网页。引用身份不包含密钥；错误库或错误媒体归属明确失败。此接口可用不等于各宿主拖拽已通过，跨应用接收按实际验收记录判断。`show_case` 打开独立详情页面；返回opening后需读页面核对显示结果。

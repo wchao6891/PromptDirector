@@ -1,6 +1,7 @@
 import { genericDetailRequests, applyGenericCaptureDetails, remapDetailTextSelection } from "./generic-capture-details.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { anchorCollectorFeedback } from './collector-feedback.js';
+import { createVideoComponentView } from './video-component-view.js';
 import { createCaptureProjectMenu } from './capture-organization.js';
 import { bindTransientMenus } from './transient-menu.js';
 import { captureSaveProgressPresentation, createCaptureProgressGate } from './capture-save-progress.js';
@@ -75,6 +76,12 @@ const elements = Object.fromEntries([
 ].map((id) => [camel(id), document.getElementById(id)]));
 
 const placeCollectorFeedback = anchorCollectorFeedback(elements.feedback, [elements.pageCaptureActions, elements.collectorFooter]);
+const videoSetupContainer = document.createElement('span');
+videoSetupContainer.id = 'video-component-setup';
+const videoSetupView = createVideoComponentView(videoSetupContainer, { primary: true });
+chrome.runtime.onMessage.addListener(message => {
+  if (message.type === 'VIDEO_COMPONENT_SETUP_CHANGED') void videoSetupView.changed(message.state);
+});
 
 let draft = null;
 let targetEntry = null;
@@ -645,6 +652,10 @@ async function addClipboardContentToDraft({ text: clipboardText, image } = {}) {
 }
 
 function render() {
+  for (const button of [elements.saveDraft, elements.pageCaptureSave]) {
+    const waiting = captureSaveTask?.status === 'waiting-component';
+    button.classList.toggle('primary', !waiting); button.classList.toggle('button-secondary', waiting);
+  }
   if (!draft) return;
   const view = collectorViewState(draft, targetEntry, { organizing });
   if (!view.hasContent) organizing = false;
@@ -1835,7 +1846,7 @@ async function startPageListCapture(button) {
 
 async function finishPageCaptureSave(response, reviewBatch, saveBatch, selected, metadata) {
   captureProgressGate.end();
-  if (!response?.ok) throw new Error(response?.message || t("网页内容保存失败"));
+  if (!response?.ok) throw Object.assign(new Error(response?.message || t("网页内容保存失败")), { code: response?.code });
   const results = response.results || [];
   const savedCandidateIds = savedPageCaptureCandidateIds(saveBatch, selected, results);
   const remainingIds = new Set(selected.filter(candidate => !savedCandidateIds.has(candidate.id)).map(candidate => candidate.id));
@@ -1920,7 +1931,8 @@ async function savePageCapture(textOnly = false) {
     } catch (error) {
       captureProgressGate.end();
       pageCaptureBatch = normalizePageCaptureBatch({ ...reviewBatch, status: "preview", error: error.message });
-      showFeedback(error.message || t("网页内容保存失败"), true);
+      if (error.code === 'video_component_required') showVideoSetup();
+      else showFeedback(error.message || t("网页内容保存失败"), true);
       render();
     } finally {
       captureProgressGate.end(); saving = false; awaitingCaptureSaveReply = false; await refresh(); render();
@@ -2172,18 +2184,20 @@ async function waitForCaptureSave(input) {
 }
 
 function restoreCaptureSaveTask(task) {
+  const previousStatus = captureSaveTask?.status;
   captureSaveTask = task;
   if (!task || awaitingCaptureSaveReply || handlingRestoredSave) return;
-  const active = ['queued', 'running', 'cancelling', 'committing'].includes(task.status);
+  const active = ['queued', 'running', 'cancelling', 'committing', 'waiting-component'].includes(task.status);
   if (task.input?.type === 'COMMIT_PAGE_CAPTURE') {
     pageCaptureDraftIds = new Set(task.input.draftItemIds || []);
     pageCaptureBatch = normalizePageCaptureBatch({ ...task.input.batch, status: active ? 'saving' : 'preview',
-      error: !active && task.input.batch.adapter === 'generic' ? task.input.batch.error : '' });
+      error: !active ? task.input.batch.error : '' });
   }
   saving = active;
   if (active) {
-    if (currentCaptureSaveId !== task.id) { currentCaptureSaveId = task.id; captureProgressGate.begin(task.id); }
-    showCaptureSaveProgress(task.progress);
+    if (currentCaptureSaveId !== task.id || task.status === 'waiting-component' || previousStatus === 'waiting-component') { currentCaptureSaveId = task.id; captureProgressGate.begin(task.id); }
+    if (task.status === 'waiting-component') showVideoSetup();
+    else showCaptureSaveProgress(task.progress);
   } else if (task.status === 'completed') {
     handlingRestoredSave = true; currentCaptureSaveId = task.id;
     void (async () => {
@@ -2200,6 +2214,15 @@ function restoreCaptureSaveTask(task) {
       finally { handlingRestoredSave = false; }
     })();
   } else if (task.message) showFeedback(task.message, false);
+}
+
+function showVideoSetup() {
+  if (feedbackTimer) window.clearTimeout(feedbackTimer);
+  feedbackTimer = 0;
+  elements.feedback.replaceChildren(videoSetupContainer);
+  setTaskFeedbackState(elements.feedback);
+  placeCollectorFeedback();
+  void videoSetupView.refresh();
 }
 
 function beginCaptureSaveProgress() {

@@ -36,6 +36,7 @@
   ],
   "optional_permissions": [
     "nativeMessaging",
+    "downloads.open",
     "clipboardRead",
     "declarativeNetRequestWithHostAccess"
   ],

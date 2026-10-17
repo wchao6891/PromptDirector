@@ -358,6 +358,13 @@
             <div class="setting-row"><label for="export-path-setting" data-i18n="分享包下载路径">分享包下载路径</label><input id="export-path-setting" autocomplete="off" /><button id="save-library-settings" class="icon-button compact-icon" type="button" disabled aria-label="保存设置" data-i18n-aria-label="保存设置" title="保存设置" data-i18n-title="保存设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-save"></use></svg></button></div>
             <p id="library-settings-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
           </section>
+          <section class="setting-section">
+            <div class="setting-section-heading"><h3 data-i18n="视频采集">视频采集</h3></div>
+            <div class="setting-row"><label for="video-online-only" data-i18n="仅保存在线播放">仅保存在线播放</label><input id="video-online-only" class="ui-switch" type="checkbox" role="switch" aria-describedby="video-online-only-help"></div>
+            <p id="video-online-only-help" class="setting-help" data-i18n="节省存储空间；关闭时保存完整视频文件。">节省存储空间；关闭时保存完整视频文件。</p>
+            <div class="capture-permission-row"><strong data-i18n="本机视频解析">本机视频解析</strong><span id="video-component-status" role="status" data-i18n="未检查">未检查</span><button id="connect-video-component" class="button-secondary" type="button" data-i18n="安装视频组件">安装视频组件</button></div>
+            <p id="video-capture-settings-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
+          </section>
           <section class="setting-section capture-permission-settings">
             <div class="setting-section-heading"><h3 data-i18n="采集权限">采集权限</h3></div>
             <div class="capture-permission-list">
@@ -615,5 +622,6 @@
 
     <script type="module" src="library.js"></script>
     <script type="module" src="agent-settings.js"></script>
+  <script type="module" src="capture-video-settings.js"></script>
 </body>
 </html>

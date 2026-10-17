@@ -48,6 +48,7 @@ export function addDiscoveredVideos(batch, resources) {
   if (batch?.adapter === 'x') return batch;
   if (batch?.candidates?.length !== 1) return batch;
   const candidate = batch.candidates[0];
+  if (['douyin', 'youtube', 'bilibili'].includes(batch.adapter) && candidate.pageType === 'video' && candidate.sourceFacts?.itemId) return batch;
   const media = [...(candidate.media || [])];
   const known = new Set(media.flatMap(item => [item.id, item.url, ...(item.variants || []).map(value => value.url)]));
   for (const resource of resources) {

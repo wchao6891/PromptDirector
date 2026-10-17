@@ -119,6 +119,8 @@ jobs:
           path: dist/ci-browser/${{ matrix.shard }}/
           if-no-files-found: error
           retention-days: 14
+          # Reruns replace only this shard's generated receipt and screenshots.
+          overwrite: true
 
   linux-upgrade:
     name: Linux packaged upgrade

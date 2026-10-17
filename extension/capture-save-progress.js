@@ -42,7 +42,8 @@ export function captureSaveProgressPresentation(progress = {}, t = value => valu
   const action = {
     queued: '等待保存…', preparing: '准备保存…', download: '下载',
     page: '读取页面媒体…', transfer: '传输', verify: '校验媒体…',
-    poster: '准备封面…', writing: '正在入库…', confirm: '等待提示词确认…'
+    poster: '准备封面…', writing: '正在入库…', confirm: '等待提示词确认…',
+    resolve: '解析视频…', merge: '合并音视频…'
   }[progress.phase] || '正在保存案例…';
   let message = t(action);
   if (['download', 'transfer'].includes(progress.phase)) {

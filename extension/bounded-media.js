@@ -61,6 +61,12 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
   const encoding = response?.headers?.get?.('content-encoding');
   const totalBytes = Number.isSafeInteger(declared) && declared > 0 && (!encoding || encoding === 'identity') ? declared : null;
   const blob = await readBoundedBlob(response, maxBytes, options.controller?.signal ?? options.signal, options.onProgress, totalBytes);
+  if (kind === 'video' && response.status === 206) {
+    const range = /^bytes (\d+)-(\d+)\/(\d+)$/u.exec(response.headers?.get?.('content-range') || '');
+    if (!range || Number(range[1]) !== 0 || Number(range[2]) + 1 !== Number(range[3]) || blob.size !== Number(range[3])) {
+      throw new Error('来源只返回了视频片段，完整视频原件未保存');
+    }
+  }
   // Only inspect a header window. The browser-managed Blob sink can spill to
   // disk; retaining all chunks and concatenating them duplicates large files.
   const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());

@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix='session-video-extension-') as temp:
           const {savedPageCaptureCandidateIds}=await import('./capture-additions.js');
           return {response,video,posterStored:!!(video?.posterAssetId&&await getMediaBlob(video.posterAssetId)),cleared:[...savedPageCaptureCandidateIds(batch,batch.candidates,response.results)]};
         }''',{'work':WORK,'url':CDN+'/failed.mp4','poster':POSTER})
-        assert failed['video']['storageMode']=='reference' and failed['posterStored'],failed
+        assert failed['video'] is None and not failed['posterStored'],failed
         assert failed['cleared']==[] and failed['response']['results'][0]['pendingMediaIds']==['failed-video'],failed
-        print({'failedVideoRetainsPosterAndRetry':True})
+        print({'failedVideoRetainsRetryWithoutImplicitOnlinePlayer':True})
         print({'background403PageSessionSaved':True,'posterStored':True,'sharedCleanupReceipt':True})

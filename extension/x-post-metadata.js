@@ -11,8 +11,52 @@ export function xVideoSourcesFromHtml(html, postUrl) {
     || !['x.com', 'twitter.com', 'www.x.com', 'www.twitter.com'].includes(expected.hostname)) return null;
   const keys = new Set(['expanded_url', 'id_str', 'media_url_https', 'video_info', 'variants', 'url', 'content_type', 'bitrate']);
   const media = new Map();
+  const addMedia = (node, ownerUrl) => {
+    const variants = (node.video_info?.variants || []).flatMap(value => {
+      try {
+        const url = new URL(value.url);
+        return url.protocol === 'https:' && url.hostname === 'video.twimg.com' && !url.username && !url.password
+          && ['video/mp4', 'application/x-mpegURL'].includes(value.content_type)
+          && !/\/(?:vid|aud)\/[^/]+\/\d+\/\d+\//u.test(url.pathname)
+          ? [{ url: url.href, mimeType: value.content_type, bitrate: Number(value.bitrate) || 0 }] : [];
+      } catch { return []; }
+    }).sort((a, b) => Number(b.mimeType === 'video/mp4') - Number(a.mimeType === 'video/mp4') || b.bitrate - a.bitrate);
+    if (variants.length) media.set(node.id_str || node.expanded_url, { id: node.id_str || '', posterUrl: node.media_url_https || '', variants,
+      ...(ownerUrl ? { workUrl: ownerUrl } : {}) });
+  };
+  // New public X pages deliver a JSON string in the normal GraphQL stream.
+  // Decode only the response value, never arbitrary JSON embedded in post text.
+  const ingestResponse = payload => {
+    const pending = [payload?.data];
+    while (pending.length) {
+      const node = pending.pop();
+      if (!node || typeof node !== 'object') continue;
+      if (String(node.rest_id || '') === postId) {
+        const own = node.result || node;
+        const quote = own.quoted_tweet_results?.result;
+        for (const tweet of [own, quote].filter(Boolean)) {
+          for (const item of tweet.media_entities2 || tweet.legacy?.extended_entities?.media || []) {
+            let url;
+            try { url = new URL(item.expanded_url); } catch { continue; }
+            const id = /^\/(?:[^/]+\/status|i\/web\/status)\/(\d+)\/video\/\d+$/u.exec(url.pathname)?.[1];
+            if (url.origin !== expected.origin || id !== String(tweet.rest_id || '')) continue;
+            url.pathname = url.pathname.replace(/\/video\/\d+$/u, ''); url.search = ''; url.hash = '';
+            addMedia(item, url.href);
+          }
+        }
+      }
+      pending.push(...Object.values(node).filter(value => value && typeof value === 'object'));
+    }
+  };
   for (const script of String(html).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/giu)) {
     const tokens = script[1].match(/"(?:\\.|[^"\\])*"|\$R\[\d+\]=?|[a-zA-Z_$][\w$]*|\d+(?:\.\d+)?|[{}\[\]:,]/gu) || [];
+    if (script[1].includes('GraphQLRequestStream.')) {
+      for (let i = 2; i < tokens.length; i++) {
+        if (tokens[i - 2] !== 'value' || tokens[i - 1] !== ':' || !tokens[i].startsWith('"')) continue;
+        try { const value = JSON.parse(tokens[i]); if (value.startsWith('{')) ingestResponse(JSON.parse(value)); }
+        catch { /* Other stream values are not response JSON. */ }
+      }
+    }
     const stack = [];
     const assign = value => {
       const parent = stack.at(-1);
@@ -34,16 +78,7 @@ export function xVideoSourcesFromHtml(html, postUrl) {
         let url;
         try { url = new URL(node.expanded_url); } catch { continue; }
         if (url.origin !== expected.origin || !new RegExp(`^/(?:[^/]+/status|i/web/status)/${postId}/video/\\d+$`, 'u').test(url.pathname)) continue;
-        const variants = node.video_info.variants.flatMap(value => {
-          try {
-            const url = new URL(value.url);
-            return url.protocol === 'https:' && url.hostname === 'video.twimg.com' && !url.username && !url.password
-              && ['video/mp4', 'application/x-mpegURL'].includes(value.content_type)
-              && !/\/(?:vid|aud)\/[^/]+\/\d+\/\d+\//u.test(url.pathname)
-              ? [{ url: url.href, mimeType: value.content_type, bitrate: Number(value.bitrate) || 0 }] : [];
-          } catch { return []; }
-        }).sort((a, b) => Number(b.mimeType === 'video/mp4') - Number(a.mimeType === 'video/mp4') || b.bitrate - a.bitrate);
-        if (variants.length) media.set(node.id_str || node.expanded_url, { id: node.id_str || '', posterUrl: node.media_url_https || '', variants });
+        addMedia(node);
       } else if (tokens[i + 1] === ':' && stack.length) {
         stack.at(-1).key = token.startsWith('"') ? JSON.parse(token) : token;
         i++;

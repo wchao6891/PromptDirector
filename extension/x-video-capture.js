@@ -1,3 +1,4 @@
+import { waitForAgentTab } from './agent-capture.js';
 import { PAGE_CAPTURE_LIMITS } from "./resource-limits.js";
 import { readXPostHtml, xVideoSourcesFromHtml } from './x-post-metadata.js';
 
@@ -22,20 +23,38 @@ export function installXVideoObserver({ timeoutMs, maxBytes, maxMedia }) {
       const node = pending.pop();
       if (!node || typeof node !== "object") continue;
       const legacy = node.legacy || node;
-      if (String(node.rest_id || legacy.id_str || "") === postId && legacy.extended_entities?.media) {
-        const media = legacy.extended_entities.media.filter(item =>
-          !item.source_status_id_str || item.source_status_id_str === postId).flatMap(item => {
-          const variants = (item.video_info?.variants || []).flatMap(variant => {
-            const url = mediaUrl(variant.url);
-            return url && ["video/mp4", "application/x-mpegURL"].includes(variant.content_type)
-              ? [{ url, mimeType: variant.content_type, bitrate: Number(variant.bitrate) || 0 }] : [];
+      if (String(node.rest_id || legacy.id_str || "") === postId) {
+        const own = node.result || node;
+        const quoted = own.quoted_status_result?.result || own.quoted_tweet_results?.result;
+        const media = [own, quoted].filter(Boolean).flatMap(tweet => {
+          const details = tweet.legacy || tweet;
+          const ownerId = String(tweet.rest_id || details.id_str || '');
+          return (tweet.media_entities2 || details.extended_entities?.media || []).filter(item =>
+            !item.source_status_id_str || item.source_status_id_str === ownerId).flatMap(item => {
+            let workUrl = '';
+            if (ownerId !== postId) {
+              try {
+                const url = new URL(item.expanded_url);
+                if (url.protocol !== 'https:' || !/^(?:www\.)?(?:x|twitter)\.com$/u.test(url.hostname)
+                  || url.username || url.password || url.pathname.match(/^\/[^/]+\/status\/(\d+)\/video\/\d+$/u)?.[1] !== ownerId) return [];
+                url.pathname = url.pathname.replace(/\/video\/\d+$/u, ''); url.search = ''; url.hash = '';
+                workUrl = url.href;
+              } catch { return []; }
+            }
+            const variants = (item.video_info?.variants || []).flatMap(variant => {
+              const url = mediaUrl(variant.url);
+              return url && ['video/mp4', 'application/x-mpegURL'].includes(variant.content_type)
+                && !/\/(?:vid|aud)\/[^/]+\/\d+\/\d+\//u.test(new URL(url).pathname)
+                ? [{ url, mimeType: variant.content_type, bitrate: Number(variant.bitrate) || 0 }] : [];
+            });
+            variants.sort((a, b) => Number(b.mimeType === 'video/mp4') - Number(a.mimeType === 'video/mp4') || b.bitrate - a.bitrate);
+            return variants.length ? [{ id: String(item.id_str || ''), posterUrl: String(item.media_url_https || ''), variants,
+              ...(workUrl ? { workUrl } : {}) }] : [];
           });
-          variants.sort((a, b) => Number(b.mimeType === "video/mp4") - Number(a.mimeType === "video/mp4") || b.bitrate - a.bitrate);
-          return variants.length ? [{ id: String(item.id_str || ""), posterUrl: String(item.media_url_https || ""), variants }] : [];
         }).slice(0, maxMedia);
         if (media.length) { state.media = media; state.stop(); return; }
       }
-      // A quote is its own post; matching by ID above prevents reply/quote substitution.
+      // A quote is its own post; matching by ID above prevents unrelated reply/quote substitution.
       pending.push(...Object.values(node).filter(value => value && typeof value === "object"));
     }
   };
@@ -108,18 +127,21 @@ export function applyXVideoSources(snapshot, result) {
   if (!result?.media?.length) return snapshot;
   return { ...snapshot, candidates: (snapshot.candidates || []).map(candidate => {
     if (xPostId(candidate.canonicalUrl) !== result.postId) return candidate;
-    const videos = candidate.media.filter(item => item.kind === "video" && !item.isQuoted);
+    const videos = candidate.media.filter(item => item.kind === "video");
     const replacements = new Map();
     const media = candidate.media.map(item => {
       if (!videos.includes(item)) return item;
       const source = result.media.find(value => value.posterUrl && item.posterUrl
         && xPosterIdentity(value.posterUrl) === xPosterIdentity(item.posterUrl))
-        || (videos.length === 1 && result.media.length === 1 ? result.media[0] : null);
+        || (!item.isQuoted && videos.filter(value => !value.isQuoted).length === 1
+          && result.media.length === 1 && (!result.media[0].workUrl || xPostId(result.media[0].workUrl) === result.postId) ? result.media[0] : null);
       if (!source) return item;
+      if (item.isQuoted && (!source.workUrl || xPostId(source.workUrl) === result.postId)) return item;
       const best = source.variants[0];
       replacements.set(item.id, best.url);
       return { ...item, url: best.url, variants: [], mimeType: best.mimeType,
-        sourceKind: "site-original", originalWorkUrl: candidate.canonicalUrl,
+        sourceKind: "site-original", originalWorkUrl: source.workUrl || candidate.canonicalUrl,
+        ...(item.isQuoted ? { quotedPostUrl: source.workUrl } : {}),
         ...(source.variants.find(value => value.mimeType === "application/x-mpegURL")
           ? { streamUrl: source.variants.find(value => value.mimeType === "application/x-mpegURL").url } : {}) };
     });
@@ -149,12 +171,11 @@ function xPostId(value) {
   } catch { return ""; }
 }
 
-export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () => false, readHtml = readXPostHtml, allowTabReload = true } = {}) {
+export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () => false, readHtml = readXPostHtml, allowTabReload = true, allowTemporaryTab = false, deadline = Date.now() + PAGE_CAPTURE_LIMITS.navigationTimeoutMs } = {}) {
   const postId = xPostId(tab.url);
   const unresolved = (snapshot.candidates || []).some(candidate => xPostId(candidate.canonicalUrl) === postId
-    && candidate.media?.some(item => item.kind === "video" && !item.isQuoted && !/\.mp4(?:\?|$)/iu.test(item.url || "")));
+    && candidate.media?.some(item => item.kind === "video" && !/\.mp4(?:\?|$)/iu.test(item.url || "")));
   if (!postId || !unresolved || cancelled()) return snapshot;
-  const deadline = Date.now() + PAGE_CAPTURE_LIMITS.navigationTimeoutMs;
   const controller = new AbortController();
   const cancelCheck = setInterval(() => { if (cancelled()) controller.abort(); }, 250);
   try {
@@ -163,24 +184,32 @@ export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () 
     if (result?.media.some(item => item.variants[0]?.mimeType === 'video/mp4')) {
       snapshot = applyXVideoSources(snapshot, result);
       if (!(snapshot.candidates || []).some(candidate => xPostId(candidate.canonicalUrl) === postId
-        && candidate.media?.some(item => item.kind === 'video' && !item.isQuoted && !/\.mp4(?:\?|$)/iu.test(item.url || '')))) return snapshot;
+        && candidate.media?.some(item => item.kind === 'video' && !/\.mp4(?:\?|$)/iu.test(item.url || '')))) return snapshot;
     }
   } catch { /* Logged-in-only posts retain the normal-response observer path. */ }
   finally { clearInterval(cancelCheck); }
-  if (!allowTabReload || cancelled() || Date.now() >= deadline) return snapshot;
-  const id = `capture-x-video-${tab.id}`;
-  let registered = false;
+  if ((!allowTabReload && !allowTemporaryTab) || cancelled() || Date.now() >= deadline) return snapshot;
+  const id = `capture-x-video-${tab.id ?? postId}`;
+  let registered = false, temporary = null;
+  let observedTab = tab;
   try {
     await api.scripting.unregisterContentScripts({ ids: [id] }).catch(() => undefined);
     const url = new URL(tab.url);
     await api.scripting.registerContentScripts([{ id, matches: [`${url.origin}${url.pathname}*`],
       js: ["x-video-observer.js"], world: "MAIN", runAt: "document_start", persistAcrossSessions: false }]);
     registered = true;
-    await api.tabs.reload(tab.id);
+    if (allowTabReload) await api.tabs.reload(tab.id);
+    else {
+      // Register before navigation so even the first normal response is seen;
+      // the selected source page and its scroll/playback state stay untouched.
+      temporary = await api.tabs.create({ url: tab.url, active: false });
+      observedTab = temporary;
+      await waitForAgentTab(api.tabs, temporary.id, Math.max(1, deadline - Date.now()));
+    }
     while (Date.now() < deadline && !cancelled()) {
-      const current = await api.tabs.get(tab.id);
+      const current = await api.tabs.get(observedTab.id);
       if (xPostId(current.url) !== postId) break;
-      const results = await api.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN",
+      const results = await api.scripting.executeScript({ target: { tabId: observedTab.id }, world: "MAIN",
         func: () => {
           const state = globalThis.__PROMPTDIRECTOR_X_VIDEO__;
           return state ? { postId: state.postId, media: state.media, done: state.done } : null;
@@ -194,9 +223,10 @@ export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () 
     console.warn("[capture-video] Selected post video source unavailable:", error?.name || "Error");
   } finally {
     if (registered) await api.scripting.unregisterContentScripts({ ids: [id] }).catch(() => undefined);
-    await api.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN",
+    await api.scripting.executeScript({ target: { tabId: observedTab.id }, world: "MAIN",
       func: () => { globalThis.__PROMPTDIRECTOR_X_VIDEO__?.stop?.(); delete globalThis.__PROMPTDIRECTOR_X_VIDEO__; }
     }).catch(() => undefined);
+    if (temporary) await api.tabs.remove(temporary.id).catch(() => undefined);
   }
   return snapshot;
 }

@@ -3,6 +3,8 @@ Only directory consent and the release download transport are supplied by fixtur
 The temporary browser profile never contains user data.
 """
 import argparse
+import base64
+import hashlib
 import json
 import shutil
 import tempfile
@@ -60,6 +62,10 @@ def main():
         shutil.copytree(args.previous_directory, installed)
         previous = json.loads((installed / "manifest.json").read_text())
         assert previous["version"] != target["version"]
+        # Use Chrome's fixed public-key identity and open its page directly.
+        # A worker may become idle during setup or its startup event may be missed.
+        digest = hashlib.sha256(base64.b64decode(previous["key"])).hexdigest()[:32]
+        extension_id = "".join(chr(ord("a") + int(value, 16)) for value in digest)
         profile = root / "profile"
         preferences = profile / "Default" / "Preferences"
         preferences.parent.mkdir(parents=True)
@@ -78,8 +84,6 @@ def main():
             download_url = f"{target['homepage_url']}/releases/download/v{target['version']}/PromptDirector-{target['version']}.zip"
             context.route("https://**/*", lambda route: route.fulfill(status=200, content_type="application/zip", body=package)
                           if route.request.url == download_url else route.abort())
-            worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
-            extension_id = worker.url.split("/")[2]
             page = context.new_page()
             page.goto(f"chrome-extension://{extension_id}/collector.html")
             entry = base_entry("native-upgrade-case", "升级前案例", "升级后正文保持", "content:image-case", 1)

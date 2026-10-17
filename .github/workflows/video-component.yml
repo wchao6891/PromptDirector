@@ -1,0 +1,82 @@
+name: Video component installers
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'connector/video-*.mjs'
+      - 'connector/register-video.mjs'
+      - 'connector/installer/**'
+      - 'tools/video-component/**'
+      - 'extension/video-component-*.js'
+      - '.github/workflows/video-component.yml'
+permissions:
+  contents: read
+concurrency:
+  group: video-component-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: make mingw-w64-ucrt-x86_64-gcc
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --yes --no-progress
+          'C:\Program Files (x86)\NSIS' | Out-File -FilePath $env:GITHUB_PATH -Append
+          'VIDEO_MSYS_BASH=${{ steps.msys2.outputs.msys2-location }}\usr\bin\bash.exe' | Out-File -FilePath $env:GITHUB_ENV -Append
+          'VIDEO_MSYS_PREFIX=/ucrt64' | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Verify video protocol and installation recovery contracts
+        run: node --test connector/test/video-host.test.mjs connector/test/video-service.test.mjs test/native-video.test.js test/video-component-setup.test.js
+      - run: node tools/video-component/build.mjs
+      - name: Install on disposable macOS runner
+        if: runner.os == 'macOS'
+        run: sudo installer -pkg dist/video-component/PromptDirector-Video-macOS.pkg -target /
+      - name: Install and verify Windows registration without developer runtimes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath dist/video-component/PromptDirector-Video-Windows.exe -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Installation failed' }
+          $componentRoot = Join-Path $env:LOCALAPPDATA 'PromptDirector/VideoComponent'
+          & "$componentRoot/bin/node.exe" "$componentRoot/connector/register-video.mjs"
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled tool validation failed' }
+          $manifest = (Get-Item 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.promptdirector.video').GetValue('')
+          if ($manifest -ne "$componentRoot\native-manifest.json") { throw 'Chrome registration mismatch' }
+          & "$componentRoot/bin/node.exe" tools/video-component/smoke.mjs "$componentRoot"
+          if ($LASTEXITCODE -ne 0) { throw 'Native protocol validation failed' }
+          $env:PROMPTDIRECTOR_YTDLP = "$componentRoot/bin/yt-dlp.exe"
+          $env:PROMPTDIRECTOR_FFMPEG = "$componentRoot/bin/ffmpeg.exe"
+          $env:PROMPTDIRECTOR_FFPROBE = "$componentRoot/bin/ffprobe.exe"
+          $env:PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS = '1'
+          & "$componentRoot/bin/node.exe" --test --test-name-pattern='real FFmpeg merges' connector/test/video-service.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Installed video/audio merge failed' }
+          $process = Start-Process -FilePath "$componentRoot/Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or (Test-Path 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.promptdirector.video')) { throw 'Uninstall did not remove its own registration' }
+      - name: Verify macOS native protocol with packaged runtime
+        if: runner.os == 'macOS'
+        run: |
+          componentRoot='/Library/Application Support/PromptDirector/VideoComponent'
+          "$componentRoot/bin/node" tools/video-component/smoke.mjs "$componentRoot"
+          PROMPTDIRECTOR_YTDLP="$componentRoot/bin/yt-dlp" PROMPTDIRECTOR_FFMPEG="$componentRoot/bin/ffmpeg" PROMPTDIRECTOR_FFPROBE="$componentRoot/bin/ffprobe" PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS=1 "$componentRoot/bin/node" --test --test-name-pattern='real FFmpeg merges' connector/test/video-service.test.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-component-${{ runner.os }}
+          path: |
+            dist/video-component/*.pkg
+            dist/video-component/*.exe
+            dist/video-component/*-build.json
+          if-no-files-found: error
