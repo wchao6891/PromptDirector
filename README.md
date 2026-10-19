@@ -27,6 +27,7 @@
 - **One click: image + prompt.** Save works, videos and their public prompts from Jimeng, Higgsfield, Midjourney, X, WeChat, Feishu and 20+ sites.
 - **A library you browse by eye.** An image-first case wall with tags and projects. It's local-first and needs no account.
 - **Your Agent can use it.** Codex, Claude Code and WorkBuddy can search, read and save back to your library through local MCP.
+- **Ask the Assistant.** The built-in Assistant captures the page or video you are on, finds references in your library and opens cases for you — from the same sidebar.
 
 <p align="center"><strong>1,000+ curated cases, ready to import:</strong> <a href="https://wchao6891.github.io/PromptDirector-Curated/en/">Browse (English)</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/?lang=zh-CN">浏览（中文）</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/en/guide.html">Quick start</a></p>
 
@@ -66,6 +67,26 @@
 <tr><td align="center"><sub><b>Skill center.</b> Build, import and reuse creative Skills.</sub></td><td align="center"><sub><b>Composer.</b> References + Skill → a ready-to-use prompt.</sub></td></tr>
 </table>
 
+## What's new
+
+**An Assistant beside the page.** New in 1.27, the built-in Assistant sits in the capture sidebar. Ask it to capture the current page or video, find references in your library or open a case — originals, prompts and your own edits all stay where they are.
+
+<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-assistant-bar.jpg" alt="The Assistant entry in PromptDirector's capture panel" width="620"></p>
+
+**Similar cases, and notes on the exact frame.** Cases list similar references from your library underneath, so one good find leads to more. On video, add a creative note at any timestamp and jump back to that moment later.
+
+<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-similar-cases.jpg" alt="A case detail with its original prompt and a wall of similar cases underneath" width="1000"></p>
+
+<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-detail-notes.jpg" alt="A creative note saved at 18.19s on a video case, with similar cases below" width="1000"></p>
+
+**A library that stays tidy.** Review duplicate cases that share the same image or video original, fill in missing text tags, complete the library index automatically, and restore anything you delete from the recycle bin.
+
+<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-maintenance.jpg" alt="Settings → Tasks and maintenance: complete text tags, automatic library index completion and duplicate cases" width="860"></p>
+
+**Backup, sync, and your Agent.** Back up and restore the whole library, sync it across devices, and copy the Agent connection request for Codex, Claude Code or WorkBuddy.
+
+<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-settings-sync.jpg" alt="Settings: Agent connection, backup and restore, cross-device sync and version 1.27.0" width="760"></p>
+
 ## Where you can capture
 
 **Open a work, post or article → Capture → Preview and select → Save cases.**
@@ -77,6 +98,7 @@
 | **HeyBox / 小黑盒 · WeChat articles** | Save a whole article or split clearly structured multi-case posts into selectable image-and-prompt groups. Keep a single HeyBox image gallery with its prompt from the post body. |
 | **Feishu documents** | Capture document bodies, long documents and images within tables, preserving cell placement and merged cells. |
 | **X / Twitter · Xiaohongshu · Weibo · Reddit** | Collect the current post's text and accessible media, including prompts shared by the author. |
+| **Douyin · Bilibili · YouTube** | Video posts, captions and public prompts. Save online playback, or install the optional free local video component to keep the original file. |
 | **Pinterest · Behance · ArtStation · Huaban · ZCOOL** | Bring visual work into one place to browse, search and organize. |
 | **More webpages and local files** | General webpage capture, text and image selection, screenshots and local imports help gather scattered materials. |
 
@@ -84,11 +106,17 @@
 
 **Context stays with the reference.** Multi-image works stay grouped, articles keep their media order and Feishu tables keep their layout. Media, text, original prompts, sources and later analysis each have their own place.
 
+**Videos capture like any other page.** Preview the video, keep its caption and public prompt, and save the case. With the optional free [local video component](docs/VIDEO_COMPONENT.md), the original file comes along too.
+
+<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-video-capture.jpg" alt="Capturing a YouTube video: the page and the PromptDirector preview with Save case" width="1000"></p>
+
 Capture, browsing and organization require no AI service. Pages must be accessible and original prompts must be public. Login state, lazy loading and site changes can affect results, so preview before saving. See the [capture guide](docs/CAPTURE_SUPPORT.md).
 
 ## Let your Agent take it further
 
 Connect your library to **Codex, Claude Code or WorkBuddy**. Your Agent can search references, read prompts, retrieve originals, capture URLs and save creative materials back to the library.
+
+The built-in Assistant covers the in-browser side; the Agent connection exposes the same library to Codex, Claude Code or WorkBuddy.
 
 1. In the extension, open **Settings → Agent connection** and select **Copy connection request**.
 2. Paste it into an Agent with local MCP support. It installs, configures and verifies the connector.
@@ -109,6 +137,8 @@ Other local MCP clients can use the generic configuration. Cloud-only workspaces
 | **A reference you can recognize at a glance** | An image-first case wall, text search and tag filters. |
 | **A focused collection for each project** | Nested projects, related cases and batch management. |
 | **Experience you can reuse** | The Composer reads selected cases and drafts editable prompts, reusable Skills and tag suggestions for your review. |
+| **A second pair of eyes** | Similar cases under every case, timestamped creative notes, and an Assistant that captures, finds and opens cases beside the page. |
+| **A library that stays tidy** | Recycle bin, duplicate review, automatic index completion, and batch tags or batch analysis. |
 | **Room for more than images** | Local images, videos, audio, DOCX, PDFs, Markdown, TXT, HTML, RTF and timestamped video notes. |
 | **A collection you can share and preserve** | Export cases or project subtrees, full folder backups, recovery on another computer and encrypted folder sync. |
 
